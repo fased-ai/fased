@@ -1,7 +1,7 @@
 import { createReadStream, createWriteStream, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Transform } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import * as tar from "tar";
@@ -443,6 +443,43 @@ function observeReleaseArchiveProgress(progress: ReleaseArchiveProgressTracker):
   return observer;
 }
 
+function createManifestArchiveStream(
+  cwd: string,
+  manifest: ReleaseArchiveManifestEntry[],
+  noMtime: boolean | undefined,
+): DestroyableByteStream {
+  const statCache = new Map(
+    manifest.map((entry) => [path.resolve(cwd, ...entry.path.split("/")), entry.stat]),
+  );
+  const linkCache = new Map<`${number}:${number}`, string>();
+
+  return Readable.from(
+    (async function* () {
+      for (const manifestEntry of manifest) {
+        const absolute = path.resolve(cwd, ...manifestEntry.path.split("/"));
+        const entry = new tar.WriteEntry(manifestEntry.path, {
+          absolute,
+          cwd,
+          linkCache,
+          noMtime,
+          portable: true,
+          statCache,
+          strict: true,
+        });
+        try {
+          for await (const chunk of entry) {
+            yield chunk;
+          }
+        } finally {
+          entry.destroy();
+        }
+      }
+      yield Buffer.alloc(1_024);
+    })(),
+    { objectMode: false },
+  );
+}
+
 async function inspectReleaseArchive(
   archivePath: string,
   gzip: boolean,
@@ -495,25 +532,10 @@ export async function writeReleaseArchive({
   const gzipIdleTimeoutMs = requireTimeout(gzipIdleTimeoutInputMs, "Release gzip idle timeout");
   const manifest = await createReleaseArchiveManifest({ cwd, entries, filter });
   const progress = new ReleaseArchiveProgressTracker(manifest);
-  const statCache = new Map(
-    manifest.map((entry) => [path.resolve(cwd, ...entry.path.split("/")), entry.stat]),
-  );
   console.log(
     `release-archive: validated manifest for ${path.basename(destination)} (${manifest.length} entries)`,
   );
-  const source = tar.c(
-    {
-      cwd,
-      gzip: false,
-      jobs: 1,
-      noDirRecurse: true,
-      noMtime,
-      portable: true,
-      statCache,
-      strict: true,
-    },
-    manifest.map((entry) => entry.path),
-  );
+  const source = createManifestArchiveStream(cwd, manifest, noMtime);
   let archivedEntries = 0;
 
   const result = await writeTwoPhaseGzipAtomically({

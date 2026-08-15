@@ -112,6 +112,42 @@ describe("release archive writer", () => {
     ]);
   });
 
+  it("streams thousands of hard-linked manifest entries without a pack scheduler", async () => {
+    const root = await fixture();
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    const packageRoot = path.join(source, "package");
+    const seed = path.join(packageRoot, "seed.txt");
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(seed, "shared hard-link fixture\n");
+
+    const linkedEntries = 4_096;
+    for (let offset = 0; offset < linkedEntries; offset += 128) {
+      await Promise.all(
+        Array.from({ length: Math.min(128, linkedEntries - offset) }, (_, index) =>
+          fs.link(
+            seed,
+            path.join(packageRoot, `linked-${String(offset + index).padStart(4, "0")}.txt`),
+          ),
+        ),
+      );
+    }
+
+    const result = await writeReleaseArchive({
+      cwd: source,
+      destination,
+      entries: ["package"],
+      requiredEntryPrefix: "package/",
+      rawIdleTimeoutMs: 5_000,
+      gzipIdleTimeoutMs: 5_000,
+    });
+
+    expect(result.manifestEntries).toBe(linkedEntries + 2);
+    expect(result.entries).toBe(result.manifestEntries);
+    expect(result.rawSize).toBeGreaterThan(0);
+  });
+
   it("rejects roots that can escape or reinterpret the explicit manifest", async () => {
     const root = await fixture();
     const source = path.join(root, "source");
