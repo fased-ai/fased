@@ -90,10 +90,15 @@ describe("npm-free managed lifecycle", () => {
 
   it("does not advertise npm-global installation from the macOS application", async () => {
     const onboarding = `${await source("apps/macos/Sources/FasedAgent/Onboarding.swift")}\n${await source("apps/macos/Sources/FasedAgent/OnboardingView+Pages.swift")}`;
+    const gatewayEnvironment = await source(
+      "apps/macos/Sources/FasedAgent/GatewayEnvironment.swift",
+    );
 
     expect(onboarding).not.toContain("npm install -g fased");
     expect(onboarding).not.toContain("releases/latest/download/install.sh");
-    expect(onboarding).toContain("native macOS lifecycle runtime must be shipped and verified");
+    expect(onboarding).toContain("Local mode is compatibility-only");
+    expect(gatewayEnvironment).not.toContain("installGlobal");
+    expect(gatewayEnvironment).not.toMatch(/(?:npm|pnpm|bun).*(?:install|add).*fased@/u);
   });
 
   it("removes superseded managed shell and Node migration owners", async () => {
@@ -105,6 +110,7 @@ describe("npm-free managed lifecycle", () => {
       "scripts/migrate-hosted-signer-v2.mjs",
       "scripts/hosted-legacy-wallet-migration.mjs",
       "scripts/fased-launcher-runtime.mjs",
+      "scripts/fased-launcher-runtime.d.mts",
       "src/types/fased-launcher-runtime.d.ts",
       "src/commands/managed-up.ts",
       "src/cli/program/register.managed.ts",

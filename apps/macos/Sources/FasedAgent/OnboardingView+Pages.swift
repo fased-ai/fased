@@ -113,7 +113,7 @@ extension OnboardingView {
 
     private var localGatewaySubtitle: String {
         guard let probe = self.localGatewayProbe else {
-            return "Gateway starts automatically on this Mac."
+            return "Compatibility only: attach an existing local CLI; this app does not install or update it."
         }
         let base = probe.expected
             ? "Existing gateway detected"
@@ -394,7 +394,7 @@ extension OnboardingView {
                 Label("Use Remote mode to connect this app to a lifecycle-managed Linux instance.", systemImage: "lock.shield")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                Text("A native macOS lifecycle runtime must be shipped and verified separately before Local mode can be enabled here.")
+                Text("Local mode is compatibility-only for an already installed CLI. A native macOS lifecycle runtime must be shipped and verified separately before this app can install or update Local mode.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

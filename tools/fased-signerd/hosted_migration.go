@@ -240,16 +240,9 @@ func runHostedSignerMigrationV1(cfg hostedMigrationConfigV1, stdout io.Writer) e
 		}
 		if !exists {
 			if cfg.Phase == "validate" {
-				keystore, err := openHostedMigrationSourceV1(wallet.KeystorePath, allowedRoots, allowedUIDs, "legacy encrypted keystore", maxHostedMigrationLegacyKeystoreBytesV1)
-				if err != nil {
+				if err := validateHostedMigrationSourceWalletV1(wallet, allowedRoots, allowedUIDs); err != nil {
 					return err
 				}
-				keystore.Close()
-				passphrase, err := openHostedMigrationSourceV1(wallet.PassphrasePath, allowedRoots, allowedUIDs, "legacy passphrase", maxHostedMigrationLegacyPassphraseBytesV1)
-				if err != nil {
-					return err
-				}
-				passphrase.Close()
 				continue
 			}
 			if cfg.Phase == "commit" {
@@ -540,6 +533,61 @@ func verifyHostedMigrationWalletResultV1(result signerWalletPolicyResultV2, expe
 	normalized, err := normalizeSignerPolicyV2(result.Policy)
 	if err != nil || !reflect.DeepEqual(normalized, result.Policy) || !reflect.DeepEqual(result.Policy, expected.Policy) {
 		return fmt.Errorf("signer wallet policy does not exactly match migration policy for %s", expected.WalletID)
+	}
+	return nil
+}
+
+func validateHostedMigrationSourceWalletV1(
+	wallet hostedMigrationWalletV1,
+	allowedRoots []string,
+	allowedUIDs map[uint32]bool,
+) error {
+	keystore, err := openHostedMigrationSourceV1(
+		wallet.KeystorePath,
+		allowedRoots,
+		allowedUIDs,
+		"legacy encrypted keystore",
+		maxHostedMigrationLegacyKeystoreBytesV1,
+	)
+	if err != nil {
+		return err
+	}
+	defer keystore.Close()
+	keystoreData, err := io.ReadAll(io.LimitReader(keystore, maxHostedMigrationLegacyKeystoreBytesV1+1))
+	if err != nil || len(keystoreData) == 0 || len(keystoreData) > maxHostedMigrationLegacyKeystoreBytesV1 {
+		return errors.New("read legacy encrypted keystore for validation")
+	}
+	defer zeroBytes(keystoreData)
+	envelope, err := parseSolanaEnvelope(keystoreData)
+	if err != nil {
+		return fmt.Errorf("parse legacy encrypted keystore for %s: %w", wallet.WalletID, err)
+	}
+
+	passphrase, err := openHostedMigrationSourceV1(
+		wallet.PassphrasePath,
+		allowedRoots,
+		allowedUIDs,
+		"legacy passphrase",
+		maxHostedMigrationLegacyPassphraseBytesV1,
+	)
+	if err != nil {
+		return err
+	}
+	defer passphrase.Close()
+	passphraseData, err := io.ReadAll(io.LimitReader(passphrase, maxHostedMigrationLegacyPassphraseBytesV1+1))
+	if err != nil || len(passphraseData) == 0 || len(passphraseData) > maxHostedMigrationLegacyPassphraseBytesV1 {
+		return errors.New("read legacy passphrase for validation")
+	}
+	defer zeroBytes(passphraseData)
+	secret, err := decryptSolanaEnvelope(envelope, strings.TrimSpace(string(passphraseData)))
+	if err != nil {
+		return fmt.Errorf("legacy signer wallet decryption failed for %s", wallet.WalletID)
+	}
+	defer zeroBytes(secret)
+	if !validateSolanaCLIPrivateKeyV2(secret) ||
+		envelope.PublicKey != wallet.ExpectedPublicKey ||
+		solana.PrivateKey(secret).PublicKey().String() != wallet.ExpectedPublicKey {
+		return fmt.Errorf("legacy signer wallet public key does not match migration policy for %s", wallet.WalletID)
 	}
 	return nil
 }

@@ -76,6 +76,17 @@ func SignRoot(metadata RootMetadata, keys []SigningKey) ([]byte, error) {
 }
 
 func VerifyInitialRoot(data []byte, pinnedSHA256 string, now time.Time) (VerifiedRoot, error) {
+	return verifyInitialRoot(data, pinnedSHA256, now)
+}
+
+// VerifyInitialRootChainLink authenticates the immutable root without treating
+// it as the final current authority. This permits an offline client to traverse
+// an expired historical root to a later cross-signed, unexpired root.
+func VerifyInitialRootChainLink(data []byte, pinnedSHA256 string) (VerifiedRoot, error) {
+	return verifyInitialRoot(data, pinnedSHA256, time.Time{})
+}
+
+func verifyInitialRoot(data []byte, pinnedSHA256 string, now time.Time) (VerifiedRoot, error) {
 	digest, err := digestDocument(data)
 	if err != nil {
 		return VerifiedRoot{}, err
@@ -111,6 +122,16 @@ func VerifyInitialRoot(data []byte, pinnedSHA256 string, now time.Time) (Verifie
 }
 
 func VerifyRootRotation(trusted VerifiedRoot, data []byte, now time.Time) (VerifiedRoot, error) {
+	return verifyRootRotation(trusted, data, now)
+}
+
+// VerifyRootRotationChainLink verifies old/new thresholds and structure while
+// deferring current-time freshness to the final root in a contiguous chain.
+func VerifyRootRotationChainLink(trusted VerifiedRoot, data []byte) (VerifiedRoot, error) {
+	return verifyRootRotation(trusted, data, time.Time{})
+}
+
+func verifyRootRotation(trusted VerifiedRoot, data []byte, now time.Time) (VerifiedRoot, error) {
 	var probe rawEnvelope
 	if err := decodeStrict(data, &probe); err != nil {
 		return VerifiedRoot{}, err
@@ -148,6 +169,17 @@ func VerifyRootRotation(trusted VerifiedRoot, data []byte, now time.Time) (Verif
 		return VerifiedRoot{}, err
 	}
 	return VerifiedRoot{metadata: candidate, digest: digest, keys: candidateKeys}, nil
+}
+
+// RequireCurrent rejects a historical chain whose final authority is not
+// currently valid. Expired intermediates can authenticate successors but can
+// never authorize release metadata themselves.
+func (root VerifiedRoot) RequireCurrent(now time.Time) error {
+	if now.IsZero() {
+		return errors.New("current lifecycle root validation requires an explicit time")
+	}
+	_, _, err := validity(root.metadata.IssuedAt, root.metadata.ExpiresAt, now, maxRootLifetime)
+	return err
 }
 
 func validateRootMetadata(metadata RootMetadata, now time.Time) (map[string]ed25519.PublicKey, error) {

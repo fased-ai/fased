@@ -290,11 +290,16 @@ func (adapter HostedSignerMigrationAdapter) Commit(ctx context.Context, tx model
 			return err
 		}
 		record.NativeCommitted = true
+		// Native custody is now the only rollback-safe authority. Retain only the
+		// non-secret terminal record needed to make Commit idempotent until the
+		// outer engine durably journals MIGRATOR_COMMITTED.
+		record.Registry = hostedFileSnapshot{}
+		record.Config = hostedFileSnapshot{}
 		if err := adapter.writeRecord(tx, record); err != nil {
 			return err
 		}
 	}
-	return adapter.removePreparedState(tx, record, "committed")
+	return adapter.retainCommittedState(tx, record)
 }
 
 func (adapter HostedSignerMigrationAdapter) Abort(_ context.Context, tx model.Transaction, migration model.Migration) error {
@@ -319,7 +324,7 @@ func (adapter HostedSignerMigrationAdapter) Abort(_ context.Context, tx model.Tr
 			return err
 		}
 	}
-	return adapter.removePreparedState(tx, record, "rolled-back")
+	return adapter.removeRolledBackState(tx, record)
 }
 
 func (adapter HostedSignerMigrationAdapter) validate(tx model.Transaction, migration model.Migration) error {
@@ -496,24 +501,56 @@ func (adapter HostedSignerMigrationAdapter) removePreparedFiles(record hostedSig
 	return errors.Join(cleanupErrors...)
 }
 
-func (adapter HostedSignerMigrationAdapter) removePreparedState(tx model.Transaction, record hostedSignerRecord, outcome string) error {
+func (adapter HostedSignerMigrationAdapter) retainCommittedState(tx model.Transaction, record hostedSignerRecord) error {
+	var cleanupErrors []error
+	for _, wallet := range record.Wallets {
+		for _, path := range []string{wallet.PassphrasePath, wallet.PassphrasePath + ".migrated-v2"} {
+			if err := removeHostedFile(path); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("remove committed Hosting signer passphrase %s: %w", path, err))
+			}
+		}
+	}
+	if err := errors.Join(cleanupErrors...); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(adapter.stateRoot(tx))
+	if err != nil {
+		return fmt.Errorf("inspect committed Hosting migration state: %w", err)
+	}
+	expected := map[string]bool{filepath.Base(adapter.recordPath(tx)): true}
+	if !record.Noop {
+		expected[filepath.Base(record.PolicyPath)] = true
+		expected[filepath.Base(record.NativeMarker)] = true
+	}
+	if len(entries) != len(expected) {
+		return errors.New("committed Hosting migration state has unexpected entries")
+	}
+	for _, entry := range entries {
+		if !expected[entry.Name()] {
+			return fmt.Errorf("committed Hosting migration state contains unexpected entry %s", entry.Name())
+		}
+	}
+	return nil
+}
+
+func (adapter HostedSignerMigrationAdapter) removeRolledBackState(tx model.Transaction, record hostedSignerRecord) error {
 	if err := adapter.removePreparedFiles(record); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(adapter.stateRoot(tx))
 	if err != nil {
-		return fmt.Errorf("inspect %s Hosting migration state: %w", outcome, err)
+		return fmt.Errorf("inspect rolled-back Hosting migration state: %w", err)
 	}
 	for _, entry := range entries {
 		if entry.Name() != filepath.Base(adapter.recordPath(tx)) {
-			return fmt.Errorf("refuse to remove %s Hosting migration state containing unexpected entry %s", outcome, entry.Name())
+			return fmt.Errorf("refuse to remove rolled-back Hosting migration state containing unexpected entry %s", entry.Name())
 		}
 	}
 	if err := removeMigrationRecord(adapter.recordPath(tx)); err != nil {
 		return err
 	}
 	if err := os.Remove(adapter.stateRoot(tx)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove %s Hosting migration state: %w", outcome, err)
+		return fmt.Errorf("remove rolled-back Hosting migration state: %w", err)
 	}
 	return nil
 }

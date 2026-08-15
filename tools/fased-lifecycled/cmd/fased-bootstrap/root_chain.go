@@ -44,7 +44,7 @@ func resolveTrustedRoot(
 	if err != nil {
 		return trust.VerifiedRoot{}, err
 	}
-	root, err := trust.VerifyInitialRoot(rootJSON, pinnedRootSHA256, now)
+	root, err := trust.VerifyInitialRootChainLink(rootJSON, pinnedRootSHA256)
 	if err != nil {
 		return trust.VerifiedRoot{}, err
 	}
@@ -54,14 +54,20 @@ func resolveTrustedRoot(
 			if fetchErr != nil {
 				return trust.VerifiedRoot{}, fetchErr
 			}
-			root, err = trust.VerifyRootRotation(root, rotationJSON, now)
+			root, err = trust.VerifyRootRotationChainLink(root, rotationJSON)
 			if err != nil {
 				return trust.VerifiedRoot{}, err
 			}
 		}
+		if err := root.RequireCurrent(now); err != nil {
+			return trust.VerifiedRoot{}, err
+		}
 		return root, nil
 	}
 	if rotationBaseURL == "" {
+		if err := root.RequireCurrent(now); err != nil {
+			return trust.VerifiedRoot{}, err
+		}
 		return root, nil
 	}
 
@@ -78,7 +84,7 @@ func resolveTrustedRoot(
 		if readErr != nil {
 			return trust.VerifiedRoot{}, readErr
 		}
-		root, err = trust.VerifyRootRotation(root, cached, now)
+		root, err = trust.VerifyRootRotationChainLink(root, cached)
 		if err != nil {
 			return trust.VerifiedRoot{}, fmt.Errorf("verify cached lifecycle root rotation: %w", err)
 		}
@@ -95,9 +101,12 @@ func resolveTrustedRoot(
 			return trust.VerifiedRoot{}, fetchErr
 		}
 		if !found {
+			if err := root.RequireCurrent(now); err != nil {
+				return trust.VerifiedRoot{}, err
+			}
 			return root, nil
 		}
-		rotated, verifyErr := trust.VerifyRootRotation(root, rotationJSON, now)
+		rotated, verifyErr := trust.VerifyRootRotationChainLink(root, rotationJSON)
 		if verifyErr != nil {
 			return trust.VerifiedRoot{}, fmt.Errorf("verify lifecycle root rotation %d: %w", root.Version()+1, verifyErr)
 		}

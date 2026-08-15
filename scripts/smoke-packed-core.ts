@@ -290,10 +290,12 @@ function runCore(coreRoot: string, env: NodeJS.ProcessEnv, args: string[]): stri
       stdio: ["ignore", stdoutFd, stderrFd],
     });
   } catch (error) {
+    const stdout = readFileSync(stdoutPath, "utf8");
     const stderr = readFileSync(stderrPath, "utf8");
-    throw new Error(`packed core command failed (${args.join(" ")}): ${stderr}`, {
-      cause: error,
-    });
+    throw new Error(
+      `packed core command failed (${args.join(" ")}):\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`,
+      { cause: error },
+    );
   } finally {
     closeSync(stdoutFd);
     closeSync(stderrFd);

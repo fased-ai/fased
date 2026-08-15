@@ -354,9 +354,10 @@ func TestPublicRootRotationIsDiscoveredAndBecomesADurableFloor(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	oldKeys := []fixtureKey{fixtureKeyPair(t), fixtureKeyPair(t), fixtureKeyPair(t)}
 	newKeys := []fixtureKey{fixtureKeyPair(t), fixtureKeyPair(t), fixtureKeyPair(t)}
-	metadata := func(version uint64, keys []fixtureKey) trust.RootMetadata {
+	newestKeys := []fixtureKey{fixtureKeyPair(t), fixtureKeyPair(t), fixtureKeyPair(t)}
+	metadata := func(version uint64, keys []fixtureKey, issuedAt, expiresAt time.Time) trust.RootMetadata {
 		root := trust.RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: version,
-			IssuedAt: now.Add(-time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+			IssuedAt: issuedAt.Format(time.RFC3339), ExpiresAt: expiresAt.Format(time.RFC3339),
 			Keys: map[string]trust.Key{}, Root: trust.RootRole{Threshold: 2},
 			ReleaseAuthority: &trust.ReleaseAuthority{Type: "github-artifact-attestation-v1", Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml", SourceRefPrefix: "refs/tags/v", DenySelfHostedRunners: true},
 			Revocations:      trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
@@ -367,15 +368,22 @@ func TestPublicRootRotationIsDiscoveredAndBecomesADurableFloor(t *testing.T) {
 		sortStrings(root.Root.KeyIDs)
 		return root
 	}
-	rootV1, err := trust.SignRoot(metadata(1, oldKeys), []trust.SigningKey{{KeyID: oldKeys[0].id, PrivateKey: oldKeys[0].private}, {KeyID: oldKeys[1].id, PrivateKey: oldKeys[1].private}})
+	rootV1, err := trust.SignRoot(metadata(1, oldKeys, now.Add(-72*time.Hour), now.Add(-48*time.Hour)), []trust.SigningKey{{KeyID: oldKeys[0].id, PrivateKey: oldKeys[0].private}, {KeyID: oldKeys[1].id, PrivateKey: oldKeys[1].private}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rootV2Metadata := metadata(2, newKeys)
+	rootV2Metadata := metadata(2, newKeys, now.Add(-48*time.Hour), now.Add(-24*time.Hour))
 	rootV2Metadata.Revocations.ReleaseVersions = []string{"0.1.75"}
 	rootV2, err := trust.SignRoot(rootV2Metadata, []trust.SigningKey{
 		{KeyID: oldKeys[0].id, PrivateKey: oldKeys[0].private}, {KeyID: oldKeys[1].id, PrivateKey: oldKeys[1].private},
 		{KeyID: newKeys[0].id, PrivateKey: newKeys[0].private}, {KeyID: newKeys[1].id, PrivateKey: newKeys[1].private},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootV3, err := trust.SignRoot(metadata(3, newestKeys, now.Add(-time.Hour), now.Add(time.Hour)), []trust.SigningKey{
+		{KeyID: newKeys[0].id, PrivateKey: newKeys[0].private}, {KeyID: newKeys[1].id, PrivateKey: newKeys[1].private},
+		{KeyID: newestKeys[0].id, PrivateKey: newestKeys[0].private}, {KeyID: newestKeys[1].id, PrivateKey: newestKeys[1].private},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -395,6 +403,10 @@ func TestPublicRootRotationIsDiscoveredAndBecomesADurableFloor(t *testing.T) {
 				if includeRotation {
 					data = rootV2
 				}
+			case "/channel/" + rootRotationAssetName(3):
+				if includeRotation {
+					data = rootV3
+				}
 			}
 			if len(data) == 0 {
 				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing")), Request: request}, nil
@@ -403,21 +415,28 @@ func TestPublicRootRotationIsDiscoveredAndBecomesADurableFloor(t *testing.T) {
 		})}
 	}
 
+	if _, err := resolveTrustedRoot(context.Background(), clientFor(false), stateRoot, uint32(os.Geteuid()),
+		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
+		hex.EncodeToString(rootV1Digest[:]), now); err == nil {
+		t.Fatal("expired final root was accepted without a current successor")
+	}
 	root, err := resolveTrustedRoot(context.Background(), clientFor(true), stateRoot, uint32(os.Geteuid()),
 		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
 		hex.EncodeToString(rootV1Digest[:]), now)
-	if err != nil || root.Version() != 2 {
+	if err != nil || root.Version() != 3 {
 		t.Fatalf("public root rotation was not discovered: version=%d err=%v", root.Version(), err)
 	}
-	cachePath := filepath.Join(stateRoot, trustedRootCacheDirectory, rootRotationAssetName(2))
-	if cached, err := os.ReadFile(cachePath); err != nil || !bytes.Equal(cached, rootV2) {
-		t.Fatalf("verified root rotation was not persisted exactly: err=%v", err)
+	for version, expected := range map[uint64][]byte{2: rootV2, 3: rootV3} {
+		cachePath := filepath.Join(stateRoot, trustedRootCacheDirectory, rootRotationAssetName(version))
+		if cached, err := os.ReadFile(cachePath); err != nil || !bytes.Equal(cached, expected) {
+			t.Fatalf("verified root rotation %d was not persisted exactly: err=%v", version, err)
+		}
 	}
 
 	root, err = resolveTrustedRoot(context.Background(), clientFor(false), stateRoot, uint32(os.Geteuid()),
 		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
 		hex.EncodeToString(rootV1Digest[:]), now)
-	if err != nil || root.Version() != 2 {
+	if err != nil || root.Version() != 3 {
 		t.Fatalf("network suppression rolled back the cached root floor: version=%d err=%v", root.Version(), err)
 	}
 }

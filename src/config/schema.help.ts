@@ -664,7 +664,7 @@ const SPECIFIC_FIELD_HELP: Record<string, string> = {
   "logging.redactSensitive":
     'Controls log redaction. "off" disables extra redaction, while "tools" redacts tool arguments and sensitive tool payloads before writing logs.',
   "update.channel":
-    "Legacy developer/package channel. Managed Go lifecycle updates ignore it and accept an explicit stable or beta CLI channel.",
+    'Legacy developer/package channel: "stable", "beta", or "dev". Managed Go lifecycle updates ignore it and accept an explicit "stable" or "beta" CLI channel.',
   "update.checkOnStart":
     "Deprecated compatibility field retained so older valid configs continue to load; it does not trigger managed updates.",
   "agents.defaults.compaction.mode":

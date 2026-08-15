@@ -124,6 +124,10 @@ struct GeneralSettings: View {
             }
 
             if self.state.connectionMode == .local {
+                Text("Compatibility only: this app can attach to an existing local CLI but does not install or update it.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 // In Nix mode, gateway is managed declaratively - no install buttons.
                 if !self.isNixMode {
                     self.gatewayInstallerCard

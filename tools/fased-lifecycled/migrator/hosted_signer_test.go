@@ -14,6 +14,20 @@ import (
 	"fased-lifecycled/platform"
 )
 
+func writeFakeHostedSignerNativeMarker(args []string) error {
+	markerPath, phase := "", args[len(args)-1]
+	for index, arg := range args {
+		if arg == "--marker-file" && index+1 < len(args) {
+			markerPath = args[index+1]
+			break
+		}
+	}
+	if phase == "validate" || markerPath == "" {
+		return nil
+	}
+	return os.WriteFile(markerPath, []byte(`{"schemaVersion":1,"phase":"`+phase+`"}`), 0o600)
+}
+
 func hostedSignerFixture(t *testing.T) (HostedSignerMigrationAdapter, model.Transaction, model.Migration, string, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -75,7 +89,7 @@ func hostedSignerFixture(t *testing.T) (HostedSignerMigrationAdapter, model.Tran
 		now: func() time.Time { return time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC) },
 		run: func(_ context.Context, _ string, args []string) error {
 			calls = append(calls, args[len(args)-1])
-			return nil
+			return writeFakeHostedSignerNativeMarker(args)
 		},
 	}
 	_ = calls
@@ -130,7 +144,7 @@ func TestHostedSignerMigrationDefersNativeImportUntilCommit(t *testing.T) {
 			t.Fatalf("unexpected target signer binary: %s", binary)
 		}
 		phases = append(phases, args[len(args)-1])
-		return nil
+		return writeFakeHostedSignerNativeMarker(args)
 	}
 	if err := adapter.Prepare(context.Background(), tx, migration); err != nil {
 		t.Fatal(err)
@@ -152,12 +166,12 @@ func TestHostedSignerMigrationDefersNativeImportUntilCommit(t *testing.T) {
 	}
 }
 
-func TestHostedSignerMigrationRetriesCleanupWithoutRepeatingNativeCommit(t *testing.T) {
+func TestHostedSignerMigrationRetainsRetryableTerminalState(t *testing.T) {
 	adapter, tx, migration, _, _ := hostedSignerFixture(t)
 	var phases []string
 	adapter.run = func(_ context.Context, _ string, args []string) error {
 		phases = append(phases, args[len(args)-1])
-		return nil
+		return writeFakeHostedSignerNativeMarker(args)
 	}
 	if err := adapter.Prepare(context.Background(), tx, migration); err != nil {
 		t.Fatal(err)
@@ -169,7 +183,7 @@ func TestHostedSignerMigrationRetriesCleanupWithoutRepeatingNativeCommit(t *test
 	if err := os.WriteFile(unexpectedPath, []byte("preserve"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Commit(context.Background(), tx, migration); err == nil || !strings.Contains(err.Error(), "unexpected entry") {
+	if err := adapter.Commit(context.Background(), tx, migration); err == nil || !strings.Contains(err.Error(), "unexpected entr") {
 		t.Fatalf("unsafe cleanup unexpectedly succeeded: %v", err)
 	}
 	record, err := adapter.readRecord(tx)
@@ -191,8 +205,19 @@ func TestHostedSignerMigrationRetriesCleanupWithoutRepeatingNativeCommit(t *test
 	if !reflect.DeepEqual(phases, []string{"prepare", "commit"}) {
 		t.Fatalf("cleanup retry repeated native custody mutation: %v", phases)
 	}
-	if _, err := os.Stat(adapter.stateRoot(tx)); !os.IsNotExist(err) {
-		t.Fatalf("completed migration state was not removed: %v", err)
+	record, err = adapter.readRecord(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.NativeCommitted || record.Registry.Exists || record.Config.Exists || len(record.Registry.Data) != 0 || len(record.Config.Data) != 0 {
+		t.Fatalf("terminal migration record retained rollback secrets or lost commit identity: %#v", record)
+	}
+	entries, err := os.ReadDir(adapter.stateRoot(tx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("terminal migration state is not the bounded retry tombstone: %v", entries)
 	}
 }
 
@@ -203,7 +228,7 @@ func TestHostedSignerMigrationRetriesNativeCommitInsteadOfRollingBack(t *testing
 		if args[len(args)-1] == "commit" && failCommit {
 			return os.ErrInvalid
 		}
-		return nil
+		return writeFakeHostedSignerNativeMarker(args)
 	}
 	if err := adapter.Prepare(context.Background(), tx, migration); err != nil {
 		t.Fatal(err)

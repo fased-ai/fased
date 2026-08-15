@@ -14,7 +14,7 @@ const FIELD_LABELS_BASE: Record<string, string> = {
   "acp.stream.maxChunkChars": "ACP Stream Max Chunk Chars",
   "acp.runtime.ttlMinutes": "ACP Runtime TTL (min)",
   "acp.runtime.installCommand": "ACP Install Command",
-  "update.channel": "Self-Update Channel",
+  "update.channel": "Legacy Package Channel (managed lifecycle ignores this)",
   "update.checkOnStart": "Deprecated Update Check on Start",
   "diagnostics.enabled": "Diagnostics Enabled",
   "diagnostics.flags": "Diagnostics Flags",

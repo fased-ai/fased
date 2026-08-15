@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  requireCurrentLifecycleRoot,
   trustMetadataDigest,
   verifyInitialLifecycleRoot,
   verifyLifecycleRootRotation,
@@ -64,16 +65,17 @@ export async function verifyLifecycleRootChain({ directory, pinPath, now = Date.
       }
       trusted = verifyInitialLifecycleRoot(envelope, {
         pinnedSha256: INITIAL_LIFECYCLE_ROOT_SHA256,
-        now,
+        now: null,
       });
     } else {
-      trusted = verifyLifecycleRootRotation(trustedEnvelope, envelope, { now });
+      trusted = verifyLifecycleRootRotation(trustedEnvelope, envelope, { now: null });
     }
     if (trusted.version !== version) {
       throw new Error(`lifecycle root asset name and signed version disagree at v${version}`);
     }
     trustedEnvelope = envelope;
   }
+  requireCurrentLifecycleRoot(trusted, now);
   return Object.freeze({
     version: trusted.version,
     digest: trustMetadataDigest(trustedEnvelope),
