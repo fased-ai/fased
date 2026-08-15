@@ -5,7 +5,6 @@ import { createReadStream } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import * as tar from "tar";
 import {
   parsePredecessorCapsule,
   predecessorInstallationClassDigest,
@@ -67,6 +66,7 @@ async function safeSourceEntry(root, relative, requestedType) {
 }
 
 export async function buildInstalledStateCapsule({ spec, sourceRoot, outputDirectory }) {
+  const tar = await import("tar");
   exactKeys(
     spec,
     [

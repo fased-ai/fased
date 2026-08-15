@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import * as tar from "tar";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -12,6 +14,7 @@ import { predecessorInstallationClassDigest } from "./predecessor-capsule.mjs";
 import { inspectCapsuleArchive } from "./restore-predecessor-capsule.mjs";
 
 const temporary: string[] = [];
+const execFileAsync = promisify(execFile);
 const digest = (bytes: string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
 function descriptor(entryDigest: string) {
@@ -84,6 +87,27 @@ afterEach(async () => {
 });
 
 describe("sanitized installed-state capsules", () => {
+  it("verifies a descriptor without the production dependency graph", async () => {
+    const isolated = await mkdtemp(path.join(tmpdir(), "fased-capsule-verify-"));
+    temporary.push(isolated);
+    const script = path.join(isolated, "lifecycle-installed-state-capsule.mjs");
+    const descriptorPath = path.join(isolated, "fased-predecessor-capsule.json");
+    await copyFile(path.join(import.meta.dirname, "lifecycle-installed-state-capsule.mjs"), script);
+    await copyFile(
+      path.join(import.meta.dirname, "predecessor-capsule.mjs"),
+      path.join(isolated, "predecessor-capsule.mjs"),
+    );
+    await writeFile(descriptorPath, `${JSON.stringify(descriptor(digest("expected")))}\n`);
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      script,
+      "verify",
+      "--descriptor",
+      descriptorPath,
+    ]);
+    expect(JSON.parse(stdout)).toMatchObject({ ok: true, profile: "hosting", version: "0.1.75" });
+  });
+
   it("builds deterministic sanitized bytes without replaying an installer", async () => {
     const sourceRoot = await mkdtemp(path.join(tmpdir(), "fased-capsule-source-"));
     const output = await mkdtemp(path.join(tmpdir(), "fased-capsule-output-"));
