@@ -154,6 +154,10 @@ package version it inherits.
 
 - Never duplicate a running command or rerun an unchanged failure.
 - Correct and rerun only the first failed predicate. Stop after it fails twice.
+- Release archives use separately bounded raw-tar and gzip phases in one private
+  transaction directory. Close, verify, and fsync raw tar before compression;
+  close, verify, and fsync gzip before no-clobber publication. A byte counter
+  upstream of a backpressured transform is not independent liveness evidence.
 - Cache immutable artifacts, toolchains, dependencies, images, and predecessor
   assets—not installations, journals, Wallets, or signer state.
 - Explain any command expected to exceed one minute before starting it.
