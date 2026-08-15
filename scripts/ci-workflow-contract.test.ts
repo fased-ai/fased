@@ -1024,6 +1024,7 @@ describe("CI workflow routing", () => {
     expect(publicationReplayText).toContain("fased-hosting-candidate");
     expect(publicationReplayText).toContain("fased-p1-replay-*-receipts");
     expect(publicationReplayText).toContain("scripts/lifecycle-receipt-verifier.mjs");
+    expect(publicationReplayText).toContain("--acquisition-evidence-class SUPPORTING");
     expect(publicationReplayText).toContain("local_receipt_count=0");
     expect(publicationReplayText).toContain('test -f "$local_receipts/ubuntu-fresh-install.json"');
     expect(publicationReplayText).toContain('"$local_receipts/ubuntu-managed-update.json"');
