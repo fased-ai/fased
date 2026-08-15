@@ -167,6 +167,10 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(capsuleWrapper).toContain('FIXTURE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"');
     expect(capsuleWrapper).toContain("Predecessor capsule reuse rejected product changes:");
     expect(capsuleWrapper).toContain("$FIXTURE_COMMIT-$FIXTURE_TREE");
+    expect(capsuleWrapper).toContain("--pattern fased-lifecycled-linux-amd64");
+    expect(capsuleWrapper).toContain(
+      '--lifecycle-binary "$source_dir/fased-lifecycled-linux-amd64"',
+    );
     expect(wrapper).not.toContain(":/repo:");
   });
 });

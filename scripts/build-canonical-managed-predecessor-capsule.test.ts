@@ -21,7 +21,7 @@ describe("canonical managed predecessor capsule", () => {
     temporary.push(root);
     const source = path.join(root, "generation-source");
     const output = path.join(root, "output");
-    await mkdir(path.join(source, "generation/payload/bin"), { recursive: true });
+    await mkdir(path.join(source, "generation"), { recursive: true });
     await mkdir(output);
     const version = "1.2.3";
     const commit = "a".repeat(40);
@@ -64,9 +64,10 @@ describe("canonical managed predecessor capsule", () => {
       path.join(source, "generation/inventory.json"),
       `${JSON.stringify(inventory)}\n`,
     );
-    await writeFile(path.join(source, "generation/payload/bin/fased-lifecycled"), "binary\n");
     const generationArchive = path.join(root, `fased-generation-linux-x64-v${version}.tar.gz`);
     await tar.c({ cwd: source, file: generationArchive, gzip: true }, ["generation"]);
+    const lifecycleBinary = path.join(root, "fased-lifecycled-linux-amd64");
+    await writeFile(lifecycleBinary, "standalone lifecycle binary\n");
     const releaseManifest = path.join(root, "fased-hosted-release-v2.json");
     const releaseAttestation = `${releaseManifest}.attestation.json`;
     await writeFile(
@@ -82,27 +83,29 @@ describe("canonical managed predecessor capsule", () => {
     });
     await writeFile(
       candidateDescriptor,
-      `${JSON.stringify({ version, commit, tree, artifacts: [await artifact(generationArchive), await artifact(dependencyArchive)] })}\n`,
+      `${JSON.stringify({ version, commit, tree, artifacts: [await artifact(generationArchive), await artifact(dependencyArchive), await artifact(lifecycleBinary)] })}\n`,
     );
     const compatibility = path.join(root, "compatibility.json");
     const acceptance = path.join(root, "acceptance.json");
     await writeFile(compatibility, "{}\n");
     await writeFile(acceptance, "{}\n");
 
-    const result = await buildCanonicalManagedPredecessorCapsule({
+    const buildOptions = {
       releaseManifestPath: releaseManifest,
       releaseManifestAttestationPath: releaseAttestation,
       releaseTree: tree,
       candidateDescriptorPath: candidateDescriptor,
       generationArchivePath: generationArchive,
       dependencyArchivePath: dependencyArchive,
+      lifecycleBinaryPath: lifecycleBinary,
       compatibilityIndexPath: compatibility,
       acceptanceContractPath: acceptance,
       outputDirectory: output,
       builderCommit: "2".repeat(40),
       builderTree: "3".repeat(40),
       branchProof: true,
-    });
+    };
+    const result = await buildCanonicalManagedPredecessorCapsule(buildOptions);
     const capsule = parsePredecessorCapsule(result.descriptor);
     expect(capsule.installationClass.kind).toBe("canonical-managed");
     expect(capsule.installationClass.manifestSchema).toBe(1);
@@ -128,6 +131,14 @@ describe("canonical managed predecessor capsule", () => {
     expect(new Set([platform.operator.uid, platform.gateway.uid, platform.signer.uid]).size).toBe(
       3,
     );
+    const restoredLifecycleBinary = path.join(
+      restored,
+      "opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
+    );
+    await expect(readFile(restoredLifecycleBinary, "utf8")).resolves.toBe(
+      "standalone lifecycle binary\n",
+    );
+    expect((await stat(restoredLifecycleBinary)).mode & 0o777).toBe(0o755);
     expect(
       capsule.entries.find((entry) => entry.path === "var/lib/fased-local/1122334455667788"),
     ).toMatchObject({ type: "directory", mode: 0o755, owner: "root" });
@@ -192,5 +203,13 @@ describe("canonical managed predecessor capsule", () => {
     });
     const { phase: _phase, revision: _revision, ...journalEnvelope } = supervisor;
     expect(envelope).toEqual(journalEnvelope);
+
+    await writeFile(lifecycleBinary, "tampered lifecycle binary\n");
+    await expect(
+      buildCanonicalManagedPredecessorCapsule({
+        ...buildOptions,
+        outputDirectory: path.join(root, "tampered-output"),
+      }),
+    ).rejects.toThrow("candidate artifact identity is invalid: fased-lifecycled-linux-amd64");
   });
 });

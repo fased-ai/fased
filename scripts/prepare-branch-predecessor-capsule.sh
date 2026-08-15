@@ -67,6 +67,7 @@ if [[ ! -f "$target/fased-predecessor-capsule.json" ]]; then
       --dir "$source_dir" \
       --pattern fased-hosting-candidate.json \
       --pattern fased-hosting-candidate.json.attestation.json \
+      --pattern fased-lifecycled-linux-amd64 \
       --pattern "fased-generation-linux-x64-v$VERSION.tar.gz" \
       --pattern 'fased-hosted-deps-linux-x64-*.tar.gz'
     GH_PROMPT_DISABLED=1 gh attestation verify \
@@ -83,6 +84,7 @@ if [[ ! -f "$target/fased-predecessor-capsule.json" ]]; then
       --candidate-descriptor "$source_dir/fased-hosting-candidate.json" \
       --generation-archive "$source_dir/fased-generation-linux-x64-v$VERSION.tar.gz" \
       --dependency-archive "$dependency_archive" \
+      --lifecycle-binary "$source_dir/fased-lifecycled-linux-amd64" \
       --compatibility-index "$ROOT_DIR/config/lifecycle-compatibility.v1.json" \
       --acceptance-contract "$ROOT_DIR/config/lifecycle-acceptance.v2.json" \
       --output "$output_dir" \

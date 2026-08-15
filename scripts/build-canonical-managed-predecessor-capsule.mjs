@@ -285,6 +285,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
     candidateDescriptorPath,
     generationArchivePath,
     dependencyArchivePath,
+    lifecycleBinaryPath,
     compatibilityIndexPath,
     acceptanceContractPath,
     outputDirectory,
@@ -311,7 +312,10 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
   if (branchProof && (!COMMIT.test(builderCommit || "") || !COMMIT.test(builderTree || ""))) {
     fail("branch proof identity is invalid");
   }
-  for (const file of [generationArchivePath, dependencyArchivePath]) {
+  if (!lifecycleBinaryPath) {
+    fail("lifecycle binary is required");
+  }
+  for (const file of [generationArchivePath, dependencyArchivePath, lifecycleBinaryPath]) {
     const name = path.basename(file);
     const record = candidate.artifacts?.find((artifact) => artifact.name === name);
     const info = await fsp.lstat(file);
@@ -420,7 +424,7 @@ export async function buildCanonicalManagedPredecessorCapsule(options) {
       await copy(
         source,
         "opt/fased/lifecycle/supervisor-v1/fased-lifecycled",
-        path.join(metadataRoot, "generation/payload/bin/fased-lifecycled"),
+        lifecycleBinaryPath,
         0o755,
         "root",
       ),
@@ -598,6 +602,7 @@ async function main() {
     candidateDescriptorPath: values["candidate-descriptor"],
     generationArchivePath: values["generation-archive"],
     dependencyArchivePath: values["dependency-archive"],
+    lifecycleBinaryPath: values["lifecycle-binary"],
     compatibilityIndexPath: values["compatibility-index"],
     acceptanceContractPath: values["acceptance-contract"],
     outputDirectory: values.output,
