@@ -783,6 +783,7 @@ func TestActivateAllowsExactSchemaOnePredecessorInventoryWithoutWeakeningTargetP
 		Path: "bin/fased-lifecycled", Kind: bundle.ArtifactFile,
 		SHA256: fmt.Sprintf("sha256:%x", legacySum), Size: int64(len(legacyBytes)), Executable: true,
 	})
+	legacyInventory.PluginLockDigest = "sha256:" + strings.Repeat("c", 64)
 	sort.Slice(legacyInventory.Artifacts, func(left, right int) bool {
 		return legacyInventory.Artifacts[left].Path < legacyInventory.Artifacts[right].Path
 	})

@@ -3,6 +3,7 @@ package migrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,40 @@ import (
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
 )
+
+type hostedSocketFileInfo struct{ mode os.FileMode }
+
+func (info hostedSocketFileInfo) Name() string       { return "control.sock" }
+func (info hostedSocketFileInfo) Size() int64        { return 0 }
+func (info hostedSocketFileInfo) Mode() os.FileMode  { return info.mode }
+func (info hostedSocketFileInfo) ModTime() time.Time { return time.Time{} }
+func (info hostedSocketFileInfo) IsDir() bool        { return false }
+func (info hostedSocketFileInfo) Sys() any           { return nil }
+
+func TestHostedSignerControlSocketReadinessIsBoundedAndTypeChecked(t *testing.T) {
+	path := "/run/fased-signerd/control.sock"
+	attempts := 0
+	inspect := func(string) (os.FileInfo, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, os.ErrNotExist
+		}
+		return hostedSocketFileInfo{mode: os.ModeSocket | 0o600}, nil
+	}
+	if err := waitForHostedSignerControlSocketWith(context.Background(), path, inspect, time.Second, time.Nanosecond); err != nil {
+		t.Fatalf("ready signer control socket was rejected: %v", err)
+	}
+	regular := func(string) (os.FileInfo, error) { return hostedSocketFileInfo{mode: 0o600}, nil }
+	if err := waitForHostedSignerControlSocketWith(context.Background(), path, regular, time.Second, time.Nanosecond); err == nil || !strings.Contains(err.Error(), "not a Unix socket") {
+		t.Fatalf("non-socket signer control path was accepted: %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	missing := func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	if err := waitForHostedSignerControlSocketWith(cancelled, path, missing, time.Second, time.Nanosecond); err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled signer readiness wait did not stop: %v", err)
+	}
+}
 
 func writeFakeHostedSignerNativeMarker(args []string) error {
 	markerPath, phase := "", args[len(args)-1]
@@ -96,7 +131,7 @@ func hostedSignerFixture(t *testing.T) (HostedSignerMigrationAdapter, model.Tran
 	return adapter, tx, tx.Migrations[0], registryPath, configPath
 }
 
-func TestHostedSignerMigrationActivatesAndRollsBackExactApplicationState(t *testing.T) {
+func TestHostedSignerMigrationOwnsOnlyRegistryMutationAndRollback(t *testing.T) {
 	adapter, tx, migration, registryPath, configPath := hostedSignerFixture(t)
 	registryBefore, _ := os.ReadFile(registryPath)
 	configBefore, _ := os.ReadFile(configPath)
@@ -115,12 +150,8 @@ func TestHostedSignerMigrationActivatesAndRollsBackExactApplicationState(t *test
 	if wallets[0].(map[string]any)["providerId"] != "local-socket-signer" {
 		t.Fatal("embedded wallet was not routed to the native signer")
 	}
-	var configuration map[string]any
-	data, _ = os.ReadFile(configPath)
-	_ = json.Unmarshal(data, &configuration)
-	vars := configuration["env"].(map[string]any)["vars"].(map[string]any)
-	if _, exists := vars["FASED_WALLET_PASSPHRASE"]; exists {
-		t.Fatal("legacy inline passphrase remained Gateway-readable")
+	if got, _ := os.ReadFile(configPath); !reflect.DeepEqual(got, configBefore) {
+		t.Fatal("signer migrator mutated lifecycle-file-owned configuration")
 	}
 	if err := adapter.Verify(context.Background(), tx, migration); err != nil {
 		t.Fatal(err)
@@ -132,7 +163,7 @@ func TestHostedSignerMigrationActivatesAndRollsBackExactApplicationState(t *test
 		t.Fatal("rollback did not restore the exact registry bytes")
 	}
 	if got, _ := os.ReadFile(configPath); !reflect.DeepEqual(got, configBefore) {
-		t.Fatal("rollback did not restore the exact configuration bytes")
+		t.Fatal("signer migrator rollback mutated lifecycle-file-owned configuration")
 	}
 }
 

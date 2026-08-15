@@ -23,8 +23,7 @@ import (
 )
 
 const maxHostedLegacyJSONBytes int64 = 1 << 20
-
-var hostedLegacySecretEnv = regexp.MustCompile(`^FASED_WALLET_(?:(?:SOLANA_)?KEYSTORE_|PASSPHRASE|(?:SOLANA_)?PRIVATE_KEY|(?:SOLANA_)?RPC_URL)`)
+const hostedSignerControlSocketReadyTimeout = 10 * time.Second
 
 type HostedSignerMigrationAdapter struct {
 	Config     platform.Config
@@ -194,10 +193,6 @@ func (adapter HostedSignerMigrationAdapter) Activate(_ context.Context, tx model
 	if err := json.Unmarshal(record.Registry.Data, &registry); err != nil {
 		return errors.New("prepared legacy Hosting registry snapshot is invalid")
 	}
-	configuration := map[string]any{}
-	if record.Config.Exists && json.Unmarshal(record.Config.Data, &configuration) != nil {
-		return errors.New("prepared legacy Hosting configuration snapshot is invalid")
-	}
 	now := adapter.clock().UTC().Format(time.RFC3339Nano)
 	providers, _ := registry["providers"].(map[string]any)
 	if providers == nil {
@@ -232,19 +227,8 @@ func (adapter HostedSignerMigrationAdapter) Activate(_ context.Context, tx model
 		metadata["migratedAt"], wallet["updatedAt"] = now, now
 	}
 	registry["updatedAt"] = now
-	cleanHostedConfiguration(configuration)
 	registryBytes, _ := json.MarshalIndent(registry, "", "  ")
-	configBytes, _ := json.MarshalIndent(configuration, "", "  ")
 	if err := restoreHostedSnapshot(record.RegistryPath, hostedFileSnapshot{Exists: true, Mode: record.Registry.Mode, UID: record.Registry.UID, GID: record.Registry.GID, Data: append(registryBytes, '\n')}); err != nil {
-		return err
-	}
-	configSnapshot := record.Config
-	configSnapshot.Exists, configSnapshot.Data = true, append(configBytes, '\n')
-	if configSnapshot.Mode == 0 {
-		configSnapshot.Mode, configSnapshot.UID, configSnapshot.GID = 0o600, adapter.Config.Operator.UID, adapter.Config.Operator.GID
-	}
-	if err := restoreHostedSnapshot(record.ConfigPath, configSnapshot); err != nil {
-		_ = restoreHostedSnapshot(record.RegistryPath, record.Registry)
 		return err
 	}
 	record.Activated = true
@@ -318,9 +302,6 @@ func (adapter HostedSignerMigrationAdapter) Abort(_ context.Context, tx model.Tr
 	}
 	if !record.Noop {
 		if err := restoreHostedSnapshot(record.RegistryPath, record.Registry); err != nil {
-			return err
-		}
-		if err := restoreHostedSnapshot(record.ConfigPath, record.Config); err != nil {
 			return err
 		}
 	}
@@ -412,9 +393,13 @@ func (adapter HostedSignerMigrationAdapter) planWallets(registry, configuration 
 
 func (adapter HostedSignerMigrationAdapter) runNative(ctx context.Context, tx model.Transaction, record hostedSignerRecord, phase string) error {
 	binary := adapter.resolve(filepath.Join(adapter.Config.InstallRoot, "generations", strings.TrimPrefix(tx.Target.ID, "sha256:"), "payload", "bin", "fased-signerd"))
-	args := []string{"admin", "migration", "hosted-v1", "--control-socket", adapter.resolve(adapter.Config.ControlSocket()), "--policy-file", record.PolicyPath, "--app-home", adapter.resolve(adapter.Config.OwnerHome()), "--legacy-signer-home", adapter.resolve("/home/fased-signer"), "--state-dir", adapter.resolve(adapter.Config.SignerStateRoot()), "--marker-file", record.NativeMarker, "--phase", phase}
+	controlSocket := adapter.resolve(adapter.Config.ControlSocket())
+	args := []string{"admin", "migration", "hosted-v1", "--control-socket", controlSocket, "--policy-file", record.PolicyPath, "--app-home", adapter.resolve(adapter.Config.OwnerHome()), "--legacy-signer-home", adapter.resolve("/home/fased-signer"), "--state-dir", adapter.resolve(adapter.Config.SignerStateRoot()), "--marker-file", record.NativeMarker, "--phase", phase}
 	if adapter.run != nil {
 		return adapter.run(ctx, binary, args)
+	}
+	if err := waitForHostedSignerControlSocket(ctx, controlSocket); err != nil {
+		return fmt.Errorf("native hosted signer migration %s readiness: %w", phase, err)
 	}
 	command := exec.CommandContext(ctx, binary, args...)
 	command.Env = []string{"HOME=" + adapter.resolve(adapter.Config.SupervisorRuntimeRoot()), "LANG=C", "LC_ALL=C", "PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
@@ -423,6 +408,34 @@ func (adapter HostedSignerMigrationAdapter) runNative(ctx context.Context, tx mo
 		return fmt.Errorf("native hosted signer migration %s failed: %s", phase, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func waitForHostedSignerControlSocket(ctx context.Context, path string) error {
+	return waitForHostedSignerControlSocketWith(ctx, path, os.Lstat, hostedSignerControlSocketReadyTimeout, 25*time.Millisecond)
+}
+
+func waitForHostedSignerControlSocketWith(ctx context.Context, path string, inspect func(string) (os.FileInfo, error), timeout, interval time.Duration) error {
+	readyContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		info, err := inspect(path)
+		if err == nil {
+			if info.Mode()&os.ModeSocket == 0 {
+				return errors.New("signer control socket path is not a Unix socket")
+			}
+			return nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect signer control socket readiness: %w", err)
+		}
+		select {
+		case <-readyContext.Done():
+			return fmt.Errorf("signer control socket did not become ready: %w", readyContext.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func (adapter HostedSignerMigrationAdapter) listLegacyKeystores() ([]string, error) {
@@ -814,30 +827,6 @@ func setHostedProvider(providers map[string]any, id string, enabled bool, now st
 		providers[id] = provider
 	}
 	provider["enabled"], provider["updatedAt"] = enabled, now
-}
-
-func cleanHostedConfiguration(configuration map[string]any) {
-	wallet, _ := configuration["wallet"].(map[string]any)
-	if wallet == nil {
-		wallet = map[string]any{}
-		configuration["wallet"] = wallet
-	}
-	provider, _ := wallet["provider"].(map[string]any)
-	if provider == nil {
-		provider = map[string]any{}
-	}
-	provider["id"] = "local-socket-signer"
-	wallet["provider"] = provider
-	wallet["localSigner"] = map[string]any{"socketPath": "/run/fased-signerd/app.sock"}
-	wallet["runtime"] = map[string]any{"enabled": true, "mode": "external", "runtime": "external-custom"}
-	delete(wallet, "keystore")
-	environment, _ := configuration["env"].(map[string]any)
-	vars, _ := environment["vars"].(map[string]any)
-	for key := range vars {
-		if hostedLegacySecretEnv.MatchString(key) {
-			delete(vars, key)
-		}
-	}
 }
 
 func hostedEnv(configuration map[string]any) map[string]string {

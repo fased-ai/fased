@@ -32,6 +32,16 @@ var signerLifecycleUpdateOperationsV1 = map[string]bool{
 	"v2.lifecycle.upgrade.abort":   true,
 }
 
+// These mutations are part of a lifecycle-owned custody migration, but they
+// also remain available to an explicit control-socket administrator when no
+// paired update is active. During an update they may cross the gate only on
+// the signer-only control socket; application and operator sockets stay
+// blocked.
+var signerLifecycleMigrationOperationsV1 = map[string]bool{
+	"v2.wallet.importLegacy": true,
+	"v2.network.put":         true,
+}
+
 func enforceApplicationUpdateGate(gatePath, operation string, control bool, trustedUID, trustedGID int) error {
 	if signerLifecycleUpdateOperationsV1[operation] {
 		if !control {
@@ -52,6 +62,12 @@ func enforceApplicationUpdateGate(gatePath, operation string, control bool, trus
 	active, err := trustedUpdateGateActive(gatePath, trustedUID, trustedGID)
 	if err != nil {
 		return fmt.Errorf("signer update gate is invalid; refusing mutation: %w", err)
+	}
+	if active && signerLifecycleMigrationOperationsV1[operation] {
+		if !control {
+			return errors.New("signer lifecycle migration requires the control socket")
+		}
+		return nil
 	}
 	if active {
 		socketKind := "application"

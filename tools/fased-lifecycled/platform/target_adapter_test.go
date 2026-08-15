@@ -26,10 +26,16 @@ type fakeLifecycleFiles struct {
 	activations *[][]string
 }
 
-type fakeTypedState struct{ calls *[]string }
+type fakeTypedState struct {
+	calls          *[]string
+	mutationOwners *[][]string
+}
 
-func (state fakeTypedState) Prepare(string) (StatePreparation, error) {
+func (state fakeTypedState) Prepare(_ string, mutationOwners []string) (StatePreparation, error) {
 	*state.calls = append(*state.calls, "shared.prepare")
+	if state.mutationOwners != nil {
+		*state.mutationOwners = append(*state.mutationOwners, append([]string(nil), mutationOwners...))
+	}
 	return StatePreparation{Digest: digestA, ParticipantDigests: testStateParticipantDigests()}, nil
 }
 
@@ -369,6 +375,8 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		!strings.Contains(combined, "Environment=FASED_PLUGIN_STATUS_CACHE_PATH="+filepath.Join(adapter.Config.OwnerStateRoot, "cache", "plugin-status.json")) ||
 		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
 		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") ||
+		!strings.Contains(combined, "Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external") ||
+		!strings.Contains(combined, "Environment=FASED_WALLET_SIGNER_STATE_DIR="+adapter.Config.SignerStateRoot()) ||
 		!strings.Contains(combined, "Environment=FASED_PROTECTED_LOCAL=1") ||
 		!strings.Contains(combined, "BindReadOnlyPaths="+filepath.Join(adapter.Generations.(fakeGenerations).root, "dependencies", "node_modules")+":"+filepath.Join(adapter.Generations.(fakeGenerations).root, "runtime", "node_modules")) {
 		t.Fatalf("canonical Gateway unit lacks Local runtime context:\n%s", combined)
@@ -639,8 +647,8 @@ func TestHostingPublicStableBridgeTransactionallyNormalizesGatewayMode(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx := model.Transaction{PlanAction: "BRIDGE_PUBLIC_STABLE", Migrations: []model.Migration{{State: "configuration", From: 0, To: 1}}}
-	original := []byte(`{"gateway":{"mode":"remote","bind":"loopback","auth":{"token":"preserved"},"remote":{"token":"preserved"}},"agents":{"defaults":{"workspace":"/home/app/.fased/workspace"}}}`)
+	tx := model.Transaction{PlanAction: "BRIDGE_PUBLIC_STABLE", Migrations: []model.Migration{{State: "configuration", From: 0, To: 1}, {State: "signer", From: 1, To: 2}}}
+	original := []byte(`{"gateway":{"mode":"remote","bind":"loopback","auth":{"token":"preserved"},"remote":{"token":"preserved"}},"wallet":{"provider":"embedded-keystore","localSigner":{"socketPath":"/tmp/stale.sock"},"keystore":{"passphraseFile":"legacy"},"runtime":{"policy":{"capsEnabled":true}}},"env":{"vars":{"FASED_WALLET_PROVIDER":"embedded-keystore","FASED_WALLET_LOCAL_SIGNER_SOCKET":"/tmp/stale.sock","FASED_WALLET_PASSPHRASE":"secret","FASED_WALLET_SOLANA_RPC_URL__AGENT_2":"https://rpc.example.test","PRESERVED":"value"}},"agents":{"defaults":{"workspace":"/home/app/.fased/workspace"}}}`)
 	migrated, err := canonicalGatewayConfigForTransaction(config, tx, original)
 	if err != nil {
 		t.Fatal(err)
@@ -652,6 +660,25 @@ func TestHostingPublicStableBridgeTransactionallyNormalizesGatewayMode(t *testin
 	gateway := decoded["gateway"].(map[string]any)
 	if gateway["mode"] != "local" || gateway["bind"] != "loopback" || gateway["auth"].(map[string]any)["token"] != "preserved" || gateway["remote"].(map[string]any)["token"] != "preserved" {
 		t.Fatalf("Hosting configuration migration lost preserved values: %s", migrated)
+	}
+	wallet := decoded["wallet"].(map[string]any)
+	variables := decoded["env"].(map[string]any)["vars"].(map[string]any)
+	runtime := wallet["runtime"].(map[string]any)
+	if wallet["provider"].(map[string]any)["id"] != "local-socket-signer" || runtime["enabled"] != true || runtime["mode"] != "external" || runtime["runtime"] != "external-custom" || runtime["policy"].(map[string]any)["capsEnabled"] != true {
+		t.Fatalf("Hosting signer configuration was not moved to the lifecycle-file transaction: %s", migrated)
+	}
+	_, localSignerExists := wallet["localSigner"]
+	if _, exists := wallet["keystore"]; exists || localSignerExists || variables["PRESERVED"] != "value" {
+		t.Fatalf("Hosting signer configuration cleanup lost its boundary: %s", migrated)
+	}
+	for key := range variables {
+		if strings.HasPrefix(key, "FASED_WALLET_") {
+			t.Fatalf("legacy wallet secret remained Gateway-readable: %s", key)
+		}
+	}
+	owners := typedStateMutationOwners(config, tx)
+	if len(owners) != 1 || owners[0] != filepath.Join(config.OwnerStateRoot, "wallet", "provider-registry.v1.json") {
+		t.Fatalf("Hosting signer registry did not receive its exclusive mutation owner: %v", owners)
 	}
 	tx.Migrations = nil
 	if _, err := canonicalGatewayConfigForTransaction(config, tx, original); err == nil {

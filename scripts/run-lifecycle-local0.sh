@@ -129,6 +129,38 @@ collect_receipts() {
   done < <(find "$lane_receipt_root" -type f -name '*.json' -print0 | sort -z)
 }
 
+validate_receipt_set() {
+  local distro_count expected_count actual_count partial_count receipt receipt_commit
+  local -a configured_distros
+  IFS=',' read -r -a configured_distros <<<"$DISTROS"
+  distro_count="${#configured_distros[@]}"
+  case "$MODE" in
+    build) expected_count=0 ;;
+    serial)
+      if [[ -n "$ONLY_LANE" ]]; then
+        expected_count="$distro_count"
+      else
+        expected_count="$((distro_count * 5))"
+      fi
+      ;;
+    concurrent|all) expected_count="$((distro_count * 5))" ;;
+  esac
+  actual_count="$(find "$lane_receipt_root" -type f -name '*.json' ! -name '*.partial.json' -print | wc -l)"
+  partial_count="$(find "$lane_receipt_root" -type f -name '*.partial.json' -print | wc -l)"
+  [[ "$actual_count" -eq "$expected_count" && "$partial_count" -eq 0 ]] || {
+    echo "LOCAL0 receipt set is incomplete: expected=$expected_count actual=$actual_count partial=$partial_count" >&2
+    return 1
+  }
+  receipt_commit="$(jq -er .commit "$artifact_dir/fased-lifecycled-release.json")"
+  while IFS= read -r -d '' receipt; do
+    jq -e --arg commit "$receipt_commit" \
+      '.evidenceClass == "PASS" and .commit == $commit and
+       (.profile == "protected-local" or .profile == "hosting") and
+       (.scenario == "fresh-install" or .scenario == "managed-update")' \
+      "$receipt" >/dev/null || return 1
+  done < <(find "$lane_receipt_root" -type f -name '*.json' -print0)
+}
+
 write_receipt() {
   local status="$1"
   local phase="$2"
@@ -442,12 +474,10 @@ case "$MODE" in
   build) ;;
   serial) run_serial ;;
   concurrent) run_concurrent ;;
-  all)
-    run_serial
-    run_concurrent
-    ;;
+  all) run_concurrent ;;
 esac
 current_phase="complete"
+validate_receipt_set || fail_local0 "LOCAL0 refused a false PASS without every exact verified child receipt."
 write_receipt PASS complete
 echo "LOCAL0 PASS: artifact=$artifact_dir"
 echo "LOCAL0 receipt: $aggregate_receipt"

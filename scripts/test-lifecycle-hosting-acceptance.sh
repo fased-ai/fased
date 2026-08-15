@@ -282,7 +282,7 @@ run_scenario_body() {
     -v "$fixture_node:/fixture-node:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$predecessor_dir:/predecessor-capsule:ro,Z" \
-    "$image" >/dev/null
+    "$image" >/dev/null || return 1
   ready=0
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
@@ -297,13 +297,13 @@ run_scenario_body() {
     exit 1
   }
   fixture_phase="$([[ "$scenario" == "fresh-install" ]] && printf install || printf managed-update)"
-  "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh "$fixture_phase"
+  "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh "$fixture_phase" || return 1
   if [[ -n "$RECEIPT_DIR" ]]; then
     mkdir -p "$RECEIPT_DIR"
     receipt="$RECEIPT_DIR/${distro}-${scenario}.json"
     "$RUNTIME" cp \
       "$name:/var/lib/fased-lifecycled/lifecycle-acceptance-${scenario}.json" \
-      "$receipt"
+      "$receipt" || return 1
     capsule_digest=""
     installation_class_digest=""
     [[ "$scenario" != "managed-update" ]] || \
@@ -322,10 +322,10 @@ run_scenario_body() {
       --predecessor-installation-class "$([[ "$scenario" == "managed-update" ]] && printf '%s' "$PREDECESSOR_CLASS" || true)" \
       --predecessor-installation-class-digest "$installation_class_digest" \
       --evidence-class PASS \
-      --acquisition-evidence-class SUPPORTING >/dev/null
+      --acquisition-evidence-class SUPPORTING >/dev/null || return 1
   fi
-  "$RUNTIME" stop "$name" >/dev/null
-  "$RUNTIME" start "$name" >/dev/null
+  "$RUNTIME" stop "$name" >/dev/null || return 1
+  "$RUNTIME" start "$name" >/dev/null || return 1
   ready=0
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
@@ -339,8 +339,8 @@ run_scenario_body() {
     echo "$distro $scenario Go Hosting fixture did not recover after reboot: $name" >&2
     exit 1
   }
-  "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh verify-reboot
-  "$RUNTIME" rm -f "$name" >/dev/null
+  "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh verify-reboot || return 1
+  "$RUNTIME" rm -f "$name" >/dev/null || return 1
 }
 
 run_scenario() {

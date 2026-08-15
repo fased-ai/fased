@@ -517,6 +517,19 @@ dump_fixture_failure() {
   ' || true
 }
 
+preserve_partial_receipt() {
+  local name="$1"
+  local distro="$2"
+  local scenario="$3"
+  local source="/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${scenario}.json"
+  local destination="$RECEIPT_DIR/${distro}-${scenario}.partial.json"
+
+  if run_container exec "$name" test -f "$source" >/dev/null 2>&1; then
+    run_container cp "$name:$source" "$destination" >/dev/null 2>&1 || return 0
+    printf 'preserved partial lifecycle receipt: %s\n' "$destination" >&2
+  fi
+}
+
 cleanup() {
   local name
   for name in "${cleanup_names[@]}"; do
@@ -670,6 +683,7 @@ run_fixture_scenario() {
   done
   wait "$fixture_command_pid" || fixture_command_status="$?"
   if [[ "$fixture_command_status" -ne 0 ]]; then
+    preserve_partial_receipt "$name" "$distro" "$scenario"
     if [[ "${FASED_SYSTEMD_FIXTURE_COMPACT_DIAGNOSTICS:-0}" == "1" ]]; then
       run_container exec "$name" /bin/bash -lc '
         for log in \
@@ -710,6 +724,7 @@ run_fixture_scenario() {
   }
   if ! run_container exec "$name" /bin/bash \
     /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot; then
+    preserve_partial_receipt "$name" "$distro" "$scenario"
     dump_fixture_failure "$name"
     exit 1
   fi

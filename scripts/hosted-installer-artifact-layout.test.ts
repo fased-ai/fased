@@ -90,9 +90,20 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(hostingFixture).toContain("${distro}-${scenario}.partial.json");
     expect(hostingFixture).toContain('wait -n -p completed_pid "${scenario_pids[@]}"');
     expect(hostingFixture).toContain("Serial Hosting proof stopped on the first failed scenario.");
+    expect(hostingFixture).toContain('lifecycle-acceptance.sh "$fixture_phase" || return 1');
+    expect(hostingFixture).toContain('lifecycle-receipt-verifier.mjs" \\');
+    expect(hostingFixture).toContain(
+      "--acquisition-evidence-class SUPPORTING >/dev/null || return 1",
+    );
     expect(hostingFixture).toContain(
       "Parallel Hosting proof stopped: distro=$failed_distro scenario=$failed_scenario container=$failed_name",
     );
+  });
+
+  it("preserves the exact Local partial receipt before retaining a failed fixture", () => {
+    expect(localFixture).toContain("preserve_partial_receipt");
+    expect(localFixture).toContain("${distro}-${scenario}.partial.json");
+    expect(localFixture).toContain("preserved partial lifecycle receipt:");
   });
 
   it("mounts immutable candidate bytes without a direct lifecycle-binary bypass", () => {

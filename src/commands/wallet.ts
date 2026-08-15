@@ -3356,7 +3356,8 @@ export async function collectWalletSignerDoctorReport(
     (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 
   if (isLocalSigner) {
-    const externallyManaged = isLocalSignerExternallyManaged(effectiveEnv);
+    const externallyManaged =
+      Boolean(operatorLifecycle) || isLocalSignerExternallyManaged(effectiveEnv);
     try {
       const st = fs.statSync(socketPath);
       push("socket.exists", st.isSocket?.() ?? true, socketPath);

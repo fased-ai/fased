@@ -38,9 +38,9 @@ func (verifier *modeAccessVerifier) Verify(_ context.Context, path string, direc
 			return os.ErrPermission
 		}
 		stat := info.Sys().(*syscall.Stat_t)
-		accessible = principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, principal.GID)
+		accessible = principalCanTraverse(info.Mode(), stat.Uid, stat.Gid, principal.UID, principal.GID)
 		for _, gid := range groups {
-			accessible = accessible || principalCanAccess(info.Mode(), stat.Uid, stat.Gid, principal.UID, gid)
+			accessible = accessible || principalCanTraverse(info.Mode(), stat.Uid, stat.Gid, principal.UID, gid)
 		}
 		if !accessible {
 			return os.ErrPermission
@@ -50,6 +50,16 @@ func (verifier *modeAccessVerifier) Verify(_ context.Context, path string, direc
 		}
 	}
 	return nil
+}
+
+func principalCanTraverse(mode os.FileMode, ownerUID, ownerGID, uid, gid uint32) bool {
+	bits := mode.Perm() & 0o001
+	if uid == ownerUID {
+		bits = (mode.Perm() >> 6) & 0o1
+	} else if gid == ownerGID {
+		bits = (mode.Perm() >> 3) & 0o1
+	}
+	return bits != 0
 }
 
 func sqliteBytes(suffix string) []byte {
@@ -115,7 +125,7 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 					t.Fatal(err)
 				}
 			}
-			prepared, err := store.Prepare("transaction")
+			prepared, err := store.Prepare("transaction", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,7 +208,7 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 					t.Fatalf("directory metadata was not restored: %s info=%v err=%v", path, info, err)
 				}
 			}
-			if _, err := store.Prepare("retry"); err != nil {
+			if _, err := store.Prepare("retry", nil); err != nil {
 				t.Fatal(err)
 			}
 			if err := store.Activate("retry"); err != nil {
@@ -217,6 +227,80 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 				t.Fatal("typed state never invoked its target-identity access verifier")
 			}
 		})
+	}
+}
+
+func TestTypedStateStoreBindsButDoesNotCompeteWithHostedSignerRegistryOwner(t *testing.T) {
+	current := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	config, err := NewConfig(model.ProfileHosting, "hosting", "/home/app/.fased", current,
+		Principal{UID: current.UID + 1, GID: current.GID + 1}, Principal{UID: current.UID + 2, GID: current.GID + 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := &modeAccessVerifier{}
+	store, err := NewDiskTypedStateStore(config, access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.rootPrefix = t.TempDir()
+	owner := store.resolve(config.OwnerStateRoot)
+	access.stop = owner
+	wallet := filepath.Join(owner, "wallet")
+	if err := os.MkdirAll(wallet, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry := filepath.Join(wallet, "provider-registry.v1.json")
+	before := []byte("registry-before\n")
+	after := []byte("registry-after\n")
+	if err := os.WriteFile(registry, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logicalRegistry := filepath.Join(config.OwnerStateRoot, "wallet", "provider-registry.v1.json")
+	if _, err := store.Prepare("owned", []string{logicalRegistry}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.read("owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, record := range records {
+		if record.Path == logicalRegistry {
+			found = record.MutationOwner == "migrator" && record.Digest != "" && record.Backup == ""
+		}
+	}
+	if !found {
+		t.Fatalf("hosted signer registry did not receive exclusive mutation ownership: %+v", records)
+	}
+	if err := os.WriteFile(registry, after, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Activate("owned"); err != nil {
+		t.Fatalf("declared signer registry mutation was rejected: %v", err)
+	}
+	if info, err := os.Stat(wallet); err != nil || info.Mode().Perm() != 0o710 || info.Mode()&os.ModeSetgid == 0 {
+		t.Fatalf("legacy wallet directory was writable before custody commit: info=%v err=%v", info, err)
+	}
+	if err := store.VerifyAccess(context.Background(), "owned"); err != nil {
+		t.Fatalf("target could not traverse to the exact migration-owned registry: %v", err)
+	}
+	if err := store.Restore("owned"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(registry); string(got) != string(after) {
+		t.Fatalf("typed state overwrote migrator-owned rollback state: %q", got)
+	}
+	if _, err := store.Prepare("unowned", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registry, before, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Activate("unowned"); err == nil || !strings.Contains(err.Error(), "content changed") {
+		t.Fatalf("undeclared registry mutation was accepted: %v", err)
+	}
+	if _, err := store.Prepare("invalid-owner", []string{filepath.Join(config.OwnerStateRoot, "fased.json")}); err == nil {
+		t.Fatal("typed state accepted a noncanonical mutation owner")
 	}
 }
 
@@ -242,7 +326,7 @@ func TestTypedStateStoreRejectsUnsafeAndInaccessibleState(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(owner, "fased.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Prepare("transaction"); err == nil {
+	if _, err := store.Prepare("transaction", nil); err == nil {
 		t.Fatal("typed state accepted a symlink")
 	}
 }
@@ -268,7 +352,7 @@ func TestTypedStateStoreTreatsSignerAsOpaqueAndNeverReadsMasterKey(t *testing.T)
 	if err := os.WriteFile(masterKey, []byte("must-not-be-read"), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Prepare("opaque-signer"); err != nil {
+	if _, err := store.Prepare("opaque-signer", nil); err != nil {
 		t.Fatalf("lifecycle tried to read signer-owned key material: %v", err)
 	}
 	if err := os.Chmod(signerRoot, 0o710); err != nil {

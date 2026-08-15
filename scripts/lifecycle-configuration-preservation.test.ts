@@ -37,6 +37,50 @@ function canonicalTargetConfiguration() {
 }
 
 describe("lifecycle configuration preservation", () => {
+  it("accepts only the bounded Hosting signer-v2 configuration transition", () => {
+    const predecessor = predecessorConfiguration();
+    Object.assign(predecessor, {
+      wallet: {
+        provider: { id: "embedded-keystore" },
+        keystore: { enabled: true, path: "/home/app/.fased/wallet/legacy.enc" },
+        runtime: { policy: { capsEnabled: true } },
+      },
+      env: {
+        vars: {
+          FASED_WALLET_PASSPHRASE: "legacy-secret",
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: "/tmp/stale.sock",
+          PRESERVED: "value",
+        },
+      },
+    });
+    const target = structuredClone(predecessor);
+    target.gateway.mode = "local";
+    target.wallet = {
+      provider: { id: "local-socket-signer" },
+      runtime: {
+        enabled: true,
+        mode: "external",
+        runtime: "external-custom",
+        policy: { capsEnabled: true },
+      },
+    };
+    target.env = { vars: { PRESERVED: "value" } };
+    expect(
+      assertConfigurationPreserved({ predecessor, target, targetVersion, profile: "hosting" }),
+    ).toMatchObject({ ok: true, profile: "hosting", targetVersion });
+
+    const staleTarget = structuredClone(target);
+    Object.assign(staleTarget.wallet, { localSigner: { socketPath: "/tmp/stale.sock" } });
+    expect(() =>
+      assertConfigurationPreserved({
+        predecessor,
+        target: staleTarget,
+        targetVersion,
+        profile: "hosting",
+      }),
+    ).toThrow("unsupported Gateway wallet custody configuration");
+  });
+
   it("accepts the exact 0.1.75 Hosting canonicalization produced by the target", () => {
     expect(
       assertConfigurationPreserved({

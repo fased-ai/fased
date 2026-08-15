@@ -401,6 +401,13 @@ func parseHostedMigrationPolicyV1(raw []byte) ([]hostedMigrationWalletV1, error)
 				signerRoleBaselineRuntimeFromEnvV1(),
 			)
 			if baselineErr == nil {
+				// New signer policies are durably stored at version 1. Bind the
+				// migration expectation to that exact materialized representation,
+				// including its version-dependent hash, before import verification.
+				policy.Version = 1
+				policy, baselineErr = normalizeSignerPolicyV2(policy)
+			}
+			if baselineErr == nil {
 				baseline = &request
 			}
 			if baselineErr != nil {
@@ -460,7 +467,15 @@ func configureHostedMigrationNetworkV1(controlSocket string, wallet hostedMigrat
 	if wallet.PrimaryRPCURL == "" {
 		return false, nil
 	}
-	if _, err := callSignerAdmin(controlSocket, "v2.network.get", wallet.WalletID, nil); err == nil {
+	existing, err := callSignerAdmin(controlSocket, "v2.network.get", wallet.WalletID, nil)
+	if err != nil {
+		return false, fmt.Errorf("query preserved signer RPC for %s: %w", wallet.WalletID, err)
+	}
+	needsSetup, err := hostedMigrationNetworkNeedsSetupV1(existing, wallet.WalletID)
+	if err != nil {
+		return false, err
+	}
+	if !needsSetup {
 		return true, nil
 	}
 	expectedVersion := uint64(0)
@@ -479,6 +494,17 @@ func configureHostedMigrationNetworkV1(controlSocket string, wallet hostedMigrat
 		return false, fmt.Errorf("verify preserved signer RPC metadata for %s", wallet.WalletID)
 	}
 	return true, nil
+}
+
+func hostedMigrationNetworkNeedsSetupV1(raw []byte, walletID string) (bool, error) {
+	var summary signerNetworkSummaryV2
+	if err := decodeSignerAdminStrictJSON(raw, &summary); err != nil {
+		return false, fmt.Errorf("verify preserved signer RPC metadata for %s", walletID)
+	}
+	if err := validateSignerNetworkSummaryV2(summary, walletID); err != nil {
+		return false, fmt.Errorf("verify preserved signer RPC metadata for %s", walletID)
+	}
+	return !summary.Configured || summary.Version == 0, nil
 }
 
 func requireHostedMigrationUniqueStringsV1(values []string, label, walletID string) error {
@@ -651,13 +677,7 @@ func importHostedMigrationWalletV1(
 	defer cleanupHostedMigrationStageV1(stagedKeystore)
 	defer cleanupHostedMigrationStageV1(stagedPassphrase)
 
-	body := signerWalletLegacyImportRequestV2{
-		ExpectedVersion: 0,
-		Policy:          wallet.Policy,
-		Baseline:        wallet.Baseline,
-		Path:            stagedKeystore,
-		PassphrasePath:  stagedPassphrase,
-	}
+	body := hostedMigrationLegacyImportRequestV1(wallet, stagedKeystore, stagedPassphrase)
 	resultRaw, callErr := callSignerAdminSensitiveV2(cfg.ControlSocket, "v2.wallet.importLegacy", wallet.WalletID, body)
 	cleanupKeystoreErr := cleanupHostedMigrationStageV1(stagedKeystore)
 	cleanupPassphraseErr := cleanupHostedMigrationStageV1(stagedPassphrase)
@@ -681,6 +701,19 @@ func importHostedMigrationWalletV1(
 		return signerWalletPolicyResultV2{}, err
 	}
 	return result, nil
+}
+
+func hostedMigrationLegacyImportRequestV1(wallet hostedMigrationWalletV1, stagedKeystore, stagedPassphrase string) signerWalletLegacyImportRequestV2 {
+	body := signerWalletLegacyImportRequestV2{
+		ExpectedVersion: 0,
+		Baseline:        wallet.Baseline,
+		Path:            stagedKeystore,
+		PassphrasePath:  stagedPassphrase,
+	}
+	if wallet.Baseline == nil {
+		body.Policy = wallet.Policy
+	}
+	return body
 }
 
 func verifyHostedMigrationHealthV1(controlSocket string, wallets []signerWalletPolicyResultV2) error {

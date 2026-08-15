@@ -17,6 +17,13 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(local0).toContain("scripts/test-lifecycle-hosting-acceptance.sh");
     expect(local0).toContain("local-canonical-managed");
     expect(local0).toContain("completeLocal0");
+    expect(local0).toContain("validate_receipt_set");
+    expect(local0).toContain('.evidenceClass == "PASS" and .commit == $commit');
+    expect(local0).toContain(
+      "LOCAL0 refused a false PASS without every exact verified child receipt.",
+    );
+    expect(local0).toContain("all) run_concurrent ;;");
+    expect(local0).not.toMatch(/all\)\s+run_serial\s+run_concurrent/);
     expect(local0).toContain("--lane is valid only with --mode serial.");
     expect(local0).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
   });
