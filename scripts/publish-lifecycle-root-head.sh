@@ -109,7 +109,7 @@ else
   if [[ -n "$current_head_id" || -n "$current_attestation_id" ]]; then
     if [[ -n "$current_head_id" && -n "$current_attestation_id" ]]; then
       download_asset "$release_json" "$head_name" "$workspace/current-head"
-      download_asset "$release_json" "$attestation_name" "$workspace/current-attestation"
+      download_asset "$release_json" "$attestation_name" "$workspace/current-$attestation_name"
       download_asset "$release_json" "$index_name" "$workspace/current-index"
       if test "$(jq -er .releaseIndexSHA256 "$workspace/current-head")" = \
         "$(sha256sum "$workspace/current-index" | awk '{print $1}')"; then
@@ -117,7 +117,7 @@ else
         for root_file in "$metadata_dir"/fased-lifecycle-root-v*.json; do
           cp "$root_file" "$workspace/current-roots/$(basename "$root_file")"
         done
-        verify_head_pair "$workspace/current-head" "$workspace/current-attestation" \
+        verify_head_pair "$workspace/current-head" "$workspace/current-$attestation_name" \
           "$workspace/current-index" "$workspace/current-roots"
         current_expires="$(jq -er .expiresAt "$workspace/current-head")"
         candidate_expires="$(jq -er .expiresAt "$head")"
@@ -168,7 +168,7 @@ fi
 
 gh api "repos/$GITHUB_REPOSITORY/releases/tags/$channel_tag" >"$release_json"
 download_asset "$release_json" "$head_name" "$workspace/final-head"
-download_asset "$release_json" "$attestation_name" "$workspace/final-attestation"
+download_asset "$release_json" "$attestation_name" "$workspace/final-$attestation_name"
 download_asset "$release_json" "$index_name" "$workspace/final-index"
-verify_head_pair "$workspace/final-head" "$workspace/final-attestation" "$workspace/final-index" "$metadata_dir"
+verify_head_pair "$workspace/final-head" "$workspace/final-$attestation_name" "$workspace/final-index" "$metadata_dir"
 printf 'Root head %s: %s\n' "$channel_tag" "$action"
