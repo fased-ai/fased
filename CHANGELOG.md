@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.90
+
+- Make the signed GitHub artifact and static Go lifecycle system the sole
+  managed Linux install, update, rollback, and repair authority.
+- Preserve signer v2 custody and application state through topology-aware Local
+  and Hosting transactions with crash-safe retry and convergence receipts.
+- Require a short-lived authenticated root-head witness for channel discovery,
+  including sequential root rotation and replay protection.
+
 ## 0.1.76-rc.89
 
 - Measure archive liveness from raw tar input before gzip so active release
