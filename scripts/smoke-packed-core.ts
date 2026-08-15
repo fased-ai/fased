@@ -37,7 +37,7 @@ type SignerReleaseIdentity = {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function activePnpmStore(): string {
-  const reported = execFileSync("pnpm", ["store", "path", "--silent"], {
+  const reported = execFileSync("pnpm", ["store", "path"], {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

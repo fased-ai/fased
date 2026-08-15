@@ -229,8 +229,10 @@ describe("npm-free managed lifecycle", () => {
 
     expect(workspace).toContain("injectWorkspacePackages: true");
     expect(workspace).not.toContain("forceLegacyDeploy: true");
-    expect(artifactBuilder).toContain('["store", "path", "--silent"]');
-    expect(packedSmoke).toContain('["store", "path", "--silent"]');
+    expect(artifactBuilder).toContain('["store", "path"]');
+    expect(packedSmoke).toContain('["store", "path"]');
+    expect(artifactBuilder).not.toContain('["store", "path", "--silent"]');
+    expect(packedSmoke).not.toContain('["store", "path", "--silent"]');
     expect(artifactBuilder).toMatch(offlineProductionDeploy);
     expect(packedSmoke).toMatch(offlineProductionDeploy);
   });
