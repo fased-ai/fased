@@ -718,6 +718,11 @@ describe("CI workflow routing", () => {
     expect(predecessorCapsulesText).toContain(
       '--lifecycle-binary "$source_dir/fased-lifecycled-linux-amd64"',
     );
+    expect(predecessorCapsulesText).toContain(
+      "node scripts/build-canonical-managed-predecessor-capsule.mjs",
+    );
+    expect(predecessorCapsulesText).not.toContain("owner-local-predecessor-schema1");
+    expect(predecessorCapsulesText).not.toContain("--previous-generation");
     expect(candidateText.indexOf("build-hosted-release-manifest.mjs")).toBeLessThan(
       candidateText.indexOf("assemble-lifecycle-generation.mjs"),
     );

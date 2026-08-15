@@ -892,7 +892,6 @@ jobs:
           test "$predecessor_commit" = "$(git rev-parse "v$PREDECESSOR_VERSION^{commit}")"
           predecessor_tree="$(git rev-parse "${predecessor_commit}^{tree}")"
           if [[ "$INSTALLATION_CLASS" == "canonical-managed" ]]; then
-            test "$(jq -er .activeVersion config/owner-local-predecessor-schema1.v1.json)" = "$PREDECESSOR_VERSION"
             gh release download "v$PREDECESSOR_VERSION" \
               --repo "$GITHUB_REPOSITORY" \
               --dir "$source_dir" \
@@ -915,7 +914,6 @@ jobs:
               --generation-archive "$source_dir/fased-generation-linux-x64-v$PREDECESSOR_VERSION.tar.gz" \
               --dependency-archive "$dependency_archive" \
               --lifecycle-binary "$source_dir/fased-lifecycled-linux-amd64" \
-              --previous-generation config/owner-local-predecessor-schema1.v1.json \
               --compatibility-index config/lifecycle-compatibility.v1.json \
               --acceptance-contract config/lifecycle-acceptance.v2.json \
               --output "$output_dir/protected-local" >/dev/null
