@@ -124,7 +124,7 @@ jobs:
           }
           publication_unexpected="$({
             git diff --name-only "$replay_sha..$GITHUB_SHA" | grep -Ev \
-              '^(\.github/workflows/candidate-publication-replay\.yml|scripts/(hosted-installer-artifact-layout|ci-workflow-contract)\.test\.ts)$' || true
+              '^(\.github/workflows/candidate-publication-replay\.yml|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|github-release-draft-recovery)\.test\.ts|scripts/publish-lifecycle-channel\.sh|scripts/lib/github-release-draft\.sh)$' || true
           })"
           test -z "$publication_unexpected" || {
             printf 'Publication replay contains unrelated changes:\n%s\n' \
