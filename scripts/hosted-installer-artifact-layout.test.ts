@@ -83,6 +83,18 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(releaseWorkflow).not.toContain("scripts/test-hosting-systemd-container.sh");
   });
 
+  it("preserves the first failed Hosting fixture and supports serial diagnosis", () => {
+    expect(hostingFixture).toContain("FASED_HOSTING_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS");
+    expect(hostingFixture).toContain("FASED_HOSTING_SYSTEMD_FIXTURE_PRESERVE_FAILURE");
+    expect(hostingFixture).toContain("FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR");
+    expect(hostingFixture).toContain("${distro}-${scenario}.partial.json");
+    expect(hostingFixture).toContain('wait -n -p completed_pid "${scenario_pids[@]}"');
+    expect(hostingFixture).toContain("Serial Hosting proof stopped on the first failed scenario.");
+    expect(hostingFixture).toContain(
+      "Parallel Hosting proof stopped: distro=$failed_distro scenario=$failed_scenario container=$failed_name",
+    );
+  });
+
   it("mounts immutable candidate bytes without a direct lifecycle-binary bypass", () => {
     expect(hostingFixture).toContain('-v "$ARTIFACT_DIR:/artifacts:ro,Z"');
     expect(hostingFixture).not.toContain("/fixture-bin");
@@ -116,6 +128,16 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(localRunner).toContain('app_identity="/artifacts/fased-hosted-app-v2-linux-x64');
     expect(localRunner).toContain('tar -xzf "/artifacts/$app_asset"');
     expect(localRunner).toContain('tar -xzf "/artifacts/$dependency_asset"');
+  });
+
+  it("materializes the canonical supervisor only at the stable lifecycle path", () => {
+    expect(localRunner).not.toContain("$generation_root/payload/bin/fased-lifecycled");
+    expect(localRunner).toContain(
+      'supervisor_path="/opt/fased/lifecycle/supervisor-v1/fased-lifecycled"',
+    );
+    expect(localRunner).toContain(
+      'test "$(stat -c \'%U:%G:%a\' "$supervisor_path")" = "root:root:755"',
+    );
   });
 
   it("keeps branch proof assets truthful and production lanes platform-real", () => {

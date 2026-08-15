@@ -7,6 +7,20 @@ import { parse } from "yaml";
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 describe("version-neutral lifecycle acceptance", () => {
+  it("uses one cached tag-free LOCAL0 driver before release allocation", async () => {
+    const local0 = await readFile(resolve(repoRoot, "scripts/run-lifecycle-local0.sh"), "utf8");
+
+    expect(local0).toContain('MODE="all"');
+    expect(local0).toContain('identity_key="${commit}-${tree}-${lockfile_digest#sha256:}"');
+    expect(local0).toContain("scripts/prepare-candidate-fixture-trust.sh");
+    expect(local0).toContain("scripts/test-lifecycle-local-acceptance.sh");
+    expect(local0).toContain("scripts/test-lifecycle-hosting-acceptance.sh");
+    expect(local0).toContain("local-canonical-managed");
+    expect(local0).toContain("completeLocal0");
+    expect(local0).toContain("--lane is valid only with --mode serial.");
+    expect(local0).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
+  });
+
   it("requires explicit public predecessor identities and has no private-RC scenario", async () => {
     const wrapper = await readFile(
       resolve(repoRoot, "scripts/test-lifecycle-local-acceptance.sh"),

@@ -14,6 +14,7 @@ classes; the owner's installed RC is never a separate product contract.
 exact branch head
 -> one unpublished, tag-free candidate-shaped Linux-x64 build
 -> serial LOCAL0 fresh/update/takeover Local and Hosting fixtures
+-> concurrent LOCAL0 confirmation against the identical cached artifact
 -> rollback/retry/restart/preservation/identity/Already current
 -> protected source PR with byte-identical squash tree
 -> PRE-CANDIDATE on exact merged main
@@ -34,6 +35,18 @@ capsule digests, entrypoints, acquisition map, and acceptance-contract digest.
 It proves the affected product predicates locally with substituted acquisition
 classified as `SUPPORTING`; it cannot prove public acquisition, owner Local, or
 real Hosting.
+
+Run it through the single repository entrypoint:
+
+```bash
+bash scripts/run-lifecycle-local0.sh --mode all
+```
+
+The driver builds or reuses one commit/tree/lockfile/descriptor-bound Linux-x64
+artifact, runs diagnostic lanes serially, then runs the complete lanes
+concurrently against those same bytes. For a correction after a failure, use
+`--mode serial --lane <failed-lane>`; that focused receipt is diagnostic and
+does not replace the later complete receipt.
 
 Do not reserve or write the next RC version, dispatch PRE-CANDIDATE, or create a
 version-only PR until `LOCAL0` passes completely. Any change to a bound input or

@@ -71,6 +71,18 @@ describe("npm-free managed lifecycle", () => {
     }
   });
 
+  it("freezes the legacy public root package and keeps source builds private", async () => {
+    const rootPackage = JSON.parse(await source("package.json")) as {
+      private?: boolean;
+      publishConfig?: unknown;
+      packageManager?: string;
+    };
+
+    expect(rootPackage.private).toBe(true);
+    expect(rootPackage.publishConfig).toBeUndefined();
+    expect(rootPackage.packageManager).toMatch(/^pnpm@/u);
+  });
+
   it("does not ship or route through the legacy JavaScript managed updater", async () => {
     const rootPackage = JSON.parse(await source("package.json")) as {
       files?: string[];
@@ -153,12 +165,34 @@ describe("npm-free managed lifecycle", () => {
     expect(pullRequestWorkflow).not.toContain("fased-managed-updater-fixed-client.test.ts");
   });
 
+  it("does not tell non-git managed installs to update through npm or pnpm", async () => {
+    const doctorUpdate = await source("src/commands/doctor-update.ts");
+
+    expect(doctorUpdate).toContain("verified Go lifecycle");
+    expect(doctorUpdate).not.toMatch(/package manager \((?:npm|pnpm)/u);
+  });
+
+  it("keeps npm optional and unprivileged for third-party plugins only", async () => {
+    const pluginInstaller = await source("src/plugins/install.ts");
+    const thirdPartyManifest = JSON.parse(
+      await source("extensions/nextcloud-talk/package.json"),
+    ) as { fased?: { install?: { npmSpec?: string } } };
+    const updateCommand = await source("src/cli/update-cli/update-command.ts");
+    const local0 = await source("scripts/run-lifecycle-local0.sh");
+
+    expect(pluginInstaller).toContain("installPluginFromNpmSpec");
+    expect(thirdPartyManifest.fased?.install?.npmSpec).toBe("@fased/nextcloud-talk");
+    expect(updateCommand).not.toContain("installPluginFromNpmSpec");
+    expect(local0).not.toContain("installPluginFromNpmSpec");
+  });
+
   it("uses pnpm, not npm, to assemble and validate release artifacts", async () => {
     const artifactBuilder = await source("scripts/build-hosted-runtime-artifact.ts");
     const releaseCheck = await source("scripts/release-check.ts");
     const packedSmoke = await source("scripts/smoke-packed-core.ts");
     const workflow = await source(".github/workflows/hosted-runtime-release.yml");
     const channelPublisher = await source("scripts/publish-lifecycle-channel.sh");
+    const local0 = await source("scripts/run-lifecycle-local0.sh");
 
     expect(artifactBuilder).not.toMatch(/run\(\s*["']npm["']/u);
     expect(releaseCheck).not.toMatch(/execFileSync\(\s*["']npm["']/u);
@@ -166,6 +200,7 @@ describe("npm-free managed lifecycle", () => {
     expect(workflow).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
     expect(channelPublisher).not.toMatch(/\bnpm\b/u);
     expect(channelPublisher).toContain("fased-channel-$channel-v1");
+    expect(local0).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
   });
 
   it("keeps offline production deploy independent of registry metadata", async () => {
