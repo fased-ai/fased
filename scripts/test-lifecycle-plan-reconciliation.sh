@@ -50,6 +50,14 @@ require_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-local-acceptance.s
 require_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-hosting-acceptance.sh'
 require_text .github/workflows/hosted-runtime-release.yml \
   'Verify immutable protected pre-tag P1 pass'
+require_text docs/maintainers/codex-skills/fased-release-manager/SKILL.md \
+  'Before PRE-CANDIDATE, a version-only change, or RC allocation, require one'
+require_text docs/maintainers/codex-skills/fased-release-manager/SKILL.md \
+  'new RC as a test iteration.'
+require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \
+  'one unpublished, tag-free candidate-shaped Linux-x64 build'
+require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \
+  'allocate another RC to discover whether the correction works.'
 
 # DEV-007: PUBLIC0 is a readback boundary and cannot be lifecycle acceptance.
 require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \

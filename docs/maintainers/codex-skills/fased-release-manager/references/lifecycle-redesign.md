@@ -148,20 +148,28 @@ Execute one checkpoint at a time and stop with exact evidence.
 
 ### D10 — Branch proof
 
-- Build one cached unpublished Linux-x64 artifact.
-- Run fresh/update Local and Hosting scenarios concurrently when isolated.
+- Build one cached unpublished candidate-shaped Linux-x64 artifact without a
+  tag, GitHub Release, RC reservation, or version-only commit.
+- Run the first fresh/update/takeover Local and Hosting fixture sequence
+  serially so the first failed fixture, log, and partial receipt survive.
 - Reuse exact bytes for rollback, reboot, preservation and `Already current`.
+- Bind commit, tree, lockfile, artifact, inventory, capsules, fixture
+  entrypoints, acquisition map, and acceptance-contract digest in `LOCAL0`.
+- Treat any change to a bound release input as complete `LOCAL0` invalidation.
 - Record product predicates as `PASS` and substituted acquisition as
   `SUPPORTING`; bind both in one receipt. Never promote that receipt into
   public acquisition evidence.
 
 ### D11 — Protected delivery
 
-- One clean branch, one focused PR, focused CI and founder squash merge.
+- One clean branch, one focused PR, focused CI and founder squash merge. Reuse
+  `LOCAL0` only when the merged tree and every bound release input are
+  byte-identical.
 
 ### D12 — Release acceptance
 
-- PRE-CANDIDATE on exact merged main.
+- Require a green, still-valid `LOCAL0`, then PRE-CANDIDATE on exact merged
+  main. Only after both pass may the next unused RC be allocated.
 - One immutable candidate and one build.
 - Parallel P1, exact publication, signed channel advancement from those same
   bytes, PUBLIC0, owner Local and real Hosting.

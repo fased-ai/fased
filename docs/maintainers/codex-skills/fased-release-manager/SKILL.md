@@ -114,6 +114,34 @@ already-passing predicates against immutable final bytes; it never diagnoses
 source. Build once, run independent P1 lanes in parallel, and never rebuild
 between P1 and publication.
 
+Before PRE-CANDIDATE, a version-only change, or RC allocation, require one
+`LOCAL0` receipt from the exact branch head. Build one unpublished,
+candidate-shaped Linux-x64 artifact without a tag or GitHub Release and run the
+exact candidate fixture entrypoints locally. The first diagnostic pass is
+serial: fresh Local, latest supported public-stable Local update, recognized
+pre-bootstrap managed takeover, fresh Hosting fixture, and supported Hosting
+update. Reuse the same artifact for injected failure, rollback/retry, restart,
+declared-state preservation, process/service identities, installer no-op, and
+the identical updater command returning `Already current`. pnpm may assemble
+the artifact internally; npm is never an install, update, publication, or
+acceptance authority.
+
+Bind `LOCAL0` to commit, tree, lockfile, artifact digest, compatibility
+inventory digest, fixture entrypoints, acquisition map, predecessor-capsule
+digests, and acceptance-contract digest. A squash merge may reuse it only when
+the merged tree and every bound input are identical. Any change to installer,
+bootstrap, lifecycle or signer binaries, archive production/extraction,
+artifact inventory/naming, candidate descriptor, generation/dependency
+ownership, predecessor capsules, fixture transport, Local/Hosting entrypoints,
+receipt verification, or release workflow invalidates `LOCAL0` completely.
+
+On a local failure, freeze PRE-CANDIDATE and version allocation. Preserve the
+first failed fixture, bounded log, and partial receipt; report the exact failed
+predicate; correct it locally; then rebuild once if product bytes changed and
+rerun the affected serial lane before the full `LOCAL0` sequence. Do not use a
+new RC as a test iteration. An RC is confirmation of locally green exact bytes,
+not a debugging environment.
+
 Version identity is strict, but version never selects product behavior. Before
 allocating a candidate, bind the supported installation classes by profile,
 topology, canonical manifest schema, platform identity, state-schema digest,
@@ -128,11 +156,12 @@ candidate whose tagged source is followed by any product correction is
 permanently obsolete: never move its tag, rebuild it, publish replacement bytes
 under its version, or use it for owner acceptance.
 
-No tag may allocate an ordinary product predicate for the first time. Before
-requesting tag authority, run every supported Local and Hosting topology whose
-trust inputs can exist pre-tag, using the same fixture entrypoints, mount
-topology, acquisition routes, candidate-shaped inventory, and acceptance
-receipt verifier that trusted P1 will run. A predecessor that cannot enter the
+No PRE-CANDIDATE run, RC version, or tag may allocate an ordinary product
+predicate for the first time. Before requesting candidate authority, complete
+`LOCAL0` for every supported Local and Hosting topology whose trust inputs can
+exist without a release, using the same fixture entrypoints, mount topology,
+acquisition routes, candidate-shaped inventory, and acceptance receipt verifier
+that trusted P1 will run. A predecessor that cannot enter the
 static Go control plane through its installed updater is not automatically
 `REPAIR_REQUIRED`. When its healthy topology is recognized and its immutable
 inputs verify, run the documented installer once as an in-place takeover, then
@@ -140,10 +169,11 @@ prove the installed `fased update` returns `Already current`. Reserve
 `REPAIR_REQUIRED` for ambiguous, damaged, or incompatible state. Never preserve
 an application-owned root updater or invent a release-specific exception.
 
-If a tagged run exposes a fixture or inventory predicate that could have
-executed before the tag, freeze the release. Correct the workflow first and add
-that predicate to pre-tag closure. Do not allocate another tag until the
-corrected pre-tag run passes.
+If PRE-CANDIDATE, versioned pre-tag, or tagged evidence exposes a fixture or
+inventory predicate that could have executed locally, freeze the release.
+Correct the product or fixture locally, add that predicate to `LOCAL0`, and do
+not allocate another RC until a new complete `LOCAL0` receipt and exact
+merged-main PRE-CANDIDATE pass.
 
 An unpublished branch artifact built after a published tag is development
 evidence bound to its commit, tree, and artifact digest. Always call it a
@@ -175,6 +205,9 @@ package version it inherits.
 - Cache immutable artifacts, toolchains, dependencies, images, and predecessor
   assets—not installations, journals, Wallets, or signer state.
 - Explain any command expected to exceed one minute before starting it.
+- Do not repeat unchanged authority boilerplate in progress updates. State the
+  active boundary once, then report only a changed predicate, identity, result,
+  or newly required authority.
 - Do not inspect GitHub until reviewing or shipping.
 - Never bypass protection. Tags, releases, owner installations, Hosting,
   and stable promotion require current explicit authority.
