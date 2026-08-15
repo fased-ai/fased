@@ -89,13 +89,23 @@ async function readJSON(filePath) {
   return JSON.parse(await fsp.readFile(filePath, "utf8"));
 }
 
-export async function buildHostedReleaseManifest({ assetsDir, version, commit }) {
+export async function buildHostedReleaseManifest({
+  assetsDir,
+  version,
+  commit,
+  profile = "release",
+}) {
   if (!VERSION_PATTERN.test(version || "") || !COMMIT_PATTERN.test(commit || "")) {
     throw new Error("release version or commit is not canonical");
   }
+  if (profile !== "release" && profile !== "branch-x64") {
+    throw new Error("hosted release manifest profile is unsupported");
+  }
+  const fixtureOnly = profile === "branch-x64";
+  const architectures = fixtureOnly ? ["x64"] : ["x64", "arm64"];
   const application = {};
-  for (const architecture of ["x64", "arm64"]) {
-    const identityName = `fased-hosted-app-linux-${architecture}-v${version}.tar.gz.release.json`;
+  for (const architecture of architectures) {
+    const identityName = `fased-hosted-app-v2-linux-${architecture}-v${version}.tar.gz.release.json`;
     const identity = parseAppIdentity(
       await readJSON(path.join(assetsDir, identityName)),
       version,
@@ -125,17 +135,21 @@ export async function buildHostedReleaseManifest({ assetsDir, version, commit })
     commit,
   );
   const signerPlatforms = {};
-  for (const [platform, asset] of [
-    ["linux-amd64", "fased-signerd-linux-amd64"],
-    ["linux-arm64", "fased-signerd-linux-arm64"],
-    ["darwin-amd64", "fased-signerd-darwin-amd64"],
-    ["darwin-arm64", "fased-signerd-darwin-arm64"],
-  ]) {
+  const signerAssets = fixtureOnly
+    ? [["linux-amd64", "fased-signerd-linux-amd64"]]
+    : [
+        ["linux-amd64", "fased-signerd-linux-amd64"],
+        ["linux-arm64", "fased-signerd-linux-arm64"],
+        ["darwin-amd64", "fased-signerd-darwin-amd64"],
+        ["darwin-arm64", "fased-signerd-darwin-arm64"],
+      ];
+  for (const [platform, asset] of signerAssets) {
     signerPlatforms[platform] = { asset, sha256: await sha256(path.join(assetsDir, asset)) };
   }
 
   return {
     schemaVersion: 2,
+    ...(fixtureOnly ? { fixture: { profile: "branch-x64", publishable: false } } : {}),
     release: { version, tag: `v${version}`, commit },
     application: { linux: application },
     signer: {
@@ -154,12 +168,13 @@ export async function buildHostedReleaseManifest({ assetsDir, version, commit })
 
 function parseArgs(argv) {
   const values = new Map();
+  const allowed = new Set(["--assets", "--version", "--commit", "--output", "--profile"]);
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
-    if (!key?.startsWith("--") || !value) {
+    if (!allowed.has(key) || !value || values.has(key)) {
       throw new Error(
-        "usage: build-hosted-release-manifest --assets DIR --version X.Y.Z --commit SHA --output FILE",
+        "usage: build-hosted-release-manifest --assets DIR --version X.Y.Z --commit SHA --output FILE [--profile release|branch-x64]",
       );
     }
     values.set(key, value);
@@ -174,6 +189,7 @@ function parseArgs(argv) {
     version: values.get("--version"),
     commit: values.get("--commit"),
     output: path.resolve(values.get("--output")),
+    profile: values.get("--profile") ?? "release",
   };
 }
 

@@ -828,14 +828,16 @@ install -d -m 0755 -o root -g root \
   "$root_store/verified-assets" \
   "$root_store/verified-dependencies"
 
-runtime_asset="/artifacts/fased-hosted-linux-x64-v${version}.tar.gz"
-[[ -f "$runtime_asset" ]]
+app_identity="/artifacts/fased-hosted-app-v2-linux-x64-v${version}.tar.gz.release.json"
+[[ -f "$app_identity" ]]
+app_asset="$(jq -er .app.asset "$app_identity")"
+dependency_asset="$(jq -er .dependencies.asset "$app_identity")"
+[[ -f "/artifacts/$app_asset" && -f "/artifacts/$dependency_asset" ]]
 artifact_extract="/var/lib/fased-protected-local-artifact/package"
 install -d -m 0755 -o root -g root "$artifact_extract"
-tar -xzf "$runtime_asset" -C "$artifact_extract" --strip-components=1
+tar -xzf "/artifacts/$app_asset" -C "$artifact_extract" --strip-components=1
 cp -a "$artifact_extract/." "$release_root/"
-cp -a "$artifact_extract/node_modules" "$root_store/verified-dependencies/node_modules"
-rm -rf "$release_root/node_modules"
+tar -xzf "/artifacts/$dependency_asset" -C "$root_store/verified-dependencies"
 
 install -m 0755 -o root -g root /artifacts/fased-signerd-linux-amd64 \
   "$root_store/verified-assets/fased-signerd"
@@ -867,9 +869,6 @@ if [[ "$preinstalled_tools" == "1" ]]; then
 fi
 
 install -d -m 0755 -o root -g root /var/lib/fased-protected-local-fixture
-app_asset="fased-hosted-app-v2-linux-x64-v${version}.tar.gz"
-dependency_asset="$(basename "$(find /artifacts -maxdepth 1 -type f \
-  -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit)")"
 app_sha="$(sha256sum "/artifacts/$app_asset" | awk '{print $1}')"
 dependency_sha="$(sha256sum "/artifacts/$dependency_asset" | awk '{print $1}')"
 signer_build_input_digest="$(jq -er .buildInputDigest /artifacts/fased-signerd-release.json)"

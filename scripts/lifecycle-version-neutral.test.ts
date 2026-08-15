@@ -117,8 +117,12 @@ describe("version-neutral lifecycle acceptance", () => {
     );
     expect(wrapper).toContain('FASED_SIGNER_TARGETS="linux/amd64"');
     expect(wrapper).toContain('FASED_LIFECYCLE_TARGETS="linux/amd64"');
-    expect(wrapper).toContain("copy_branch_x64_fixture_aliases()");
-    expect(wrapper).toContain('cp --reflink=auto "$signer_source"');
+    expect(wrapper).not.toContain("copy_branch_x64_fixture_aliases()");
+    expect(wrapper).not.toContain('cp --reflink=auto "$signer_source"');
+    expect(wrapper).not.toContain("fased-signerd-darwin-amd64");
+    expect(wrapper).not.toContain("fased-signerd-linux-arm64");
+    expect(wrapper).toContain("build-native-release-assets.sh");
+    expect(wrapper).toContain("--profile branch-x64");
     expect(wrapper).toContain("branch-x64 artifacts are fixture-only and cannot be published");
     expect(wrapper).not.toContain(
       "FASED_SIGNER_TARGETS=linux/amd64,linux/arm64,darwin/amd64,darwin/arm64",
@@ -127,6 +131,7 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(wrapper).toContain("clear_branch_fixture_native_outputs()");
     expect(wrapper).toContain("-name 'fased-signerd-*'");
     expect(wrapper).toContain("-name 'fased-lifecycled-*'");
+    expect(wrapper).toContain("-name 'fased-bootstrap-*'");
     expect(wrapper.indexOf("clear_branch_fixture_native_outputs\n")).toBeLessThan(
       wrapper.indexOf('FASED_SIGNER_TARGETS="linux/amd64"'),
     );
