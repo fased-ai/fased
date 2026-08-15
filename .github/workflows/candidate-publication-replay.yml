@@ -211,6 +211,8 @@ jobs:
               --version "$RELEASE_VERSION"
               --commit "$SOURCE_COMMIT"
               --candidate-descriptor-digest "$CANDIDATE_DESCRIPTOR_SHA256"
+              --evidence-class PASS
+              --acquisition-evidence-class SUPPORTING
             )
             if [[ "$require_predecessor" == "true" ]]; then
               local capsule_digest installation_class installation_class_digest
