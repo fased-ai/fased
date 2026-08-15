@@ -61,13 +61,6 @@ export const SnapshotSchema = Type.Object(
         Type.Literal("trusted-proxy"),
       ]),
     ),
-    updateAvailable: Type.Optional(
-      Type.Object({
-        currentVersion: NonEmptyString,
-        latestVersion: NonEmptyString,
-        channel: NonEmptyString,
-      }),
-    ),
   },
   { additionalProperties: false },
 );

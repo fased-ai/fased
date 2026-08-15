@@ -138,6 +138,22 @@ async function releaseCreatedAt(commit: string): Promise<string> {
   return new Date(timestamp).toISOString();
 }
 
+async function activePnpmStore(): Promise<string> {
+  const { stdout } = await execFileAsync("pnpm", ["store", "path", "--silent"], {
+    cwd: rootDir,
+    maxBuffer: 1024 * 1024,
+  });
+  const reported = stdout.trim();
+  if (!path.isAbsolute(reported)) {
+    throw new Error("pnpm store path is not absolute");
+  }
+  const canonical = await fs.realpath(reported);
+  if (!(await fs.stat(canonical)).isDirectory()) {
+    throw new Error("pnpm store path is not a directory");
+  }
+  return canonical;
+}
+
 async function pruneHostedDependencies(
   nodeModulesRoot: string,
   arch: string,
@@ -338,9 +354,20 @@ async function main(): Promise<void> {
     await fs.mkdir(outputDir, { recursive: true });
 
     console.log(`hosted-artifact: deploying @fased/fased@${version} with pnpm`);
+    const pnpmStore = await activePnpmStore();
     await run(
       "pnpm",
-      ["--offline", "--filter", "@fased/fased", "deploy", "--prod", "--no-optional", packageRoot],
+      [
+        "--store-dir",
+        pnpmStore,
+        "--offline",
+        "--filter",
+        "@fased/fased",
+        "deploy",
+        "--prod",
+        "--no-optional",
+        packageRoot,
+      ],
       rootDir,
       { npm_config_ignore_scripts: "true" },
     );

@@ -1,24 +1,10 @@
-import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
-import { CONFIG_PATH } from "../config/config.js";
 import type { DeviceIdentity } from "../infra/device-identity.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import type { GatewayClient } from "./client.js";
-
-vi.mock("../infra/update-runner.js", () => ({
-  runGatewayUpdate: vi.fn(async () => ({
-    status: "ok",
-    mode: "git",
-    root: "/repo",
-    steps: [],
-    durationMs: 12,
-  })),
-}));
-
-import { runGatewayUpdate } from "../infra/update-runner.js";
 import { connectGatewayClient } from "./test-helpers.e2e.js";
 import { installGatewayTestHooks, onceMessage, rpcReq } from "./test-helpers.js";
 import { installConnectedControlUiServerSuite } from "./test-with-server.js";
@@ -126,7 +112,7 @@ describe("gateway role enforcement", () => {
 });
 
 describe("gateway update.run", () => {
-  test("writes sentinel and schedules restart", async () => {
+  test("refuses mutation inside replaceable Gateway bytes", async () => {
     const sigusr1 = vi.fn();
     process.on("SIGUSR1", sigusr1);
 
@@ -144,49 +130,11 @@ describe("gateway update.run", () => {
         }),
       );
       const res = await onceMessage(ws, (o) => o.type === "res" && o.id === id);
-      expect(res.ok).toBe(true);
-
-      await vi.waitFor(() => {
-        expect(sigusr1.mock.calls.length).toBeGreaterThan(0);
-      }, FAST_WAIT_OPTS);
-      expect(sigusr1).toHaveBeenCalled();
-
-      const sentinelPath = path.join(os.homedir(), ".fased", "restart-sentinel.json");
-      const raw = await fs.readFile(sentinelPath, "utf-8");
-      const parsed = JSON.parse(raw) as {
-        payload?: { kind?: string; stats?: { mode?: string } };
-      };
-      expect(parsed.payload?.kind).toBe("update");
-      expect(parsed.payload?.stats?.mode).toBe("git");
-    } finally {
-      process.off("SIGUSR1", sigusr1);
-    }
-  });
-
-  test("uses configured update channel", async () => {
-    const sigusr1 = vi.fn();
-    process.on("SIGUSR1", sigusr1);
-
-    try {
-      await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
-      await fs.writeFile(CONFIG_PATH, JSON.stringify({ update: { channel: "beta" } }, null, 2));
-      const updateMock = vi.mocked(runGatewayUpdate);
-      updateMock.mockClear();
-
-      const id = "req-update-channel";
-      ws.send(
-        JSON.stringify({
-          type: "req",
-          id,
-          method: "update.run",
-          params: {
-            restartDelayMs: 0,
-          },
-        }),
+      expect(res.ok).toBe(false);
+      expect((res.error as { message?: string } | undefined)?.message).toContain(
+        "run fased update from the owner shell",
       );
-      const res = await onceMessage(ws, (o) => o.type === "res" && o.id === id);
-      expect(res.ok).toBe(true);
-      expect(updateMock).toHaveBeenCalledOnce();
+      expect(sigusr1).not.toHaveBeenCalled();
     } finally {
       process.off("SIGUSR1", sigusr1);
     }

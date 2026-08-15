@@ -402,7 +402,7 @@ async function buildOnboardingGatewayInstallPlan(params: {
 }> {
   return await buildGatewayInstallPlan({
     env:
-      params.startupMode === "managed-up" || params.strictVps
+      params.startupMode === "go-lifecycle" || params.strictVps
         ? {
             ...process.env,
             FASED_GATEWAY_MODE: "managed",
@@ -478,16 +478,12 @@ export function formatPersistentRuntimeServiceFailure(params: {
         : "";
     return `Hosting requires persistent runtime service, but no active fased-gateway systemd service was detected (status=${detail}).${hint}`;
   }
-  if (params.startupMode === "managed-up") {
-    const uid = typeof process.getuid === "function" ? String(process.getuid()) : "1000";
-    const logDir = path.join("/tmp", `fased-${uid}`);
+  if (params.startupMode === "go-lifecycle") {
     return [
-      `Local managed runtime requires an active fased-gateway systemd user service, but no active service was detected (status=${detail}).`,
+      `Local managed runtime requires its root-owned lifecycle Gateway service, but no active service was detected (status=${detail}).`,
       "Check logs with:",
-      "  systemctl --user status fased-gateway --no-pager -l",
-      "  journalctl --user -u fased-gateway -n 120 --no-pager",
-      `  tail -n 80 ${path.join(logDir, "start-managed-gateway.log")}`,
-      `  tail -n 80 ${path.join(logDir, "start-managed-zrok.log")}`,
+      "  sudo systemctl status 'fased-gateway-*' --no-pager -l",
+      "  sudo journalctl -u 'fased-gateway-*' -n 120 --no-pager",
     ].join("\n");
   }
   return `Persistent runtime service was not detected (status=${detail}).`;
@@ -530,8 +526,8 @@ async function verifyStrictRootGatewayExecStart(
   const safeRunAsUser = runAsUser?.trim();
   return await runShell(
     [
-      startupMode === "managed-up"
-        ? `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -E ' managed up|start-(managed|vps)\\.sh|/usr/local/libexec/fased-gateway-launch' >/dev/null`
+      startupMode === "go-lifecycle"
+        ? `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=.*/payload/bin/fased-gateway-launch$' >/dev/null`
         : `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -F ' gateway ' >/dev/null`,
       `systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'Environment=FASED_GATEWAY_PORT=' >/dev/null`,
       ...(safeRunAsUser
@@ -646,56 +642,14 @@ async function formatStrictListenerFailureDiagnostics(reason: string): Promise<s
     isSystemdServiceActive({ name: "fased-gateway", scope: "root" }),
     isSystemdServiceActive({ name: "fased-gateway", scope: "user" }),
   ]);
-  const gatewayLogTails = await collectManagedGatewayBootLogTails();
   return [
     reason,
     `systemd root is-active: ${rootState.detail ?? (rootState.ok ? "active" : "unknown")}`,
     `systemd user is-active: ${userState.detail ?? (userState.ok ? "active" : "unknown")}`,
-    ...gatewayLogTails.flatMap(({ file, tail }) => [`Gateway boot log tail (${file}):`, tail]),
     "Debug commands:",
     "  sudo systemctl status fased-gateway --no-pager",
     "  sudo journalctl -u fased-gateway -n 120 --no-pager",
   ].join("\n");
-}
-
-async function collectManagedGatewayBootLogTails(): Promise<Array<{ file: string; tail: string }>> {
-  const candidates = new Set<string>();
-  const configDir = process.env.FASED_CONFIG_DIR?.trim() || resolveUserPath("~/.fased");
-  candidates.add(path.join(configDir, "logs", "start-managed-gateway.log"));
-  candidates.add(path.join(configDir, "logs", "start-managed.log"));
-  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "1000";
-  candidates.add(path.join("/tmp", `fased-${uid}`, "start-managed-gateway.log"));
-  try {
-    const entries = await fs.readdir("/tmp", { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !/^fased-\d+$/.test(entry.name)) {
-        continue;
-      }
-      candidates.add(path.join("/tmp", entry.name, "start-managed-gateway.log"));
-    }
-  } catch {
-    // Keep the UID-specific fallback only.
-  }
-
-  const tails: Array<{ file: string; tail: string }> = [];
-  for (const file of candidates) {
-    try {
-      const logText = await fs.readFile(file, "utf8");
-      const lines = logText
-        .split(/\r?\n/)
-        .map((line) => line.trimEnd())
-        .filter(Boolean);
-      if (lines.length > 0) {
-        tails.push({ file, tail: lines.slice(-20).join("\n") });
-      }
-    } catch {
-      // Missing or unreadable boot logs are expected during early startup.
-    }
-    if (tails.length >= 3) {
-      break;
-    }
-  }
-  return tails;
 }
 
 export type GatewayServiceRestartProfile = "local" | "hosting";
@@ -805,10 +759,10 @@ export function isCanonicalGatewayServiceCommand(
   }
   const joined = args.join(" ");
   const isGatewayCommand = joined.includes(" gateway ") && joined.includes(" --port ");
-  const isManagedUpCommand =
-    joined.includes(" managed up") ||
-    args.some((arg) => /(^|[\\/])start-(managed|vps)\.sh$/i.test(arg));
-  return startupMode === "managed-up" ? isManagedUpCommand : isGatewayCommand;
+  const isGoLifecycleCommand = args.some((arg) =>
+    /(^|[\\/])payload[\\/]bin[\\/]fased-gateway-launch$/i.test(arg),
+  );
+  return startupMode === "go-lifecycle" ? isGoLifecycleCommand : isGatewayCommand;
 }
 
 function normalizeServicePath(value: string): string {
@@ -865,16 +819,6 @@ export function gatewayServiceMatchesCurrentInstall(params: {
       continue;
     }
     const basename = path.basename(value);
-    if (basename === "start-managed.sh" || basename === "start-vps.sh") {
-      const expected = path.join(repoRoot, "scripts", basename);
-      if (normalizeServicePath(value) !== normalizeServicePath(expected)) {
-        return {
-          ok: false,
-          detail: `${basename} points to ${value}; expected ${expected}`,
-        };
-      }
-      continue;
-    }
     if (basename === "entry.js" || basename === "index.js" || basename === "fased.mjs") {
       if (!isPathInside(repoRoot, value)) {
         return {
@@ -1626,8 +1570,8 @@ export async function finalizeOnboardingWizard(
       ? DEFAULT_GATEWAY_DAEMON_RUNTIME
       : (opts.daemonRuntime ?? DEFAULT_GATEWAY_DAEMON_RUNTIME);
   const expectedGatewayStartupMode: GatewayStartupMode =
-    resolveHostedOnboardingGatewayStartupMode(opts.hostProfile) === "managed-up"
-      ? "managed-up"
+    resolveHostedOnboardingGatewayStartupMode(opts.hostProfile) === "go-lifecycle"
+      ? "go-lifecycle"
       : resolveGatewayStartupMode({
           env: process.env,
           config: nextConfig,
@@ -2089,7 +2033,7 @@ export async function finalizeOnboardingWizard(
         }
       }
     }
-    const requirePersistentRuntime = strictVps || expectedGatewayStartupMode === "managed-up";
+    const requirePersistentRuntime = strictVps || expectedGatewayStartupMode === "go-lifecycle";
     if (requirePersistentRuntime && !autoStartEnabled && !opts.allowInsecure) {
       throw new Error(
         formatPersistentRuntimeServiceFailure({

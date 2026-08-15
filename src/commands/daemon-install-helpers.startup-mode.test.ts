@@ -6,9 +6,9 @@ import {
 } from "./daemon-install-helpers.js";
 
 describe("resolveGatewayStartupMode", () => {
-  it("chooses managed-up when FASED_GATEWAY_MODE=managed", () => {
+  it("routes an old managed mode request to the Go lifecycle boundary", () => {
     expect(resolveGatewayStartupMode({ env: { FASED_GATEWAY_MODE: "managed" } })).toBe(
-      "managed-up",
+      "go-lifecycle",
     );
   });
 
@@ -41,8 +41,8 @@ describe("resolveGatewayStartupMode", () => {
 });
 
 describe("resolveHostedOnboardingGatewayStartupMode", () => {
-  it("uses managed-up for hosting onboarding", () => {
-    expect(resolveHostedOnboardingGatewayStartupMode("hosting")).toBe("managed-up");
+  it("uses the Go lifecycle boundary for hosting onboarding", () => {
+    expect(resolveHostedOnboardingGatewayStartupMode("hosting")).toBe("go-lifecycle");
   });
 
   it("keeps local onboarding on gateway mode", () => {
@@ -52,23 +52,16 @@ describe("resolveHostedOnboardingGatewayStartupMode", () => {
 });
 
 describe.runIf(process.platform === "linux")("hosted gateway install plan", () => {
-  it("keeps the managed runtime flags required by the root service helper", async () => {
-    const plan = await buildGatewayInstallPlan({
-      env: { FASED_GATEWAY_MODE: "managed" },
-      port: 18789,
-      runtime: "node",
-      nodePath: "/usr/bin/node",
-      devMode: false,
-      startupMode: "managed-up",
-    });
-
-    expect(plan.programArguments[0]).toBe("/bin/bash");
-    expect(plan.programArguments[1]).toMatch(/scripts\/start-managed\.sh$/);
-    expect(plan.environment).toMatchObject({
-      FASED_GATEWAY_MODE: "managed",
-      FASED_MANAGED_INTERNAL: "1",
-      FASED_GATEWAY_PORT: "18789",
-      FASED_NODE_BIN: "/usr/bin/node",
-    });
+  it("refuses to install a managed service from Node", async () => {
+    await expect(
+      buildGatewayInstallPlan({
+        env: { FASED_GATEWAY_MODE: "managed" },
+        port: 18789,
+        runtime: "node",
+        nodePath: "/usr/bin/node",
+        devMode: false,
+        startupMode: "go-lifecycle",
+      }),
+    ).rejects.toThrow("verified Go lifecycle installer");
   });
 });

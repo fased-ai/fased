@@ -168,6 +168,58 @@ describe("single Go lifecycle production routing", () => {
     ).toEqual([]);
   });
 
+  it("keeps managed update authority in Go and source updates explicitly developer-only", async () => {
+    const launcher = await readFile(
+      resolve(repoRoot, "tools/fased-lifecycled/platform/cli_launcher.go"),
+      "utf8",
+    );
+    const publicUpdate = await readFile(
+      resolve(repoRoot, "src/cli/update-cli/update-command.ts"),
+      "utf8",
+    );
+    const sourceUpdate = await readFile(
+      resolve(repoRoot, "src/cli/update-cli/source-update-command.ts"),
+      "utf8",
+    );
+    const developerCli = await readFile(resolve(repoRoot, "src/cli/dev-cli.ts"), "utf8");
+    const gatewayUpdate = await readFile(
+      resolve(repoRoot, "src/gateway/server-methods/update.ts"),
+      "utf8",
+    );
+
+    expect(launcher).toContain('managed_operation="status"');
+    expect(launcher).toContain(
+      'exec "$bootstrap" "$managed_operation" --profile "$FASED_LIFECYCLE_PROFILE"',
+    );
+    expect(publicUpdate).not.toContain("runGatewayUpdate");
+    expect(publicUpdate).toContain("rerun the verified public installer");
+    expect(sourceUpdate).not.toContain("runGatewayUpdate");
+    expect(sourceUpdate).toContain('status.installKind !== "git"');
+    expect(sourceUpdate).toContain("runDeveloperSourceUpdate");
+    expect(await exists("src/cli/update-cli/legacy-source-update-command.ts")).toBe(false);
+    expect(await exists("src/infra/update-runner.ts")).toBe(false);
+    expect(await exists("src/infra/update-global.ts")).toBe(false);
+    expect(developerCli).toContain('.command("update-source")');
+    expect(developerCli).not.toContain("legacy-source-update-command");
+    expect(gatewayUpdate).not.toContain("runGatewayUpdate");
+    expect(gatewayUpdate).not.toContain("getGatewayUpdateStatus");
+    expect(gatewayUpdate).toContain("run fased update from the owner shell");
+  });
+
+  it("selects managed channels only through an attested replay-protected Go index", async () => {
+    const route = await readFile(
+      resolve(repoRoot, "tools/fased-lifecycled/cmd/fased-bootstrap/route.go"),
+      "utf8",
+    );
+
+    expect(route).not.toContain("api.github.com/repos/fased-ai/fased/releases");
+    expect(route).not.toContain("discoverPublicReleaseVersion");
+    expect(route).toContain("discoverSignedChannelRelease");
+    expect(route).toContain("productionChannelReleasePrefix");
+    expect(route).toContain("signed channel index is older than the installed release authority");
+    expect(route).toContain("validateSignedChannelResult");
+  });
+
   it("keeps the missing-tool bootstrap transport independent of jq", async () => {
     const runner = await readFile(
       resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),

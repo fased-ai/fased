@@ -170,7 +170,7 @@ func RegistryFor(config platform.Config) (map[Key]Adapter, error) {
 		registry[Key{State: state, From: 0, To: 1}] = PreservedStateAdapter{}
 	}
 	if config.Profile == model.ProfileHosting {
-		registry[Key{State: "signer", From: 1, To: 2}] = SignerOwnedAdapter{}
+		registry[Key{State: "signer", From: 1, To: 2}] = HostedSignerMigrationAdapter{Config: config}
 	}
 	return registry, nil
 }

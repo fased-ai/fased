@@ -102,7 +102,6 @@ function createMcpStatusServerStub(endpointOverrides?: { mode?: AcpxMcpStatusEnd
       })),
       previewGatewayStatus: vi.fn(async () => ({}) as never),
       previewModelsCatalogStatus: vi.fn(async () => ({}) as never),
-      previewUpdateStatus: vi.fn(async () => ({}) as never),
       previewCommandsList: vi.fn(async () => ({}) as never),
       previewAcpStatus: vi.fn(async () => ({}) as never),
       executePushTestRequest: vi.fn(async () => ({}) as never),

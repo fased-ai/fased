@@ -60,21 +60,10 @@ export type FasedAgentConfig = {
   diagnostics?: DiagnosticsConfig;
   logging?: LoggingConfig;
   update?: {
-    /** Built-in self-update channel for package installs ("stable", "beta", or "dev"). */
+    /** Legacy developer/package channel. Managed Go lifecycle updates ignore this field. */
     channel?: "stable" | "beta" | "dev";
-    /** Check for package self-updates on gateway start. Default: false (opt-in). */
+    /** Deprecated compatibility field. Managed Go lifecycle updates never check on Gateway start. */
     checkOnStart?: boolean;
-    /** Core auto-update policy for package installs. */
-    auto?: {
-      /** Enable background auto-update checks and apply logic. Default: false. */
-      enabled?: boolean;
-      /** Stable channel minimum delay before auto-apply. Default: 6. */
-      stableDelayHours?: number;
-      /** Additional stable-channel jitter window. Default: 12. */
-      stableJitterHours?: number;
-      /** Beta channel check cadence. Default: 1 hour. */
-      betaCheckIntervalHours?: number;
-    };
   };
   browser?: BrowserConfig;
   ui?: {

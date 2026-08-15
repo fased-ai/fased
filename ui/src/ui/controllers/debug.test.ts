@@ -36,7 +36,6 @@ function createDebugState(request: ReturnType<typeof vi.fn>): DebugState {
     debugModels: [],
     debugModelCatalogStatus: null,
     debugCommandsCatalog: null,
-    debugUpdateStatus: null,
     debugPluginsMarketplace: null,
     debugDiagnosticsStability: null,
     debugMemoryInventory: null,
@@ -162,7 +161,7 @@ describe("loadDebug", () => {
   });
 
   it("keeps dashboard memory doctor data on the read-only json contract", async () => {
-    const secretBody = "SECRET_TRANSCRIPT_BODY dashboard must not keep message body";
+    const secretBody = "SECRET_TRANSCRIPT_BODY dashboard must not keep message body"; // pragma: allowlist secret
     const unsafeFields = {
       body: secretBody,
       transcript: secretBody,

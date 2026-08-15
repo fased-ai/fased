@@ -10,7 +10,6 @@ import {
   buildModelCatalogStatus,
   executeAcpxPushTestRequest,
   getAcpStatusSnapshot,
-  getGatewayUpdateStatus,
   getPublicGatewayIdentity,
   getStatusSummary,
   listAgentIds,
@@ -38,7 +37,6 @@ import {
   ACPX_GATEWAY_STATUS_MCP_TOOL_NAME,
   ACPX_MODELS_CATALOG_STATUS_MCP_TOOL_NAME,
   ACPX_STATUS_MCP_TOOL_NAME,
-  ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
   resolveAcpxMcpBridgeToolDefinitions,
 } from "./mcp-readonly-tool-registry.js";
 
@@ -147,67 +145,6 @@ type RawModelsCatalogProviderStatus = {
   reasoningModels?: unknown;
   visionModels?: unknown;
   sources?: unknown;
-};
-
-type RawUpdateStatusResult = {
-  ok?: unknown;
-  update?: unknown;
-  availability?: unknown;
-  channel?: unknown;
-  probes?: unknown;
-  summary?: unknown;
-};
-
-type RawUpdateStatusUpdate = {
-  installKind?: unknown;
-  packageManager?: unknown;
-  git?: unknown;
-  deps?: unknown;
-  registry?: unknown;
-};
-
-type RawUpdateStatusGit = {
-  sha?: unknown;
-  tag?: unknown;
-  branch?: unknown;
-  upstream?: unknown;
-  dirty?: unknown;
-  ahead?: unknown;
-  behind?: unknown;
-  fetchOk?: unknown;
-  error?: unknown;
-};
-
-type RawUpdateStatusDeps = {
-  manager?: unknown;
-  status?: unknown;
-  reason?: unknown;
-};
-
-type RawUpdateStatusRegistry = {
-  latestVersion?: unknown;
-  error?: unknown;
-};
-
-type RawUpdateAvailability = {
-  available?: unknown;
-  hasGitUpdate?: unknown;
-  hasRegistryUpdate?: unknown;
-  latestVersion?: unknown;
-  gitBehind?: unknown;
-};
-
-type RawUpdateChannel = {
-  channel?: unknown;
-  source?: unknown;
-  label?: unknown;
-  config?: unknown;
-};
-
-type RawUpdateProbes = {
-  fetchGit?: unknown;
-  includeRegistry?: unknown;
-  timeoutMs?: unknown;
 };
 
 type RawCommandsListResult = {
@@ -440,58 +377,6 @@ export type AcpxModelsCatalogStatusPreview = {
   providers: AcpxModelsCatalogProviderStatusPreview[];
 };
 
-export type AcpxUpdateStatusPreview = {
-  bridge: {
-    id: "acpx";
-    mode: ResolvedAcpxMcpBridgeConfig["mode"];
-    enabled: true;
-  };
-  source: "update.status";
-  update: {
-    installKind: string;
-    packageManager: string;
-    git?: {
-      sha: string | null;
-      tag: string | null;
-      branch: string | null;
-      upstream: string | null;
-      dirty: boolean | null;
-      ahead: number | null;
-      behind: number | null;
-      fetchOk: boolean | null;
-      error?: string;
-    };
-    deps?: {
-      manager: string;
-      status: string;
-      reason?: string;
-    };
-    registry?: {
-      latestVersion: string | null;
-      error?: string;
-    };
-  };
-  availability: {
-    available: boolean;
-    hasGitUpdate: boolean;
-    hasRegistryUpdate: boolean;
-    latestVersion: string | null;
-    gitBehind: number | null;
-  };
-  channel: {
-    channel: string;
-    source: string;
-    label: string;
-    config: string | null;
-  };
-  probes: {
-    fetchGit: boolean;
-    includeRegistry: boolean;
-    timeoutMs: number;
-  };
-  summary: string;
-};
-
 export type AcpxCommandArgChoicePreview = {
   value: string;
   label: string;
@@ -619,10 +504,6 @@ export type AcpxMcpModelsCatalogStatusResolver = (params: {
   context: FasedAgentPluginServiceContext;
 }) => Promise<RawModelsCatalogStatusResult> | RawModelsCatalogStatusResult;
 
-export type AcpxMcpUpdateStatusResolver = (params: {
-  context: FasedAgentPluginServiceContext;
-}) => Promise<RawUpdateStatusResult> | RawUpdateStatusResult;
-
 export type AcpxMcpCommandsListResolver = (params: {
   context: FasedAgentPluginServiceContext;
   agentId?: string;
@@ -644,7 +525,6 @@ export type CreateAcpxMcpStatusServerParams = {
   gatewayIdentityResolver?: AcpxMcpGatewayIdentityResolver;
   gatewayStatusResolver?: AcpxMcpGatewayStatusResolver;
   modelsCatalogStatusResolver?: AcpxMcpModelsCatalogStatusResolver;
-  updateStatusResolver?: AcpxMcpUpdateStatusResolver;
   commandsListResolver?: AcpxMcpCommandsListResolver;
   acpStatusResolver?: AcpxMcpAcpStatusResolver;
   pushTestExecutionAdapter?: AcpxPushTestMcpToolExecutionAdapter;
@@ -658,7 +538,6 @@ export type AcpxMcpStatusServer = {
   previewEffectiveTools(input?: { agentId?: string }): Promise<AcpxToolsEffectivePreview>;
   previewGatewayStatus(): Promise<AcpxGatewayStatusPreview>;
   previewModelsCatalogStatus(): Promise<AcpxModelsCatalogStatusPreview>;
-  previewUpdateStatus(): Promise<AcpxUpdateStatusPreview>;
   previewCommandsList(input?: {
     agentId?: string;
     provider?: string;
@@ -751,13 +630,6 @@ async function defaultModelsCatalogStatusResolver(): Promise<RawModelsCatalogSta
   return buildModelCatalogStatus({
     catalog,
     cfg: loadConfig(),
-  });
-}
-
-async function defaultUpdateStatusResolver(): Promise<RawUpdateStatusResult> {
-  return getGatewayUpdateStatus({
-    fetchGit: false,
-    includeRegistry: false,
   });
 }
 
@@ -999,93 +871,6 @@ function normalizeAcpIdentityState(value: unknown): AcpIdentityState {
 
 function normalizeAcpIdentitySource(value: unknown): AcpIdentitySource {
   return value === "status" || value === "event" || value === "ensure" ? value : "ensure";
-}
-
-function sanitizeUpdateStatusResult(
-  result: RawUpdateStatusResult,
-  bridgeMode: ResolvedAcpxMcpBridgeConfig["mode"],
-): AcpxUpdateStatusPreview {
-  const update = asRecord(result.update) as RawUpdateStatusUpdate;
-  const git = asRecord(update.git) as RawUpdateStatusGit;
-  const deps = asRecord(update.deps) as RawUpdateStatusDeps;
-  const registry = asRecord(update.registry) as RawUpdateStatusRegistry;
-  const availability = asRecord(result.availability) as RawUpdateAvailability;
-  const channel = asRecord(result.channel) as RawUpdateChannel;
-  const probes = asRecord(result.probes) as RawUpdateProbes;
-  const gitPresent = Object.keys(git).length > 0;
-  const depsPresent = Object.keys(deps).length > 0;
-  const registryPresent = Object.keys(registry).length > 0;
-  const latestVersion = normalizeNullableString(availability.latestVersion);
-
-  return {
-    bridge: {
-      id: "acpx",
-      mode: bridgeMode,
-      enabled: true,
-    },
-    source: "update.status",
-    update: {
-      installKind: normalizeOptionalString(update.installKind) ?? "unknown",
-      packageManager: normalizeOptionalString(update.packageManager) ?? "unknown",
-      ...(gitPresent
-        ? {
-            git: {
-              sha: normalizeNullableString(git.sha)?.slice(0, 12) ?? null,
-              tag: normalizeNullableString(git.tag),
-              branch: normalizeNullableString(git.branch),
-              upstream: normalizeNullableString(git.upstream),
-              dirty: normalizeNullableBoolean(git.dirty),
-              ahead: normalizeNullableNumber(git.ahead),
-              behind: normalizeNullableNumber(git.behind),
-              fetchOk: normalizeNullableBoolean(git.fetchOk),
-              ...(normalizeNullableString(git.error)
-                ? { error: normalizeNullableString(git.error) ?? undefined }
-                : {}),
-            },
-          }
-        : {}),
-      ...(depsPresent
-        ? {
-            deps: {
-              manager: normalizeOptionalString(deps.manager) ?? "unknown",
-              status: normalizeOptionalString(deps.status) ?? "unknown",
-              ...(normalizeNullableString(deps.reason)
-                ? { reason: normalizeNullableString(deps.reason) ?? undefined }
-                : {}),
-            },
-          }
-        : {}),
-      ...(registryPresent
-        ? {
-            registry: {
-              latestVersion: normalizeNullableString(registry.latestVersion),
-              ...(normalizeNullableString(registry.error)
-                ? { error: normalizeNullableString(registry.error) ?? undefined }
-                : {}),
-            },
-          }
-        : {}),
-    },
-    availability: {
-      available: normalizeBoolean(availability.available),
-      hasGitUpdate: normalizeBoolean(availability.hasGitUpdate),
-      hasRegistryUpdate: normalizeBoolean(availability.hasRegistryUpdate),
-      latestVersion,
-      gitBehind: normalizeNullableNumber(availability.gitBehind),
-    },
-    channel: {
-      channel: normalizeOptionalString(channel.channel) ?? "stable",
-      source: normalizeOptionalString(channel.source) ?? "default",
-      label: normalizeOptionalString(channel.label) ?? "stable (default)",
-      config: normalizeNullableString(channel.config),
-    },
-    probes: {
-      fetchGit: normalizeBoolean(probes.fetchGit),
-      includeRegistry: normalizeBoolean(probes.includeRegistry),
-      timeoutMs: normalizePositiveNumber(probes.timeoutMs, 3500),
-    },
-    summary: normalizeOptionalString(result.summary) ?? "Update: unknown",
-  };
 }
 
 function sanitizeGatewayStartupStatus(value: unknown): AcpxGatewayStatusPreview["gatewayStartup"] {
@@ -1607,7 +1392,6 @@ export function createAcpxMcpStatusServer(
   const gatewayStatusResolver = params.gatewayStatusResolver ?? defaultGatewayStatusResolver;
   const modelsCatalogStatusResolver =
     params.modelsCatalogStatusResolver ?? defaultModelsCatalogStatusResolver;
-  const updateStatusResolver = params.updateStatusResolver ?? defaultUpdateStatusResolver;
   const commandsListResolver = params.commandsListResolver ?? defaultCommandsListResolver;
   const acpStatusResolver = params.acpStatusResolver ?? defaultAcpStatusResolver;
   const pushTestExecutionAdapter =
@@ -1657,15 +1441,6 @@ export function createAcpxMcpStatusServer(
       context: params.context,
     });
     return sanitizeModelsCatalogStatusResult(status, params.bridgeConfig.mode);
-  };
-  const previewUpdateStatus = async (): Promise<AcpxUpdateStatusPreview> => {
-    if (closed) {
-      throw new Error("ACPX MCP status server is closed");
-    }
-    const status = await updateStatusResolver({
-      context: params.context,
-    });
-    return sanitizeUpdateStatusResult(status, params.bridgeConfig.mode);
   };
   const previewCommandsList = async (input?: {
     agentId?: string;
@@ -1877,42 +1652,6 @@ export function createAcpxMcpStatusServer(
     }
   };
 
-  const registerUpdateStatusTool = (targetServer: McpServer, collectToolNames: boolean) => {
-    if (!hasImplementedBridgeTool(ACPX_UPDATE_STATUS_MCP_TOOL_NAME)) {
-      return;
-    }
-
-    targetServer.registerTool(
-      ACPX_UPDATE_STATUS_MCP_TOOL_NAME,
-      {
-        title: "Fased Update Status",
-        description:
-          "Read sanitized Fased update status. This does not start an update, fetch git, or query npm.",
-        inputSchema: {},
-        annotations: {
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false,
-        },
-      },
-      async () => {
-        const result = await previewUpdateStatus();
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      },
-    );
-    if (collectToolNames) {
-      toolNames.push(ACPX_UPDATE_STATUS_MCP_TOOL_NAME);
-    }
-  };
-
   const registerCommandsListTool = (targetServer: McpServer, collectToolNames: boolean) => {
     if (!hasImplementedBridgeTool(ACPX_COMMANDS_LIST_MCP_TOOL_NAME)) {
       return;
@@ -2076,7 +1815,6 @@ export function createAcpxMcpStatusServer(
     registerGatewayIdentityTool(nextServer, collectToolNames);
     registerGatewayStatusTool(nextServer, collectToolNames);
     registerModelsCatalogStatusTool(nextServer, collectToolNames);
-    registerUpdateStatusTool(nextServer, collectToolNames);
     registerCommandsListTool(nextServer, collectToolNames);
     registerAcpStatusTool(nextServer, collectToolNames);
     registerPushTestRequestTool(nextServer, collectToolNames);
@@ -2161,7 +1899,6 @@ export function createAcpxMcpStatusServer(
     previewEffectiveTools,
     previewGatewayStatus,
     previewModelsCatalogStatus,
-    previewUpdateStatus,
     previewCommandsList,
     previewAcpStatus,
     executePushTestRequest,

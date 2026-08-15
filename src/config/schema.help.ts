@@ -17,9 +17,9 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "acp.runtime.installCommand":
     "Operator install/setup command shown by /acp install and /acp doctor.",
   "update.channel":
-    'Built-in self-update channel for package installs ("stable", "beta", or "dev").',
+    "Legacy developer/package channel. Managed Go lifecycle updates ignore this field; select stable or beta explicitly with fased update --channel.",
   "update.checkOnStart":
-    "Check for package self-updates when the gateway starts (default: false; opt-in).",
+    "Deprecated compatibility field. Managed Go lifecycle updates never run from Gateway startup.",
   "gateway.remote.url": "Remote Gateway WebSocket URL (ws:// or wss://).",
   "gateway.remote.tlsFingerprint":
     "Expected sha256 TLS fingerprint for the remote gateway (pin to avoid MITM).",
@@ -197,14 +197,14 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "tools.web.search.enabled": "Enable the web_search tool.",
   "tools.web.search.provider":
     'Search provider id. Built-ins include "brave", "duckduckgo", "exa", "firecrawl", "gemini", "grok", "kimi", "perplexity", "searxng", and "tavily"; plugins can add more.',
-  "tools.web.search.apiKey": "Brave Search API key or SecretRef (fallback: BRAVE_API_KEY env var).",
+  "tools.web.search.apiKey": "Brave Search API key or SecretRef (fallback: BRAVE_API_KEY env var).", // pragma: allowlist secret
   "tools.web.search.maxResults": "Default number of results to return (1-10).",
   "tools.web.search.timeoutSeconds": "Timeout in seconds for web_search requests.",
   "tools.web.search.cacheTtlMinutes": "Cache TTL in minutes for web_search results.",
   "tools.web.search.duckduckgo.region": 'DuckDuckGo region such as "us-en" (optional).',
   "tools.web.search.duckduckgo.safeSearch":
     'DuckDuckGo safe search level: "strict", "moderate", or "off".',
-  "tools.web.search.exa.apiKey": "Exa API key or SecretRef (fallback: EXA_API_KEY env var).",
+  "tools.web.search.exa.apiKey": "Exa API key or SecretRef (fallback: EXA_API_KEY env var).", // pragma: allowlist secret
   "tools.web.search.exa.baseUrl": "Optional Exa-compatible base URL.",
   "tools.web.search.exa.type": 'Exa search type, usually "auto".',
   "tools.web.search.firecrawl.apiKey":
@@ -664,7 +664,9 @@ const SPECIFIC_FIELD_HELP: Record<string, string> = {
   "logging.redactSensitive":
     'Controls log redaction. "off" disables extra redaction, while "tools" redacts tool arguments and sensitive tool payloads before writing logs.',
   "update.channel":
-    'Self-update channel. "stable" is recommended, "beta" gets preview releases, and "dev" follows development builds with more churn.',
+    'Legacy developer/package channel: "stable", "beta", or "dev". Managed Go lifecycle updates ignore it and accept an explicit "stable" or "beta" CLI channel.',
+  "update.checkOnStart":
+    "Deprecated compatibility field retained so older valid configs continue to load; it does not trigger managed updates.",
   "agents.defaults.compaction.mode":
     'Context compaction mode. "default" uses normal pruning; "safeguard" keeps stricter reserves for long tasks and memory-sensitive sessions.',
   "agents.defaults.compaction.identifierPolicy":

@@ -22,11 +22,7 @@ import {
   normalizeUpdateChannel,
   resolveEffectiveUpdateChannel,
 } from "../infra/update-channels.js";
-import {
-  checkUpdateStatus,
-  compareSemverStrings,
-  formatGitInstallLabel,
-} from "../infra/update-check.js";
+import { checkUpdateStatus, formatGitInstallLabel } from "../infra/update-check.js";
 import { runExec } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { VERSION } from "../version.js";
@@ -95,7 +91,7 @@ export async function statusAllCommand(
       root,
       timeoutMs: 6500,
       fetchGit: true,
-      includeRegistry: true,
+      includeRegistry: false,
     });
     const configChannel = normalizeUpdateChannel(cfg.update?.channel);
     const channelInfo = resolveEffectiveUpdateChannel({
@@ -244,21 +240,7 @@ export async function statusAllCommand(
       : null;
 
     const updateLine = (() => {
-      const appendRegistryAndDepsStatus = (parts: string[]) => {
-        const latest = update.registry?.latestVersion;
-        if (latest) {
-          const cmp = compareSemverStrings(VERSION, latest);
-          if (cmp === 0) {
-            parts.push(`npm latest ${latest}`);
-          } else if (cmp != null && cmp < 0) {
-            parts.push(`npm update ${latest}`);
-          } else {
-            parts.push(`npm latest ${latest} (local newer)`);
-          }
-        } else if (update.registry?.error) {
-          parts.push("npm latest unknown");
-        }
-
+      const appendDepsStatus = (parts: string[]) => {
         if (update.deps?.status === "ok") {
           parts.push("deps ok");
         }
@@ -294,12 +276,12 @@ export async function statusAllCommand(
           parts.push("fetch failed");
         }
 
-        appendRegistryAndDepsStatus(parts);
+        appendDepsStatus(parts);
         return parts.join(" · ");
       }
       const parts: string[] = [];
-      parts.push(update.packageManager !== "unknown" ? update.packageManager : "pkg");
-      appendRegistryAndDepsStatus(parts);
+      parts.push("managed lifecycle via fased update status");
+      appendDepsStatus(parts);
       return parts.join(" · ");
     })();
 

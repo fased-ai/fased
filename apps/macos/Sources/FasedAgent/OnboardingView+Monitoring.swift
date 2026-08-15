@@ -62,22 +62,6 @@ extension OnboardingView {
         self.gatewayDiscovery.stop()
     }
 
-    func installCLI() async {
-        guard !self.installingCLI else { return }
-        self.installingCLI = true
-        defer { installingCLI = false }
-        await CLIInstaller.install { message in
-            self.cliStatus = message
-        }
-        self.refreshCLIStatus()
-    }
-
-    func refreshCLIStatus() {
-        let installLocation = CLIInstaller.installedLocation()
-        self.cliInstallLocation = installLocation
-        self.cliInstalled = installLocation != nil
-    }
-
     func refreshLocalGatewayProbe() async {
         let port = GatewayEnvironment.gatewayPort()
         let desc = await PortGuardian.shared.describe(port: port)

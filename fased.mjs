@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import module from "node:module";
-import { fileURLToPath } from "node:url";
 
 if (process.platform === "win32") {
   console.error(
@@ -14,10 +13,6 @@ if (process.platform === "win32") {
   );
   process.exit(1);
 }
-
-const { reexecWithSupportedNodeIfNeeded } = await import("./scripts/fased-launcher-runtime.mjs");
-
-reexecWithSupportedNodeIfNeeded({ selfPath: fileURLToPath(import.meta.url) });
 
 // https://nodejs.org/api/module.html#module-compile-cache
 if (module.enableCompileCache && !process.env.NODE_DISABLE_COMPILE_CACHE) {
@@ -66,17 +61,11 @@ const tryImport = async (specifier) => {
 
 const lightweightCommand = `${process.argv[2] ?? ""} ${process.argv[3] ?? ""}`.trim();
 const lightweightSpecifier =
-  lightweightCommand === "update status"
-    ? "./dist/light-update-status.js"
-    : lightweightCommand === "plugins info"
-      ? "./dist/light-plugin-info.js"
-      : lightweightCommand === "plugins doctor"
-        ? "./dist/light-plugin-doctor.js"
-        : process.argv[2] === "update" &&
-            (!process.argv[3] || process.argv[3] === "--json") &&
-            process.argv.length <= 4
-          ? "./dist/light-update-precheck.js"
-          : null;
+  lightweightCommand === "plugins info"
+    ? "./dist/light-plugin-info.js"
+    : lightweightCommand === "plugins doctor"
+      ? "./dist/light-plugin-doctor.js"
+      : null;
 
 let handledByLightweightCli = false;
 if (lightweightSpecifier) {

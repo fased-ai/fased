@@ -1,10 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { runCommandWithTimeout } from "../process/exec.js";
-import { fetchWithTimeout } from "../utils/fetch-timeout.js";
 import { detectPackageManager as detectPackageManagerImpl } from "./detect-package-manager.js";
-import { channelToNpmTag, type UpdateChannel } from "./update-channels.js";
-import { resolveHostedNpmInstallTarget } from "./update-global.js";
 
 export type PackageManager = "pnpm" | "bun" | "npm" | "unknown";
 
@@ -29,26 +26,12 @@ export type DepsStatus = {
   reason?: string;
 };
 
-export type RegistryStatus = {
-  latestVersion: string | null;
-  error?: string;
-};
-
-export type NpmTagStatus = {
-  tag: string;
-  version: string | null;
-  error?: string;
-};
-
-const NPM_PACKAGE_NAME = "@fased/fased";
-
 export type UpdateCheckResult = {
   root: string | null;
   installKind: "git" | "package" | "unknown";
   packageManager: PackageManager;
   git?: GitUpdateStatus;
   deps?: DepsStatus;
-  registry?: RegistryStatus;
 };
 
 export function formatGitInstallLabel(update: UpdateCheckResult): string | null {
@@ -286,63 +269,6 @@ export async function checkDepsStatus(params: {
   };
 }
 
-export async function fetchNpmLatestVersion(params?: {
-  timeoutMs?: number;
-}): Promise<RegistryStatus> {
-  const res = await fetchNpmTagVersion({ tag: "latest", timeoutMs: params?.timeoutMs });
-  return {
-    latestVersion: res.version,
-    error: res.error,
-  };
-}
-
-export async function fetchNpmTagVersion(params: {
-  tag: string;
-  timeoutMs?: number;
-}): Promise<NpmTagStatus> {
-  const timeoutMs = params?.timeoutMs ?? 3500;
-  const tag = params.tag;
-  try {
-    const res = await fetchWithTimeout(
-      `https://registry.npmjs.org/${encodeURIComponent(NPM_PACKAGE_NAME)}/${encodeURIComponent(tag)}`,
-      {},
-      Math.max(250, timeoutMs),
-    );
-    if (!res.ok) {
-      return { tag, version: null, error: `HTTP ${res.status}` };
-    }
-    const json = (await res.json()) as { version?: unknown };
-    const version = typeof json?.version === "string" ? json.version : null;
-    return { tag, version };
-  } catch (err) {
-    return { tag, version: null, error: String(err) };
-  }
-}
-
-export async function resolveNpmChannelTag(params: {
-  channel: UpdateChannel;
-  timeoutMs?: number;
-}): Promise<{ tag: string; version: string | null }> {
-  const channelTag = channelToNpmTag(params.channel);
-  const channelStatus = await fetchNpmTagVersion({ tag: channelTag, timeoutMs: params.timeoutMs });
-  if (params.channel !== "beta") {
-    return { tag: channelTag, version: channelStatus.version };
-  }
-
-  const latestStatus = await fetchNpmTagVersion({ tag: "latest", timeoutMs: params.timeoutMs });
-  if (!latestStatus.version) {
-    return { tag: channelTag, version: channelStatus.version };
-  }
-  if (!channelStatus.version) {
-    return { tag: "latest", version: latestStatus.version };
-  }
-  const cmp = compareSemverStrings(channelStatus.version, latestStatus.version);
-  if (cmp != null && cmp < 0) {
-    return { tag: "latest", version: latestStatus.version };
-  }
-  return { tag: channelTag, version: channelStatus.version };
-}
-
 export function compareSemverStrings(a: string | null, b: string | null): number | null {
   const pa = parseComparableSemver(a);
   const pb = parseComparableSemver(b);
@@ -462,7 +388,6 @@ export async function checkUpdateStatus(params: {
       root: null,
       installKind: "unknown",
       packageManager: "unknown",
-      registry: params.includeRegistry ? await fetchNpmLatestVersion({ timeoutMs }) : undefined,
     };
   }
 
@@ -470,8 +395,7 @@ export async function checkUpdateStatus(params: {
   const isGit = gitRoot && path.resolve(gitRoot) === root;
 
   const installKind: UpdateCheckResult["installKind"] = isGit ? "git" : "package";
-  const hostedNpm = !isGit ? resolveHostedNpmInstallTarget(root) : null;
-  const pm = hostedNpm ? "npm" : await detectPackageManager(root);
+  const pm = await detectPackageManager(root);
   const git = isGit
     ? await checkGitUpdateStatus({
         root,
@@ -480,7 +404,6 @@ export async function checkUpdateStatus(params: {
       })
     : undefined;
   const deps = await checkDepsStatus({ root, manager: pm });
-  const registry = params.includeRegistry ? await fetchNpmLatestVersion({ timeoutMs }) : undefined;
 
   return {
     root,
@@ -488,6 +411,5 @@ export async function checkUpdateStatus(params: {
     packageManager: pm,
     git,
     deps,
-    registry,
   };
 }

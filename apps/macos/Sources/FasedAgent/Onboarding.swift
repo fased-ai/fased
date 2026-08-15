@@ -58,13 +58,9 @@ struct OnboardingView: View {
     @Environment(\.openSettings) var openSettings
     @State var currentPage = 0
     @State var isRequesting = false
-    @State var installingCLI = false
-    @State var cliStatus: String?
     @State var copied = false
     @State var monitoringPermissions = false
     @State var monitoringDiscovery = false
-    @State var cliInstalled = false
-    @State var cliInstallLocation: String?
     @State var workspacePath: String = ""
     @State var workspaceStatus: String?
     @State var workspaceApplying = false
@@ -137,11 +133,6 @@ struct OnboardingView: View {
 
     var canAdvance: Bool {
         !self.isWizardBlocking
-    }
-
-    var devLinkCommand: String {
-        let version = GatewayEnvironment.expectedGatewayVersionString() ?? "latest"
-        return "npm install -g fased@\(version)"
     }
 
     struct LocalGatewayProbe: Equatable {

@@ -13,7 +13,7 @@ fi
 started_at="$(date +%s)"
 output="$(
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-    'export PATH="$HOME/.fased/bin:$HOME/.fased/install-cache/npm-global/bin:$PATH"; fased update'
+    'export PATH="$HOME/.fased/bin:$PATH"; fased update'
 )"
 elapsed="$(( $(date +%s) - started_at ))"
 
@@ -31,7 +31,7 @@ fi
 
 gateway_status="$(
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-    'export PATH="$HOME/.fased/bin:$HOME/.fased/install-cache/npm-global/bin:$PATH"; fased gateway status'
+    'export PATH="$HOME/.fased/bin:$PATH"; fased gateway status'
 )"
 printf '%s\n' "$gateway_status"
 

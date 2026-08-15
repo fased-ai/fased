@@ -6,6 +6,7 @@ import {
   trustMetadataDigest,
 } from "./lifecycle-trust-crypto.mjs";
 import {
+  requireCurrentLifecycleRoot,
   verifyInitialLifecycleRoot,
   verifyLifecycleRootRotation,
 } from "./lifecycle-trust-root.mjs";
@@ -21,6 +22,7 @@ export {
 } from "./lifecycle-trust-crypto.mjs";
 export {
   OFFICIAL_GITHUB_RELEASE_AUTHORITY,
+  requireCurrentLifecycleRoot,
   verifyInitialLifecycleRoot,
   verifyLifecycleRootRotation,
 } from "./lifecycle-trust-root.mjs";

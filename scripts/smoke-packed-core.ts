@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -34,6 +35,23 @@ type SignerReleaseIdentity = {
 };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function activePnpmStore(): string {
+  const reported = execFileSync("pnpm", ["store", "path", "--silent"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (!path.isAbsolute(reported)) {
+    throw new Error("pnpm store path is not absolute");
+  }
+  const canonical = realpathSync(reported);
+  if (!statSync(canonical).isDirectory()) {
+    throw new Error("pnpm store path is not a directory");
+  }
+  return canonical;
+}
+
 const bundledChannels = [
   "discord",
   "feishu",
@@ -272,10 +290,12 @@ function runCore(coreRoot: string, env: NodeJS.ProcessEnv, args: string[]): stri
       stdio: ["ignore", stdoutFd, stderrFd],
     });
   } catch (error) {
+    const stdout = readFileSync(stdoutPath, "utf8");
     const stderr = readFileSync(stderrPath, "utf8");
-    throw new Error(`packed core command failed (${args.join(" ")}): ${stderr}`, {
-      cause: error,
-    });
+    throw new Error(
+      `packed core command failed (${args.join(" ")}):\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`,
+      { cause: error },
+    );
   } finally {
     closeSync(stdoutFd);
     closeSync(stderrFd);
@@ -475,9 +495,20 @@ async function main() {
     }
 
     const installRoot = path.join(tempRoot, "clean-install");
+    const pnpmStore = activePnpmStore();
     execFileSync(
       "pnpm",
-      ["--offline", "--filter", "@fased/fased", "deploy", "--prod", "--no-optional", installRoot],
+      [
+        "--store-dir",
+        pnpmStore,
+        "--offline",
+        "--filter",
+        "@fased/fased",
+        "deploy",
+        "--prod",
+        "--no-optional",
+        installRoot,
+      ],
       {
         cwd: repoRoot,
         env: { ...process.env, npm_config_ignore_scripts: "true" },

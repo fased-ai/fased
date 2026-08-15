@@ -60,18 +60,26 @@ corrected branch paths and exact merged-main PRE-CANDIDATE pass.
 
 ```text
 GitHub prerelease exact bytes
+-> signed beta channel advancement from those exact bytes
 -> PUBLIC0 readback
 -> owner Local
 -> real Hosting
 -> stable promotion
 ```
 
-PUBLIC0 is readback-only and verifies the exact GitHub tag, release metadata,
-asset inventory, sizes, digests, and attestations without rebuilding. Owner
-Local uses the literal public command and proves four services, Wallet/signer,
-Mining, Network, plugins, restart, preserved state, and `Already current`. Real
-Hosting requires an authorized VPS/Tailscale environment; containers are
-supporting evidence only.
+Publication makes the exact release public before advancing its channel. The
+channel publisher consumes the exact attested index, rejects replay/downgrade,
+stages replacement pairs, promotes their canonical names, and verifies
+readback; it never rebuilds. Channel discovery also requires the current
+36-hour attested root-head witness. The scheduled protected-main refresh may
+replace only that witness and its attestation; it must verify the committed
+root chain and current attested index and may never replace product bytes.
+PUBLIC0 is then readback-only and verifies the exact GitHub tag, release
+metadata, asset inventory, sizes, digests, attestations, root-head freshness,
+and signed channel binding. Owner Local uses the literal public
+command and proves four services, Wallet/signer, Mining, Network, plugins,
+restart, preserved state, and `Already current`. Real Hosting requires an
+authorized VPS/Tailscale environment; containers are supporting evidence only.
 
 Stable promotion reuses accepted candidate bytes and changes only authorized
 GitHub release/channel metadata.

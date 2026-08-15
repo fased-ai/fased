@@ -281,7 +281,6 @@ export { getPublicGatewayIdentity } from "../gateway/gateway-identity.js";
 export { getStatusSummary } from "../commands/status.js";
 export { loadGatewayModelCatalog } from "../gateway/server-model-catalog.js";
 export { buildModelCatalogStatus } from "../agents/model-catalog-status.js";
-export { getGatewayUpdateStatus } from "../gateway/update-status.js";
 export { listAgentIds, resolveDefaultAgentId } from "../agents/agent-scope.js";
 export { buildCommandsListResult } from "../gateway/server-methods/commands.js";
 export { getAcpStatusSnapshot } from "../acp/status-snapshot.js";

@@ -37,7 +37,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: candidate-publication-replay-${{ inputs.release_version }}-${{ inputs.source_commit }}
+  group: fased-lifecycle-channel-${{ contains(inputs.release_version, '-') && 'beta' || 'stable' }}
   cancel-in-progress: false
 
 env:
@@ -375,8 +375,20 @@ jobs:
             "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id')"
           if [[ -n "$existing_release_id" ]]; then
-            echo "Release already exists; refusing non-atomic overwrite: $RELEASE_TAG" >&2
-            exit 1
+            gh api "repos/$GITHUB_REPOSITORY/releases/$existing_release_id" \
+              > "$RUNNER_TEMP/existing-release.json"
+            jq -e \
+              --arg tag "$RELEASE_TAG" \
+              '.tag_name == $tag and .draft == false and .prerelease == true' \
+              "$RUNNER_TEMP/existing-release.json" >/dev/null
+            jq '[.assets[] | {name,size,digest}]' \
+              "$RUNNER_TEMP/existing-release.json" > "$RUNNER_TEMP/release-assets.json"
+            node scripts/release-artifact-set.mjs verify-assets \
+              --directory "$candidate" \
+              --assets-json "$RUNNER_TEMP/release-assets.json"
+            release_id=""
+            trap - EXIT
+            exit 0
           fi
           gh release create "$RELEASE_TAG" "$candidate"/* \
             --repo "$GITHUB_REPOSITORY" \
@@ -403,3 +415,13 @@ jobs:
           test "$(jq -r .isPrerelease "$RUNNER_TEMP/published-release.json")" = true
           release_id=""
           trap - EXIT
+
+      - name: Advance signed managed channel to the exact public candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: >-
+          bash scripts/publish-lifecycle-channel.sh
+          "${{ runner.temp }}/fased-hosting-candidate"
+          "${SOURCE_COMMIT}"

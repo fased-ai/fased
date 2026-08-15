@@ -147,7 +147,7 @@ describe("buildGatewayInstallPlan", () => {
       config: {
         env: {
           vars: {
-            GOOGLE_API_KEY: "test-key",
+            GOOGLE_API_KEY: "test-key", // pragma: allowlist secret
           },
           CUSTOM_VAR: "custom-value",
         },
@@ -262,31 +262,14 @@ describe("buildGatewayInstallPlan", () => {
       env: {},
       port: 3000,
       runtime: "node",
-      startupMode: "managed-up",
+      startupMode: "go-lifecycle",
     });
 
     expect(mocks.resolveGatewayProgramArguments).toHaveBeenCalledWith(
       expect.objectContaining({
-        startupMode: "managed-up",
+        startupMode: "go-lifecycle",
       }),
     );
-  });
-
-  it("injects the managed internal env when startupMode is managed-up", async () => {
-    mockNodeGatewayPlanFixture({
-      programArguments: ["/bin/bash", "/srv/fased/scripts/start-managed.sh"],
-    });
-
-    const plan = await buildGatewayInstallPlan({
-      env: {},
-      port: 3000,
-      runtime: "node",
-      startupMode: "managed-up",
-      nodePath: "/usr/bin/node",
-    });
-
-    expect(plan.environment.FASED_MANAGED_INTERNAL).toBe("1");
-    expect(plan.environment.FASED_NODE_BIN).toBe("/usr/bin/node");
   });
 });
 

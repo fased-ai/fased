@@ -4,7 +4,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   __testing,
-  buildHostedSystemdUnit,
   findHostedSystemdUnitPath,
   parseProtectedLocalSystemdTarget,
   resolveRootManagedSystemdTarget,
@@ -15,39 +14,6 @@ describe("hosted systemd unit", () => {
 
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
-  });
-
-  it("builds the root-managed service shape accepted by the hosted installer helper", () => {
-    const unit = buildHostedSystemdUnit({
-      runAsUser: "app",
-      programArguments: [
-        "/bin/bash",
-        "/home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed.sh",
-      ],
-      workingDirectory: "/home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased",
-      environment: {
-        FASED_GATEWAY_MODE: "managed",
-        FASED_MANAGED_INTERNAL: "1",
-        FASED_GATEWAY_PORT: "18789",
-      },
-    });
-
-    expect(unit).toContain("User=app");
-    expect(unit).toContain("Group=app");
-    expect(unit).toContain("NoNewPrivileges=true");
-    expect(unit).toContain("PrivateTmp=true");
-    expect(unit).toContain("After=fased-signerd.service");
-    expect(unit).toContain("Wants=fased-signerd.service");
-    expect(unit).toContain("Environment=FASED_HOST_PROFILE=hosting");
-    expect(unit).toContain("Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external");
-    expect(unit).toContain(
-      "Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=/run/fased-signerd/app.sock",
-    );
-    expect(unit).not.toContain("FASED_WALLET_LOCAL_SIGNER_BACKEND_SOCKET");
-    expect(unit).toContain("WantedBy=multi-user.target");
-    expect(unit).toContain(
-      "ExecStart=/bin/bash /home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed.sh",
-    );
   });
 
   it.runIf(process.platform === "linux")("finds a root-managed gateway unit", async () => {
@@ -67,8 +33,8 @@ describe("hosted systemd unit", () => {
       unitPath,
       [
         "[Service]",
-        "ExecStart=/bin/bash /home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed.sh",
-        "WorkingDirectory=/home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased",
+        "ExecStart=/opt/fased/current/payload/bin/fased-gateway-launch",
+        "WorkingDirectory=/opt/fased/current/payload/runtime",
         "Environment=FASED_GATEWAY_PORT=18789", // pragma: allowlist secret
         "",
       ].join("\n"),
@@ -76,24 +42,10 @@ describe("hosted systemd unit", () => {
     );
 
     await expect(__testing.readRootManagedSystemdCommand(unitPath)).resolves.toMatchObject({
-      programArguments: [
-        "/bin/bash",
-        "/home/app/.fased/install-cache/npm-global/lib/node_modules/@fased/fased/scripts/start-managed.sh",
-      ],
+      programArguments: ["/opt/fased/current/payload/bin/fased-gateway-launch"],
       environment: { FASED_GATEWAY_PORT: "18789" },
       sourcePath: unitPath,
     });
-  });
-
-  it("waits for the hosted service restart transaction to finish", () => {
-    expect(__testing.buildRootManagedSystemctlControlArgs("restart")).toEqual([
-      "restart",
-      "fased-gateway.service",
-    ]);
-    expect(__testing.buildRootManagedSystemctlControlArgs("stop")).toEqual([
-      "stop",
-      "fased-gateway.service",
-    ]);
   });
 
   it("accepts only an exact protected Local system service identity", () => {
@@ -113,7 +65,6 @@ describe("hosted systemd unit", () => {
       profile: "protected-local",
       serviceName: "fased-gateway-0123456789abcdef.service",
       unitPath: "/test/system/fased-gateway-0123456789abcdef.service",
-      updaterSocketPath: "/run/fased-local-controller/0123456789abcdef/request.sock",
     });
     for (const service of [
       { name: "fased-gateway.service", scope: "system" },
@@ -159,7 +110,6 @@ describe("hosted systemd unit", () => {
       profile: "protected-local",
       serviceName: "fased-gateway-fedcba9876543210.service",
       unitPath: path.join(root, "system", "fased-gateway-fedcba9876543210.service"),
-      updaterSocketPath: "/run/fased-local-controller/fedcba9876543210/request.sock",
     });
   });
 });

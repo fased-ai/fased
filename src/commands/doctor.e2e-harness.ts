@@ -20,15 +20,6 @@ function setStdinTty(value: boolean | undefined) {
   }
 }
 
-function createGatewayUpdateResult() {
-  return {
-    status: "skipped",
-    mode: "unknown",
-    steps: [],
-    durationMs: 0,
-  } as const;
-}
-
 function createCommandWithTimeoutResult() {
   return {
     stdout: "",
@@ -59,9 +50,6 @@ export const note = vi.fn() as unknown as MockFn;
 export const writeConfigFile = vi.fn().mockResolvedValue(undefined) as unknown as MockFn;
 export const resolveFasedAgentPackageRoot = vi.fn().mockResolvedValue(null) as unknown as MockFn;
 export const resolveFasedAgentPackageRootSync = vi.fn().mockReturnValue(null) as unknown as MockFn;
-export const runGatewayUpdate = vi
-  .fn()
-  .mockResolvedValue(createGatewayUpdateResult()) as unknown as MockFn;
 export const migrateLegacyConfig = vi.fn((raw: unknown) => ({
   config: raw as Record<string, unknown>,
   changes: ["Moved routing.allowFrom → channels.whatsapp.allowFrom."],
@@ -228,10 +216,6 @@ vi.mock("../infra/fased-root.js", () => ({
   resolveFasedAgentPackageRootSync,
 }));
 
-vi.mock("../infra/update-runner.js", () => ({
-  runGatewayUpdate,
-}));
-
 vi.mock("../agents/auth-profiles.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../agents/auth-profiles.js")>();
   return {
@@ -371,7 +355,6 @@ beforeEach(() => {
   writeConfigFile.mockReset().mockResolvedValue(undefined);
   resolveFasedAgentPackageRoot.mockReset().mockResolvedValue(null);
   resolveFasedAgentPackageRootSync.mockReset().mockReturnValue(null);
-  runGatewayUpdate.mockReset().mockResolvedValue(createGatewayUpdateResult());
   legacyReadConfigFileSnapshot.mockReset().mockResolvedValue(createLegacyConfigSnapshot());
   createConfigIO.mockReset().mockImplementation(() => ({
     readConfigFileSnapshot: legacyReadConfigFileSnapshot,

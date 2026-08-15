@@ -1,131 +1,23 @@
-import {
-  formatUpdateAvailableHint,
-  formatUpdateOneLiner,
-  resolveUpdateAvailability,
-} from "../../commands/status.update.js";
-import { readConfigFileSnapshot } from "../../config/config.js";
-import {
-  normalizeUpdateChannel,
-  resolveUpdateChannelDisplay,
-} from "../../infra/update-channels.js";
-import { checkUpdateStatus } from "../../infra/update-check.js";
 import { defaultRuntime } from "../../runtime.js";
-import { renderTable } from "../../terminal/table.js";
-import { theme } from "../../terminal/theme.js";
-import { parseTimeoutMsOrExit, resolveUpdateRoot, type UpdateStatusOptions } from "./shared.js";
+import type { UpdateStatusOptions } from "./shared.js";
 
-function formatGitStatusLine(params: {
-  branch: string | null;
-  tag: string | null;
-  sha: string | null;
-}): string {
-  const shortSha = params.sha ? params.sha.slice(0, 8) : null;
-  const branch = params.branch && params.branch !== "HEAD" ? params.branch : null;
-  const tag = params.tag;
-  const parts = [
-    branch ?? (tag ? "detached" : "git"),
-    tag ? `tag ${tag}` : null,
-    shortSha ? `@ ${shortSha}` : null,
-  ].filter(Boolean);
-  return parts.join(" · ");
-}
+const VERIFIED_INSTALLER =
+  "curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash";
 
 export async function updateStatusCommand(opts: UpdateStatusOptions): Promise<void> {
-  const timeoutMs = parseTimeoutMsOrExit(opts.timeout);
-  if (timeoutMs === null) {
-    return;
-  }
-
-  const root = await resolveUpdateRoot();
-  const configSnapshot = await readConfigFileSnapshot();
-  const configChannel = configSnapshot.valid
-    ? normalizeUpdateChannel(configSnapshot.config.update?.channel)
-    : null;
-
-  const update = await checkUpdateStatus({
-    root,
-    timeoutMs: timeoutMs ?? 3500,
-    fetchGit: true,
-    includeRegistry: true,
-  });
-
-  const channelInfo = resolveUpdateChannelDisplay({
-    configChannel,
-    installKind: update.installKind,
-    gitTag: update.git?.tag ?? null,
-    gitBranch: update.git?.branch ?? null,
-  });
-  const channelLabel = channelInfo.label;
-
-  const gitLabel =
-    update.installKind === "git"
-      ? formatGitStatusLine({
-          branch: update.git?.branch ?? null,
-          tag: update.git?.tag ?? null,
-          sha: update.git?.sha ?? null,
-        })
-      : null;
-
-  const updateAvailability = resolveUpdateAvailability(update, { channel: channelInfo.channel });
-  const updateLine = formatUpdateOneLiner(update, { channel: channelInfo.channel }).replace(
-    /^Update:\s*/i,
-    "",
-  );
-
+  const message =
+    "This Node/package runtime is not the managed lifecycle status authority; run `fased update status` through the installed launcher or repair it with the verified public installer.";
   if (opts.json) {
     defaultRuntime.log(
-      JSON.stringify(
-        {
-          update,
-          channel: {
-            value: channelInfo.channel,
-            source: channelInfo.source,
-            label: channelLabel,
-            config: configChannel,
-          },
-          availability: updateAvailability,
-        },
-        null,
-        2,
-      ),
+      JSON.stringify({
+        status: "repair-required",
+        reason: "managed-launcher-required",
+        message,
+        installer: VERIFIED_INSTALLER,
+      }),
     );
-    return;
+  } else {
+    defaultRuntime.error(`${message}\nInstaller: ${VERIFIED_INSTALLER}`);
   }
-
-  const tableWidth = Math.max(60, (process.stdout.columns ?? 120) - 1);
-  const installLabel =
-    update.installKind === "git"
-      ? `git (${update.root ?? "unknown"})`
-      : update.installKind === "package"
-        ? update.packageManager
-        : "unknown";
-
-  const rows = [
-    { Item: "Install", Value: installLabel },
-    { Item: "Channel", Value: channelLabel },
-    ...(gitLabel ? [{ Item: "Git", Value: gitLabel }] : []),
-    {
-      Item: "Update",
-      Value: updateAvailability.available ? theme.warn(`available · ${updateLine}`) : updateLine,
-    },
-  ];
-
-  defaultRuntime.log(theme.heading("Fased Agent update status"));
-  defaultRuntime.log("");
-  defaultRuntime.log(
-    renderTable({
-      width: tableWidth,
-      columns: [
-        { key: "Item", header: "Item", minWidth: 10 },
-        { key: "Value", header: "Value", flex: true, minWidth: 24 },
-      ],
-      rows,
-    }).trimEnd(),
-  );
-  defaultRuntime.log("");
-
-  const updateHint = formatUpdateAvailableHint(update, { channel: channelInfo.channel });
-  if (updateHint) {
-    defaultRuntime.log(theme.warn(updateHint));
-  }
+  defaultRuntime.exit(1);
 }

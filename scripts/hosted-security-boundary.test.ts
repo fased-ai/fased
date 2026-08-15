@@ -3,21 +3,14 @@ import { describe, expect, it } from "vitest";
 
 const read = (path: string) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 const install = read("../install.sh");
-const managed = read("./start-managed.sh");
 const networkAdmin = read("./fased-signer-network-hosting.sh");
 const onboardingHostSecurity = read("../src/wizard/onboarding.host-security.ts");
 const targetAdapter = read("../tools/fased-lifecycled/platform/target_adapter.go");
 const networkPolicy = read("../tools/fased-lifecycled/platform/network_policy.go");
 const bootstrap = read("../tools/fased-lifecycled/cmd/fased-bootstrap/main.go");
+const bootstrapRootChain = read("../tools/fased-lifecycled/cmd/fased-bootstrap/root_chain.go");
 const bootstrapRoute = read("../tools/fased-lifecycled/cmd/fased-bootstrap/route.go");
-
-function sliceBetween(source: string, start: string, end: string): string {
-  const startIndex = source.indexOf(start);
-  const endIndex = source.indexOf(end, startIndex + start.length);
-  expect(startIndex).toBeGreaterThanOrEqual(0);
-  expect(endIndex).toBeGreaterThan(startIndex);
-  return source.slice(startIndex, endIndex);
-}
+const rootHead = read("../tools/fased-lifecycled/trust/root_head.go");
 
 describe("hosted signer security boundary", () => {
   it("enters privileged Hosting setup only through an immutable attested Go bundle", () => {
@@ -28,9 +21,15 @@ describe("hosted signer security boundary", () => {
     expect(install).toContain('[[ "$actual_sha256" == "$bootstrap_sha256" ]]');
     expect(install).toContain('install -m 0555 "$download" "$bootstrap"');
     expect(install).toContain('"${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"');
-    expect(bootstrap).toContain("trust.VerifyInitialRoot");
-    expect(bootstrap).toContain("trust.VerifyRootRotation");
+    expect(bootstrapRootChain).toContain("trust.VerifyInitialRoot");
+    expect(bootstrapRootChain).toContain("trust.VerifyRootRotation");
+    expect(bootstrapRootChain).toContain("persistTrustedRoot");
+    expect(bootstrapRootChain).toContain("witnessed lifecycle root rotation");
     expect(bootstrap).toContain("trust.VerifyAttestedReleaseIndex");
+    expect(bootstrapRoute).toContain("verifyAttestedRootHead");
+    expect(bootstrapRoute).toContain("ReleaseIndexSHA256");
+    expect(rootHead).toContain("maxRootHeadLifetime");
+    expect(rootHead).toContain("refs/heads/main");
     expect(bootstrapRoute).toMatch(
       /productionReleaseBase\s*=\s*"https:\/\/github\.com\/fased-ai\/fased\/releases\/download"/u,
     );
@@ -53,44 +52,11 @@ describe("hosted signer security boundary", () => {
     expect(bootstrapRoute).toContain("FASED_HOST_ROOT_PREPARED=1");
   });
 
-  it("cold starts use the external system signer and never start a hosted broker", () => {
-    const startup = sliceBetween(
-      managed,
-      "HOSTED_ROOT_SIGNER=0",
-      'if [[ -f "$ZROK_MONITOR_PID_FILE" ]]',
-    );
-    expect(startup).toContain("HOSTED_ROOT_SIGNER=1");
-    expect(startup).toContain('SIGNERD_SOCKET="/run/fased-signerd/app.sock"');
-    expect(startup).toContain("elif should_start_signerd");
-    const hostedBranch = sliceBetween(
-      startup,
-      'if [[ "${FASED_HOST_PROFILE:-}" == "hosting" || "${FASED_PROTECTED_LOCAL:-0}" == "1" ]]',
-      "elif should_start_signerd",
-    );
-    expect(hostedBranch).not.toContain("start_signerd_process");
-    expect(hostedBranch).not.toContain("start_signer_broker");
-  });
-
-  it("uses the root-verified Tailscale route without installing a zrok tunnel", () => {
-    expect(managed).toContain('if [[ "${FASED_HOST_PROFILE:-}" == "hosting" ]]');
-    expect(managed).toContain(
-      "Hosting uses its root-verified private Tailscale Serve route; no zrok tunnel is started.",
-    );
+  it("uses the root-verified Tailscale route without a Node startup owner", () => {
     expect(networkPolicy).toContain("Tailscale binary must use a fixed system path");
     expect(networkPolicy).toContain("Tailscale is not ready");
-  });
-
-  it("never imports legacy wallet key material into managed startup", () => {
-    const envLoader = sliceBetween(
-      managed,
-      "load_wallet_signer_env_file()",
-      "clear_legacy_wallet_key_env()",
-    );
-    expect(envLoader).not.toContain("grep -E '^export FASED_WALLET_' \"$SIGNERD_ENV_FILE\"");
-    expect(envLoader).not.toContain("PASSPHRASE");
-    expect(envLoader).not.toContain("PRIVATE_KEY");
-    expect(managed).toContain("FASED_WALLET_SOLANA_KEYSTORE_PATH__*");
-    expect(managed).toContain("FASED_WALLET_MNEMONIC__*");
+    expect(targetAdapter).toContain("Environment=FASED_HOST_PROFILE=%s");
+    expect(targetAdapter).toContain("Environment=FASED_RUNTIME_SOURCE=go-lifecycle"); // pragma: allowlist secret
   });
 
   it("keeps hosted network activation root-only and stdin-bound", () => {

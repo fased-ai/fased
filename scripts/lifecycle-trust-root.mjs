@@ -116,8 +116,7 @@ export function parseLifecycleRootEnvelope(value, now = Date.now()) {
   if (
     issuedAt.milliseconds >= expiresAt.milliseconds ||
     expiresAt.milliseconds - issuedAt.milliseconds > MAX_ROOT_VALIDITY_MS ||
-    now < issuedAt.milliseconds ||
-    now > expiresAt.milliseconds
+    (now !== null && (now < issuedAt.milliseconds || now >= expiresAt.milliseconds))
   ) {
     failTrust("lifecycle root metadata is stale or has an invalid validity window");
   }
@@ -166,6 +165,19 @@ export function parseLifecycleRootEnvelope(value, now = Date.now()) {
     releaseAuthority,
     revocations,
   });
+}
+
+export function requireCurrentLifecycleRoot(root, now = Date.now()) {
+  if (
+    !root ||
+    typeof now !== "number" ||
+    !Number.isFinite(now) ||
+    now < root.issuedAt.milliseconds ||
+    now >= root.expiresAt.milliseconds
+  ) {
+    failTrust("final lifecycle root metadata is not currently valid");
+  }
+  return root;
 }
 
 function requireRootThreshold(root, verified) {

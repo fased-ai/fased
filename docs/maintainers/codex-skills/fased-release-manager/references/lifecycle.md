@@ -29,9 +29,22 @@ launcher owns future update entry. Users never manage Node, npm, pnpm, Git, Go,
 GitHub CLI, internal paths, units, or recovery journals.
 
 An explicit `--release <tag>` must resolve completely from that immutable
-GitHub Release. A channel endpoint or npm dist-tag may suggest a tag only as an
-untrusted hint; it cannot be a trust root or mandatory dependency. Quiet and
-verbose modes change output only.
+GitHub Release. A channel selector must resolve through the signed monotonic
+release record inside the Go trust boundary. GitHub release listings and npm
+dist-tags are neither managed discovery authorities nor dependencies. Quiet
+and verbose modes change output only.
+
+The protected publisher exposes the exact immutable release first, then
+advances the predictable `fased-channel-<channel>-v1` release with the exact
+already-attested root/index pair and a short-lived attested root-head witness.
+The witness positively binds the latest root version/digest and exact index
+digest; HTTP absence never defines the end of a root chain. Protected main
+refreshes that witness every six hours with a 36-hour lifetime, while clients
+reject stale, missing, replayed-below-floor, or digest-mismatched witnesses.
+The publisher serializes per channel, rejects sequence or security-epoch
+rollback, stages replacement pairs before renaming them, and verifies public
+readback. An interrupted channel transaction is fail-closed and retryable; it
+never rebuilds or republishes candidate bytes.
 
 Always distinguish `documented`, `implemented`, and `proven`. The canonical
 contract, source inspection, and a literal enforcing receipt are different
@@ -61,6 +74,13 @@ The installed lifecycle host is the only product root mutation owner.
 Application generations never provide a root controller or root executable.
 The Go signer exclusively owns keys, Wallet policy, network identity, audit and
 signing.
+
+The fixed installed launcher routes both `fased update` and
+`fased update status` to the Go bootstrap before replaceable Node application
+bytes start. Direct Node/package `fased update` is a non-mutating repair
+redirect, and Gateway `update.run` is unavailable. The only source updater is
+the explicitly developer-only `fased dev update-source`, and it must prove a
+non-managed Git checkout before entering source mutation code.
 
 ## Transaction
 
@@ -110,8 +130,10 @@ explicit repair for ambiguous residue. Unknown-newer state fails unchanged;
 lower release sequence is rejected.
 
 Legacy JavaScript mutation owners and candidate root-controller workers must
-remain unreachable and be deleted after their replacement passes the same
-branch proof. Never dual-write one installation.
+remain unreachable only until their replacement passes the same branch proof,
+then be physically deleted. Never dual-write one installation. Compatibility
+readers may remain only for a named supported predecessor topology and must not
+provide a second managed mutation route.
 
 ## Required local proof
 

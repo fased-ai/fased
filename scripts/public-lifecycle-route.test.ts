@@ -24,13 +24,16 @@ describe("D7 public lifecycle routing", () => {
     const launcher = await source("tools/fased-lifecycled/platform/cli_launcher.go");
     const route = await source("tools/fased-lifecycled/cmd/fased-bootstrap/route.go");
     expect(launcher).toContain("/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap");
-    expect(launcher).toContain("managed_update=0");
+    expect(launcher).toContain('managed_operation=""');
     expect(launcher).toContain('[[ "${1:-}" == "--update" ]]');
-    expect(launcher.indexOf("managed_update=0")).toBeLessThan(
+    expect(launcher).toContain('managed_operation="status"');
+    expect(launcher.indexOf('managed_operation=""')).toBeLessThan(
       launcher.indexOf('current="$install_root/current"'),
     );
-    expect(route).toContain("discoverPublicReleaseVersion");
-    expect(route).toContain("api.github.com/repos/fased-ai/fased/releases");
+    expect(route).toContain("discoverSignedChannelRelease");
+    expect(route).toContain("productionChannelReleasePrefix");
+    expect(route).not.toContain("discoverPublicReleaseVersion");
+    expect(route).not.toContain("api.github.com/repos/fased-ai/fased/releases");
     expect(route).not.toContain("registry.npmjs.org");
   });
 

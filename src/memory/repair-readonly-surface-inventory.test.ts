@@ -218,7 +218,6 @@ describe("memory repair read-only surface inventory", () => {
         debugModels: [],
         debugModelCatalogStatus: null,
         debugCommandsCatalog: null,
-        debugUpdateStatus: null,
         debugPluginsMarketplace: null,
         debugDiagnosticsStability: null,
         debugMemoryInventory: null,

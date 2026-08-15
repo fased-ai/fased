@@ -10,7 +10,7 @@ if [[ -z "$host" ]]; then
   exit 2
 fi
 
-remote='export PATH="$HOME/.fased/bin:$HOME/.fased/install-cache/npm-global/bin:$PATH"; fased gateway restart >/dev/null; for attempt in $(seq 1 30); do status="$(fased gateway status 2>&1 || true)"; if grep -q "RPC probe: ok" <<<"$status"; then break; fi; sleep 1; done; sudo -n journalctl -u fased-gateway.service --since "2 minutes ago" --no-pager'
+remote='export PATH="$HOME/.fased/bin:$PATH"; fased gateway restart >/dev/null; for attempt in $(seq 1 30); do status="$(fased gateway status 2>&1 || true)"; if grep -q "RPC probe: ok" <<<"$status"; then break; fi; sleep 1; done; sudo -n journalctl -u fased-gateway.service --since "2 minutes ago" --no-pager'
 output="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$remote")"
 printf '%s\n' "$output"
 

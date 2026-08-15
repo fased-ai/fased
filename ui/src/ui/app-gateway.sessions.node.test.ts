@@ -115,7 +115,6 @@ function createHost() {
     refreshSessionsAfterChat: new Set<string>(),
     execApprovalQueue: [],
     execApprovalError: null,
-    updateAvailable: null,
   } as unknown as Parameters<typeof handleGatewayEvent>[0];
 }
 

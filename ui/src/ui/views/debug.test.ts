@@ -344,53 +344,6 @@ describe("renderDebug", () => {
             },
           ],
         },
-        updateStatus: {
-          ok: true,
-          update: {
-            root: "/tmp/fased-agent",
-            installKind: "git",
-            packageManager: "pnpm",
-            git: {
-              root: "/tmp/fased-agent",
-              sha: "abcdef123456",
-              tag: null,
-              branch: "main",
-              upstream: "origin/main",
-              dirty: false,
-              ahead: 0,
-              behind: 0,
-              fetchOk: true,
-            },
-            deps: {
-              manager: "pnpm",
-              status: "ok",
-              lockfilePath: "/tmp/fased-agent/pnpm-lock.yaml",
-              markerPath: "/tmp/fased-agent/node_modules/.modules.yaml",
-            },
-            registry: {
-              latestVersion: "0.1.1",
-            },
-          },
-          availability: {
-            available: false,
-            hasGitUpdate: false,
-            hasRegistryUpdate: false,
-            latestVersion: null,
-            gitBehind: 0,
-          },
-          channel: {
-            channel: "stable",
-            source: "config",
-            label: "Stable",
-            config: "stable",
-          },
-          probes: {
-            fetchGit: false,
-            includeRegistry: false,
-            timeoutMs: 3500,
-          },
-          summary: "Update: git main · up to date · npm latest 0.1.1 · deps ok",
-        },
         diagnosticsStability: {
           generatedAt: "2026-04-30T00:00:00.000Z",
           capacity: 1000,
@@ -628,12 +581,7 @@ describe("renderDebug", () => {
     expect(text).toContain("provider-catalog.error");
     expect(text).toContain("Command Catalog");
     expect(text).toContain("status");
-    expect(text).toContain("Update Status");
-    expect(text).toContain("Update: git main");
-    expect(text).toContain("channel source");
-    expect(text).toContain("Stable");
-    expect(text).toContain("Dependencies");
-    expect(text).toContain("pnpm · ok");
+    expect(text).not.toContain("Update Status");
     expect(text).toContain("Gateway Startup");
     expect(text).toContain("plugins.load");
     expect(text).toContain("Strict-Agentic Policy");
@@ -772,7 +720,7 @@ describe("renderDebug", () => {
           response: {
             status: "denied",
             stage: "operator-approval",
-            requestFingerprint: "1234567890abcdef1234567890abcdef",
+            requestFingerprint: "1234567890abcdef1234567890abcdef", // pragma: allowlist secret
             reasons: ["ACPX push-test execution requires explicit operator confirmation"],
             safeSummary: {
               nodeId: "ios-node-1",
@@ -874,7 +822,7 @@ describe("renderDebug", () => {
     vi.stubGlobal("navigator", { language: "en-US" });
     const { renderDebug } = await import("./debug.ts");
     const secretPath = "/private/fased/workspaces/customer-alpha/memory/transcript-secret.md";
-    const secretTranscript = "SECRET_TRANSCRIPT_BODY should never render";
+    const secretTranscript = "SECRET_TRANSCRIPT_BODY should never render"; // pragma: allowlist secret
     const text = flattenTemplateText(
       renderDebugForTest(renderDebug, {
         loading: false,
@@ -956,7 +904,7 @@ describe("renderDebug", () => {
     const { renderDebug } = await import("./debug.ts");
     const secretWorkspace = "/private/fased/workspaces/customer-alpha";
     const secretPath = `${secretWorkspace}/memory/transcript-secret.md`;
-    const secretTranscript = "SECRET_TRANSCRIPT_BODY should never render";
+    const secretTranscript = "SECRET_TRANSCRIPT_BODY should never render"; // pragma: allowlist secret
     const unsafeFields = {
       body: secretTranscript,
       transcript: secretTranscript,

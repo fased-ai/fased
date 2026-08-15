@@ -7,8 +7,10 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,6 +186,50 @@ func TestGitHubArtifactAttestationVerificationBindsExactAuthority(t *testing.T) 
 			mutation.edit(&candidate)
 			if _, err := verifyGitHubArtifactAttestation(trusted, bundleJSON, candidate); err == nil {
 				t.Fatal("mutated authority was accepted")
+			}
+		})
+	}
+}
+
+func TestRootHeadRequiresShortLivedProtectedWitness(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	commit := strings.Repeat("b", 40)
+	head := RootHead{
+		SchemaVersion: 1, Type: rootHeadType, Channel: "beta",
+		RootVersion: 3, RootSHA256: strings.Repeat("a", 64),
+		ReleaseIndexSHA256: strings.Repeat("c", 64), ReleaseVersion: "0.1.76-rc.90",
+		ReleaseSequence: 90, SecurityEpoch: 7, IndexCommit: commit,
+		WitnessRef: githubArtifactAttestationRefPrefix + "0.1.76-rc.90", WitnessCommit: commit,
+		IssuedAt: now.Add(-time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+	}
+	data, err := json.Marshal(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded, err := DecodeRootHead(data, now); err != nil || decoded.RootVersion != 3 {
+		t.Fatalf("valid root-head was rejected: decoded=%+v err=%v", decoded, err)
+	}
+
+	mutations := []struct {
+		name string
+		edit func(*RootHead)
+	}{
+		{"expired", func(candidate *RootHead) { candidate.ExpiresAt = now.Format(time.RFC3339) }},
+		{"too long", func(candidate *RootHead) { candidate.ExpiresAt = now.Add(49 * time.Hour).Format(time.RFC3339) }},
+		{"feature ref", func(candidate *RootHead) { candidate.WitnessRef = "refs/heads/feature" }},
+		{"tag commit mismatch", func(candidate *RootHead) { candidate.WitnessCommit = strings.Repeat("d", 40) }},
+		{"channel mismatch", func(candidate *RootHead) { candidate.Channel = "stable" }},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			candidate := head
+			mutation.edit(&candidate)
+			candidateJSON, marshalErr := json.Marshal(candidate)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if _, decodeErr := DecodeRootHead(candidateJSON, now); decodeErr == nil {
+				t.Fatal("unsafe root-head was accepted")
 			}
 		})
 	}

@@ -40,8 +40,8 @@ func verifyGatewayReadiness(statusCode int, body []byte, target model.Generation
 	if statusCode != http.StatusOK || !payload.OK || !payload.Ready || payload.Status != "ready" {
 		return engine.GatewayReceipt{}, errors.New("Gateway did not report ready")
 	}
-	if payload.RuntimeSource != "managed-package" && payload.RuntimeSource != "packaged-runtime" {
-		return engine.GatewayReceipt{}, fmt.Errorf("Gateway runtime source %q is not a verified package", payload.RuntimeSource)
+	if payload.RuntimeSource != "go-lifecycle" {
+		return engine.GatewayReceipt{}, fmt.Errorf("Gateway runtime source %q is not the Go lifecycle generation", payload.RuntimeSource)
 	}
 	if payload.Version != target.Version || payload.Generation == nil || payload.Generation.SchemaVersion != 1 || payload.Generation.GenerationID != target.ID || payload.Generation.Version != target.Version || payload.Generation.ReleaseCommit != target.Commit {
 		return engine.GatewayReceipt{}, fmt.Errorf("Gateway readiness identity does not match generation %s at %s", target.Version, target.Commit)

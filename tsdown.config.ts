@@ -113,8 +113,6 @@ const preservedCoreConfig = {
 const lightweightCliConfigs = [
   ["light-plugin-info", "src/cli/lightweight/plugin-info.ts"],
   ["light-plugin-doctor", "src/cli/lightweight/plugin-doctor.ts"],
-  ["light-update-status", "src/cli/lightweight/update-status.ts"],
-  ["light-update-precheck", "src/cli/lightweight/update-precheck.ts"],
 ].map(([name, entry]) => ({
   entry: { [name]: entry },
   clean: false,

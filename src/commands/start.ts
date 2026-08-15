@@ -1,11 +1,8 @@
 import { spawn } from "node:child_process";
-import { loadConfig } from "../config/config.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
-import { resolveGatewayStartupMode } from "./daemon-install-helpers.js";
-import { managedUpCommand } from "./managed-up.js";
 
 export type StartCommandOptions = {
-  mode?: "auto" | "managed" | "gateway";
+  mode?: "auto" | "gateway";
 };
 
 async function runGatewayForeground(runtime: RuntimeEnv): Promise<void> {
@@ -41,29 +38,10 @@ async function runGatewayForeground(runtime: RuntimeEnv): Promise<void> {
   runtime.log("Gateway stopped.");
 }
 
-function resolveStartMode(input: StartCommandOptions["mode"]): "managed" | "gateway" {
-  if (input === "managed") {
-    return "managed";
-  }
-  if (input === "gateway") {
-    return "gateway";
-  }
-  const config = loadConfig();
-  const startupMode = resolveGatewayStartupMode({
-    env: process.env,
-    config,
-  });
-  return startupMode === "managed-up" ? "managed" : "gateway";
-}
-
 export async function startCommand(
   options: StartCommandOptions = {},
   runtime: RuntimeEnv = defaultRuntime,
 ): Promise<void> {
-  const mode = resolveStartMode(options.mode);
-  if (mode === "managed") {
-    await managedUpCommand(runtime, { json: false });
-    return;
-  }
+  void options.mode;
   await runGatewayForeground(runtime);
 }

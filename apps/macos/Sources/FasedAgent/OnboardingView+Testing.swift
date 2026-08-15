@@ -32,9 +32,6 @@ extension OnboardingView {
             expected: true)
         view.showAdvancedConnection = true
         view.preferredGatewayID = gateway.stableID
-        view.cliInstalled = true
-        view.cliInstallLocation = "/usr/local/bin/fased"
-        view.cliStatus = "Installed"
         view.workspacePath = "/tmp/fased"
         view.workspaceStatus = "Saved workspace"
         view.state.connectionMode = .local

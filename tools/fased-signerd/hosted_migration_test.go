@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -8,7 +12,49 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	solana "github.com/gagliardetto/solana-go"
+	"golang.org/x/crypto/scrypt"
 )
+
+func writeHostedMigrationEnvelopeV1(t *testing.T, path, passphrase string, privateKey solana.PrivateKey) {
+	t.Helper()
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		t.Fatal(err)
+	}
+	key, err := scrypt.Key([]byte(passphrase), salt, 16384, 8, 1, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zeroBytes(key)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iv := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(iv); err != nil {
+		t.Fatal(err)
+	}
+	sealed := gcm.Seal(nil, iv, []byte(privateKey), nil)
+	ciphertext, tag := sealed[:len(sealed)-gcm.Overhead()], sealed[len(sealed)-gcm.Overhead():]
+	encode := base64.RawURLEncoding.EncodeToString
+	raw, err := json.Marshal(solanaEnvelopeV1{
+		Kind: "fased-solana-keypair", Version: 1, KDF: "scrypt", Cipher: "aes-256-gcm",
+		Salt: encode(salt), IV: encode(iv), AuthTag: encode(tag), Ciphertext: encode(ciphertext),
+		PublicKey: privateKey.PublicKey().String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func hostedMigrationCanonicalTempDirV1(t *testing.T) string {
 	t.Helper()
@@ -201,6 +247,42 @@ func TestOpenHostedMigrationSourceV1RejectsLinksAndLoosePermissions(t *testing.T
 	}
 	if _, err := openHostedMigrationSourceV1(source, []string{root}, allowedUIDs, "legacy material", 4); err == nil || !strings.Contains(err.Error(), "invalid size") {
 		t.Fatalf("expected oversized source rejection, got %v", err)
+	}
+}
+
+func TestValidateHostedMigrationSourceWalletV1DecryptsAndBindsPublicKey(t *testing.T) {
+	root := filepath.Join(hostedMigrationCanonicalTempDirV1(t), "wallet")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keystorePath := filepath.Join(root, "keystore-agent.v1.enc")
+	passphrasePath := filepath.Join(root, "passphrase")
+	privateKey := solana.NewWallet().PrivateKey
+	writeHostedMigrationEnvelopeV1(t, keystorePath, "correct passphrase", privateKey)
+	if err := os.WriteFile(passphrasePath, []byte("correct passphrase\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owner := currentHostedMigrationOwnerV1(t, keystorePath)
+	wallet := hostedMigrationWalletV1{
+		WalletID: "agent", ExpectedPublicKey: privateKey.PublicKey().String(),
+		KeystorePath: keystorePath, PassphrasePath: passphrasePath,
+	}
+	allowedUIDs := map[uint32]bool{owner.UID: true}
+	if err := validateHostedMigrationSourceWalletV1(wallet, []string{root}, allowedUIDs); err != nil {
+		t.Fatalf("valid encrypted legacy wallet did not pass non-mutating validation: %v", err)
+	}
+	if err := os.WriteFile(passphrasePath, []byte("wrong passphrase"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateHostedMigrationSourceWalletV1(wallet, []string{root}, allowedUIDs); err == nil || !strings.Contains(err.Error(), "decryption failed") {
+		t.Fatalf("wrong legacy passphrase crossed the validation boundary: %v", err)
+	}
+	if err := os.WriteFile(passphrasePath, []byte("correct passphrase"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wallet.ExpectedPublicKey = solana.NewWallet().PublicKey().String()
+	if err := validateHostedMigrationSourceWalletV1(wallet, []string{root}, allowedUIDs); err == nil || !strings.Contains(err.Error(), "public key does not match") {
+		t.Fatalf("wrong legacy wallet identity crossed the validation boundary: %v", err)
 	}
 }
 
@@ -397,6 +479,7 @@ func TestHostedMigrationMarkerIsAtomicStrictAndOwnerChecked(t *testing.T) {
 	marker := hostedMigrationMarkerV1{
 		SchemaVersion: hostedMigrationSchemaVersionV1,
 		PolicySHA256:  "sha256:" + strings.Repeat("a", 64),
+		Phase:         "prepared",
 	}
 	if err := writeHostedMigrationMarkerV1(path, marker); err != nil {
 		t.Fatal(err)
@@ -414,5 +497,13 @@ func TestHostedMigrationMarkerIsAtomicStrictAndOwnerChecked(t *testing.T) {
 	}
 	if _, _, err := readHostedMigrationMarkerV1(path, owner.UID+1); err == nil || !strings.Contains(err.Error(), "unexpected owner") {
 		t.Fatalf("expected owner mismatch rejection, got %v", err)
+	}
+	marker.Phase = "committed"
+	if err := replaceHostedMigrationMarkerV1(path, marker); err != nil {
+		t.Fatal(err)
+	}
+	stored, exists, err = readHostedMigrationMarkerV1(path, owner.UID)
+	if err != nil || !exists || stored != marker {
+		t.Fatalf("read committed marker: stored=%#v exists=%v err=%v", stored, exists, err)
 	}
 }

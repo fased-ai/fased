@@ -1,8 +1,5 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { resolveManagedScriptPath } from "../commands/managed-up.js";
-import { resolveStateDir } from "../config/paths.js";
 import { isBunRuntime, isNodeRuntime } from "./runtime-binary.js";
 
 type GatewayProgramArgs = {
@@ -11,7 +8,7 @@ type GatewayProgramArgs = {
 };
 
 type GatewayRuntimePreference = "auto" | "node" | "bun";
-export type GatewayStartupMode = "gateway" | "managed-up";
+export type GatewayStartupMode = "gateway" | "go-lifecycle";
 
 async function resolveCliEntrypointPathForService(): Promise<string> {
   const argv1 = process.argv[1];
@@ -243,42 +240,10 @@ export async function resolveGatewayProgramArguments(params: {
   env?: Record<string, string | undefined>;
 }): Promise<GatewayProgramArgs> {
   const startupMode = params.startupMode ?? "gateway";
-  const env = params.env ?? process.env;
-  const stateDir = resolveStateDir(env, os.homedir);
-  const manifestPath = env.FASED_MANAGED_INSTALL_MANIFEST || path.join(stateDir, "install.json");
-  try {
-    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
-      schemaVersion?: unknown;
-      service?: { launcher?: unknown };
-      runtime?: { currentLink?: unknown };
-    };
-    const launcher =
-      typeof manifest.service?.launcher === "string" ? manifest.service.launcher : "";
-    const currentLink =
-      typeof manifest.runtime?.currentLink === "string" ? manifest.runtime.currentLink : "";
-    if (manifest.schemaVersion === 1 && launcher && currentLink) {
-      await fs.access(launcher);
-      await fs.access(currentLink);
-      if (startupMode === "managed-up") {
-        return {
-          programArguments: ["/bin/bash", launcher, "managed"],
-          workingDirectory: currentLink,
-        };
-      }
-      return {
-        programArguments: ["/bin/bash", launcher, "gateway", "--port", String(params.port)],
-        workingDirectory: currentLink,
-      };
-    }
-  } catch {
-    // Legacy and source installs retain their existing service arguments.
-  }
-  if (startupMode === "managed-up") {
-    const scriptPath = resolveManagedScriptPath();
-    return {
-      programArguments: ["/bin/bash", scriptPath],
-      workingDirectory: path.resolve(path.dirname(scriptPath), ".."),
-    };
+  if (startupMode === "go-lifecycle") {
+    throw new Error(
+      "Managed Gateway services are installed only by the verified Go lifecycle installer.",
+    );
   }
   const gatewayArgs = ["gateway", "--port", String(params.port)];
   return resolveCliProgramArguments({
