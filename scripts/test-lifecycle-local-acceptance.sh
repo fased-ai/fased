@@ -25,6 +25,7 @@ ARTIFACT_CACHE_TARGET=""
 ARTIFACT_CACHE_LOCK_FD=""
 IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
 PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
+EXACT_CANDIDATE_REPLAY="${FASED_SYSTEMD_FIXTURE_EXACT_CANDIDATE_REPLAY:-0}"
 PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
 RELEASE_SEQUENCE="${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}"
 SECURITY_EPOCH="${FASED_LIFECYCLE_SECURITY_EPOCH:-1}"
@@ -181,6 +182,10 @@ run_container() {
 }
 [[ "$PREINSTALLED_TOOLS" == "0" || "$PREINSTALLED_TOOLS" == "1" ]] || {
   echo "FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS must be 0 or 1." >&2
+  exit 1
+}
+[[ "$EXACT_CANDIDATE_REPLAY" == "0" || "$EXACT_CANDIDATE_REPLAY" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_EXACT_CANDIDATE_REPLAY must be 0 or 1." >&2
   exit 1
 }
 [[ "$PARALLEL_SCENARIOS" == "0" || "$PARALLEL_SCENARIOS" == "1" ]] || {
@@ -579,7 +584,27 @@ if [[ "$PREINSTALLED_TOOLS" == "1" ]]; then
   chmod 0755 "$FIXTURE_PREINSTALLED_TOOLS_DIR/gh"
 fi
 FIXTURE_SOURCE_COMMIT="$COMMIT"
-if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
+if [[ "$EXACT_CANDIDATE_REPLAY" == "1" ]]; then
+  [[ -n "$ARTIFACT_DIR" &&
+    ! -e "$ARTIFACT_DIR/fased-branch-proof-x64.json" &&
+    ! -e "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]] || {
+    echo "Exact candidate replay requires an unmodified candidate artifact directory." >&2
+    exit 1
+  }
+  git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD || {
+    echo "Exact candidate replay requires a descendant fixture correction." >&2
+    exit 1
+  }
+  unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
+    "$ROOT_DIR" "$COMMIT" HEAD)"
+  [[ -z "$unexpected_fixture_changes" ]] || {
+    echo "Exact candidate replay rejected product changes:" >&2
+    printf '%s\n' "$unexpected_fixture_changes" >&2
+    exit 1
+  }
+  FIXTURE_SOURCE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  echo "exact candidate replay: product=$COMMIT fixture=$FIXTURE_SOURCE_COMMIT"
+elif [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]]; then
   git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD || {
     echo "A branch artifact can reuse only descendant fixture corrections." >&2

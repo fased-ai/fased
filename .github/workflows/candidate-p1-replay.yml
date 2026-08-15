@@ -57,12 +57,6 @@ jobs:
         with:
           node-version: 24.x
 
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: tools/fased-lifecycled/go.mod
-          cache-dependency-path: tools/fased-lifecycled/go.sum
-
       - name: Download exact prior-run candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -117,6 +111,16 @@ jobs:
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
             --source-ref "refs/tags/v$RELEASE_VERSION" \
             --deny-self-hosted-runners >/dev/null
+          test ! -e "$RUNNER_TEMP/fased-hosting-candidate/fased-candidate-fixture-overlay.json"
+          node scripts/release-artifact-set.mjs verify \
+            --directory "$RUNNER_TEMP/fased-hosting-candidate" \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT" \
+            --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --workflow-run-id "$SOURCE_RUN_ID"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$MANAGED_PREDECESSOR_VERSION")"
           local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg managed "$MANAGED_PREDECESSOR_VERSION" \
@@ -126,17 +130,11 @@ jobs:
           printf 'local_predecessors=%s\n' "$local_predecessors" >>"$GITHUB_OUTPUT"
           printf 'hosting_predecessors=%s\n' "$hosting_predecessors" >>"$GITHUB_OUTPUT"
 
-      - name: Create non-publishable exact-inventory trust overlay
-        run: >-
-          bash scripts/prepare-candidate-fixture-trust.sh
-          "$RUNNER_TEMP/fased-hosting-candidate"
-          "$RUNNER_TEMP/fased-p1-replay-candidate"
-
-      - name: Upload digest-bound replay candidate
+      - name: Upload exact unmodified replay candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fased-p1-replay-candidate
-          path: ${{ runner.temp }}/fased-p1-replay-candidate/
+          path: ${{ runner.temp }}/fased-hosting-candidate/
           if-no-files-found: error
           retention-days: 7
 
@@ -160,6 +158,7 @@ jobs:
         env:
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-p1-replay-candidate
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_SYSTEMD_FIXTURE_EXACT_CANDIDATE_REPLAY: "1"
           FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
           FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
           FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
@@ -206,6 +205,7 @@ jobs:
         env:
           FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-p1-replay-candidate
           FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
+          FASED_SYSTEMD_FIXTURE_EXACT_CANDIDATE_REPLAY: "1"
           FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ steps.scenario.outputs.value }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
           FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS: ${{ matrix.predecessor.installationClass }}
