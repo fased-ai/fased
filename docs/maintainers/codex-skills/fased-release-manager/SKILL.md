@@ -154,10 +154,24 @@ package version it inherits.
 
 - Never duplicate a running command or rerun an unchanged failure.
 - Correct and rerun only the first failed predicate. Stop after it fails twice.
+- Treat a workflow timeout as an emergency ceiling, never as the expected wait.
+  Before starting a long proof, name each phase, its independently observed
+  progress signal, and the shortest inactivity budget justified by a passing
+  cold-run baseline. Diagnostic branch proofs should normally finish within 15
+  minutes; any longer ceiling or any inactivity budget above 120 seconds needs
+  a recorded baseline and explicit reason.
+- Run one same-runner proof only after focused local and protected PR checks pass,
+  and only once per materially changed source commit. On failure, preserve and
+  inspect its receipt immediately before editing. Never increase a timer or
+  restart a quiet job without new causal evidence.
 - Release archives use separately bounded raw-tar and gzip phases in one private
   transaction directory. Close, verify, and fsync raw tar before compression;
   close, verify, and fsync gzip before no-clobber publication. A byte counter
   upstream of a backpressured transform is not independent liveness evidence.
+- Archive receipts must report the validated manifest count, completed count,
+  active path/type/declared size, active-entry bytes, and destination bytes.
+  Publish the small receipt and log on failure; never retain or upload the
+  unpublished candidate-shaped archive merely to diagnose it.
 - Cache immutable artifacts, toolchains, dependencies, images, and predecessor
   assets—not installations, journals, Wallets, or signer state.
 - Explain any command expected to exceed one minute before starting it.
