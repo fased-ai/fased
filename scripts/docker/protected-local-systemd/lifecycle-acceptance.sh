@@ -1080,7 +1080,7 @@ function selectFixtureTrustAsset(asset) {
     : asset;
 }
 
-function handleRequest(request, response) {
+function handleGithubRequest(request, response) {
   if (request.method === "GET" && request.url?.startsWith("/@fased%2ffased")) {
     const selectedVersion = fs.readFileSync(
       "/var/lib/fased-protected-local-fixture/selected-target-version",
@@ -1125,6 +1125,14 @@ function handleRequest(request, response) {
     serveFile(response, selected);
     return;
   }
+  response.writeHead(404).end();
+}
+
+function handleRpcRequest(request, response) {
+  if (request.method !== "POST") {
+    response.writeHead(404).end();
+    return;
+  }
   let raw = "";
   request.setEncoding("utf8");
   request.on("data", (chunk) => { raw += chunk; });
@@ -1146,14 +1154,14 @@ function handleRequest(request, response) {
   });
 }
 
-http.createServer(handleRequest).listen(port, "127.0.0.1");
+http.createServer(handleRpcRequest).listen(port, "127.0.0.1");
 https
   .createServer(
     {
       key: fs.readFileSync("/var/lib/fased-protected-local-fixture/tls/github.key"),
       cert: fs.readFileSync("/var/lib/fased-protected-local-fixture/tls/github.crt"),
     },
-    handleRequest,
+    handleGithubRequest,
   )
   .listen(443, "127.0.0.1");
 EOF_RPC
@@ -1207,6 +1215,21 @@ wait_for_service fased-fixture-solana-rpc.service
 wait_for_rpc \
   "http://127.0.0.1:$rpc_port" \
   "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" # pragma: allowlist secret
+test "$(
+  curl -sS -o /tmp/fixture-root-v1.json -w '%{http_code}' \
+    "https://github.com/fased-ai/fased/releases/download/v${version}/fased-lifecycle-root-v1.json"
+)" = "200"
+jq -e '.signed.version == 1' /tmp/fixture-root-v1.json >/dev/null
+test "$(
+  curl -sS -o /tmp/fixture-absent-root-v2.json -w '%{http_code}' \
+    "https://github.com/fased-ai/fased/releases/download/fased-channel-${target_channel}-v1/fased-lifecycle-root-v2.json"
+)" = "404"
+test ! -s /tmp/fixture-absent-root-v2.json
+test "$(
+  curl -sS -o /tmp/fixture-rpc-get.json -w '%{http_code}' \
+    "http://127.0.0.1:$rpc_port"
+)" = "404"
+test ! -s /tmp/fixture-rpc-get.json
 
 cat >/etc/sudoers.d/fased-protected-local-fixture <<'EOF_SUDOERS'
 testop ALL=(root) NOPASSWD: ALL

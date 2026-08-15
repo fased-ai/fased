@@ -196,10 +196,24 @@ describe("attested Go lifecycle artifact layout", () => {
       expect(runner).not.toContain("/lifecycle/v1");
     }
     expect(localRunner).toContain("fs.existsSync(path.join(releaseAssets, branchAsset))");
+    expect(localRunner).toContain("function handleGithubRequest(request, response)");
+    expect(localRunner).toContain("function handleRpcRequest(request, response)");
+    expect(localRunner).toContain("http.createServer(handleRpcRequest)");
+    expect(localRunner).toContain("handleGithubRequest,");
+    expect(localRunner).toContain(
+      "fased-channel-${target_channel}-v1/fased-lifecycle-root-v2.json",
+    );
+    expect(localRunner).toContain("/tmp/fixture-absent-root-v2.json");
+    expect(localRunner).toContain("/tmp/fixture-rpc-get.json");
     expect(hostingRunner).toContain("fs.existsSync(`/artifacts/${branchAsset}`)");
     expect(hostingRunner).toContain(String.raw`-f "/artifacts/\$branch_asset"`);
     expect(candidateTrustOverlay).not.toContain("gh release");
     expect(candidateTrustOverlay).not.toContain("git tag");
+    expect(localFixture).toContain("FASED_SYSTEMD_FIXTURE_EXACT_CANDIDATE_REPLAY");
+    expect(localFixture).toContain("Exact candidate replay rejected product changes:");
+    expect(localFixture).toContain(
+      "Exact candidate replay requires an unmodified candidate artifact directory.",
+    );
     for (const fixture of [localFixture, hostingFixture]) {
       expect(fixture).toContain("fased-candidate-fixture-overlay.json");
       expect(fixture).toContain("fased-candidate-original/$name");

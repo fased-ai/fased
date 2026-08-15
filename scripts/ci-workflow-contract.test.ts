@@ -962,13 +962,24 @@ describe("CI workflow routing", () => {
       name: "fased-hosting-candidate",
       "run-id": "${{ inputs.source_run_id }}",
     });
-    expect(replayText).toContain("scripts/prepare-candidate-fixture-trust.sh");
+    expect(replayText).toContain("scripts/release-artifact-set.mjs verify");
+    expect(replayText).toContain("Upload exact unmodified replay candidate");
+    expect(replayText).toContain(
+      'test ! -e "$RUNNER_TEMP/fased-hosting-candidate/fased-candidate-fixture-overlay.json"',
+    );
+    expect(replayText).not.toContain("scripts/prepare-candidate-fixture-trust.sh");
     expect(replayText).toContain('.conclusion == "failure"');
     for (const jobName of ["local-fresh", "local-update", "hosting"] as const) {
       const checkout = replay.jobs?.[jobName]?.steps?.find((step) =>
         usesAction(step, "actions/checkout"),
       );
       expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    }
+    for (const jobName of ["local-fresh", "local-update"] as const) {
+      const replayStep = replay.jobs?.[jobName]?.steps?.find((step) =>
+        step.run?.includes("scripts/test-lifecycle-local-acceptance.sh"),
+      );
+      expect(replayStep?.env?.FASED_SYSTEMD_FIXTURE_EXACT_CANDIDATE_REPLAY).toBe("1");
     }
     expect(replayText).not.toContain("pnpm build");
     expect(replayText).not.toContain("gh release create");
