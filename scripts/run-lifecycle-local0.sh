@@ -246,6 +246,18 @@ fail_local0() {
   exit 1
 }
 
+verify_release_predecessor_capsule_contract() {
+  local workflow="$ROOT_DIR/.github/workflows/hosted-runtime-release.yml"
+  grep -Fq -- "node scripts/build-canonical-managed-predecessor-capsule.mjs" "$workflow" ||
+    return 1
+  if grep -Fq -- "owner-local-predecessor-schema1" "$workflow"; then
+    return 1
+  fi
+  if grep -Fq -- "--previous-generation" "$workflow"; then
+    return 1
+  fi
+}
+
 verify_artifact() {
   local candidate="$1"
   local allow_fixture_descendant="${2:-0}"
@@ -498,6 +510,9 @@ run_concurrent() {
   current_lane=""
 }
 
+current_phase="release-workflow-predecessor-capsule-contract"
+verify_release_predecessor_capsule_contract ||
+  fail_local0 "The trusted release workflow retains a version-specific or obsolete predecessor capsule input."
 current_phase="artifact-resolution"
 resolve_or_build_artifact
 case "$MODE" in
