@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.91
+
+- Publish release archives through separate verified and fsynced raw-tar and
+  gzip phases before an atomic no-clobber commit.
+- Measure archive liveness at the downstream destination so active compression
+  and backpressure do not look like a stalled writer.
+
 ## 0.1.76-rc.90
 
 - Make the signed GitHub artifact and static Go lifecycle system the sole
