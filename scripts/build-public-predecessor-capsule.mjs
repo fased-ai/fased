@@ -99,7 +99,7 @@ function syntheticDeviceIdentity() {
 }
 
 function encodeBase58(bytes) {
-  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"; // pragma: allowlist secret
   let value = BigInt(`0x${Buffer.from(bytes).toString("hex")}`);
   let encoded = "";
   while (value > 0n) {

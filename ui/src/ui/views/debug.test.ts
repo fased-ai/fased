@@ -720,7 +720,7 @@ describe("renderDebug", () => {
           response: {
             status: "denied",
             stage: "operator-approval",
-            requestFingerprint: "1234567890abcdef1234567890abcdef",
+            requestFingerprint: "1234567890abcdef1234567890abcdef", // pragma: allowlist secret
             reasons: ["ACPX push-test execution requires explicit operator confirmation"],
             safeSummary: {
               nodeId: "ios-node-1",
@@ -822,7 +822,7 @@ describe("renderDebug", () => {
     vi.stubGlobal("navigator", { language: "en-US" });
     const { renderDebug } = await import("./debug.ts");
     const secretPath = "/private/fased/workspaces/customer-alpha/memory/transcript-secret.md";
-    const secretTranscript = "SECRET_TRANSCRIPT_BODY should never render";
+    const secretTranscript = "SECRET_TRANSCRIPT_BODY should never render"; // pragma: allowlist secret
     const text = flattenTemplateText(
       renderDebugForTest(renderDebug, {
         loading: false,
@@ -904,7 +904,7 @@ describe("renderDebug", () => {
     const { renderDebug } = await import("./debug.ts");
     const secretWorkspace = "/private/fased/workspaces/customer-alpha";
     const secretPath = `${secretWorkspace}/memory/transcript-secret.md`;
-    const secretTranscript = "SECRET_TRANSCRIPT_BODY should never render";
+    const secretTranscript = "SECRET_TRANSCRIPT_BODY should never render"; // pragma: allowlist secret
     const unsafeFields = {
       body: secretTranscript,
       transcript: secretTranscript,

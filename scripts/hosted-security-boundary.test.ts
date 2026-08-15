@@ -50,7 +50,7 @@ describe("hosted signer security boundary", () => {
     expect(networkPolicy).toContain("Tailscale binary must use a fixed system path");
     expect(networkPolicy).toContain("Tailscale is not ready");
     expect(targetAdapter).toContain("Environment=FASED_HOST_PROFILE=%s");
-    expect(targetAdapter).toContain("Environment=FASED_RUNTIME_SOURCE=go-lifecycle");
+    expect(targetAdapter).toContain("Environment=FASED_RUNTIME_SOURCE=go-lifecycle"); // pragma: allowlist secret
   });
 
   it("keeps hosted network activation root-only and stdin-bound", () => {

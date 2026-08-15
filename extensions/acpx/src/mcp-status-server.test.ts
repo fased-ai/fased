@@ -313,7 +313,7 @@ describe("createAcpxMcpStatusServer", () => {
       gatewayIdentityResolver: () => ({
         deviceId: "device-123",
         publicKey: "public-key-raw",
-        privateKey: "PRIVATE-KEY" as never,
+        privateKey: "PRIVATE-KEY" as never, // pragma: allowlist secret
       }),
       gatewayStatusResolver: () => ({
         gatewayStartup: {
@@ -405,7 +405,7 @@ describe("createAcpxMcpStatusServer", () => {
             sources: ["provider-index"],
           },
         ],
-        apiKey: "SECRET_API_KEY",
+        apiKey: "SECRET_API_KEY", // pragma: allowlist secret
       }),
       commandsListResolver: (params) => ({
         commands: [
@@ -431,7 +431,7 @@ describe("createAcpxMcpStatusServer", () => {
                         label: "GPT-5.2",
                       },
                     ],
-                    rawSecret: "SHOULD_NOT_LEAK",
+                    rawSecret: "SHOULD_NOT_LEAK", // pragma: allowlist secret
                   },
                 ]
               : undefined,

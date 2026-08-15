@@ -197,14 +197,14 @@ const FIELD_HELP_BASE: Record<string, string> = {
   "tools.web.search.enabled": "Enable the web_search tool.",
   "tools.web.search.provider":
     'Search provider id. Built-ins include "brave", "duckduckgo", "exa", "firecrawl", "gemini", "grok", "kimi", "perplexity", "searxng", and "tavily"; plugins can add more.',
-  "tools.web.search.apiKey": "Brave Search API key or SecretRef (fallback: BRAVE_API_KEY env var).",
+  "tools.web.search.apiKey": "Brave Search API key or SecretRef (fallback: BRAVE_API_KEY env var).", // pragma: allowlist secret
   "tools.web.search.maxResults": "Default number of results to return (1-10).",
   "tools.web.search.timeoutSeconds": "Timeout in seconds for web_search requests.",
   "tools.web.search.cacheTtlMinutes": "Cache TTL in minutes for web_search results.",
   "tools.web.search.duckduckgo.region": 'DuckDuckGo region such as "us-en" (optional).',
   "tools.web.search.duckduckgo.safeSearch":
     'DuckDuckGo safe search level: "strict", "moderate", or "off".',
-  "tools.web.search.exa.apiKey": "Exa API key or SecretRef (fallback: EXA_API_KEY env var).",
+  "tools.web.search.exa.apiKey": "Exa API key or SecretRef (fallback: EXA_API_KEY env var).", // pragma: allowlist secret
   "tools.web.search.exa.baseUrl": "Optional Exa-compatible base URL.",
   "tools.web.search.exa.type": 'Exa search type, usually "auto".',
   "tools.web.search.firecrawl.apiKey":
