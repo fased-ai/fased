@@ -32,6 +32,20 @@ topologies. If both fresh and stable-update are required, run them concurrently
 with isolated state. Reuse the artifact for rollback/retry, restart,
 preservation, and `Already current`. Fixture-only corrections cannot rebuild it.
 
+For an exact-runner packaging or archive proof, run one attempt per materially
+changed producer commit after focused local and protected PR checks pass. The job
+timeout is an emergency ceiling, not a planned wait: derive it from a cold-run
+baseline plus a small buffer and normally keep a diagnostic branch proof within
+15 minutes. Give each phase an independent destination-side progress signal and
+normally no more than 120 seconds of inactivity. A longer phase budget requires
+evidence that one valid entry or operation needs it.
+
+On archive failure, upload only the small JSON receipt and log with manifest
+count, completed count, active path/type/declared size, active-entry bytes, and
+destination bytes. Inspect that receipt immediately. Do not retry unchanged,
+raise the timer, rebuild candidate bytes, or wait for the job ceiling without a
+new causal correction.
+
 T2 is required only for changed root ownership, generated units, privileged
 sockets, controller handoff, signer isolation, or rollback across that boundary.
 Check `sudo -n true` once; if unavailable, report it and stop.
