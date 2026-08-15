@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 
 	"fased-lifecycled/engine"
 	"fased-lifecycled/model"
 )
+
+var hostedLegacyWalletEnvironment = regexp.MustCompile(`^FASED_WALLET_(?:(?:SOLANA_)?KEYSTORE_|PASSPHRASE|(?:SOLANA_)?PRIVATE_KEY|(?:SOLANA_)?RPC_URL)`)
 
 type GenerationManager interface {
 	GenerationPayloadPath(string) (string, error)
@@ -206,40 +209,88 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 }
 
 func canonicalGatewayConfigForTransaction(config Config, tx model.Transaction, data []byte) ([]byte, error) {
-	if config.Profile != model.ProfileHosting || tx.PlanAction != "BRIDGE_PUBLIC_STABLE" {
+	if config.Profile != model.ProfileHosting {
 		return data, nil
 	}
-	declared := false
-	for _, migration := range tx.Migrations {
-		if migration.State == "configuration" && migration.From == 0 && migration.To == 1 {
-			declared = true
-			break
-		}
+	bridge := tx.PlanAction == "BRIDGE_PUBLIC_STABLE"
+	signerMigration := transactionDeclaresMigration(tx, model.Migration{State: "signer", From: 1, To: 2})
+	if !bridge && !signerMigration {
+		return data, nil
 	}
-	if !declared {
+	if bridge && !transactionDeclaresMigration(tx, model.Migration{State: "configuration", From: 0, To: 1}) {
 		return nil, errors.New("Hosting public-stable bridge lacks its declared configuration migration")
 	}
 	var document map[string]any
 	if err := json.Unmarshal(data, &document); err != nil {
 		return nil, errors.New("Hosting public-stable Gateway configuration is invalid")
 	}
-	gateway, ok := document["gateway"].(map[string]any)
-	if !ok {
-		return nil, errors.New("Hosting public-stable Gateway configuration is missing")
+	changed := false
+	if bridge {
+		gateway, ok := document["gateway"].(map[string]any)
+		if !ok {
+			return nil, errors.New("Hosting public-stable Gateway configuration is missing")
+		}
+		mode, ok := gateway["mode"].(string)
+		if !ok || (mode != "remote" && mode != "local") {
+			return nil, errors.New("Hosting public-stable Gateway mode is unsupported")
+		}
+		if mode == "remote" {
+			gateway["mode"] = "local"
+			changed = true
+		}
 	}
-	mode, ok := gateway["mode"].(string)
-	if !ok || (mode != "remote" && mode != "local") {
-		return nil, errors.New("Hosting public-stable Gateway mode is unsupported")
+	if signerMigration {
+		normalizeHostedSignerConfiguration(document)
+		changed = true
 	}
-	if mode == "local" {
+	if !changed {
 		return data, nil
 	}
-	gateway["mode"] = "local"
 	encoded, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(encoded, '\n'), nil
+}
+
+func transactionDeclaresMigration(tx model.Transaction, want model.Migration) bool {
+	for _, migration := range tx.Migrations {
+		if migration == want {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeHostedSignerConfiguration(document map[string]any) {
+	wallet, _ := document["wallet"].(map[string]any)
+	if wallet == nil {
+		wallet = map[string]any{}
+		document["wallet"] = wallet
+	}
+	provider, _ := wallet["provider"].(map[string]any)
+	if provider == nil {
+		provider = map[string]any{}
+	}
+	provider["id"] = "local-socket-signer"
+	wallet["provider"] = provider
+	delete(wallet, "localSigner")
+	runtime, _ := wallet["runtime"].(map[string]any)
+	if runtime == nil {
+		runtime = map[string]any{}
+	}
+	runtime["enabled"] = true
+	runtime["mode"] = "external"
+	runtime["runtime"] = "external-custom"
+	wallet["runtime"] = runtime
+	delete(wallet, "keystore")
+	environment, _ := document["env"].(map[string]any)
+	variables, _ := environment["vars"].(map[string]any)
+	for key := range variables {
+		if hostedLegacyWalletEnvironment.MatchString(key) || key == "FASED_WALLET_PROVIDER" || strings.HasPrefix(key, "FASED_WALLET_LOCAL_SIGNER_") || key == "FASED_WALLET_SIGNER_STATE_DIR" || strings.HasPrefix(key, "FASED_WALLET_WEBAUTHN_") {
+			delete(variables, key)
+		}
+	}
 }
 
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction) error {
@@ -263,7 +314,7 @@ func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction)
 }
 
 func (adapter *TargetAdapter) PrepareState(_ context.Context, tx model.Transaction) (engine.ParticipantReceipt, string, error) {
-	prepared, err := adapter.TypedState.Prepare(tx.ID)
+	prepared, err := adapter.TypedState.Prepare(tx.ID, typedStateMutationOwners(adapter.Config, tx))
 	if err != nil {
 		return engine.ParticipantReceipt{}, "", err
 	}
@@ -274,6 +325,13 @@ func (adapter *TargetAdapter) PrepareState(_ context.Context, tx model.Transacti
 			PluginData: prepared.ParticipantDigests["plugin-data"], Signer: prepared.ParticipantDigests["signer"],
 		}}
 	return receipt, prepared.Digest, nil
+}
+
+func typedStateMutationOwners(config Config, tx model.Transaction) []string {
+	if config.Profile == model.ProfileHosting && transactionDeclaresMigration(tx, model.Migration{State: "signer", From: 1, To: 2}) {
+		return []string{filepath.Join(config.OwnerStateRoot, "wallet", "provider-registry.v1.json")}
+	}
+	return nil
 }
 
 func (adapter *TargetAdapter) StopTarget(ctx context.Context, _ model.Transaction) error {
@@ -678,6 +736,8 @@ Environment=FASED_VERSION=%s
 Environment=FASED_HOST_PROFILE=%s
 %sEnvironment=FASED_GATEWAY_PORT=%d
 Environment=FASED_WALLET_LOCAL_SIGNER_SOCKET=%s
+Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external
+Environment=FASED_WALLET_SIGNER_STATE_DIR=%s
 ExecStart=%s
 Restart=always
 RestartSec=1
@@ -696,7 +756,7 @@ WantedBy=multi-user.target
 `, adapter.Config.InstanceID, adapter.Identity.Services["signer"], adapter.Identity.Services["signer"],
 		adapter.Config.Gateway.UID, adapter.Config.Gateway.GID, adapter.Config.ConfigGroupName(), payload,
 		adapter.Config.OwnerHome(), adapter.Config.OwnerStateRoot,
-		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.InstallRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, target.ID, payload, target.Version, profileEnvironment(adapter.Config.Profile), protectedLocalEnvironment(adapter.Config.Profile, adapter.Config.InstanceID), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(),
+		adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, adapter.Config.InstallRoot, adapter.Config.OwnerStateRoot, adapter.Config.OwnerStateRoot, target.ID, payload, target.Version, profileEnvironment(adapter.Config.Profile), protectedLocalEnvironment(adapter.Config.Profile, adapter.Config.InstanceID), adapter.Config.GatewayPort, adapter.Config.ApplicationSocket(), signerState,
 		filepath.Join(payload, "bin/fased-gateway-launch"), dependencyMount, adapter.Config.OwnerStateRoot)
 	return map[string][]byte{
 		adapter.Identity.Services["signer"]: []byte(signer), adapter.Identity.Services["gateway"]: []byte(gateway),

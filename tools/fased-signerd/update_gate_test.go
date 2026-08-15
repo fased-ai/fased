@@ -70,3 +70,24 @@ func TestSignerLifecycleUpgradeRequiresControlSocketAndActiveTrustedGate(t *test
 		t.Fatalf("trusted lifecycle operation was blocked: %v", err)
 	}
 }
+
+func TestSignerLifecycleMigrationCrossesActiveGateOnlyOnControlSocket(t *testing.T) {
+	gatePath := filepath.Join(t.TempDir(), "active")
+	operations := []string{"v2.wallet.importLegacy", "v2.network.put"}
+	for _, operation := range operations {
+		if err := enforceApplicationUpdateGate(gatePath, operation, true, os.Geteuid(), os.Getegid()); err != nil {
+			t.Fatalf("explicit control migration %s was blocked without an active update: %v", operation, err)
+		}
+	}
+	if err := os.WriteFile(gatePath, []byte("paired-update\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range operations {
+		if err := enforceApplicationUpdateGate(gatePath, operation, false, os.Geteuid(), os.Getegid()); err == nil || !strings.Contains(err.Error(), "control socket") {
+			t.Fatalf("lifecycle migration %s crossed the active gate outside the control socket: %v", operation, err)
+		}
+		if err := enforceApplicationUpdateGate(gatePath, operation, true, os.Geteuid(), os.Getegid()); err != nil {
+			t.Fatalf("trusted control-socket lifecycle migration %s was blocked: %v", operation, err)
+		}
+	}
+}

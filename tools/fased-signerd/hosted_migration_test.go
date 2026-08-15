@@ -167,7 +167,7 @@ func TestParseHostedMigrationPolicyV1CompilesAutomaticRoleBaselines(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wallets) != 1 || wallets[0].Baseline == nil || wallets[0].Policy.BaselineVersion != 1 || wallets[0].Policy.Role != "agent" || wallets[0].PrimaryRPCURL != "https://rpc.example.test" {
+	if len(wallets) != 1 || wallets[0].Baseline == nil || wallets[0].Policy.Version != 1 || wallets[0].Policy.BaselineVersion != 1 || wallets[0].Policy.Role != "agent" || wallets[0].PrimaryRPCURL != "https://rpc.example.test" {
 		t.Fatalf("automatic role baseline was not compiled exactly: %#v", wallets)
 	}
 
@@ -181,6 +181,82 @@ func TestParseHostedMigrationPolicyV1CompilesAutomaticRoleBaselines(t *testing.T
 	if wallets[0].Baseline == nil || wallets[0].Policy.Role != "mining" || wallets[0].Policy.BaselineVersion != 1 ||
 		wallets[0].Policy.TypedSATPrograms || len(wallets[0].Policy.Operations) == 0 {
 		t.Fatalf("pre-launch Mining migration must receive its reviewed-use baseline: %#v", wallets[0])
+	}
+}
+
+func TestHostedMigrationImportRequestSelectsExactlyOnePolicyAuthority(t *testing.T) {
+	baselineWallets, err := parseHostedMigrationPolicyV1(func() []byte {
+		input := hostedMigrationPolicyFileV1{
+			SchemaVersion: hostedMigrationSchemaVersionV1,
+			Wallets: []hostedMigrationWalletInputV1{{
+				WalletID: "agent_primary", ExpectedPublicKey: "11111111111111111111111111111111",
+				KeystorePath:   "/home/app/.fased/wallet/keystore-agent.v1.enc",
+				PassphrasePath: "/home/app/.fased/wallet/passphrase", BaselineRole: "agent",
+			}},
+		}
+		encoded, marshalErr := json.Marshal(input)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		return encoded
+	}())
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineRequest := hostedMigrationLegacyImportRequestV1(baselineWallets[0], "/staged/key", "/staged/passphrase")
+	if baselineRequest.Baseline == nil || baselineRequest.Policy.Role != "" || len(baselineRequest.Policy.Operations) != 0 || len(baselineRequest.Policy.Programs) != 0 || len(baselineRequest.Policy.Assets) != 0 {
+		t.Fatalf("baseline migration request carried an ambiguous explicit policy: %#v", baselineRequest)
+	}
+	materialized := signerWalletPolicyResultV2{
+		Wallet: signerWalletRecordV2{
+			WalletID:  baselineWallets[0].WalletID,
+			PublicKey: baselineWallets[0].ExpectedPublicKey,
+		},
+		Policy: baselineWallets[0].Policy,
+	}
+	if err := verifyHostedMigrationWalletResultV1(materialized, baselineWallets[0]); err != nil {
+		t.Fatalf("materialized version-one role baseline did not verify: %v", err)
+	}
+	preStore := materialized
+	preStore.Policy.Version = 0
+	preStore.Policy, err = normalizeSignerPolicyV2(preStore.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyHostedMigrationWalletResultV1(preStore, baselineWallets[0]); err == nil {
+		t.Fatal("pre-store version-zero baseline was accepted as the durable migration policy")
+	}
+
+	explicitWallets, err := parseHostedMigrationPolicyV1(validHostedMigrationPolicyV1(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicitRequest := hostedMigrationLegacyImportRequestV1(explicitWallets[0], "/staged/key", "/staged/passphrase")
+	if explicitRequest.Baseline != nil || explicitRequest.Policy.Hash != explicitWallets[0].Policy.Hash {
+		t.Fatalf("explicit migration request did not carry its one bound policy: %#v", explicitRequest)
+	}
+}
+
+func TestHostedMigrationNetworkSetupDistinguishesUnconfiguredFromPreserved(t *testing.T) {
+	needsSetup, err := hostedMigrationNetworkNeedsSetupV1(
+		[]byte(`{"walletId":"agent_2","configured":false,"version":0,"ready":false}`),
+		"agent_2",
+	)
+	if err != nil || !needsSetup {
+		t.Fatalf("unconfigured signer network was treated as preserved: needs=%v err=%v", needsSetup, err)
+	}
+	needsSetup, err = hostedMigrationNetworkNeedsSetupV1(
+		[]byte(`{"walletId":"agent_2","configured":true,"version":1,"hash":"hmac-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ready":true}`),
+		"agent_2",
+	)
+	if err != nil || needsSetup {
+		t.Fatalf("configured signer network was not preserved: needs=%v err=%v", needsSetup, err)
+	}
+	if _, err := hostedMigrationNetworkNeedsSetupV1(
+		[]byte(`{"walletId":"other","configured":false,"version":0,"ready":false}`),
+		"agent_2",
+	); err == nil {
+		t.Fatal("network metadata rebound to another wallet was accepted")
 	}
 }
 

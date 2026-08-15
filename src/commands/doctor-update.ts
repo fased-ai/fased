@@ -28,8 +28,8 @@ async function detectFasedAgentGitCheckout(root: string): Promise<"git" | "not-g
     return "unknown";
   }
   if (res.code !== 0) {
-    // Avoid noisy "Update via package manager" notes when git is missing/broken,
-    // but do show it when this is clearly not a git checkout.
+    // Avoid noisy legacy-update notes when git is missing or broken, but do
+    // show the managed lifecycle instruction for a clear non-git install.
     if (res.stderr.toLowerCase().includes("not a git repository")) {
       return "not-git";
     }
@@ -139,7 +139,7 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
     note(
       [
         "This install is not a git checkout.",
-        `Run \`${formatCliCommand("fased update")}\` to update via your package manager (npm/pnpm), then rerun doctor.`,
+        `Managed installs update through the verified Go lifecycle: run \`${formatCliCommand("fased update")}\`, then rerun doctor.`,
       ].join("\n"),
       "Update",
     );

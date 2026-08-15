@@ -7,6 +7,32 @@ import { parse } from "yaml";
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 describe("version-neutral lifecycle acceptance", () => {
+  it("uses one cached tag-free LOCAL0 driver before release allocation", async () => {
+    const local0 = await readFile(resolve(repoRoot, "scripts/run-lifecycle-local0.sh"), "utf8");
+
+    expect(local0).toContain('MODE="all"');
+    expect(local0).toContain('identity_key="${commit}-${tree}-${lockfile_digest#sha256:}"');
+    expect(local0).toContain("scripts/prepare-candidate-fixture-trust.sh");
+    expect(local0).toContain("scripts/test-lifecycle-local-acceptance.sh");
+    expect(local0).toContain("scripts/test-lifecycle-hosting-acceptance.sh");
+    expect(local0).toContain("local-canonical-managed");
+    expect(local0).toContain("completeLocal0");
+    expect(local0).toContain("validate_receipt_set");
+    expect(local0).toContain("fixtureOnlyDescendant");
+    expect(local0).toContain("artifact_product_commit");
+    expect(local0).toContain("crosses the fixture-only reuse boundary");
+    expect(local0).toContain("merge-base --is-ancestor");
+    expect(local0).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
+    expect(local0).toContain('.evidenceClass == "PASS" and .commit == $commit');
+    expect(local0).toContain(
+      "LOCAL0 refused a false PASS without every exact verified child receipt.",
+    );
+    expect(local0).toContain("all) run_concurrent ;;");
+    expect(local0).not.toMatch(/all\)\s+run_serial\s+run_concurrent/);
+    expect(local0).toContain("--lane is valid only with --mode serial.");
+    expect(local0).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
+  });
+
   it("requires explicit public predecessor identities and has no private-RC scenario", async () => {
     const wrapper = await readFile(
       resolve(repoRoot, "scripts/test-lifecycle-local-acceptance.sh"),
@@ -18,6 +44,10 @@ describe("version-neutral lifecycle acceptance", () => {
     );
     const hostingWrapper = await readFile(
       resolve(repoRoot, "scripts/test-lifecycle-hosting-acceptance.sh"),
+      "utf8",
+    );
+    const fixtureOnlyPaths = await readFile(
+      resolve(repoRoot, "scripts/lifecycle-fixture-only-paths.sh"),
       "utf8",
     );
 
@@ -65,7 +95,14 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixture).toContain('test "$(stat -c \'%U:%G:%a\' /usr/bin/gh)" = "root:root:755"');
     expect(fixture).toContain("the one-time in-place takeover");
     expect(fixture).toContain("if run_target_installer \\");
-    expect(hostingWrapper).toContain("lifecycle-d8-contract|lifecycle-version-neutral");
+    for (const source of [wrapper, hostingWrapper]) {
+      expect(source).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
+      expect(source).toContain("lifecycle_unexpected_fixture_changes");
+    }
+    expect(fixtureOnlyPaths).toContain("lifecycle-d8-contract|lifecycle-version-neutral");
+    expect(fixtureOnlyPaths).toContain("npm-free-managed-lifecycle-contract");
+    expect(fixtureOnlyPaths).toContain("docs/maintainers/codex-skills/fased-release-manager/");
+    expect(fixtureOnlyPaths).toContain("scripts/run-lifecycle-local0\\.sh");
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
@@ -166,6 +203,8 @@ describe("version-neutral lifecycle acceptance", () => {
     );
     expect(capsuleWrapper).toContain('FIXTURE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"');
     expect(capsuleWrapper).toContain("Predecessor capsule reuse rejected product changes:");
+    expect(capsuleWrapper).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
+    expect(capsuleWrapper).toContain("lifecycle_unexpected_fixture_changes");
     expect(capsuleWrapper).toContain("$FIXTURE_COMMIT-$FIXTURE_TREE");
     expect(capsuleWrapper).toContain("--pattern fased-lifecycled-linux-amd64");
     expect(capsuleWrapper).toContain(

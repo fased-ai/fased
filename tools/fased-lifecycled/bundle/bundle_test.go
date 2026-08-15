@@ -82,13 +82,14 @@ func TestLegacyInstalledInventoryAllowsBoundLifecycleExecutableOnlyThroughCompat
 		Path: "bin/fased-lifecycled", Kind: ArtifactFile,
 		SHA256: hashBytes([]byte("historical lifecycle")), Size: int64(len("historical lifecycle")), Executable: true,
 	})
+	inventory.PluginLockDigest = "sha256:" + strings.Repeat("c", 64)
 	sort.Slice(inventory.Artifacts, func(left, right int) bool { return inventory.Artifacts[left].Path < inventory.Artifacts[right].Path })
 	data, err := json.Marshal(inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := DecodeInventory(data); err == nil {
-		t.Fatal("target inventory decoder accepted a lifecycle executable")
+		t.Fatal("target inventory decoder accepted historical predecessor metadata")
 	}
 	legacy, err := DecodeLegacyInstalledInventory(data)
 	if err != nil {
@@ -104,6 +105,24 @@ func TestLegacyInstalledInventoryAllowsBoundLifecycleExecutableOnlyThroughCompat
 	write(t, root, "bin/fased-lifecycled", "substituted lifecycle", 0o755)
 	if err := VerifyLegacyInstalled(root, legacy, generation); err == nil {
 		t.Fatal("schema-one compatibility verification accepted substituted lifecycle bytes")
+	}
+	legacy.PluginLockDigest = "sha256:" + strings.Repeat("d", 64)
+	if err := VerifyLegacyInstalled(root, legacy, generation); err == nil {
+		t.Fatal("schema-one compatibility verification accepted rebound plugin-lock metadata")
+	}
+}
+
+func TestLegacyInstalledInventoryRejectsInvalidPluginLockDigest(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "bin/fased", "application", 0o755)
+	inventory, _ := inspect(t, root)
+	inventory.PluginLockDigest = "not-a-digest"
+	data, err := json.Marshal(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeLegacyInstalledInventory(data); err == nil || !strings.Contains(err.Error(), "plugin-lock digest") {
+		t.Fatalf("invalid historical plugin-lock metadata was accepted: %v", err)
 	}
 }
 

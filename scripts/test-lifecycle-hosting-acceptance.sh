@@ -2,16 +2,20 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 DISTROS="${FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS:-ubuntu}"
 SCENARIOS="${FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,managed-update}"
 ARTIFACT_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 RECEIPT_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
+IMAGE_CACHE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
 PREDECESSOR_VERSION="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_VERSION:-0.1.75}"
 PREDECESSOR_CLASS="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CLASS:-public-stable}"
 PREDECESSOR_CAPSULE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR:-}"
 CACHE_HOME="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}"
 PREDECESSOR_CAPSULE_CACHE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR-$CACHE_HOME/fased/predecessor-capsules}"
+PARALLEL_SCENARIOS="${FASED_HOSTING_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"
+PRESERVE_FAILED_CONTAINER="${FASED_HOSTING_SYSTEMD_FIXTURE_PRESERVE_FAILURE:-1}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/hosting-systemd"
 
 [[ -n "$ARTIFACT_DIR" && -d "$ARTIFACT_DIR" ]] || {
@@ -24,6 +28,14 @@ command -v "$RUNTIME" >/dev/null 2>&1 || {
 }
 [[ "$RUNTIME" == "podman" ]] || {
   echo "The Go Hosting systemd fixture currently requires Podman." >&2
+  exit 1
+}
+[[ "$PARALLEL_SCENARIOS" == "0" || "$PARALLEL_SCENARIOS" == "1" ]] || {
+  echo "FASED_HOSTING_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS must be 0 or 1." >&2
+  exit 1
+}
+[[ "$PRESERVE_FAILED_CONTAINER" == "0" || "$PRESERVE_FAILED_CONTAINER" == "1" ]] || {
+  echo "FASED_HOSTING_SYSTEMD_FIXTURE_PRESERVE_FAILURE must be 0 or 1." >&2
   exit 1
 }
 
@@ -129,7 +141,26 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
 fi
 
 cleanup_names=()
+image_staging=""
 fixture_tools_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-hosting-fixture-tools.XXXXXX")"
+failure_registry="$fixture_tools_dir/failed-containers"
+mkdir -p "$failure_registry"
+cleanup() {
+  local status=$?
+  local name
+  [[ -z "$image_staging" ]] || rm -f -- "$image_staging"
+  for name in "${cleanup_names[@]}"; do
+    if [[ "$status" -ne 0 && "$PRESERVE_FAILED_CONTAINER" == "1" &&
+      -f "$failure_registry/$name" ]] &&
+      "$RUNTIME" container exists "$name" >/dev/null 2>&1; then
+      printf 'Preserved failed Go Hosting fixture container: %s\n' "$name" >&2
+      continue
+    fi
+    "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
+  done
+  rm -rf -- "$fixture_tools_dir"
+}
+trap cleanup EXIT INT TERM HUP
 fixture_source_commit="$commit"
 if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]]; then
@@ -137,10 +168,8 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
     echo "A branch artifact can reuse only descendant Hosting fixture corrections." >&2
     exit 1
   }
-  unexpected_fixture_changes="$(
-    git -C "$ROOT_DIR" diff --name-only "$commit..HEAD" | \
-      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract|lifecycle-version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-public-predecessor-capsule\.(mjs|test\.ts)|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
-  )"
+  unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
+    "$ROOT_DIR" "$commit" HEAD)"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
     printf '%s\n' "$unexpected_fixture_changes" >&2
@@ -161,19 +190,6 @@ fixture_node_modules="$(readlink -f "$ROOT_DIR/node_modules")"
 fixture_node="$(readlink -f "$(command -v node)")"
 [[ -d "$fixture_node_modules" && -x "$fixture_node" ]]
 ln -s /fixture-node-modules "$fixture_tools_dir/scripts/node_modules"
-cleanup() {
-  local status=$?
-  local name
-  if [[ "$status" -ne 0 && "${FASED_KEEP_FAILED_CONTAINER:-0}" == "1" ]]; then
-    printf 'Preserving failed Go Hosting fixture container(s): %s\n' "${cleanup_names[*]}" >&2
-    return
-  fi
-  for name in "${cleanup_names[@]}"; do
-    "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
-  done
-  rm -rf -- "$fixture_tools_dir"
-}
-trap cleanup EXIT INT TERM HUP
 
 IFS=',' read -r -a distro_list <<<"$DISTROS"
 IFS=',' read -r -a scenario_list <<<"$SCENARIOS"
@@ -191,14 +207,58 @@ for distro in "${distro_list[@]}"; do
     exit 1
   }
   image="fased-hosting-systemd-${distro}:local"
-  "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
+  image_archive=""
+  if [[ -n "$IMAGE_CACHE_DIR" ]]; then
+    [[ "$IMAGE_CACHE_DIR" == /* ]] || {
+      echo "FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR must be absolute." >&2
+      exit 1
+    }
+    mkdir -p "$IMAGE_CACHE_DIR"
+    image_archive="$IMAGE_CACHE_DIR/${distro}.oci.tar"
+  fi
+  if [[ -n "$image_archive" && -s "$image_archive" ]]; then
+    "$RUNTIME" load --input "$image_archive" >/dev/null
+    "$RUNTIME" image exists "$image"
+    printf 'Hosting fixture image cache hit: distro=%s\n' "$distro"
+  else
+    "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
+    if [[ -n "$image_archive" ]]; then
+      image_staging="${image_archive}.building.$$"
+      "$RUNTIME" save --format oci-archive --output "$image_staging" "$image"
+      mv -n "$image_staging" "$image_archive"
+      rm -f -- "$image_staging"
+      image_staging=""
+    fi
+  fi
 done
 
-run_scenario() {
+dump_scenario_failure() {
   local distro="$1"
   local scenario="$2"
+  local name="$3"
+  touch "$failure_registry/$name"
+  printf 'Hosting fixture failure: distro=%s scenario=%s container=%s\n' \
+    "$distro" "$scenario" "$name" >&2
+  if [[ -n "$RECEIPT_DIR" ]]; then
+    mkdir -p "$RECEIPT_DIR"
+    "$RUNTIME" cp \
+      "$name:/var/lib/fased-lifecycled/lifecycle-acceptance-${scenario}.json" \
+      "$RECEIPT_DIR/${distro}-${scenario}.partial.json" >/dev/null 2>&1 || true
+  fi
+  "$RUNTIME" logs "$name" >&2 2>/dev/null || true
+  "$RUNTIME" exec "$name" systemctl --failed --no-pager >&2 2>/dev/null || true
+  "$RUNTIME" exec "$name" journalctl \
+    -u fased-host-updater.service \
+    -u fased-signerd.service \
+    -u fased-gateway.service \
+    -n 200 --no-pager >&2 2>/dev/null || true
+}
+
+run_scenario_body() {
+  local distro="$1"
+  local scenario="$2"
+  local name="$3"
   local image="fased-hosting-systemd-${distro}:local"
-  local name="fased-go-hosting-${distro}-${scenario}-$$"
   local predecessor_dir="$ARTIFACT_DIR"
   local predecessor=""
   [[ "$scenario" != "managed-update" ]] || {
@@ -221,7 +281,7 @@ run_scenario() {
     -v "$fixture_node:/fixture-node:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$predecessor_dir:/predecessor-capsule:ro,Z" \
-    "$image" >/dev/null
+    "$image" >/dev/null || return 1
   ready=0
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
@@ -232,17 +292,17 @@ run_scenario() {
     sleep 0.1
   done
   [[ "$ready" -eq 1 ]] || {
-    echo "$distro Go Hosting fixture did not become ready." >&2
+    echo "$distro $scenario Go Hosting fixture did not become ready: $name" >&2
     exit 1
   }
   fixture_phase="$([[ "$scenario" == "fresh-install" ]] && printf install || printf managed-update)"
-  "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh "$fixture_phase"
+  "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh "$fixture_phase" || return 1
   if [[ -n "$RECEIPT_DIR" ]]; then
     mkdir -p "$RECEIPT_DIR"
     receipt="$RECEIPT_DIR/${distro}-${scenario}.json"
     "$RUNTIME" cp \
       "$name:/var/lib/fased-lifecycled/lifecycle-acceptance-${scenario}.json" \
-      "$receipt"
+      "$receipt" || return 1
     capsule_digest=""
     installation_class_digest=""
     [[ "$scenario" != "managed-update" ]] || \
@@ -261,10 +321,10 @@ run_scenario() {
       --predecessor-installation-class "$([[ "$scenario" == "managed-update" ]] && printf '%s' "$PREDECESSOR_CLASS" || true)" \
       --predecessor-installation-class-digest "$installation_class_digest" \
       --evidence-class PASS \
-      --acquisition-evidence-class SUPPORTING >/dev/null
+      --acquisition-evidence-class SUPPORTING >/dev/null || return 1
   fi
-  "$RUNTIME" stop "$name" >/dev/null
-  "$RUNTIME" start "$name" >/dev/null
+  "$RUNTIME" stop "$name" >/dev/null || return 1
+  "$RUNTIME" start "$name" >/dev/null || return 1
   ready=0
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
@@ -275,29 +335,78 @@ run_scenario() {
     sleep 0.1
   done
   [[ "$ready" -eq 1 ]] || {
-    echo "$distro Go Hosting fixture did not recover after reboot." >&2
+    echo "$distro $scenario Go Hosting fixture did not recover after reboot: $name" >&2
     exit 1
   }
-  "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh verify-reboot
-  "$RUNTIME" rm -f "$name" >/dev/null
+  "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh verify-reboot || return 1
+  "$RUNTIME" rm -f "$name" >/dev/null || return 1
 }
 
-scenario_pids=()
-for distro in "${distro_list[@]}"; do
-  for scenario in "${scenario_list[@]}"; do
-    name="fased-go-hosting-${distro}-${scenario}-$$"
-    cleanup_names+=("$name")
-    run_scenario "$distro" "$scenario" &
-    scenario_pids+=("$!")
-  done
-done
-for pid in "${scenario_pids[@]}"; do
-  if ! wait "$pid"; then
-    for remaining in "${scenario_pids[@]}"; do kill "$remaining" 2>/dev/null || true; done
-    wait || true
-    echo "Parallel Hosting proof stopped on the first failed scenario." >&2
-    exit 1
+run_scenario() {
+  local distro="$1"
+  local scenario="$2"
+  local name="$3"
+  local status
+  set +e
+  (
+    set -euo pipefail
+    run_scenario_body "$distro" "$scenario" "$name"
+  )
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    dump_scenario_failure "$distro" "$scenario" "$name"
+    return "$status"
   fi
-done
+}
+
+if [[ "$PARALLEL_SCENARIOS" == "0" ]]; then
+  for distro in "${distro_list[@]}"; do
+    for scenario in "${scenario_list[@]}"; do
+      name="fased-go-hosting-${distro}-${scenario}-$$"
+      cleanup_names+=("$name")
+      if ! run_scenario "$distro" "$scenario" "$name"; then
+        echo "Serial Hosting proof stopped on the first failed scenario." >&2
+        exit 1
+      fi
+    done
+  done
+else
+  scenario_pids=()
+  declare -A scenario_labels=()
+  for distro in "${distro_list[@]}"; do
+    for scenario in "${scenario_list[@]}"; do
+      name="fased-go-hosting-${distro}-${scenario}-$$"
+      cleanup_names+=("$name")
+      run_scenario "$distro" "$scenario" "$name" &
+      pid="$!"
+      scenario_pids+=("$pid")
+      scenario_labels["$pid"]="$distro|$scenario|$name"
+    done
+  done
+  while [[ "${#scenario_pids[@]}" -gt 0 ]]; do
+    completed_pid=""
+    set +e
+    wait -n -p completed_pid "${scenario_pids[@]}"
+    status=$?
+    set -e
+    label="${scenario_labels[$completed_pid]:-unknown|unknown|unknown}"
+    IFS='|' read -r failed_distro failed_scenario failed_name <<<"$label"
+    if [[ "$status" -ne 0 ]]; then
+      for remaining in "${scenario_pids[@]}"; do
+        [[ "$remaining" == "$completed_pid" ]] || kill "$remaining" 2>/dev/null || true
+      done
+      wait || true
+      echo "Parallel Hosting proof stopped: distro=$failed_distro scenario=$failed_scenario container=$failed_name" >&2
+      exit 1
+    fi
+    next_pids=()
+    for remaining in "${scenario_pids[@]}"; do
+      [[ "$remaining" == "$completed_pid" ]] || next_pids+=("$remaining")
+    done
+    scenario_pids=("${next_pids[@]}")
+    unset 'scenario_labels[$completed_pid]'
+  done
+fi
 
 echo "Go Hosting systemd fixtures passed: distros=$DISTROS scenarios=$SCENARIOS"

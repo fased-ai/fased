@@ -12,6 +12,8 @@ const TARGET_DEFAULTS = [
   { path: ["commands", "restart"], value: true },
 ];
 const SYSTEM_PLUGIN_ALLOW_ADDITIONS = new Set(["memory-core"]);
+const HOSTED_SIGNER_MANAGED_ENV =
+  /^(?:FASED_WALLET_PROVIDER|FASED_WALLET_(?:(?:SOLANA_)?KEYSTORE_|PASSPHRASE|(?:SOLANA_)?PRIVATE_KEY|(?:SOLANA_)?RPC_URL|LOCAL_SIGNER_|SIGNER_STATE_DIR|WEBAUTHN_))/;
 
 function fail(message) {
   throw new Error(`lifecycle configuration preservation: ${message}`);
@@ -166,6 +168,70 @@ function permitHostingMode(before, after, profile) {
   removePath(after, ["gateway", "mode"]);
 }
 
+function permitHostingSignerMigration(before, after, profile) {
+  if (profile !== "hosting") {
+    return;
+  }
+  const predecessorProvider = lookup(before, ["wallet", "provider"]);
+  const targetProvider = lookup(after, ["wallet", "provider", "id"]);
+  const predecessorProviderId = isObject(predecessorProvider.value)
+    ? predecessorProvider.value.id
+    : predecessorProvider.value;
+  if (
+    predecessorProviderId !== "embedded-keystore" &&
+    targetProvider.value !== "local-socket-signer"
+  ) {
+    return;
+  }
+  if (
+    predecessorProviderId !== "embedded-keystore" ||
+    !targetProvider.found ||
+    targetProvider.value !== "local-socket-signer"
+  ) {
+    fail("Hosting signer migration did not replace embedded-keystore with local-socket-signer");
+  }
+  if (
+    lookup(after, ["wallet", "keystore"]).found ||
+    lookup(after, ["wallet", "localSigner"]).found
+  ) {
+    fail(
+      "Hosting signer migration left legacy or unsupported Gateway wallet custody configuration",
+    );
+  }
+  removePath(before, ["wallet", "provider"]);
+  removePath(after, ["wallet", "provider"]);
+  removePath(before, ["wallet", "keystore"]);
+  removePath(before, ["wallet", "localSigner"]);
+  for (const [name, value] of [
+    ["enabled", true],
+    ["mode", "external"],
+    ["runtime", "external-custom"],
+  ]) {
+    const target = lookup(after, ["wallet", "runtime", name]);
+    if (!target.found || target.value !== value) {
+      fail(`Hosting signer migration has invalid /wallet/runtime/${name}`);
+    }
+    removePath(before, ["wallet", "runtime", name]);
+    removePath(after, ["wallet", "runtime", name]);
+  }
+  const predecessorVars = lookup(before, ["env", "vars"]);
+  const targetVars = lookup(after, ["env", "vars"]);
+  const keys = new Set([
+    ...(isObject(predecessorVars.value) ? Object.keys(predecessorVars.value) : []),
+    ...(isObject(targetVars.value) ? Object.keys(targetVars.value) : []),
+  ]);
+  for (const key of keys) {
+    if (!HOSTED_SIGNER_MANAGED_ENV.test(key)) {
+      continue;
+    }
+    if (isObject(targetVars.value) && Object.prototype.hasOwnProperty.call(targetVars.value, key)) {
+      fail(`Hosting signer migration left lifecycle-owned environment key ${key}`);
+    }
+    removePath(before, ["env", "vars", key]);
+    removePath(after, ["env", "vars", key]);
+  }
+}
+
 function permitTargetDefaults(before, after) {
   for (const entry of TARGET_DEFAULTS) {
     if (lookup(before, entry.path).found) {
@@ -196,6 +262,7 @@ export function assertConfigurationPreserved({ predecessor, target, targetVersio
   const normalizedPredecessor = clone(predecessor);
   const normalizedTarget = clone(target);
   permitHostingMode(normalizedPredecessor, normalizedTarget, profile);
+  permitHostingSignerMigration(normalizedPredecessor, normalizedTarget, profile);
   permitSystemMetadata(normalizedPredecessor, normalizedTarget, targetVersion);
   permitTargetDefaults(normalizedPredecessor, normalizedTarget);
   validatePluginAllow(normalizedPredecessor, normalizedTarget);

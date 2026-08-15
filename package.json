@@ -1,6 +1,7 @@
 {
   "name": "@fased/fased",
   "version": "0.1.76-rc.94",
+  "private": true,
   "description": "Fased Agent self-hosted AI gateway with channels, tools, plugins, and operator modules",
   "keywords": [
     "ai-agent",
@@ -122,9 +123,6 @@
       "default": "./dist/plugin-sdk/whatsapp.js"
     },
     "./cli-entry": "./fased.mjs"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "scripts": {
     "android:assemble": "cd apps/android && ./gradlew :app:assembleDebug",

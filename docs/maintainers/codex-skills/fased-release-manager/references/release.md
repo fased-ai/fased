@@ -14,6 +14,7 @@ classes; the owner's installed RC is never a separate product contract.
 exact branch head
 -> one unpublished, tag-free candidate-shaped Linux-x64 build
 -> serial LOCAL0 fresh/update/takeover Local and Hosting fixtures
+-> concurrent LOCAL0 confirmation against the identical cached artifact
 -> rollback/retry/restart/preservation/identity/Already current
 -> protected source PR with byte-identical squash tree
 -> PRE-CANDIDATE on exact merged main
@@ -35,13 +36,28 @@ It proves the affected product predicates locally with substituted acquisition
 classified as `SUPPORTING`; it cannot prove public acquisition, owner Local, or
 real Hosting.
 
+Run it through the single repository entrypoint:
+
+```bash
+bash scripts/run-lifecycle-local0.sh --mode all
+```
+
+The driver builds or reuses one commit/tree/lockfile/descriptor-bound Linux-x64
+artifact, runs diagnostic lanes serially, then runs the complete lanes
+concurrently against those same bytes. For a correction after a failure, use
+`--mode serial --lane <failed-lane>`; that focused receipt is diagnostic and
+does not replace the later complete receipt.
+
 Do not reserve or write the next RC version, dispatch PRE-CANDIDATE, or create a
 version-only PR until `LOCAL0` passes completely. Any change to a bound input or
 to installer/bootstrap/lifecycle/signer bytes, archive handling, artifact
 inventory, descriptor, generation ownership, capsule creation, fixture
 transport, acceptance scripts/receipts, or release workflows invalidates the
-whole receipt. Rebuild once when product bytes change. On failure, preserve the
-first fixture and bounded diagnostics, correct locally, and rerun there; never
+whole receipt. Rebuild once when product bytes change. A fixture-only change
+may reuse an explicitly supplied ancestor artifact only across the driver's
+closed allowlist and identical lockfile; the replacement receipt binds the old
+product source and exact new fixture source. On failure, preserve the first
+fixture and bounded diagnostics, correct locally, and rerun there; never
 allocate another RC to discover whether the correction works.
 
 PRE-CANDIDATE verifies frozen dependencies, production audit, release/package

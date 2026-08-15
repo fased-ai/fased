@@ -805,7 +805,7 @@ func handleAuthorizedConn(
 			continue
 		}
 		gateControl := control || operator
-		if signerLifecycleUpdateOperationsV1[req.Op] {
+		if signerLifecycleUpdateOperationsV1[req.Op] || signerLifecycleMigrationOperationsV1[req.Op] {
 			gateControl = control && !operator
 		}
 		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, gateControl, 0, os.Getegid()); err != nil {

@@ -199,9 +199,12 @@ materialize_canonical_managed_predecessor() {
   chown -R root:root "$generation_root" "$dependency_root"
   chmod -R a-w "$generation_root" "$dependency_root"
   chmod 0755 "$generation_root" "$dependency_root" \
-    "$generation_root/payload/bin/fased-lifecycled" \
     "$generation_root/payload/bin/fased-signerd" \
     "$generation_root/payload/bin/fased-gateway-launch"
+  supervisor_path="/opt/fased/lifecycle/supervisor-v1/fased-lifecycled"
+  test -f "$supervisor_path"
+  test ! -L "$supervisor_path"
+  test "$(stat -c '%U:%G:%a' "$supervisor_path")" = "root:root:755"
   # The real store publishes both identity files as root-owned 0644 so the
   # unprivileged launcher and updater can verify the generation and dependency.
   # Reproduce those store postconditions after the fixture-only extraction.

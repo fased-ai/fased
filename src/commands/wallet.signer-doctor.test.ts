@@ -115,7 +115,6 @@ describe("collectWalletSignerDoctorReport", () => {
               FASED_PROTECTED_LOCAL_INSTANCE: "0123456789abcdef",
             }
           : { FASED_HOST_PROFILE: "hosting" }),
-        FASED_WALLET_LOCAL_SIGNER_LIFECYCLE: "external",
         FASED_WALLET_LOCAL_SIGNER_BIN: signerBinPath,
         FASED_WALLET_LOCAL_SIGNER_SOCKET: applicationSocketPath,
       } as NodeJS.ProcessEnv;

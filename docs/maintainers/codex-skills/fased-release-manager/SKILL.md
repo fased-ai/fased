@@ -59,6 +59,23 @@ Choose one mode:
 Advance modes only when the controlling plan or newest request explicitly
 contains that transition and every preceding exit predicate is satisfied.
 
+Use this decision engine before selecting work:
+
+```text
+source failure
+-> FIX: nearest regression, one correction, focused proof
+
+lifecycle bytes or lifecycle fixture changed
+-> LIFECYCLE: one cached Linux-x64 artifact
+-> rerun only the affected serial lane
+
+release requested
+-> require one complete run-lifecycle-local0 PASS receipt
+-> RELEASE: PRE-CANDIDATE, then one immutable candidate
+```
+
+Do not allocate a version to diagnose a source or fixture failure.
+
 If a newer request replaces active work, stop the obsolete command safely and
 switch scope. In a dirty worktree, preserve unrelated changes and isolate the
 requested patch before editing or committing.
@@ -93,6 +110,21 @@ preservation, and `Already current`. Never build ARM/macOS or a release matrix
 during development. For standalone lifecycle work, hand back after local
 closure unless shipping was requested. Inside an active controlling plan,
 continue according to that plan's declared checkpoints and recorded authority.
+
+Use the repository driver as the only branch-artifact/cache entrypoint:
+
+```bash
+bash scripts/run-lifecycle-local0.sh --mode serial --lane <affected-lane>
+```
+
+It keys immutable artifacts by commit, tree, lockfile, and descriptor digest,
+persists one aggregate JSON receipt, and preserves the first failed fixture.
+When only an allowlisted acceptance fixture or lifecycle-policy input changes,
+pass the prior cache directory with `--artifact-dir`: the driver may reuse those
+product bytes only when their commit is an ancestor, the lockfile is identical,
+and every intervening path is fixture-only. The replacement receipt binds both
+the product source and current fixture source. Any product-path change refuses
+reuse and requires one new build.
 
 For a root lifecycle, installer trust, Local/Hosting convergence, or updater
 architecture replacement, also read
@@ -134,6 +166,14 @@ bootstrap, lifecycle or signer binaries, archive production/extraction,
 artifact inventory/naming, candidate descriptor, generation/dependency
 ownership, predecessor capsules, fixture transport, Local/Hosting entrypoints,
 receipt verification, or release workflow invalidates `LOCAL0` completely.
+
+Generate the complete receipt with exactly:
+
+```bash
+bash scripts/run-lifecycle-local0.sh --mode all
+```
+
+Only `status: "PASS"` together with `completeLocal0: true` closes this gate.
 
 On a local failure, freeze PRE-CANDIDATE and version allocation. Preserve the
 first failed fixture, bounded log, and partial receipt; report the exact failed
@@ -242,6 +282,9 @@ package version it inherits.
 
 Managed release publication is GitHub-only. Never publish npm packages or use
 registry tags as candidate, acceptance, or stable-promotion evidence.
+The root workspace package is private. Freeze the existing public
+`@fased/fased` versions; deprecate that legacy registry package only after the
+Go stable installer is public and accepted, so migration users are not stranded.
 
 Load at most one reference for ordinary work. The canonical skill is
 `docs/maintainers/codex-skills/fased-release-manager/`; synchronize the

@@ -12,11 +12,12 @@ import (
 	"strings"
 	"syscall"
 
+	"fased-lifecycled/model"
 	stateparticipant "fased-lifecycled/participant"
 )
 
 type TypedStateStore interface {
-	Prepare(string) (StatePreparation, error)
+	Prepare(string, []string) (StatePreparation, error)
 	Activate(string) error
 	VerifyAccess(context.Context, string) error
 	Restore(string) error
@@ -40,6 +41,7 @@ type typedStateRecord struct {
 	Directory       bool   `json:"directory"`
 	SignerOwned     bool   `json:"signerOwned"`
 	ProjectionOwned bool   `json:"projectionOwned"`
+	MutationOwner   string `json:"mutationOwner,omitempty"`
 	SQLite          bool   `json:"sqlite"`
 	SQLiteFamily    string `json:"sqliteFamily,omitempty"`
 	Backup          string `json:"backup,omitempty"`
@@ -64,7 +66,11 @@ func NewDiskTypedStateStore(config Config, access StateAccessVerifier) (*DiskTyp
 	return &DiskTypedStateStore{Config: config, Access: access}, nil
 }
 
-func (store *DiskTypedStateStore) Prepare(transactionID string) (StatePreparation, error) {
+func (store *DiskTypedStateStore) Prepare(transactionID string, mutationOwnedPaths []string) (StatePreparation, error) {
+	mutationOwners, err := store.validateMutationOwners(mutationOwnedPaths)
+	if err != nil {
+		return StatePreparation{}, err
+	}
 	records, err := store.discover()
 	if err != nil {
 		return StatePreparation{}, err
@@ -86,13 +92,16 @@ func (store *DiskTypedStateStore) Prepare(transactionID string) (StatePreparatio
 		}
 	}
 	for index := range records {
+		if mutationOwners[records[index].Path] {
+			records[index].MutationOwner = "migrator"
+		}
 		if records[index].Directory || records[index].SignerOwned {
 			continue
 		}
-		if records[index].ProjectionOwned {
+		if records[index].ProjectionOwned || records[index].MutationOwner != "" {
 			digest, err := stateparticipant.DigestRegularFile(store.resolve(records[index].Path))
 			if err != nil {
-				return StatePreparation{}, fmt.Errorf("bind %s projection state: %w", records[index].Participant, err)
+				return StatePreparation{}, fmt.Errorf("bind %s externally owned state: %w", records[index].Participant, err)
 			}
 			records[index].Digest = digest
 			continue
@@ -171,6 +180,7 @@ func (store *DiskTypedStateStore) Activate(transactionID string) error {
 	if err != nil {
 		return err
 	}
+	migrationWalletDirectory := store.migrationOwnedWalletDirectory(records)
 	for _, record := range records {
 		path := store.resolve(record.Path)
 		info, err := os.Lstat(path)
@@ -186,7 +196,7 @@ func (store *DiskTypedStateStore) Activate(transactionID string) error {
 		if !ok || stat.Uid != record.UID || stat.Gid != record.GID || durableStateMode(info.Mode()) != record.Mode || info.IsDir() != record.Directory {
 			return errors.New("typed state changed after post-quiesce snapshot")
 		}
-		if !record.Directory {
+		if !record.Directory && record.MutationOwner == "" {
 			digest, err := stateparticipant.DigestRegularFile(path)
 			if err != nil || digest != record.Digest {
 				return errors.New("typed state content changed after post-quiesce snapshot")
@@ -201,7 +211,14 @@ func (store *DiskTypedStateStore) Activate(transactionID string) error {
 		if err := os.Chown(path, int(record.UID), int(configGID)); err != nil {
 			return err
 		}
-		if err := os.Chmod(path, sharedStateMode(info.Mode())); err != nil {
+		mode := sharedStateMode(info.Mode())
+		if record.Path == migrationWalletDirectory {
+			// The target Gateway needs only traversal to the explicitly bound
+			// registry before signer custody commits. Directory write access here
+			// would let it replace still-live legacy keystores or passphrases.
+			mode = os.ModeSetgid | 0o710
+		}
+		if err := os.Chmod(path, mode); err != nil {
 			return err
 		}
 	}
@@ -230,6 +247,7 @@ func (store *DiskTypedStateStore) VerifyAccess(ctx context.Context, transactionI
 	if err != nil {
 		return err
 	}
+	migrationWalletDirectory := store.migrationOwnedWalletDirectory(records)
 	for _, record := range records {
 		if record.ProjectionOwned && record.Path != store.unresolve(CanonicalGatewayConfigPath(store.Config)) {
 			// install.json and lifecycle.json describe a committed lifecycle.
@@ -238,6 +256,12 @@ func (store *DiskTypedStateStore) VerifyAccess(ctx context.Context, transactionI
 			// would either expose an uncommitted transaction or make every
 			// public-stable bridge fail. fased.json is the only projection the
 			// target process requires during pre-start verification.
+			continue
+		}
+		if record.Path == migrationWalletDirectory {
+			// The exact registry-file probe below proves both ancestor traversal
+			// and target read/write access without granting pre-commit directory
+			// mutation over legacy custody material.
 			continue
 		}
 		info, err := os.Lstat(store.resolve(record.Path))
@@ -306,7 +330,7 @@ func (store *DiskTypedStateStore) Restore(transactionID string) error {
 		}
 	}
 	for _, record := range records {
-		if record.SignerOwned || record.ProjectionOwned {
+		if record.SignerOwned || record.ProjectionOwned || record.MutationOwner != "" {
 			continue
 		}
 		if !record.Directory {
@@ -329,7 +353,7 @@ func (store *DiskTypedStateStore) Restore(transactionID string) error {
 		}
 	}
 	for _, record := range records {
-		if record.SignerOwned || record.ProjectionOwned {
+		if record.SignerOwned || record.ProjectionOwned || record.MutationOwner != "" {
 			continue
 		}
 		path := store.resolve(record.Path)
@@ -493,6 +517,28 @@ func (store *DiskTypedStateStore) specs() []stateparticipant.StateSpec {
 	return stateparticipant.CanonicalStateSpecs(store.Config.OwnerStateRoot, store.Config.SignerStateRoot())
 }
 
+func (store *DiskTypedStateStore) validateMutationOwners(paths []string) (map[string]bool, error) {
+	owners := make(map[string]bool, len(paths))
+	allowed := filepath.Join(store.Config.OwnerStateRoot, "wallet", "provider-registry.v1.json")
+	for _, path := range paths {
+		if store.Config.Profile != model.ProfileHosting || path != allowed || owners[path] {
+			return nil, errors.New("typed state mutation owner is not canonical")
+		}
+		owners[path] = true
+	}
+	return owners, nil
+}
+
+func (store *DiskTypedStateStore) migrationOwnedWalletDirectory(records []typedStateRecord) string {
+	registry := filepath.Join(store.Config.OwnerStateRoot, "wallet", "provider-registry.v1.json")
+	for _, record := range records {
+		if record.Path == registry && record.MutationOwner == "migrator" {
+			return filepath.Dir(registry)
+		}
+	}
+	return ""
+}
+
 func (store *DiskTypedStateStore) read(transactionID string) ([]typedStateRecord, error) {
 	data, err := readRegularFile(store.recordPath(transactionID))
 	if err != nil {
@@ -514,11 +560,14 @@ func (store *DiskTypedStateStore) read(transactionID string) ([]typedStateRecord
 		if !record.Directory && !record.SignerOwned && !stateparticipant.ValidDigest(record.Digest) {
 			return nil, errors.New("typed state record lacks a content binding")
 		}
-		if !record.Directory && !record.SignerOwned && !record.ProjectionOwned && (record.Backup == "" || !pathWithin(store.unresolve(store.transactionRoot(transactionID)), record.Backup)) {
+		if !record.Directory && !record.SignerOwned && !record.ProjectionOwned && record.MutationOwner == "" && (record.Backup == "" || !pathWithin(store.unresolve(store.transactionRoot(transactionID)), record.Backup)) {
 			return nil, errors.New("typed state record lacks rollback evidence")
 		}
-		if record.ProjectionOwned && record.Backup != "" {
-			return nil, errors.New("managed projection acquired competing rollback ownership")
+		if (record.ProjectionOwned || record.MutationOwner != "") && record.Backup != "" {
+			return nil, errors.New("externally owned state acquired competing rollback ownership")
+		}
+		if record.MutationOwner != "" && (record.MutationOwner != "migrator" || store.Config.Profile != model.ProfileHosting || record.Path != filepath.Join(store.Config.OwnerStateRoot, "wallet", "provider-registry.v1.json") || record.Participant != string(stateparticipant.Wallet) || record.Directory || record.SignerOwned || record.ProjectionOwned || record.SQLite) {
+			return nil, errors.New("typed state mutation owner is invalid")
 		}
 		if record.SQLite && (record.SQLiteFamily == "" || !pathWithin(store.Config.OwnerStateRoot, record.SQLiteFamily)) {
 			return nil, errors.New("SQLite family record is invalid")

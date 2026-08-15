@@ -36,14 +36,15 @@ type Artifact struct {
 }
 
 type Inventory struct {
-	SchemaVersion uint32                 `json:"schemaVersion"`
-	Version       string                 `json:"version"`
-	Commit        string                 `json:"commit"`
-	Tree          string                 `json:"tree"`
-	StateSchemas  map[string]uint32      `json:"stateSchemas"`
-	Capabilities  model.CapabilityRanges `json:"capabilities"`
-	Dependency    *DependencyLayer       `json:"dependency,omitempty"`
-	Artifacts     []Artifact             `json:"artifacts"`
+	SchemaVersion    uint32                 `json:"schemaVersion"`
+	Version          string                 `json:"version"`
+	Commit           string                 `json:"commit"`
+	Tree             string                 `json:"tree"`
+	StateSchemas     map[string]uint32      `json:"stateSchemas"`
+	Capabilities     model.CapabilityRanges `json:"capabilities"`
+	Dependency       *DependencyLayer       `json:"dependency,omitempty"`
+	PluginLockDigest string                 `json:"pluginLockDigest,omitempty"`
+	Artifacts        []Artifact             `json:"artifacts"`
 }
 
 type DependencyLayer struct {
@@ -64,7 +65,7 @@ func inspectInventory(root, version, commit, tree string, stateSchemas map[strin
 	return inspectInventoryPolicy(root, version, commit, tree, stateSchemas, capabilities, dependency, false)
 }
 
-func inspectInventoryPolicy(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency *DependencyLayer, allowLegacyLifecycleExecutable bool) (Inventory, model.Generation, error) {
+func inspectInventoryPolicy(root, version, commit, tree string, stateSchemas map[string]uint32, capabilities model.CapabilityRanges, dependency *DependencyLayer, allowLegacyInstalledContract bool) (Inventory, model.Generation, error) {
 	clean, err := secureRoot(root)
 	if err != nil {
 		return Inventory{}, model.Generation{}, err
@@ -140,7 +141,7 @@ func inspectInventoryPolicy(root, version, commit, tree string, stateSchemas map
 	sort.Slice(inventory.Artifacts, func(left, right int) bool {
 		return inventory.Artifacts[left].Path < inventory.Artifacts[right].Path
 	})
-	generation, err := identityWithPolicy(inventory, allowLegacyLifecycleExecutable)
+	generation, err := identityWithPolicy(inventory, allowLegacyInstalledContract)
 	if err != nil {
 		return Inventory{}, model.Generation{}, err
 	}
@@ -160,22 +161,29 @@ func VerifyLegacyInstalled(root string, expected Inventory, generation model.Gen
 	return verifyWithPolicy(root, expected, generation, true)
 }
 
-func verifyWithPolicy(root string, expected Inventory, generation model.Generation, allowLegacyLifecycleExecutable bool) error {
-	if err := validateInventoryWithPolicy(expected, allowLegacyLifecycleExecutable); err != nil {
+func verifyWithPolicy(root string, expected Inventory, generation model.Generation, allowLegacyInstalledContract bool) error {
+	if err := validateInventoryWithPolicy(expected, allowLegacyInstalledContract); err != nil {
 		return err
 	}
-	bound, err := identityWithPolicy(expected, allowLegacyLifecycleExecutable)
+	bound, err := identityWithPolicy(expected, allowLegacyInstalledContract)
 	if err != nil {
 		return err
 	}
 	if bound != generation {
 		return errors.New("generation identity does not match the declared artifact inventory")
 	}
-	actual, _, err := inspectInventoryPolicy(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities, expected.Dependency, allowLegacyLifecycleExecutable)
+	actual, _, err := inspectInventoryPolicy(root, expected.Version, expected.Commit, expected.Tree, expected.StateSchemas, expected.Capabilities, expected.Dependency, allowLegacyInstalledContract)
 	if err != nil {
 		return err
 	}
-	actualGeneration, err := identityWithPolicy(actual, allowLegacyLifecycleExecutable)
+	if allowLegacyInstalledContract {
+		// The pre-authority inventory writer bound this metadata into the
+		// generation identity. The exact plugin.lock.json bytes remain verified
+		// independently as an artifact; copying the already identity-bound value
+		// here only reconstructs the historical wire identity.
+		actual.PluginLockDigest = expected.PluginLockDigest
+	}
+	actualGeneration, err := identityWithPolicy(actual, allowLegacyInstalledContract)
 	if err != nil {
 		return err
 	}
@@ -206,7 +214,7 @@ func DecodeLegacyInstalledInventory(data []byte) (Inventory, error) {
 	return decodeInventoryWithPolicy(data, true)
 }
 
-func decodeInventoryWithPolicy(data []byte, allowLegacyLifecycleExecutable bool) (Inventory, error) {
+func decodeInventoryWithPolicy(data []byte, allowLegacyInstalledContract bool) (Inventory, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var inventory Inventory
@@ -220,7 +228,7 @@ func decodeInventoryWithPolicy(data []byte, allowLegacyLifecycleExecutable bool)
 		}
 		return Inventory{}, err
 	}
-	if err := validateInventoryWithPolicy(inventory, allowLegacyLifecycleExecutable); err != nil {
+	if err := validateInventoryWithPolicy(inventory, allowLegacyInstalledContract); err != nil {
 		return Inventory{}, err
 	}
 	return inventory, nil
@@ -236,8 +244,8 @@ func IdentityLegacyInstalledInventory(inventory Inventory) (model.Generation, er
 	return identityWithPolicy(inventory, true)
 }
 
-func identityWithPolicy(inventory Inventory, allowLegacyLifecycleExecutable bool) (model.Generation, error) {
-	if err := validateInventoryWithPolicy(inventory, allowLegacyLifecycleExecutable); err != nil {
+func identityWithPolicy(inventory Inventory, allowLegacyInstalledContract bool) (model.Generation, error) {
+	if err := validateInventoryWithPolicy(inventory, allowLegacyInstalledContract); err != nil {
 		return model.Generation{}, err
 	}
 	data, err := json.Marshal(inventory)
@@ -263,7 +271,7 @@ func validateInventory(inventory Inventory) error {
 	return validateInventoryWithPolicy(inventory, false)
 }
 
-func validateInventoryWithPolicy(inventory Inventory, allowLegacyLifecycleExecutable bool) error {
+func validateInventoryWithPolicy(inventory Inventory, allowLegacyInstalledContract bool) error {
 	if inventory.SchemaVersion > CurrentInventorySchemaVersion {
 		return errors.New("artifact inventory schema is newer than supported")
 	}
@@ -276,6 +284,14 @@ func validateInventoryWithPolicy(inventory Inventory, allowLegacyLifecycleExecut
 	if inventory.SchemaVersion == CurrentInventorySchemaVersion {
 		if inventory.Dependency == nil || !validDependency(*inventory.Dependency) {
 			return errors.New("artifact inventory dependency layer is invalid")
+		}
+	}
+	if inventory.PluginLockDigest != "" {
+		if !allowLegacyInstalledContract {
+			return errors.New("current artifact inventory must not declare legacy plugin-lock metadata")
+		}
+		if !validDigest(inventory.PluginLockDigest) {
+			return errors.New("legacy artifact inventory plugin-lock digest is invalid")
 		}
 	}
 	if len(inventory.Artifacts) == 0 {
@@ -303,7 +319,7 @@ func validateInventoryWithPolicy(inventory Inventory, allowLegacyLifecycleExecut
 		if artifact.Path <= previous {
 			return errors.New("artifact inventory paths must be unique and sorted")
 		}
-		if reservedLifecycleExecutable(artifact.Path) && !allowLegacyLifecycleExecutable {
+		if reservedLifecycleExecutable(artifact.Path) && !allowLegacyInstalledContract {
 			return fmt.Errorf("application inventory must not contain lifecycle executable %q", artifact.Path)
 		}
 		if !validDigest(artifact.SHA256) || artifact.Size < 0 {

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"
 GO_BIN="${FASED_GO_BIN:-$(command -v go || true)}"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 OCI_RUNTIME="${FASED_CONTAINER_OCI_RUNTIME:-}"
@@ -517,6 +518,19 @@ dump_fixture_failure() {
   ' || true
 }
 
+preserve_partial_receipt() {
+  local name="$1"
+  local distro="$2"
+  local scenario="$3"
+  local source="/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${scenario}.json"
+  local destination="$RECEIPT_DIR/${distro}-${scenario}.partial.json"
+
+  if run_container exec "$name" test -f "$source" >/dev/null 2>&1; then
+    run_container cp "$name:$source" "$destination" >/dev/null 2>&1 || return 0
+    printf 'preserved partial lifecycle receipt: %s\n' "$destination" >&2
+  fi
+}
+
 cleanup() {
   local name
   for name in "${cleanup_names[@]}"; do
@@ -571,10 +585,8 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
     echo "A branch artifact can reuse only descendant fixture corrections." >&2
     exit 1
   }
-  unexpected_fixture_changes="$(
-    git -C "$ROOT_DIR" diff --name-only "$COMMIT..HEAD" | \
-      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract|lifecycle-version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-(public|canonical-managed)-predecessor-capsule\.mjs|scripts/build-(public|canonical-managed)-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
-  )"
+  unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
+    "$ROOT_DIR" "$COMMIT" HEAD)"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
     printf '%s\n' "$unexpected_fixture_changes" >&2
@@ -670,6 +682,7 @@ run_fixture_scenario() {
   done
   wait "$fixture_command_pid" || fixture_command_status="$?"
   if [[ "$fixture_command_status" -ne 0 ]]; then
+    preserve_partial_receipt "$name" "$distro" "$scenario"
     if [[ "${FASED_SYSTEMD_FIXTURE_COMPACT_DIAGNOSTICS:-0}" == "1" ]]; then
       run_container exec "$name" /bin/bash -lc '
         for log in \
@@ -710,6 +723,7 @@ run_fixture_scenario() {
   }
   if ! run_container exec "$name" /bin/bash \
     /usr/local/bin/fased-protected-local-systemd-fixture verify-reboot; then
+    preserve_partial_receipt "$name" "$distro" "$scenario"
     dump_fixture_failure "$name"
     exit 1
   fi
