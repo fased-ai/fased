@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.96
+
+- Remove obsolete version-specific predecessor fixture inputs from trusted
+  canonical-managed capsule generation.
+- Make LOCAL0 reject stale predecessor capsule workflow inputs before building
+  a candidate-shaped artifact.
+
 ## 0.1.76-rc.95
 
 - Make the signed Go lifecycle the sole managed Local and Hosting install and
