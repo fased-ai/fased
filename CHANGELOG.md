@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.94
+
+- Encode hard-linked dependency source files as independent regular archive
+  entries accepted by the Go lifecycle store.
+- Acquire the canonical-managed supervisor from the exact standalone lifecycle
+  asset bound by the attested candidate descriptor.
+
 ## 0.1.76-rc.93
 
 - Build release archives from a validated deterministic manifest with
