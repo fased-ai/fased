@@ -42,7 +42,8 @@ describe("release archive writer", () => {
       destination,
       entries: ["package"],
       requiredEntryPrefix: "package/",
-      idleTimeoutMs: 5_000,
+      rawIdleTimeoutMs: 5_000,
+      gzipIdleTimeoutMs: 5_000,
     });
 
     expect(result.entries).toBeGreaterThan(1);
@@ -144,7 +145,8 @@ describe("release archive writer", () => {
     const result = await writeTwoPhaseGzipAtomically({
       destination,
       source,
-      idleTimeoutMs: 75,
+      rawIdleTimeoutMs: 75,
+      gzipIdleTimeoutMs: 75,
       compressionInputTransforms: [downstreamProgress],
       verifyRaw: async (rawPath) => {
         rawVerified = true;
@@ -158,6 +160,31 @@ describe("release archive writer", () => {
 
     expect(rawVerified).toBe(true);
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(175);
+    expect(result.size).toBeGreaterThan(0);
+    expect(await fs.readdir(output)).toEqual(["runtime.tar.gz"]);
+  });
+
+  it("allows raw creation to remain quiet longer than the gzip inactivity budget", async () => {
+    const root = await fixture();
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    const source = new PassThrough();
+    const producer = (async () => {
+      source.write("first raw bytes");
+      await delay(75);
+      source.end("last raw bytes");
+    })();
+
+    const result = await writeTwoPhaseGzipAtomically({
+      destination,
+      source,
+      rawIdleTimeoutMs: 1_000,
+      gzipIdleTimeoutMs: 25,
+      verifyRaw: async () => undefined,
+      verifyCompressed: async () => undefined,
+    });
+    await producer;
+
     expect(result.size).toBeGreaterThan(0);
     expect(await fs.readdir(output)).toEqual(["runtime.tar.gz"]);
   });
@@ -176,7 +203,8 @@ describe("release archive writer", () => {
       writeTwoPhaseGzipAtomically({
         destination,
         source,
-        idleTimeoutMs: 25,
+        rawIdleTimeoutMs: 500,
+        gzipIdleTimeoutMs: 25,
         compressionInputTransforms: [stalledTransform],
         verifyRaw: async () => undefined,
         verifyCompressed: async () => undefined,
@@ -205,7 +233,8 @@ describe("release archive writer", () => {
       writeTwoPhaseGzipAtomically({
         destination,
         source,
-        idleTimeoutMs: 500,
+        rawIdleTimeoutMs: 500,
+        gzipIdleTimeoutMs: 500,
         compressionInputTransforms: [failingTransform],
         verifyRaw: async () => undefined,
         verifyCompressed: async () => undefined,
@@ -229,7 +258,8 @@ describe("release archive writer", () => {
       writeTwoPhaseGzipAtomically({
         destination,
         source: createReadStream(replacement),
-        idleTimeoutMs: 5_000,
+        rawIdleTimeoutMs: 5_000,
+        gzipIdleTimeoutMs: 5_000,
         verifyRaw: async () => undefined,
         verifyCompressed: async () => undefined,
       }),

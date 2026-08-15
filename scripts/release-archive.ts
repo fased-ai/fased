@@ -27,7 +27,8 @@ type AtomicStreamOptions = {
 type TwoPhaseGzipOptions = {
   destination: string;
   source: DestroyableByteStream;
-  idleTimeoutMs: number;
+  rawIdleTimeoutMs: number;
+  gzipIdleTimeoutMs: number;
   compressionInputTransforms?: Transform[];
   verifyRaw: (rawPath: string) => Promise<void>;
   verifyCompressed: (compressedPath: string) => Promise<void>;
@@ -38,12 +39,14 @@ type ReleaseArchiveOptions = {
   destination: string;
   entries: string[];
   filter?: ArchiveFilter;
-  idleTimeoutMs?: number;
+  rawIdleTimeoutMs?: number;
+  gzipIdleTimeoutMs?: number;
   noMtime?: boolean;
   requiredEntryPrefix: string;
 };
 
-const DEFAULT_ARCHIVE_IDLE_TIMEOUT_MS = 120_000;
+const DEFAULT_RAW_ARCHIVE_IDLE_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_GZIP_ARCHIVE_IDLE_TIMEOUT_MS = 120_000;
 
 function requireTimeout(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 1) {
@@ -172,12 +175,14 @@ export async function writeStreamAtomically({
 export async function writeTwoPhaseGzipAtomically({
   destination,
   source,
-  idleTimeoutMs: rawIdleTimeoutMs,
+  rawIdleTimeoutMs: rawIdleTimeoutInputMs,
+  gzipIdleTimeoutMs: gzipIdleTimeoutInputMs,
   compressionInputTransforms = [],
   verifyRaw,
   verifyCompressed,
 }: TwoPhaseGzipOptions): Promise<{ size: number }> {
-  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs, "Release archive idle timeout");
+  const rawIdleTimeoutMs = requireTimeout(rawIdleTimeoutInputMs, "Release raw-tar idle timeout");
+  const gzipIdleTimeoutMs = requireTimeout(gzipIdleTimeoutInputMs, "Release gzip idle timeout");
   const outputDir = path.dirname(destination);
   const destinationName = path.basename(destination);
   await fs.mkdir(outputDir, { recursive: true });
@@ -189,7 +194,7 @@ export async function writeTwoPhaseGzipAtomically({
     const rawOutput = createWriteStream(rawPath, { flags: "wx", mode: 0o600 });
     await pipelineWithIdleTimeout(
       [source, rawOutput],
-      idleTimeoutMs,
+      rawIdleTimeoutMs,
       `Creating raw tar for ${destinationName}`,
     );
     await requireNonemptyFile(rawPath, `Raw tar for ${destinationName}`);
@@ -202,7 +207,7 @@ export async function writeTwoPhaseGzipAtomically({
     const compressedOutput = createWriteStream(compressedPath, { flags: "wx", mode: 0o644 });
     await pipelineWithIdleTimeout(
       [rawInput, ...compressionInputTransforms, gzip, compressedOutput],
-      idleTimeoutMs,
+      gzipIdleTimeoutMs,
       `Compressing ${destinationName}`,
     );
     const size = await requireNonemptyFile(compressedPath, `Release archive ${destinationName}`);
@@ -253,11 +258,13 @@ export async function writeReleaseArchive({
   destination,
   entries,
   filter,
-  idleTimeoutMs: rawIdleTimeoutMs = DEFAULT_ARCHIVE_IDLE_TIMEOUT_MS,
+  rawIdleTimeoutMs: rawIdleTimeoutInputMs = DEFAULT_RAW_ARCHIVE_IDLE_TIMEOUT_MS,
+  gzipIdleTimeoutMs: gzipIdleTimeoutInputMs = DEFAULT_GZIP_ARCHIVE_IDLE_TIMEOUT_MS,
   noMtime,
   requiredEntryPrefix,
 }: ReleaseArchiveOptions): Promise<{ entries: number; size: number }> {
-  const idleTimeoutMs = requireTimeout(rawIdleTimeoutMs, "Release archive idle timeout");
+  const rawIdleTimeoutMs = requireTimeout(rawIdleTimeoutInputMs, "Release raw-tar idle timeout");
+  const gzipIdleTimeoutMs = requireTimeout(gzipIdleTimeoutInputMs, "Release gzip idle timeout");
   const source = tar.c(
     { cwd, filter, gzip: false, noMtime, portable: true, strict: true },
     entries,
@@ -267,12 +274,13 @@ export async function writeReleaseArchive({
   const result = await writeTwoPhaseGzipAtomically({
     destination,
     source,
-    idleTimeoutMs,
+    rawIdleTimeoutMs,
+    gzipIdleTimeoutMs,
     verifyRaw: async (rawPath) => {
       const rawEntries = await inspectReleaseArchive(
         rawPath,
         false,
-        idleTimeoutMs,
+        rawIdleTimeoutMs,
         requiredEntryPrefix,
       );
       console.log(
@@ -283,7 +291,7 @@ export async function writeReleaseArchive({
       archivedEntries = await inspectReleaseArchive(
         compressedPath,
         true,
-        idleTimeoutMs,
+        gzipIdleTimeoutMs,
         requiredEntryPrefix,
       );
       console.log(
