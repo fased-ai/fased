@@ -119,6 +119,12 @@ bash scripts/run-lifecycle-local0.sh --mode serial --lane <affected-lane>
 
 It keys immutable artifacts by commit, tree, lockfile, and descriptor digest,
 persists one aggregate JSON receipt, and preserves the first failed fixture.
+When only an allowlisted acceptance fixture or lifecycle-policy input changes,
+pass the prior cache directory with `--artifact-dir`: the driver may reuse those
+product bytes only when their commit is an ancestor, the lockfile is identical,
+and every intervening path is fixture-only. The replacement receipt binds both
+the product source and current fixture source. Any product-path change refuses
+reuse and requires one new build.
 
 For a root lifecycle, installer trust, Local/Hosting convergence, or updater
 architecture replacement, also read

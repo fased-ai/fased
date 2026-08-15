@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"
 GO_BIN="${FASED_GO_BIN:-$(command -v go || true)}"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 OCI_RUNTIME="${FASED_CONTAINER_OCI_RUNTIME:-}"
@@ -584,10 +585,8 @@ if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
     echo "A branch artifact can reuse only descendant fixture corrections." >&2
     exit 1
   }
-  unexpected_fixture_changes="$(
-    git -C "$ROOT_DIR" diff --name-only "$COMMIT..HEAD" | \
-      grep -Ev '^(\.github/workflows/candidate-p1-replay\.yml|docs/maintainers/codex-skills/fased-release-manager/(SKILL\.md|references/release\.md)|scripts/test-lifecycle-(local|hosting)-acceptance\.sh|scripts/docker/(protected-local|hosting)-systemd/lifecycle-acceptance\.sh|scripts/(hosted-installer-artifact-layout|ci-workflow-contract|lifecycle-d8-contract|lifecycle-version-neutral)\.test\.ts|scripts/lifecycle-configuration-preservation\.(mjs|test\.ts)|scripts/prepare-candidate-fixture-trust\.sh|scripts/build-(public|canonical-managed)-predecessor-capsule\.mjs|scripts/build-(public|canonical-managed)-predecessor-capsule\.test\.ts|scripts/prepare-branch-predecessor-capsule\.sh)$' || true
-  )"
+  unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
+    "$ROOT_DIR" "$COMMIT" HEAD)"
   [[ -z "$unexpected_fixture_changes" ]] || {
     echo "Branch artifact reuse rejected product changes:" >&2
     printf '%s\n' "$unexpected_fixture_changes" >&2

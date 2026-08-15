@@ -145,6 +145,13 @@ Use exact immutable bytes and machine-readable receipts. Fresh and update are
 independent; test only affected topologies during development. Candidate P1
 later replays the same contract against final bytes.
 
+A fixture-only correction invalidates the old acceptance receipt, not unchanged
+product bytes. The LOCAL0 driver may reuse an explicitly supplied ancestor
+artifact only across its closed fixture/policy allowlist with an identical
+lockfile. The new receipt must bind the artifact product commit/tree separately
+from the exact current fixture commit/tree. Any other changed path fails closed
+and rebuilds once.
+
 Signer changes additionally require authenticated, authorized, replay-safe
 typed RPC; no secret material in JS/UI/Gateway; exact Wallet/network/policy
 binding; and rollback preserving signer database and master-key identity.

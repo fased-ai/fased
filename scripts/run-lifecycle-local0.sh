@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"
 MODE="all"
 ONLY_LANE=""
 SUPPLIED_ARTIFACT_DIR=""
@@ -101,6 +102,10 @@ aggregate_receipt="$receipt_root/local0.json"
 mkdir -p "$lane_receipt_root"
 
 artifact_dir="$SUPPLIED_ARTIFACT_DIR"
+artifact_product_commit=""
+artifact_product_tree=""
+artifact_product_lockfile_digest=""
+artifact_fixture_only_descendant="false"
 current_phase="initialization"
 current_lane=""
 active_staging=""
@@ -203,6 +208,10 @@ write_receipt() {
     --arg compatibilityDigest "$compatibility_digest" \
     --arg acceptanceDigest "$acceptance_digest" \
     --arg overlayDigest "$overlay_digest" \
+    --arg artifactProductCommit "$artifact_product_commit" \
+    --arg artifactProductTree "$artifact_product_tree" \
+    --arg artifactProductLockfileDigest "$artifact_product_lockfile_digest" \
+    --arg artifactFixtureOnlyDescendant "$artifact_fixture_only_descendant" \
     --arg localEntrypointDigest "$local_entrypoint_digest" \
     --arg hostingEntrypointDigest "$hosting_entrypoint_digest" \
     --arg publicStableVersion "$PUBLIC_STABLE_VERSION" \
@@ -217,7 +226,10 @@ write_receipt() {
       source:{commit:$commit,tree:$tree,lockfileDigest:$lockfileDigest},
       artifact:{directory:$artifactDirectory,descriptorDigest:$descriptorDigest,
         compatibilityDigest:$compatibilityDigest,acceptanceContractDigest:$acceptanceDigest,
-        fixtureTrustOverlayDigest:$overlayDigest,publishable:false,platforms:["linux-x64"]},
+        fixtureTrustOverlayDigest:$overlayDigest,publishable:false,platforms:["linux-x64"],
+        productSource:{commit:$artifactProductCommit,tree:$artifactProductTree,
+          lockfileDigest:$artifactProductLockfileDigest},
+        fixtureOnlyDescendant:($artifactFixtureOnlyDescendant == "true")},
       entrypoints:{local:$localEntrypointDigest,hosting:$hostingEntrypointDigest},
       materializedInstallationClasses:{publicStableVersion:$publicStableVersion,
         canonicalManagedVersion:$canonicalManagedVersion},
@@ -236,23 +248,38 @@ fail_local0() {
 
 verify_artifact() {
   local candidate="$1"
+  local allow_fixture_descendant="${2:-0}"
   local descriptor="$candidate/fased-hosting-candidate.json"
   local identity="$candidate/fased-lifecycled-release.json"
   local overlay="$candidate/fased-candidate-fixture-overlay.json"
-  local name expected_size expected_digest selected
+  local name expected_size expected_digest selected unexpected_fixture_changes
   [[ -d "$candidate" &&
     -f "$descriptor" && ! -L "$descriptor" &&
     -f "$identity" && ! -L "$identity" &&
     -f "$overlay" && ! -L "$overlay" &&
     -f "$candidate/fased-branch-proof-x64.json" ]] || return 1
-  jq -e \
-    --arg commit "$commit" \
-    --arg tree "$tree" \
-    --arg lockfileDigest "$lockfile_digest" \
-    '.commit == $commit and .tree == $tree and .lockfileDigest == $lockfileDigest' \
-    "$descriptor" >/dev/null || return 1
-  jq -e --arg commit "$commit" --arg tree "$tree" \
+  artifact_product_commit="$(jq -er .commit "$descriptor")" || return 1
+  artifact_product_tree="$(jq -er .tree "$descriptor")" || return 1
+  artifact_product_lockfile_digest="$(jq -er .lockfileDigest "$descriptor")" || return 1
+  git -C "$ROOT_DIR" cat-file -e "${artifact_product_commit}^{commit}" 2>/dev/null || return 1
+  [[ "$(git -C "$ROOT_DIR" rev-parse "${artifact_product_commit}^{tree}")" == "$artifact_product_tree" ]] ||
+    return 1
+  [[ "sha256:$(git -C "$ROOT_DIR" show "${artifact_product_commit}:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" == "$artifact_product_lockfile_digest" ]] ||
+    return 1
+  jq -e --arg commit "$artifact_product_commit" --arg tree "$artifact_product_tree" \
     '.commit == $commit and .tree == $tree' "$identity" >/dev/null || return 1
+  artifact_fixture_only_descendant="false"
+  if [[ "$artifact_product_commit" != "$commit" || "$artifact_product_tree" != "$tree" ]]; then
+    [[ "$allow_fixture_descendant" == "1" ]] || return 1
+    git -C "$ROOT_DIR" merge-base --is-ancestor "$artifact_product_commit" "$commit" || return 1
+    unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
+      "$ROOT_DIR" "$artifact_product_commit" "$commit")"
+    [[ -z "$unexpected_fixture_changes" ]] || return 1
+    [[ "$artifact_product_lockfile_digest" == "$lockfile_digest" ]] || return 1
+    artifact_fixture_only_descendant="true"
+  else
+    [[ "$artifact_product_lockfile_digest" == "$lockfile_digest" ]] || return 1
+  fi
   jq -e \
     --arg descriptor "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
     --arg install "sha256:$(sha256sum "$candidate/install.sh" | awk '{print $1}')" \
@@ -280,7 +307,10 @@ resolve_or_build_artifact() {
   local cached=()
   local staging raw prepared descriptor_digest target
   if [[ -n "$artifact_dir" ]]; then
-    verify_artifact "$artifact_dir" || fail_local0 "Supplied LOCAL0 artifact is incomplete or has the wrong exact identity."
+    [[ -z "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]] ||
+      fail_local0 "Supplied LOCAL0 artifact reuse requires one exact clean committed fixture head."
+    verify_artifact "$artifact_dir" 1 ||
+      fail_local0 "Supplied LOCAL0 artifact is incomplete or crosses the fixture-only reuse boundary."
     printf 'LOCAL0 artifact supplied: %s\n' "$artifact_dir"
     return
   fi

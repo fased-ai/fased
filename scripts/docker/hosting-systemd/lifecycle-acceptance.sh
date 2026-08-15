@@ -404,6 +404,46 @@ run_operator_acceptance() {
   acceptance_mark plugin-doctor /tmp/fased-hosting-plugin-doctor.out "plugin doctor verified"
 }
 
+assert_hosted_signer_registry_migration() {
+  local before=/tmp/fased-hosting-predecessor-provider-registry.json
+  local after=/home/app/.fased/wallet/provider-registry.v1.json
+
+  jq -e -n --slurpfile before "$before" --slurpfile after "$after" '
+    def stable_wallet:
+      {
+        id,
+        name,
+        addresses,
+        createdAt,
+        metadata: (.metadata | del(.migratedAt, .migratedFromProviderId, .signerWalletId))
+      };
+    $before[0] as $before_registry |
+    $after[0] as $after_registry |
+    $before_registry.version == $after_registry.version and
+    $before_registry.assignments == $after_registry.assignments and
+    $before_registry.defaultWalletId == $after_registry.defaultWalletId and
+    (($before_registry.providers | del(."embedded-keystore", ."local-socket-signer")) ==
+      ($after_registry.providers | del(."embedded-keystore", ."local-socket-signer"))) and
+    $before_registry.providers["embedded-keystore"].label ==
+      $after_registry.providers["embedded-keystore"].label and
+    $before_registry.providers["local-socket-signer"].label ==
+      $after_registry.providers["local-socket-signer"].label and
+    $before_registry.providers["embedded-keystore"].enabled == true and
+    $before_registry.providers["local-socket-signer"].enabled == false and
+    $after_registry.providers["embedded-keystore"].enabled == false and
+    $after_registry.providers["local-socket-signer"].enabled == true and
+    (($before_registry.wallets | map(stable_wallet) | sort_by(.id)) ==
+      ($after_registry.wallets | map(stable_wallet) | sort_by(.id))) and
+    all($before_registry.wallets[]; .providerId == "embedded-keystore") and
+    all($after_registry.wallets[];
+      .providerId == "local-socket-signer" and
+      .metadata.migratedFromProviderId == "embedded-keystore" and
+      (.metadata.migratedAt | type == "string" and length > 0) and
+      (.metadata.signerWalletId | type == "string" and length > 0))
+  ' >/tmp/fased-hosting-provider-registry-migration.out
+  test ! -e /home/app/.fased/wallet/keystore-solana-agent-2.v1.enc
+}
+
 run_public_updater() {
   test -x /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap
   test "$(stat -Lc '%U:%G:%a' /etc/sudoers.d/fased-hosting-update)" = "root:root:440"
@@ -548,13 +588,16 @@ case "$phase" in
     test "$(jq -er .runtime.activeVersion /home/app/.fased/install.json)" = "$predecessor_version"
     sha256sum \
       /home/app/.fased/identity/device.json \
-      /home/app/.fased/wallet/provider-registry.v1.json \
       /home/app/.fased/extensions/stable-bridge/fased.plugin.json \
       /home/app/.fased/extensions/stable-bridge/package.json \
       /home/app/.fased/extensions/stable-bridge/index.js \
       /home/app/.fased/plugin-data/stable-bridge/state.json \
       >/tmp/fased-hosting-predecessor-state.sha256
+    sha256sum /home/app/.fased/wallet/provider-registry.v1.json \
+      >/tmp/fased-hosting-predecessor-registry.sha256
     cp /home/app/.fased/fased.json /tmp/fased-hosting-predecessor-config.json
+    cp /home/app/.fased/wallet/provider-registry.v1.json \
+      /tmp/fased-hosting-predecessor-provider-registry.json
     acceptance_start
 
     fault_dir=/etc/systemd/system/fased-gateway.service.d
@@ -586,6 +629,7 @@ EOF_TARGET_DROPIN
     wait_for_gateway_version "$predecessor_version"
     test "$(jq -er .gateway.mode /home/app/.fased/fased.json)" = remote
     sha256sum --check /tmp/fased-hosting-predecessor-state.sha256
+    sha256sum --check /tmp/fased-hosting-predecessor-registry.sha256
 
     run_public_installer >/tmp/fased-hosting-update.out 2>/tmp/fased-hosting-update.err
     acceptance_mark rollback-retry /tmp/fased-hosting-update.out "rollback and identical retry verified"
@@ -607,6 +651,7 @@ EOF_TARGET_DROPIN
     test "$(jq -er .gateway.mode /home/app/.fased/fased.json)" = local
     {
       sha256sum --check /tmp/fased-hosting-predecessor-state.sha256
+      assert_hosted_signer_registry_migration
       /fixture-node /fixture-tools/lifecycle-configuration-preservation.mjs \
         --before /tmp/fased-hosting-predecessor-config.json \
         --after /home/app/.fased/fased.json \

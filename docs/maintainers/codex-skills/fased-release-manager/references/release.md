@@ -53,8 +53,11 @@ version-only PR until `LOCAL0` passes completely. Any change to a bound input or
 to installer/bootstrap/lifecycle/signer bytes, archive handling, artifact
 inventory, descriptor, generation ownership, capsule creation, fixture
 transport, acceptance scripts/receipts, or release workflows invalidates the
-whole receipt. Rebuild once when product bytes change. On failure, preserve the
-first fixture and bounded diagnostics, correct locally, and rerun there; never
+whole receipt. Rebuild once when product bytes change. A fixture-only change
+may reuse an explicitly supplied ancestor artifact only across the driver's
+closed allowlist and identical lockfile; the replacement receipt binds the old
+product source and exact new fixture source. On failure, preserve the first
+fixture and bounded diagnostics, correct locally, and rerun there; never
 allocate another RC to discover whether the correction works.
 
 PRE-CANDIDATE verifies frozen dependencies, production audit, release/package
