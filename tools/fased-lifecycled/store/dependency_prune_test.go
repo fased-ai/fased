@@ -62,6 +62,83 @@ func TestPruneDependenciesFailsClosedBeforeDeletingValidStaleLayer(t *testing.T)
 	}
 }
 
+func TestPruneDependenciesRetainsVerifiedSchemaOnePreviousLayer(t *testing.T) {
+	state, err := Open(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := bundle.DependencyLayer{
+		Hash: strings.Repeat("c", 64), Asset: "fased-deps-linux-x64.tar.gz", ArchiveSHA256: "sha256:" + strings.Repeat("d", 64),
+	}
+	writeDependencyLayerFixture(t, state, retained)
+	writeGeneration := func(name, contents string, legacy bool) model.Generation {
+		payload := filepath.Join(t.TempDir(), name, "payload")
+		if err := os.MkdirAll(filepath.Join(payload, "runtime"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(payload, "runtime", "fased.mjs"), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		inventory, _, err := bundle.InspectWithDependency(payload, "0.1.76", commitA, commitA, manifest().StateSchemas, manifest().Capabilities, retained)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if legacy {
+			inventory.PluginLockDigest = "sha256:" + strings.Repeat("e", 64)
+		}
+		var generation model.Generation
+		if legacy {
+			generation, err = bundle.IdentityLegacyInstalledInventory(inventory)
+		} else {
+			generation, err = bundle.Identity(inventory)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(inventory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		root := state.generationPath(generation.ID)
+		if err := os.MkdirAll(root, 0o711); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, generationInventoryName), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(payload, filepath.Join(root, generationPayloadName)); err != nil {
+			t.Fatal(err)
+		}
+		return generation
+	}
+	previous := writeGeneration("previous", "previous\n", true)
+	active := writeGeneration("active", "active\n", false)
+	want := manifest()
+	want.ActiveGeneration = &active
+	want.PreviousGeneration = &previous
+	digest, err := state.CommitManifest(want, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, generation := range map[string]model.Generation{"current": active, "previous": previous} {
+		target := filepath.ToSlash(filepath.Join("generations", strings.TrimPrefix(generation.ID, "sha256:")))
+		if err := os.Symlink(target, filepath.Join(state.installRoot, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if removed, err := state.PruneDependencies(); err != nil || len(removed) != 0 {
+		t.Fatalf("verified schema-one previous dependency was not retained: removed=%v err=%v", removed, err)
+	}
+	want.ActiveGeneration = &previous
+	want.PreviousGeneration = &active
+	if _, err := state.CommitManifest(want, digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.GenerationDependency(previous.ID); err == nil {
+		t.Fatal("legacy inventory was accepted for the active generation")
+	}
+}
+
 func installDependencyPruneFixture(t *testing.T, state *Store) (bundle.DependencyLayer, bundle.DependencyLayer) {
 	t.Helper()
 	retained := bundle.DependencyLayer{
