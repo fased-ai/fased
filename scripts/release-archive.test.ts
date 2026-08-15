@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -7,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 import * as tar from "tar";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   writeReleaseArchive,
   writeStreamAtomically,
@@ -15,6 +16,7 @@ import {
 } from "./release-archive.js";
 
 const gunzipAsync = promisify(gunzip);
+const execFileAsync = promisify(execFile);
 
 const roots: string[] = [];
 
@@ -25,6 +27,7 @@ async function fixture(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { force: true, recursive: true })));
 });
 
@@ -36,6 +39,7 @@ describe("release archive writer", () => {
     const destination = path.join(output, "runtime.tar.gz");
     await fs.mkdir(path.join(source, "package"), { recursive: true });
     await fs.writeFile(path.join(source, "package", "version.txt"), "fixture-version\n");
+    const logs = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     const result = await writeReleaseArchive({
       cwd: source,
@@ -47,7 +51,23 @@ describe("release archive writer", () => {
     });
 
     expect(result.entries).toBeGreaterThan(1);
+    expect(result.manifestEntries).toBe(result.entries);
+    expect(result.rawSize).toBeGreaterThan(0);
     expect(result.size).toBeGreaterThan(0);
+    const completion = logs.mock.calls
+      .map(([message]) => String(message))
+      .find((message) => message.startsWith("release-archive: completionReceipt="));
+    if (!completion) {
+      throw new Error("Release archive completion receipt was not logged.");
+    }
+    expect(JSON.parse(completion.slice(completion.indexOf("=") + 1))).toEqual({
+      schemaVersion: 1,
+      destination: "runtime.tar.gz",
+      manifestEntries: result.manifestEntries,
+      archivedEntries: result.entries,
+      rawBytes: result.rawSize,
+      compressedBytes: result.size,
+    });
     expect(await fs.readdir(output)).toEqual(["runtime.tar.gz"]);
 
     const extracted = path.join(root, "extracted");
@@ -57,6 +77,89 @@ describe("release archive writer", () => {
       "fixture-version\n",
     );
   });
+
+  it("archives an explicit deterministic manifest independent of creation order", async () => {
+    const root = await fixture();
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    await fs.mkdir(path.join(source, "package"), { recursive: true });
+    for (const name of ["z-last.txt", "m-middle.txt", "a-first.txt"]) {
+      await fs.writeFile(path.join(source, "package", name), `${name}\n`);
+    }
+
+    await writeReleaseArchive({
+      cwd: source,
+      destination,
+      entries: ["package"],
+      requiredEntryPrefix: "package/",
+      rawIdleTimeoutMs: 5_000,
+      gzipIdleTimeoutMs: 5_000,
+    });
+
+    const archivedPaths: string[] = [];
+    await tar.t({
+      file: destination,
+      gzip: true,
+      strict: true,
+      onReadEntry: (entry) => archivedPaths.push(entry.path),
+    });
+    expect(archivedPaths).toEqual([
+      "package/",
+      "package/a-first.txt",
+      "package/m-middle.txt",
+      "package/z-last.txt",
+    ]);
+  });
+
+  it("rejects roots that can escape or reinterpret the explicit manifest", async () => {
+    const root = await fixture();
+    const source = path.join(root, "source");
+    const destination = path.join(root, "output", "runtime.tar.gz");
+    await fs.mkdir(path.join(source, "package"), { recursive: true });
+
+    for (const invalidRoot of ["../package", "/package", "@paths.txt", "package\\child"]) {
+      await expect(
+        writeReleaseArchive({
+          cwd: source,
+          destination,
+          entries: [invalidRoot],
+          requiredEntryPrefix: "package/",
+          rawIdleTimeoutMs: 5_000,
+          gzipIdleTimeoutMs: 5_000,
+        }),
+      ).rejects.toThrow(`Release archive manifest root is invalid: ${JSON.stringify(invalidRoot)}`);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects unsupported filesystem entries with their exact manifest identity",
+    async () => {
+      const root = await fixture();
+      const source = path.join(root, "source");
+      const output = path.join(root, "output");
+      const destination = path.join(output, "runtime.tar.gz");
+      const unsupportedPath = path.join(source, "package", "runtime.pipe");
+      await fs.mkdir(path.dirname(unsupportedPath), { recursive: true });
+      await execFileAsync("mkfifo", [unsupportedPath]);
+
+      await expect(
+        writeReleaseArchive({
+          cwd: source,
+          destination,
+          entries: ["package"],
+          requiredEntryPrefix: "package/",
+          rawIdleTimeoutMs: 5_000,
+          gzipIdleTimeoutMs: 5_000,
+        }),
+      ).rejects.toThrow(
+        'Release archive manifest contains an unsupported filesystem entry: {"path":"package/runtime.pipe","type":"fifo"}',
+      );
+
+      await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 
   it("times out a stream that never completes and removes every partial file", async () => {
     const root = await fixture();
@@ -211,6 +314,81 @@ describe("release archive writer", () => {
       }),
     ).rejects.toThrow(
       "Compressing runtime.tar.gz timed out after 25ms without downstream progress; 0 bytes transferred",
+    );
+
+    await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readdir(output)).toEqual([]);
+  });
+
+  it("includes an active-entry progress receipt when raw creation stops", async () => {
+    const root = await fixture();
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    const source = new PassThrough();
+    source.write("partial raw bytes");
+
+    await expect(
+      writeTwoPhaseGzipAtomically({
+        destination,
+        source,
+        rawIdleTimeoutMs: 25,
+        gzipIdleTimeoutMs: 500,
+        rawProgressReceipt: () => ({
+          schemaVersion: 1,
+          phase: "raw-tar",
+          manifestEntries: 3,
+          completedEntries: 1,
+          outputBytes: 17,
+          activeEntry: {
+            path: "package/blocked.bin",
+            type: "file",
+            size: 42,
+            entryBytes: 7,
+          },
+        }),
+        verifyRaw: async () => undefined,
+        verifyCompressed: async () => undefined,
+      }),
+    ).rejects.toThrow(
+      'progressReceipt={"schemaVersion":1,"phase":"raw-tar","manifestEntries":3,"completedEntries":1,"outputBytes":17,"activeEntry":{"path":"package/blocked.bin","type":"file","size":42,"entryBytes":7}}',
+    );
+
+    source.destroy();
+    await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readdir(output)).toEqual([]);
+  });
+
+  it("reports the active manifest entry when the real tar producer stops", async () => {
+    const root = await fixture();
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    const destination = path.join(output, "runtime.tar.gz");
+    await fs.mkdir(path.join(source, "package"), { recursive: true });
+    await fs.writeFile(path.join(source, "package", "payload.bin"), Buffer.alloc(4_096, 0x61));
+    let rawChunks = 0;
+    const stalledRawOutput = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        rawChunks += 1;
+        if (rawChunks <= 2) {
+          callback(null, chunk);
+          return;
+        }
+        this.push(chunk.subarray(0, Math.min(chunk.byteLength, 512)));
+      },
+    });
+
+    await expect(
+      writeReleaseArchive({
+        cwd: source,
+        destination,
+        entries: ["package"],
+        rawOutputTransforms: [stalledRawOutput],
+        requiredEntryPrefix: "package/",
+        rawIdleTimeoutMs: 25,
+        gzipIdleTimeoutMs: 500,
+      }),
+    ).rejects.toThrow(
+      /progressReceipt=.*"manifestEntries":2.*"activeEntry":\{"path":"package\/payload\.bin","type":"file","size":4096,"entryBytes":512\}/u,
     );
 
     await expect(fs.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });

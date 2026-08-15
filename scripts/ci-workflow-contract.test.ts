@@ -10,6 +10,7 @@ type WorkflowJob = {
   if?: string;
   needs?: string[];
   permissions?: Record<string, string>;
+  "runs-on"?: string;
   "timeout-minutes"?: number;
   steps?: Array<{
     env?: Record<string, string>;
@@ -62,6 +63,69 @@ function usesAction(step: { uses?: string }, action: string): boolean {
 }
 
 describe("CI workflow routing", () => {
+  it("keeps the candidate-shaped archive branch proof exact and non-publishable", async () => {
+    const workflow = await readWorkflow(".github/workflows/ci.yml");
+    const jobs = workflow.jobs ?? {};
+    const proof = jobs["archive-branch-proof"];
+    const proofSteps = proof?.steps ?? [];
+    const binding = proofSteps.find(
+      (step) => step.name === "Bind proof to exact protected-main source",
+    );
+    const build = proofSteps.find(
+      (step) => step.name === "Build exact candidate-shaped archive once",
+    );
+    const verify = proofSteps.find(
+      (step) => step.name === "Verify exact candidate-shaped archive inventory",
+    );
+    const upload = proofSteps.find((step) => step.name === "Upload archive proof evidence");
+    const cleanup = proofSteps.find(
+      (step) => step.name === "Remove unpublished branch proof bytes",
+    );
+    const allProofText = proofSteps.map((step) => step.run ?? "").join("\n");
+    const proofOnly =
+      "github.event_name != 'workflow_dispatch' || inputs.archive_branch_proof != true";
+
+    expect(proof?.if).toBe(
+      "github.event_name == 'workflow_dispatch' && inputs.archive_branch_proof == true",
+    );
+    expect(proof?.permissions).toEqual({ contents: "read" });
+    expect(proof?.["runs-on"]).toBe("ubuntu-24.04");
+    expect(proof?.["timeout-minutes"]).toBe(30);
+    expect(binding?.run).toContain('test "$GITHUB_SHA" = "$SOURCE_COMMIT"');
+    expect(binding?.run).toContain(
+      'test "$(git rev-parse origin/main)" = "$AUTHORIZED_BASE_COMMIT"',
+    );
+    expect(binding?.run).toContain("git merge-base --is-ancestor");
+    expect(binding?.run).toContain("scripts/release-archive.ts");
+    expect(binding?.run).toContain("Archive branch proof rejects out-of-scope path");
+    expect(build?.run).toContain("bash scripts/test-lifecycle-local-acceptance.sh");
+    expect(build?.run).toContain("fased-archive-branch-proof.log");
+    expect(build?.env).toMatchObject({
+      FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
+      FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: "${{ runner.temp }}/fased-archive-branch-proof",
+    });
+    expect(verify?.run).toContain("node scripts/release-artifact-set.mjs verify");
+    expect(verify?.run).toContain(".artifacts[]");
+    expect(verify?.run).toContain("maxArchiveBytes");
+    expect(verify?.run).toContain("completionReceipt");
+    expect(verify?.run).toContain("all(.[];");
+    expect(verify?.run).toContain('test "$max_raw_archive_bytes" -gt 38085632');
+    expect(verify?.run).toContain("maxRawArchiveBytes");
+    expect(upload?.with).toEqual(
+      expect.objectContaining({
+        name: "fased-archive-branch-proof-evidence",
+        path: "${{ runner.temp }}/fased-archive-branch-proof-evidence/evidence.json",
+      }),
+    );
+    expect(upload?.with?.path).not.toContain("/fased-archive-branch-proof/*");
+    expect(cleanup?.if).toBe("always()");
+    expect(allProofText).not.toContain("gh release create");
+    expect(allProofText).not.toContain("npm publish");
+    expect(jobs["change-scope"]?.if).toBe(proofOnly);
+    expect(jobs.secrets?.if).toBe(proofOnly);
+    expect(jobs["required-checks"]?.if).toBe(`always() && (${proofOnly})`);
+  });
+
   it("uses one change-scope authority and one required aggregate", async () => {
     const workflow = await readWorkflow(".github/workflows/ci.yml");
     const jobs = workflow.jobs ?? {};

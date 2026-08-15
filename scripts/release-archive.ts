@@ -1,4 +1,4 @@
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Transform } from "node:stream";
@@ -29,7 +29,10 @@ type TwoPhaseGzipOptions = {
   source: DestroyableByteStream;
   rawIdleTimeoutMs: number;
   gzipIdleTimeoutMs: number;
+  rawOutputTransforms?: Transform[];
   compressionInputTransforms?: Transform[];
+  rawProgressReceipt?: (outputBytes: number) => unknown;
+  onRawProgress?: (outputBytes: number) => void;
   verifyRaw: (rawPath: string) => Promise<void>;
   verifyCompressed: (compressedPath: string) => Promise<void>;
 };
@@ -42,11 +45,41 @@ type ReleaseArchiveOptions = {
   rawIdleTimeoutMs?: number;
   gzipIdleTimeoutMs?: number;
   noMtime?: boolean;
+  rawOutputTransforms?: Transform[];
   requiredEntryPrefix: string;
 };
 
 const DEFAULT_RAW_ARCHIVE_IDLE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_GZIP_ARCHIVE_IDLE_TIMEOUT_MS = 120_000;
+
+type ReleaseArchiveEntryType = "directory" | "file" | "symlink";
+type UnsupportedReleaseArchiveEntryType =
+  | "block-device"
+  | "character-device"
+  | "fifo"
+  | "socket"
+  | "unknown";
+
+type ReleaseArchiveManifestEntry = {
+  path: string;
+  size: number;
+  stat: Stats;
+  type: ReleaseArchiveEntryType;
+};
+
+export type ReleaseArchiveProgressReceipt = {
+  schemaVersion: 1;
+  phase: "raw-tar";
+  manifestEntries: number;
+  completedEntries: number;
+  outputBytes: number;
+  activeEntry: {
+    path: string;
+    type: ReleaseArchiveEntryType;
+    size: number;
+    entryBytes: number;
+  } | null;
+};
 
 function requireTimeout(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 1) {
@@ -59,6 +92,10 @@ async function pipelineWithIdleTimeout(
   streams: DestroyableByteStream[],
   idleTimeoutMs: number,
   label: string,
+  options: {
+    progressReceipt?: (outputBytes: number) => unknown;
+    onProgress?: (outputBytes: number) => void;
+  } = {},
 ): Promise<void> {
   if (streams.length < 2) {
     throw new Error("Progress-aware pipeline requires a source and destination.");
@@ -71,8 +108,10 @@ async function pipelineWithIdleTimeout(
       clearTimeout(timeout);
     }
     timeout = setTimeout(() => {
+      const receipt = options.progressReceipt?.(transferredBytes);
+      const receiptJson = receipt === undefined ? undefined : JSON.stringify(receipt);
       const error = new Error(
-        `${label} timed out after ${idleTimeoutMs}ms without downstream progress; ${transferredBytes} bytes transferred.`,
+        `${label} timed out after ${idleTimeoutMs}ms without downstream progress; ${transferredBytes} bytes transferred.${receiptJson ? ` progressReceipt=${receiptJson}` : ""}`,
       );
       for (const stream of observedStreams) {
         stream.destroy(error);
@@ -83,6 +122,7 @@ async function pipelineWithIdleTimeout(
   const progress = new Transform({
     transform(chunk: Uint8Array, _encoding, callback) {
       transferredBytes += chunk.byteLength;
+      options.onProgress?.(transferredBytes);
       armDeadline();
       callback(null, chunk);
     },
@@ -177,10 +217,13 @@ export async function writeTwoPhaseGzipAtomically({
   source,
   rawIdleTimeoutMs: rawIdleTimeoutInputMs,
   gzipIdleTimeoutMs: gzipIdleTimeoutInputMs,
+  rawOutputTransforms = [],
   compressionInputTransforms = [],
+  rawProgressReceipt,
+  onRawProgress,
   verifyRaw,
   verifyCompressed,
-}: TwoPhaseGzipOptions): Promise<{ size: number }> {
+}: TwoPhaseGzipOptions): Promise<{ rawSize: number; size: number }> {
   const rawIdleTimeoutMs = requireTimeout(rawIdleTimeoutInputMs, "Release raw-tar idle timeout");
   const gzipIdleTimeoutMs = requireTimeout(gzipIdleTimeoutInputMs, "Release gzip idle timeout");
   const outputDir = path.dirname(destination);
@@ -193,11 +236,12 @@ export async function writeTwoPhaseGzipAtomically({
   try {
     const rawOutput = createWriteStream(rawPath, { flags: "wx", mode: 0o600 });
     await pipelineWithIdleTimeout(
-      [source, rawOutput],
+      [source, ...rawOutputTransforms, rawOutput],
       rawIdleTimeoutMs,
       `Creating raw tar for ${destinationName}`,
+      { progressReceipt: rawProgressReceipt, onProgress: onRawProgress },
     );
-    await requireNonemptyFile(rawPath, `Raw tar for ${destinationName}`);
+    const rawSize = await requireNonemptyFile(rawPath, `Raw tar for ${destinationName}`);
     await verifyRaw(rawPath);
     await syncFile(rawPath);
     await syncDirectory(stagingDir);
@@ -215,10 +259,188 @@ export async function writeTwoPhaseGzipAtomically({
     await syncFile(compressedPath);
     await syncDirectory(stagingDir);
     await publishNoClobber(compressedPath, destination);
-    return { size };
+    return { rawSize, size };
   } finally {
     await fs.rm(stagingDir, { force: true, recursive: true });
   }
+}
+
+function normalizeManifestRoot(entry: string): string {
+  if (
+    entry.length === 0 ||
+    entry !== entry.trim() ||
+    entry.includes("\\") ||
+    entry.includes("\0") ||
+    entry.startsWith("@") ||
+    path.posix.isAbsolute(entry)
+  ) {
+    throw new Error(`Release archive manifest root is invalid: ${JSON.stringify(entry)}`);
+  }
+  const segments = entry.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    throw new Error(`Release archive manifest root is invalid: ${JSON.stringify(entry)}`);
+  }
+  return segments.join("/");
+}
+
+function filesystemEntryType(
+  stat: Stats,
+): ReleaseArchiveEntryType | UnsupportedReleaseArchiveEntryType {
+  if (stat.isFile()) {
+    return "file";
+  }
+  if (stat.isDirectory()) {
+    return "directory";
+  }
+  if (stat.isSymbolicLink()) {
+    return "symlink";
+  }
+  if (stat.isFIFO()) {
+    return "fifo";
+  }
+  if (stat.isSocket()) {
+    return "socket";
+  }
+  if (stat.isBlockDevice()) {
+    return "block-device";
+  }
+  if (stat.isCharacterDevice()) {
+    return "character-device";
+  }
+  return "unknown";
+}
+
+async function createReleaseArchiveManifest({
+  cwd,
+  entries,
+  filter,
+}: Pick<ReleaseArchiveOptions, "cwd" | "entries" | "filter">): Promise<
+  ReleaseArchiveManifestEntry[]
+> {
+  const manifest = new Map<string, ReleaseArchiveManifestEntry>();
+
+  const visit = async (relativePath: string): Promise<void> => {
+    if (manifest.has(relativePath)) {
+      return;
+    }
+    const absolutePath = path.join(cwd, ...relativePath.split("/"));
+    const stat = await fs.lstat(absolutePath);
+    const type = filesystemEntryType(stat);
+    if (type !== "file" && type !== "directory" && type !== "symlink") {
+      throw new Error(
+        `Release archive manifest contains an unsupported filesystem entry: ${JSON.stringify({ path: relativePath, type })}`,
+      );
+    }
+    if (filter && !filter(relativePath, stat)) {
+      return;
+    }
+
+    manifest.set(relativePath, { path: relativePath, size: stat.size, stat, type });
+    if (type !== "directory") {
+      return;
+    }
+    const children = await fs.readdir(absolutePath);
+    children.sort();
+    for (const child of children) {
+      await visit(path.posix.join(relativePath, child));
+    }
+  };
+
+  const roots = entries.map(normalizeManifestRoot).toSorted();
+  for (const root of roots) {
+    await visit(root);
+  }
+  if (manifest.size < 1) {
+    throw new Error("Release archive manifest is empty.");
+  }
+  return [...manifest.values()].toSorted((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+  );
+}
+
+class ReleaseArchiveProgressTracker {
+  readonly #manifestByPath: Map<string, ReleaseArchiveManifestEntry>;
+  #completedEntries = 0;
+  #outputBytes = 0;
+  #activeEntry: ReleaseArchiveProgressReceipt["activeEntry"] = null;
+  #activeEntryBytes: (() => number) | null = null;
+
+  constructor(manifest: ReleaseArchiveManifestEntry[]) {
+    this.#manifestByPath = new Map(manifest.map((entry) => [entry.path, entry]));
+  }
+
+  start(entryPath: string, entryBytes: () => number): void {
+    const normalizedPath = entryPath.replace(/\/+$/u, "");
+    const manifestEntry = this.#manifestByPath.get(normalizedPath);
+    if (!manifestEntry) {
+      throw new Error(
+        `Release archive producer emitted an entry outside its manifest: ${JSON.stringify(normalizedPath)}`,
+      );
+    }
+    this.#activeEntry = {
+      path: manifestEntry.path,
+      type: manifestEntry.type,
+      size: manifestEntry.size,
+      entryBytes: 0,
+    };
+    this.#activeEntryBytes = entryBytes;
+  }
+
+  complete(entryPath: string): void {
+    const normalizedPath = entryPath.replace(/\/+$/u, "");
+    if (this.#activeEntry?.path === normalizedPath) {
+      this.#completedEntries += 1;
+      this.#activeEntry = null;
+      this.#activeEntryBytes = null;
+    }
+  }
+
+  recordOutput(outputBytes: number): void {
+    this.#outputBytes = outputBytes;
+  }
+
+  receipt(outputBytes: number): ReleaseArchiveProgressReceipt {
+    this.recordOutput(outputBytes);
+    if (this.#activeEntry && this.#activeEntryBytes) {
+      this.#activeEntry.entryBytes = this.#activeEntryBytes();
+    }
+    return {
+      schemaVersion: 1,
+      phase: "raw-tar",
+      manifestEntries: this.#manifestByPath.size,
+      completedEntries: this.#completedEntries,
+      outputBytes: this.#outputBytes,
+      activeEntry: this.#activeEntry ? { ...this.#activeEntry } : null,
+    };
+  }
+}
+
+function observeReleaseArchiveProgress(progress: ReleaseArchiveProgressTracker): Transform {
+  let observer: Transform;
+  const parser = new tar.Parser({
+    strict: true,
+    onReadEntry: (entry) => {
+      progress.start(entry.path, () => Math.max(0, entry.size - entry.remain));
+      entry.on("data", () => undefined);
+      entry.once("end", () => progress.complete(entry.path));
+    },
+  });
+  parser.on("error", (error) => observer.destroy(error));
+  observer = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      try {
+        parser.write(chunk);
+        callback(null, chunk);
+      } catch (error) {
+        callback(error as Error);
+      }
+    },
+    flush(callback) {
+      parser.once("end", callback);
+      parser.end();
+    },
+  });
+  return observer;
 }
 
 async function inspectReleaseArchive(
@@ -261,13 +483,36 @@ export async function writeReleaseArchive({
   rawIdleTimeoutMs: rawIdleTimeoutInputMs = DEFAULT_RAW_ARCHIVE_IDLE_TIMEOUT_MS,
   gzipIdleTimeoutMs: gzipIdleTimeoutInputMs = DEFAULT_GZIP_ARCHIVE_IDLE_TIMEOUT_MS,
   noMtime,
+  rawOutputTransforms,
   requiredEntryPrefix,
-}: ReleaseArchiveOptions): Promise<{ entries: number; size: number }> {
+}: ReleaseArchiveOptions): Promise<{
+  entries: number;
+  manifestEntries: number;
+  rawSize: number;
+  size: number;
+}> {
   const rawIdleTimeoutMs = requireTimeout(rawIdleTimeoutInputMs, "Release raw-tar idle timeout");
   const gzipIdleTimeoutMs = requireTimeout(gzipIdleTimeoutInputMs, "Release gzip idle timeout");
+  const manifest = await createReleaseArchiveManifest({ cwd, entries, filter });
+  const progress = new ReleaseArchiveProgressTracker(manifest);
+  const statCache = new Map(
+    manifest.map((entry) => [path.resolve(cwd, ...entry.path.split("/")), entry.stat]),
+  );
+  console.log(
+    `release-archive: validated manifest for ${path.basename(destination)} (${manifest.length} entries)`,
+  );
   const source = tar.c(
-    { cwd, filter, gzip: false, noMtime, portable: true, strict: true },
-    entries,
+    {
+      cwd,
+      gzip: false,
+      jobs: 1,
+      noDirRecurse: true,
+      noMtime,
+      portable: true,
+      statCache,
+      strict: true,
+    },
+    manifest.map((entry) => entry.path),
   );
   let archivedEntries = 0;
 
@@ -276,6 +521,9 @@ export async function writeReleaseArchive({
     source,
     rawIdleTimeoutMs,
     gzipIdleTimeoutMs,
+    rawOutputTransforms: [...(rawOutputTransforms ?? []), observeReleaseArchiveProgress(progress)],
+    onRawProgress: (outputBytes) => progress.recordOutput(outputBytes),
+    rawProgressReceipt: (outputBytes) => progress.receipt(outputBytes),
     verifyRaw: async (rawPath) => {
       const rawEntries = await inspectReleaseArchive(
         rawPath,
@@ -300,5 +548,20 @@ export async function writeReleaseArchive({
     },
   });
 
-  return { entries: archivedEntries, size: result.size };
+  console.log(
+    `release-archive: completionReceipt=${JSON.stringify({
+      schemaVersion: 1,
+      destination: path.basename(destination),
+      manifestEntries: manifest.length,
+      archivedEntries,
+      rawBytes: result.rawSize,
+      compressedBytes: result.size,
+    })}`,
+  );
+  return {
+    entries: archivedEntries,
+    manifestEntries: manifest.length,
+    rawSize: result.rawSize,
+    size: result.size,
+  };
 }
