@@ -392,9 +392,12 @@ func managedInitializationFastPath(
 	if err != nil {
 		return "", false, err
 	}
-	authority, err := state.ReadCandidateAuthority(manifest.ActiveGeneration.ID)
+	authority, bound, err := managedFastPathAuthority(state, *manifest)
 	if err != nil {
 		return "", false, err
+	}
+	if !bound {
+		return configPath, false, nil
 	}
 	policy, err := platform.ReadUpdatePolicy(config)
 	if errors.Is(err, os.ErrNotExist) {
@@ -407,6 +410,24 @@ func managedInitializationFastPath(
 		authority, policy, releaseSequence, securityEpoch, manifestProtocolMin, manifestProtocolMax,
 		releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest)
 	return configPath, fast, err
+}
+
+type candidateAuthorityReader interface {
+	ReadCandidateAuthority(string) (store.CandidateAuthority, error)
+}
+
+func managedFastPathAuthority(reader candidateAuthorityReader, manifest model.Manifest) (store.CandidateAuthority, bool, error) {
+	if manifest.ActiveGeneration == nil {
+		return store.CandidateAuthority{}, false, errors.New("managed fast path requires an installed active generation")
+	}
+	authority, err := reader.ReadCandidateAuthority(manifest.ActiveGeneration.ID)
+	if errors.Is(err, os.ErrNotExist) && manifest.SchemaVersion == 1 {
+		return store.CandidateAuthority{}, false, nil
+	}
+	if err != nil {
+		return store.CandidateAuthority{}, false, err
+	}
+	return authority, true, nil
 }
 
 func managedInitializationInputsMatch(

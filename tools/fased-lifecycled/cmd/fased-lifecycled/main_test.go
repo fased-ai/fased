@@ -17,6 +17,33 @@ import (
 	"fased-lifecycled/store"
 )
 
+type missingCandidateAuthority struct{ err error }
+
+func (missing missingCandidateAuthority) ReadCandidateAuthority(string) (store.CandidateAuthority, error) {
+	return store.CandidateAuthority{}, missing.err
+}
+
+func TestManagedInitializationFastPathAdoptsOnlySchemaOneWithoutCandidateAuthority(t *testing.T) {
+	manifest := model.Manifest{
+		SchemaVersion: 1,
+		ActiveGeneration: &model.Generation{
+			ID: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	}
+	if _, bound, err := managedFastPathAuthority(missingCandidateAuthority{err: os.ErrNotExist}, manifest); err != nil || bound {
+		t.Fatalf("schema-one predecessor did not select full initialization: bound=%v err=%v", bound, err)
+	}
+	manifest.SchemaVersion = model.CurrentManifestSchemaVersion
+	if _, _, err := managedFastPathAuthority(missingCandidateAuthority{err: os.ErrNotExist}, manifest); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("schema-two authority loss did not fail closed: %v", err)
+	}
+	manifest.SchemaVersion = 1
+	corrupt := errors.New("candidate authority is malformed")
+	if _, _, err := managedFastPathAuthority(missingCandidateAuthority{err: corrupt}, manifest); !errors.Is(err, corrupt) {
+		t.Fatalf("schema-one authority corruption was treated as absence: %v", err)
+	}
+}
+
 func TestManagedInitializationFastPathRequiresExactPolicyAndReleaseAuthority(t *testing.T) {
 	config, err := platform.NewConfig(
 		model.ProfileProtectedLocal, "0123456789abcdef", "/home/owner/.fased",
