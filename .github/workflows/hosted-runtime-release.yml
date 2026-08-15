@@ -1,6 +1,8 @@
 name: Hosted Runtime Release
 
 on:
+  schedule:
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       release_version:
@@ -33,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fased-lifecycle-channel-${{ contains(inputs.release_version, '-') && 'beta' || 'stable' }}
+  group: ${{ github.event_name == 'schedule' && format('fased-root-head-refresh-{0}', github.run_id) || format('fased-lifecycle-channel-{0}', contains(inputs.release_version, '-') && 'beta' || 'stable') }}
   cancel-in-progress: false
 
 env:
@@ -42,6 +44,7 @@ env:
 jobs:
   preflight:
     name: Validate release preflight
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     outputs:
       p1_local_predecessors: ${{ steps.p1-plan.outputs.local_predecessors }}
@@ -609,6 +612,20 @@ jobs:
             --output "$GITHUB_WORKSPACE/.artifacts/hosted-runtime/fased-release-index-v1.json"
           rm -f "$release_index_raw"
 
+          readarray -t root_head_times < <(node -e '
+            const issued = new Date();
+            const expires = new Date(issued.getTime() + 36 * 60 * 60 * 1000);
+            process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
+          ')
+          node scripts/build-lifecycle-root-head.mjs \
+            --root "$root_policy" \
+            --index .artifacts/hosted-runtime/fased-release-index-v1.json \
+            --witness-ref "$GITHUB_REF" \
+            --witness-commit "$GITHUB_SHA" \
+            --issued-at "${root_head_times[0]}" \
+            --expires-at "${root_head_times[1]}" \
+            --output .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json
+
       - name: Attest unified candidate manifest
         id: attest-candidate-manifest
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
@@ -671,6 +688,20 @@ jobs:
             "${{ steps.attest-lifecycle-release-index.outputs.bundle-path }}" \
             .artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
 
+      - name: Attest current lifecycle root head
+        id: attest-lifecycle-root-head
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json
+
+      - name: Stage lifecycle root-head attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest-lifecycle-root-head.outputs.bundle-path }}" \
+            .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json.attestation.json
+
       - name: Verify every staged candidate attestation offline
         shell: bash
         env:
@@ -689,6 +720,8 @@ jobs:
           verify fased-hosted-release-v2.json fased-hosted-release-v2.json.attestation.json
           verify fased-lifecycle-trust-v1.json fased-lifecycle-trust-v1.json.attestation.json
           verify fased-release-index-v1.json fased-release-index-v1.json.attestation.json
+          verify fased-lifecycle-root-head-v1.json \
+            fased-lifecycle-root-head-v1.json.attestation.json
           verify fased-privileged-provenance-v1.intoto.json \
             fased-privileged-provenance-v1.intoto.json.attestation.json
           node ../../scripts/verify-lifecycle-root-chain.mjs \
@@ -1259,3 +1292,112 @@ jobs:
           bash scripts/publish-lifecycle-channel.sh
           .artifacts/hosted-runtime
           "${SOURCE_COMMIT}"
+
+  refresh-root-head:
+    name: Refresh ${{ matrix.channel }} lifecycle root witness
+    if: github.event_name == 'schedule'
+    concurrency:
+      group: fased-lifecycle-channel-${{ matrix.channel }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, beta]
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout protected main witness code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+
+      - name: Prepare current channel root-head statement
+        id: prepare
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel_tag="fased-channel-$CHANNEL-v1"
+          printf 'found=false\n' >>"$GITHUB_OUTPUT"
+          if ! gh release view "$channel_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            exit 0
+          fi
+          directory="$RUNNER_TEMP/root-head-$CHANNEL"
+          mkdir -p "$directory"
+          gh release download "$channel_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'fased-lifecycle-root-v*.json' \
+            --pattern 'fased-release-index-v1.json' \
+            --pattern 'fased-release-index-v1.json.attestation.json' \
+            --dir "$directory"
+          source_roots="$RUNNER_TEMP/source-roots-$CHANNEL"
+          mkdir -p "$source_roots"
+          mapfile -t root_policies < <(find release/lifecycle-trust -mindepth 2 -maxdepth 2 \
+            -type f -name 'fased-lifecycle-root-v*.json' | sort -V)
+          test "${#root_policies[@]}" -gt 0
+          for source_root in "${root_policies[@]}"; do
+            root_name="$(basename "$source_root")"
+            install -m 0644 "$source_root" "$source_roots/$root_name"
+            cmp -s "$source_root" "$directory/$root_name"
+          done
+          test "$(find "$directory" -maxdepth 1 -type f -name 'fased-lifecycle-root-v*.json' | wc -l)" \
+            -eq "${#root_policies[@]}"
+          root_info="$(node scripts/verify-lifecycle-root-chain.mjs \
+            --directory "$source_roots" \
+            --pin release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256)"
+          version="$(jq -er .version "$directory/fased-release-index-v1.json")"
+          test "$(jq -er .channel "$directory/fased-release-index-v1.json")" = "$CHANNEL"
+          gh attestation verify "$directory/fased-release-index-v1.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$directory/fased-release-index-v1.json.attestation.json" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/v$version" \
+            --deny-self-hosted-runners >/dev/null
+          root_version="$(jq -er .version <<<"$root_info")"
+          readarray -t root_head_times < <(node -e '
+            const issued = new Date();
+            const expires = new Date(issued.getTime() + 36 * 60 * 60 * 1000);
+            process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
+          ')
+          node scripts/build-lifecycle-root-head.mjs \
+            --root "$source_roots/fased-lifecycle-root-v${root_version}.json" \
+            --index "$directory/fased-release-index-v1.json" \
+            --witness-ref refs/heads/main \
+            --witness-commit "$GITHUB_SHA" \
+            --issued-at "${root_head_times[0]}" \
+            --expires-at "${root_head_times[1]}" \
+            --output "$directory/fased-lifecycle-root-head-v1.json"
+          printf 'directory=%s\n' "$directory" >>"$GITHUB_OUTPUT"
+          printf 'found=true\n' >>"$GITHUB_OUTPUT"
+
+      - name: Attest refreshed lifecycle root head
+        if: steps.prepare.outputs.found == 'true'
+        id: attest
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: ${{ steps.prepare.outputs.directory }}/fased-lifecycle-root-head-v1.json
+
+      - name: Publish refreshed lifecycle root witness
+        if: steps.prepare.outputs.found == 'true'
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          GH_TOKEN: ${{ github.token }}
+          ROOT_HEAD_DIRECTORY: ${{ steps.prepare.outputs.directory }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 \
+            "${{ steps.attest.outputs.bundle-path }}" \
+            "$ROOT_HEAD_DIRECTORY/fased-lifecycle-root-head-v1.json.attestation.json"
+          bash scripts/publish-lifecycle-root-head.sh \
+            "$ROOT_HEAD_DIRECTORY" \
+            "fased-channel-$CHANNEL-v1"

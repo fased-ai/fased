@@ -301,10 +301,25 @@ func TestPublicUpdateSelectsAnAttestedReplayProtectedChannelIndex(t *testing.T) 
 		t.Fatal(err)
 	}
 	attestationJSON := []byte("attestation fixture")
+	indexDigest := sha256.Sum256(indexJSON)
+	rootHead := trust.RootHead{
+		SchemaVersion: 1, Type: "fased-lifecycle-root-head", Channel: "stable",
+		RootVersion: 1, RootSHA256: hex.EncodeToString(rootDigest[:]),
+		ReleaseIndexSHA256: hex.EncodeToString(indexDigest[:]), ReleaseVersion: index.Version,
+		ReleaseSequence: index.ReleaseSequence, SecurityEpoch: index.SecurityEpoch, IndexCommit: index.Commit,
+		WitnessRef: "refs/tags/v" + index.Version, WitnessCommit: index.Commit,
+		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+	}
+	rootHeadJSON, err := json.Marshal(rootHead)
+	if err != nil {
+		t.Fatal(err)
+	}
 	assets := map[string][]byte{
-		"/channel/" + releaseRootAssetName:             rootJSON,
-		"/channel/" + releaseIndexAssetName:            indexJSON,
-		"/channel/" + releaseIndexAttestationAssetName: attestationJSON,
+		"/channel/" + releaseRootAssetName:                rootJSON,
+		"/channel/" + releaseIndexAssetName:               indexJSON,
+		"/channel/" + releaseIndexAttestationAssetName:    attestationJSON,
+		"/channel/" + releaseRootHeadAssetName:            rootHeadJSON,
+		"/channel/" + releaseRootHeadAttestationAssetName: attestationJSON,
 	}
 	client := &http.Client{Transport: bootstrapRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		data, ok := assets[request.URL.Path]
@@ -324,21 +339,37 @@ func TestPublicUpdateSelectsAnAttestedReplayProtectedChannelIndex(t *testing.T) 
 		digest := sha256.Sum256(candidate)
 		return bootstrapVerifiedReleaseIndex{Index: decoded, Digest: hex.EncodeToString(digest[:]), ReleaseAuthorityDigest: strings.Repeat("d", 64)}, nil
 	}
+	verifyHead := func(candidate, bundle []byte, observed time.Time) (trust.RootHead, error) {
+		if string(bundle) != string(attestationJSON) {
+			return trust.RootHead{}, errors.New("wrong root-head attestation")
+		}
+		return trust.DecodeRootHead(candidate, observed)
+	}
 
 	rootState := t.TempDir()
 	if err := os.Chmod(rootState, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	selection, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), rootState, uint32(os.Geteuid()), 41, 3, now, verify)
+	selection, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), rootState, uint32(os.Geteuid()), 41, 3, now, verify, verifyHead)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if selection.Version != index.Version || selection.ReleaseSequence != 42 || selection.SecurityEpoch != 3 || len(selection.IndexDigest) != 64 {
 		t.Fatalf("signed channel selection lost release identity: %+v", selection)
 	}
-	if _, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), rootState, uint32(os.Geteuid()), 43, 3, now, verify); err == nil {
+	if _, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), rootState, uint32(os.Geteuid()), 43, 3, now, verify, verifyHead); err == nil {
 		t.Fatal("signed channel selection accepted a replay below the installed release sequence")
 	}
+	tamperedHead := rootHead
+	tamperedHead.ReleaseIndexSHA256 = strings.Repeat("e", 64)
+	assets["/channel/"+releaseRootHeadAssetName], err = json.Marshal(tamperedHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverSignedChannelRelease(context.Background(), "stable", client, "https://fixture.invalid/channel", hex.EncodeToString(rootDigest[:]), rootState, uint32(os.Geteuid()), 41, 3, now, verify, verifyHead); err == nil {
+		t.Fatal("channel discovery accepted an index outside the witnessed root-head")
+	}
+	assets["/channel/"+releaseRootHeadAssetName] = rootHeadJSON
 	result := bootstrapResult{Version: selection.Version, ReleaseSequence: selection.ReleaseSequence, SecurityEpoch: selection.SecurityEpoch,
 		ReleaseIndexDigest: "sha256:" + selection.IndexDigest, ReleaseAuthorityDigest: "sha256:" + selection.ReleaseAuthorityDigest}
 	if err := validateSignedChannelResult(selection, result); err != nil {
@@ -388,6 +419,7 @@ func TestPublicRootRotationIsDiscoveredAndBecomesADurableFloor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rootV3Digest := sha256.Sum256(rootV3)
 	rootV1Digest := sha256.Sum256(rootV1)
 	stateRoot := t.TempDir()
 	if err := os.Chmod(stateRoot, 0o700); err != nil {
@@ -417,12 +449,17 @@ func TestPublicRootRotationIsDiscoveredAndBecomesADurableFloor(t *testing.T) {
 
 	if _, err := resolveTrustedRoot(context.Background(), clientFor(false), stateRoot, uint32(os.Geteuid()),
 		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
-		hex.EncodeToString(rootV1Digest[:]), now); err == nil {
+		hex.EncodeToString(rootV1Digest[:]), 0, "", now); err == nil {
 		t.Fatal("expired final root was accepted without a current successor")
+	}
+	if _, err := resolveTrustedRoot(context.Background(), clientFor(false), stateRoot, uint32(os.Geteuid()),
+		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
+		hex.EncodeToString(rootV1Digest[:]), 3, hex.EncodeToString(rootV3Digest[:]), now); err == nil {
+		t.Fatal("release-host 404 suppressed a positively witnessed root rotation")
 	}
 	root, err := resolveTrustedRoot(context.Background(), clientFor(true), stateRoot, uint32(os.Geteuid()),
 		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
-		hex.EncodeToString(rootV1Digest[:]), now)
+		hex.EncodeToString(rootV1Digest[:]), 3, hex.EncodeToString(rootV3Digest[:]), now)
 	if err != nil || root.Version() != 3 {
 		t.Fatalf("public root rotation was not discovered: version=%d err=%v", root.Version(), err)
 	}
@@ -435,7 +472,7 @@ func TestPublicRootRotationIsDiscoveredAndBecomesADurableFloor(t *testing.T) {
 
 	root, err = resolveTrustedRoot(context.Background(), clientFor(false), stateRoot, uint32(os.Geteuid()),
 		"https://fixture.invalid/channel/"+releaseRootAssetName, "https://fixture.invalid/channel", nil,
-		hex.EncodeToString(rootV1Digest[:]), now)
+		hex.EncodeToString(rootV1Digest[:]), 3, hex.EncodeToString(rootV3Digest[:]), now)
 	if err != nil || root.Version() != 3 {
 		t.Fatalf("network suppression rolled back the cached root floor: version=%d err=%v", root.Version(), err)
 	}

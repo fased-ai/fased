@@ -83,6 +83,11 @@ Execute one checkpoint at a time and stop with exact evidence.
   root-authorized GitHub artifact-attestation release authority, and the
   attested release index. Reuse that authority; never generate a second
   ordinary release keypair merely to bridge metadata formats.
+- Require a short-lived GitHub/Sigstore-attested root-head witness from the
+  protected release workflow. It binds the newest root and index digests;
+  missing future root assets fail closed instead of treating HTTP `404` as a
+  signed statement of absence. Refresh the witness independently from product
+  bytes and serialize it with channel publication.
 - Bind release sequence/security epoch into manifest and transaction.
 - Reject downgrade; require explicit rollback authority.
 

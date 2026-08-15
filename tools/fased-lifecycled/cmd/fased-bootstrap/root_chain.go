@@ -35,8 +35,13 @@ func resolveTrustedRoot(
 	rotationBaseURL string,
 	explicitRotationURLs []string,
 	pinnedRootSHA256 string,
+	expectedRootVersion uint64,
+	expectedRootSHA256 string,
 	now time.Time,
 ) (trust.VerifiedRoot, error) {
+	if (expectedRootVersion == 0) != (expectedRootSHA256 == "") {
+		return trust.VerifiedRoot{}, errors.New("lifecycle root-head expectation is incomplete")
+	}
 	if rotationBaseURL != "" && len(explicitRotationURLs) != 0 {
 		return trust.VerifiedRoot{}, errors.New("root rotation base and explicit rotation URLs are mutually exclusive")
 	}
@@ -89,8 +94,20 @@ func resolveTrustedRoot(
 			return trust.VerifiedRoot{}, fmt.Errorf("verify cached lifecycle root rotation: %w", err)
 		}
 	}
+	if expectedRootVersion != 0 && root.Version() > expectedRootVersion {
+		return trust.VerifiedRoot{}, errors.New("lifecycle root-head is older than the durable root floor")
+	}
 
 	for count := 0; count < maxRootRotationsPerRun; count++ {
+		if expectedRootVersion != 0 && root.Version() == expectedRootVersion {
+			if root.Digest() != expectedRootSHA256 {
+				return trust.VerifiedRoot{}, errors.New("lifecycle root differs from the witnessed root-head digest")
+			}
+			if err := root.RequireCurrent(now); err != nil {
+				return trust.VerifiedRoot{}, err
+			}
+			return root, nil
+		}
 		name := rootRotationAssetName(root.Version() + 1)
 		rotationURL, urlErr := assetURL(rotationBaseURL, name)
 		if urlErr != nil {
@@ -101,6 +118,9 @@ func resolveTrustedRoot(
 			return trust.VerifiedRoot{}, fetchErr
 		}
 		if !found {
+			if expectedRootVersion != 0 {
+				return trust.VerifiedRoot{}, fmt.Errorf("witnessed lifecycle root rotation %d is unavailable", root.Version()+1)
+			}
 			if err := root.RequireCurrent(now); err != nil {
 				return trust.VerifiedRoot{}, err
 			}

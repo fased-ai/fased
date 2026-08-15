@@ -15,6 +15,8 @@ source_commit="$2"
 
 index_name=fased-release-index-v1.json
 attestation_name=fased-release-index-v1.json.attestation.json
+root_head_name=fased-lifecycle-root-head-v1.json
+root_head_attestation_name="$root_head_name.attestation.json"
 mapfile -t root_names < <(find "$candidate_dir" -maxdepth 1 -type f \
   -name 'fased-lifecycle-root-v*.json' -printf '%f\n' | sort -V)
 [[ "${root_names[0]:-}" == fased-lifecycle-root-v1.json ]] || {
@@ -25,11 +27,13 @@ root_name="${root_names[0]}"
 root="$candidate_dir/$root_name"
 index="$candidate_dir/$index_name"
 attestation="$candidate_dir/$attestation_name"
+root_head="$candidate_dir/$root_head_name"
+root_head_attestation="$candidate_dir/$root_head_attestation_name"
 roots=()
 for name in "${root_names[@]}"; do
   roots+=("$candidate_dir/$name")
 done
-for file in "${roots[@]}" "$index" "$attestation"; do
+for file in "${roots[@]}" "$index" "$attestation" "$root_head" "$root_head_attestation"; do
   [[ -f "$file" && ! -L "$file" && -s "$file" ]] || {
     echo "Channel source asset is missing or unsafe: $file" >&2
     exit 1
@@ -122,7 +126,7 @@ if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$channel_tag" >"$channel_rel
     fi
   }
   trap 'cleanup_draft; rm -rf "$workspace"' EXIT
-  gh release create "$channel_tag" "${roots[@]}" "$attestation" "$index" \
+  gh release create "$channel_tag" "${roots[@]}" "$attestation" "$index" "$root_head_attestation" "$root_head" \
     --repo "$GITHUB_REPOSITORY" \
     --target "$source_commit" \
     --title "Fased signed $channel channel v1" \
@@ -135,7 +139,7 @@ if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$channel_tag" >"$channel_rel
       '[.[][] | select(.tag_name == $tag and .draft == true)] |
        if length == 1 then .[0].id else error("channel draft release not found") end')"
   gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id" >"$channel_release"
-  test "$(jq '[.assets[].name] | unique | length' "$channel_release")" -eq "$((${#root_names[@]} + 2))"
+  test "$(jq '[.assets[].name] | unique | length' "$channel_release")" -eq "$((${#root_names[@]} + 4))"
   verify_release_assets "$channel_release" "$workspace/channel-draft"
   gh api --method PATCH \
     "repos/$GITHUB_REPOSITORY/releases/$draft_id" \
@@ -152,7 +156,8 @@ else
   staged_index_name="$index_name.next"
   staged_attestation_name="$attestation_name.next"
   allowed_assets="$(printf '%s\n' "${root_names[@]}" "$index_name" "$attestation_name" \
-    "$staged_index_name" "$staged_attestation_name" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+    "$staged_index_name" "$staged_attestation_name" "$root_head_name" "$root_head_attestation_name" \
+    "$root_head_name.next" "$root_head_attestation_name.next" | jq -Rsc 'split("\n") | map(select(length > 0))')"
   jq -e --argjson allowed "$allowed_assets" \
     'all(.assets[].name; . as $name | $allowed | index($name)) and
      ([.assets[].name] | group_by(.) | all(length == 1))' \
@@ -263,9 +268,11 @@ else
   fi
 fi
 
+bash scripts/publish-lifecycle-root-head.sh "$candidate_dir" "$channel_tag"
+
 gh api "repos/$GITHUB_REPOSITORY/releases/tags/$channel_tag" >"$channel_release"
 final_assets="$(jq -c '[.assets[].name] | sort' "$channel_release")"
-expected_assets="$(printf '%s\n' "${root_names[@]}" "$index_name" "$attestation_name" | \
+expected_assets="$(printf '%s\n' "${root_names[@]}" "$index_name" "$attestation_name" "$root_head_name" "$root_head_attestation_name" | \
   jq -Rsc 'split("\n") | map(select(length > 0)) | sort')"
 test "$final_assets" = "$expected_assets"
 verify_release_assets "$channel_release" "$workspace/channel-readback"

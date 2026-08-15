@@ -10,6 +10,7 @@ const networkPolicy = read("../tools/fased-lifecycled/platform/network_policy.go
 const bootstrap = read("../tools/fased-lifecycled/cmd/fased-bootstrap/main.go");
 const bootstrapRootChain = read("../tools/fased-lifecycled/cmd/fased-bootstrap/root_chain.go");
 const bootstrapRoute = read("../tools/fased-lifecycled/cmd/fased-bootstrap/route.go");
+const rootHead = read("../tools/fased-lifecycled/trust/root_head.go");
 
 describe("hosted signer security boundary", () => {
   it("enters privileged Hosting setup only through an immutable attested Go bundle", () => {
@@ -23,7 +24,12 @@ describe("hosted signer security boundary", () => {
     expect(bootstrapRootChain).toContain("trust.VerifyInitialRoot");
     expect(bootstrapRootChain).toContain("trust.VerifyRootRotation");
     expect(bootstrapRootChain).toContain("persistTrustedRoot");
+    expect(bootstrapRootChain).toContain("witnessed lifecycle root rotation");
     expect(bootstrap).toContain("trust.VerifyAttestedReleaseIndex");
+    expect(bootstrapRoute).toContain("verifyAttestedRootHead");
+    expect(bootstrapRoute).toContain("ReleaseIndexSHA256");
+    expect(rootHead).toContain("maxRootHeadLifetime");
+    expect(rootHead).toContain("refs/heads/main");
     expect(bootstrapRoute).toMatch(
       /productionReleaseBase\s*=\s*"https:\/\/github\.com\/fased-ai\/fased\/releases\/download"/u,
     );

@@ -35,6 +35,8 @@ type bootstrapRequest struct {
 	StateRoot, HostRoot, RootURL, RootRotationBaseURL, IndexURL, IndexAttestationURL, ReleaseBaseURL string
 	Channel, Version, Architecture, PinnedRootSHA256                                                 string
 	RootRotationURLs                                                                                 []string
+	ExpectedRootVersion                                                                              uint64
+	ExpectedRootSHA256                                                                               string
 	OwnerUID                                                                                         uint32
 	Client                                                                                           *http.Client
 	Now                                                                                              time.Time
@@ -131,7 +133,7 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: secureMetadataRedirect}
 	}
-	root, err := resolveTrustedRoot(ctx, client, request.StateRoot, request.OwnerUID, request.RootURL, request.RootRotationBaseURL, request.RootRotationURLs, request.PinnedRootSHA256, request.Now)
+	root, err := resolveTrustedRoot(ctx, client, request.StateRoot, request.OwnerUID, request.RootURL, request.RootRotationBaseURL, request.RootRotationURLs, request.PinnedRootSHA256, request.ExpectedRootVersion, request.ExpectedRootSHA256, request.Now)
 	if err != nil {
 		return bootstrapResult{}, err
 	}

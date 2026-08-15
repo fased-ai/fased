@@ -36,10 +36,15 @@ and verbose modes change output only.
 
 The protected publisher exposes the exact immutable release first, then
 advances the predictable `fased-channel-<channel>-v1` release with the exact
-already-attested root/index pair. It serializes per channel, rejects sequence
-or security-epoch rollback, stages both replacement assets before renaming
-them, and verifies public readback. An interrupted channel transaction is
-fail-closed and retryable; it never rebuilds or republishes candidate bytes.
+already-attested root/index pair and a short-lived attested root-head witness.
+The witness positively binds the latest root version/digest and exact index
+digest; HTTP absence never defines the end of a root chain. Protected main
+refreshes that witness every six hours with a 36-hour lifetime, while clients
+reject stale, missing, replayed-below-floor, or digest-mismatched witnesses.
+The publisher serializes per channel, rejects sequence or security-epoch
+rollback, stages replacement pairs before renaming them, and verifies public
+readback. An interrupted channel transaction is fail-closed and retryable; it
+never rebuilds or republishes candidate bytes.
 
 Always distinguish `documented`, `implemented`, and `proven`. The canonical
 contract, source inspection, and a literal enforcing receipt are different

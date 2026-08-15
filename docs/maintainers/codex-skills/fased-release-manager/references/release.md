@@ -69,10 +69,14 @@ GitHub prerelease exact bytes
 
 Publication makes the exact release public before advancing its channel. The
 channel publisher consumes the exact attested index, rejects replay/downgrade,
-stages both replacement assets, promotes their canonical names, and verifies
-readback; it never rebuilds. PUBLIC0 is then readback-only and verifies the
-exact GitHub tag, release metadata, asset inventory, sizes, digests,
-attestations, and signed channel binding. Owner Local uses the literal public
+stages replacement pairs, promotes their canonical names, and verifies
+readback; it never rebuilds. Channel discovery also requires the current
+36-hour attested root-head witness. The scheduled protected-main refresh may
+replace only that witness and its attestation; it must verify the committed
+root chain and current attested index and may never replace product bytes.
+PUBLIC0 is then readback-only and verifies the exact GitHub tag, release
+metadata, asset inventory, sizes, digests, attestations, root-head freshness,
+and signed channel binding. Owner Local uses the literal public
 command and proves four services, Wallet/signer, Mining, Network, plugins,
 restart, preserved state, and `Already current`. Real Hosting requires an
 authorized VPS/Tailscale environment; containers are supporting evidence only.

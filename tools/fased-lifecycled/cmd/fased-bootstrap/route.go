@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,11 +26,13 @@ import (
 )
 
 const (
-	productionReleaseBase            = "https://github.com/fased-ai/fased/releases/download"
-	productionChannelReleasePrefix   = productionReleaseBase + "/fased-channel-"
-	releaseRootAssetName             = "fased-lifecycle-root-v1.json"
-	releaseIndexAssetName            = "fased-release-index-v1.json"
-	releaseIndexAttestationAssetName = "fased-release-index-v1.json.attestation.json"
+	productionReleaseBase               = "https://github.com/fased-ai/fased/releases/download"
+	productionChannelReleasePrefix      = productionReleaseBase + "/fased-channel-"
+	releaseRootAssetName                = "fased-lifecycle-root-v1.json"
+	releaseIndexAssetName               = "fased-release-index-v1.json"
+	releaseIndexAttestationAssetName    = "fased-release-index-v1.json.attestation.json"
+	releaseRootHeadAssetName            = "fased-lifecycle-root-head-v1.json"
+	releaseRootHeadAttestationAssetName = "fased-lifecycle-root-head-v1.json.attestation.json"
 )
 
 type publicReleaseRoute struct {
@@ -65,6 +68,18 @@ type signedChannelSelection struct {
 	SecurityEpoch          uint64
 	IndexDigest            string
 	ReleaseAuthorityDigest string
+	RootVersion            uint64
+	RootSHA256             string
+}
+
+type rootHeadVerifier func([]byte, []byte, time.Time) (trust.RootHead, error)
+
+func verifyAttestedRootHead(headJSON, bundleJSON []byte, now time.Time) (trust.RootHead, error) {
+	verified, err := trust.VerifyAttestedRootHead(headJSON, bundleJSON, now)
+	if err != nil {
+		return trust.RootHead{}, err
+	}
+	return verified.Head(), nil
 }
 
 func decodeInstalledLifecycleStatus(config platform.Config, profile model.Profile, manifestData []byte) (installedLifecycleStatus, error) {
@@ -200,7 +215,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		selection, selectionErr := discoverSignedChannelRelease(
 			ctx, request.Channel, discoveryClient,
 			productionChannelReleasePrefix+request.Channel+"-v1", productionPinnedRootSHA256,
-			"/var/lib/fased-bootstrap", 0, installedStatus.ReleaseSequence, installedStatus.SecurityEpoch, now, nil,
+			"/var/lib/fased-bootstrap", 0, installedStatus.ReleaseSequence, installedStatus.SecurityEpoch, now, nil, nil,
 		)
 		if selectionErr != nil {
 			return selectionErr
@@ -218,13 +233,20 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		// must serve any test rotation chain beside their exact fixture metadata.
 		releaseRoute.RootRotationBaseURL = releaseRoute.ReleaseBaseURL
 	}
+	expectedRootVersion := uint64(0)
+	expectedRootSHA256 := ""
+	if channelSelection != nil {
+		expectedRootVersion = channelSelection.RootVersion
+		expectedRootSHA256 = channelSelection.RootSHA256
+	}
 	bootstrap := bootstrapRequest{
 		StateRoot: "/var/lib/fased-bootstrap", HostRoot: "/opt/fased/lifecycle",
 		RootURL: releaseRoute.RootURL, RootRotationBaseURL: releaseRoute.RootRotationBaseURL, IndexURL: releaseRoute.IndexURL,
 		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
 		Channel: request.Channel, Version: request.Version, Architecture: architecture(),
 		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: now, Inspect: inspectLifecycleHost,
-		VerifyIndex: releaseRoute.VerifyIndex,
+		VerifyIndex: releaseRoute.VerifyIndex, ExpectedRootVersion: expectedRootVersion,
+		ExpectedRootSHA256: expectedRootSHA256,
 	}
 	result, err := execute(ctx, bootstrap)
 	if err != nil {
@@ -266,7 +288,7 @@ func validateSignedChannelResult(selection signedChannelSelection, result bootst
 	return nil
 }
 
-func discoverSignedChannelRelease(ctx context.Context, channel string, client *http.Client, baseURL, pinnedRootSHA256, stateRoot string, ownerUID uint32, minimumReleaseSequence, minimumSecurityEpoch uint64, now time.Time, verifyIndex releaseIndexVerifier) (signedChannelSelection, error) {
+func discoverSignedChannelRelease(ctx context.Context, channel string, client *http.Client, baseURL, pinnedRootSHA256, stateRoot string, ownerUID uint32, minimumReleaseSequence, minimumSecurityEpoch uint64, now time.Time, verifyIndex releaseIndexVerifier, verifyRootHead rootHeadVerifier) (signedChannelSelection, error) {
 	if channel != "stable" && channel != "beta" {
 		return signedChannelSelection{}, errors.New("release discovery channel must be stable or beta")
 	}
@@ -285,13 +307,43 @@ func discoverSignedChannelRelease(ctx context.Context, channel string, client *h
 	if err != nil {
 		return signedChannelSelection{}, err
 	}
-	root, err := resolveTrustedRoot(ctx, client, stateRoot, ownerUID, rootURL, baseURL, nil, pinnedRootSHA256, now)
+	rootHeadURL, err := assetURL(baseURL, releaseRootHeadAssetName)
+	if err != nil {
+		return signedChannelSelection{}, err
+	}
+	rootHeadAttestationURL, err := assetURL(baseURL, releaseRootHeadAttestationAssetName)
+	if err != nil {
+		return signedChannelSelection{}, err
+	}
+	rootHeadJSON, err := fetchMetadata(ctx, client, rootHeadURL)
+	if err != nil {
+		return signedChannelSelection{}, fmt.Errorf("fetch signed %s root-head: %w", channel, err)
+	}
+	rootHeadAttestationJSON, err := fetchMetadata(ctx, client, rootHeadAttestationURL)
+	if err != nil {
+		return signedChannelSelection{}, fmt.Errorf("fetch signed %s root-head attestation: %w", channel, err)
+	}
+	if verifyRootHead == nil {
+		verifyRootHead = verifyAttestedRootHead
+	}
+	head, err := verifyRootHead(rootHeadJSON, rootHeadAttestationJSON, now)
+	if err != nil {
+		return signedChannelSelection{}, fmt.Errorf("verify signed %s root-head: %w", channel, err)
+	}
+	if head.Channel != channel {
+		return signedChannelSelection{}, errors.New("signed root-head differs from the requested channel")
+	}
+	root, err := resolveTrustedRoot(ctx, client, stateRoot, ownerUID, rootURL, baseURL, nil, pinnedRootSHA256, head.RootVersion, head.RootSHA256, now)
 	if err != nil {
 		return signedChannelSelection{}, fmt.Errorf("verify signed %s channel root: %w", channel, err)
 	}
 	indexJSON, err := fetchMetadata(ctx, client, indexURL)
 	if err != nil {
 		return signedChannelSelection{}, fmt.Errorf("fetch signed %s channel index: %w", channel, err)
+	}
+	indexDigest := sha256.Sum256(indexJSON)
+	if hex.EncodeToString(indexDigest[:]) != head.ReleaseIndexSHA256 {
+		return signedChannelSelection{}, errors.New("signed channel index differs from the witnessed root-head")
 	}
 	attestationJSON, err := fetchMetadata(ctx, client, attestationURL)
 	if err != nil {
@@ -305,6 +357,10 @@ func discoverSignedChannelRelease(ctx context.Context, channel string, client *h
 		return signedChannelSelection{}, fmt.Errorf("verify signed %s channel index: %w", channel, err)
 	}
 	index := verified.Index
+	if index.Version != head.ReleaseVersion || index.ReleaseSequence != head.ReleaseSequence ||
+		index.SecurityEpoch != head.SecurityEpoch || index.Commit != head.IndexCommit {
+		return signedChannelSelection{}, errors.New("signed channel index identity differs from the witnessed root-head")
+	}
 	if index.Channel != channel ||
 		(channel == "stable" && strings.Contains(index.Version, "-")) ||
 		(channel == "beta" && !strings.Contains(index.Version, "-")) {
@@ -319,6 +375,7 @@ func discoverSignedChannelRelease(ctx context.Context, channel string, client *h
 	return signedChannelSelection{
 		Version: index.Version, ReleaseSequence: index.ReleaseSequence, SecurityEpoch: index.SecurityEpoch,
 		IndexDigest: verified.Digest, ReleaseAuthorityDigest: verified.ReleaseAuthorityDigest,
+		RootVersion: head.RootVersion, RootSHA256: head.RootSHA256,
 	}, nil
 }
 
