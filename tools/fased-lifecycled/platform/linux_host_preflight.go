@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,9 +71,23 @@ func (preflight LinuxHostPreflight) path(path string) string {
 }
 
 func (preflight LinuxHostPreflight) read(path string, limit int64) ([]byte, error) {
-	info, err := os.Lstat(preflight.path(path))
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > limit {
+	selected := preflight.path(path)
+	before, err := os.Lstat(selected)
+	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() > limit {
 		return nil, errors.New("Linux host preflight file is unsafe")
 	}
-	return os.ReadFile(preflight.path(path))
+	file, err := os.Open(selected)
+	if err != nil {
+		return nil, errors.New("Linux host preflight file is unsafe")
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		return nil, errors.New("Linux host preflight file is unsafe")
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil || len(contents) == 0 || int64(len(contents)) > limit {
+		return nil, errors.New("Linux host preflight file is unsafe")
+	}
+	return contents, nil
 }

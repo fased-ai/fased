@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -41,6 +42,26 @@ func TestLinuxHostPreflightAcceptsOrdinaryLinuxAndWSL2Systemd(t *testing.T) {
 		if err := linuxPreflightFixture(t, kernel, "systemd", "degraded").Verify(context.Background()); err != nil {
 			t.Fatalf("usable host %q was rejected: %v", kernel, err)
 		}
+	}
+}
+
+func TestLinuxHostPreflightReadsZeroSizedProcIdentity(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("procfs identity is Linux-specific")
+	}
+	info, err := os.Lstat("/proc/sys/kernel/osrelease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 {
+		t.Skip("kernel exposes a nonzero procfs identity size")
+	}
+	contents, err := (LinuxHostPreflight{}).read("/proc/sys/kernel/osrelease", 4096)
+	if err != nil {
+		t.Fatalf("zero-sized procfs identity was rejected: %v", err)
+	}
+	if strings.TrimSpace(string(contents)) == "" {
+		t.Fatal("procfs identity was empty")
 	}
 }
 
