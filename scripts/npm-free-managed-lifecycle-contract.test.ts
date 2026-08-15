@@ -208,4 +208,21 @@ describe("npm-free managed lifecycle", () => {
     expect(rootPackage.scripts?.["test:install:e2e:anthropic"]).toBeUndefined();
     expect(rootPackage.scripts?.["test:install:e2e:openai"]).toBeUndefined();
   });
+
+  it("requires tag-free local lifecycle proof before RC allocation", async () => {
+    const skill = await source("docs/maintainers/codex-skills/fased-release-manager/SKILL.md");
+    const release = await source(
+      "docs/maintainers/codex-skills/fased-release-manager/references/release.md",
+    );
+    const redesign = await source(
+      "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle-redesign.md",
+    );
+
+    expect(skill).toContain("Before PRE-CANDIDATE, a version-only change, or RC allocation");
+    expect(skill).toContain("new RC as a test iteration");
+    expect(release).toContain("one unpublished, tag-free candidate-shaped Linux-x64 build");
+    expect(release).toContain("serial LOCAL0 fresh/update/takeover Local and Hosting fixtures");
+    expect(release).toContain("Any change to a bound input");
+    expect(redesign).toContain("Only after both pass may the next unused RC be allocated");
+  });
 });

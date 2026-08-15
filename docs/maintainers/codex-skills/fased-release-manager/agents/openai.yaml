@@ -1,4 +1,4 @@
 interface:
   display_name: "Fased Release Manager"
-  short_description: "Continue approved Fased plans safely and efficiently"
-  default_prompt: "Use $fased-release-manager to resume the active approved Fased plan at its first incomplete predicate, keep fixes focused, and preserve explicit irreversible boundaries."
+  short_description: "Close Fased fixes locally before release"
+  default_prompt: "Use $fased-release-manager to close affected Fased predicates through one tag-free LOCAL0 proof before any RC allocation and preserve explicit irreversible boundaries."
