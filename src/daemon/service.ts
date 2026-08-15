@@ -65,7 +65,37 @@ export type GatewayService = {
   readRuntime: (env: GatewayServiceEnv) => Promise<GatewayServiceRuntime>;
 };
 
+function managedLifecycleServiceFence(): GatewayService {
+  const refuse = async (): Promise<never> => {
+    throw new Error(
+      "Managed Gateway service mutation is owned by the verified Go lifecycle; run `fased repair` from the owner shell.",
+    );
+  };
+  return {
+    label: "Go-managed service",
+    loadedText: "managed",
+    notLoadedText: "unavailable",
+    install: refuse,
+    uninstall: refuse,
+    stop: refuse,
+    restart: refuse,
+    isLoaded: async () => false,
+    readCommand: async () => null,
+    readRuntime: async () => ({
+      status: "unknown",
+      detail: "Go-managed service metadata is unavailable to the application",
+    }),
+  };
+}
+
 export function resolveGatewayService(): GatewayService {
+  const goManaged = process.env.FASED_RUNTIME_SOURCE?.trim() === "go-lifecycle";
+  if (goManaged && process.platform === "linux") {
+    return resolveHostedSystemdService() ?? managedLifecycleServiceFence();
+  }
+  if (goManaged) {
+    return managedLifecycleServiceFence();
+  }
   if (process.platform === "darwin") {
     return {
       label: "LaunchAgent",

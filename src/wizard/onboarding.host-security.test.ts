@@ -48,6 +48,8 @@ function currentMarker(state: "pending" | "true" = "pending"): string {
     release: "1.2.4-rc.1",
     updateChannel: "beta",
     transactionId: "11111111-1111-4111-8111-111111111111",
+    tailscaleVersion: "1.88.1",
+    signerWebAuthnReady: "true",
     firewallReady: state,
     sshHardened: state,
     fail2banReady: state,

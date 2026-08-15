@@ -317,7 +317,7 @@ func (legacy *LegacyControllerPredecessor) recordPath(tx model.Transaction) stri
 }
 
 func (legacy *LegacyControllerPredecessor) unitPath(unit string) string {
-	path := filepath.Join(legacy.Config.UnitRoot, unit)
+	path := legacy.Config.ServiceDefinitionPath(unit)
 	if legacy.rootPrefix != "" {
 		return filepath.Join(legacy.rootPrefix, path)
 	}

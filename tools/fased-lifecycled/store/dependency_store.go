@@ -55,6 +55,9 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 		if err := s.verifyDependencyPath(destination, layer); err != nil {
 			return err
 		}
+		if normalizedDependencyMarker(destination) {
+			return nil
+		}
 		return normalizeDependencyMarker(destination)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -62,6 +65,9 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 	legacy := s.dependencyPath(layer.Hash)
 	if _, err := os.Lstat(legacy); err == nil {
 		if verifyErr := s.verifyDependencyPath(legacy, layer); verifyErr == nil {
+			if normalizedDependencyMarker(legacy) {
+				return nil
+			}
 			return normalizeDependencyMarker(legacy)
 		} else if !errors.Is(verifyErr, errDependencyLayerIdentityDiffers) {
 			return verifyErr
@@ -108,6 +114,11 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 		return err
 	}
 	return syncDirectory(root)
+}
+
+func normalizedDependencyMarker(root string) bool {
+	info, err := os.Lstat(filepath.Join(root, dependencyMarkerName))
+	return err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm() == 0o644
 }
 
 func normalizeDependencyMarker(root string) error {

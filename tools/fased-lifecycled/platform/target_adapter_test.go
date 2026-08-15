@@ -366,6 +366,9 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 	if strings.Contains(combined, "fased-lifecycled") || strings.Contains(combined, "fased-bootstrap") || strings.Contains(combined, "controller-worker") {
 		t.Fatalf("application generation selected a privileged lifecycle executable:\n%s", combined)
 	}
+	if strings.Contains(combined, "signerd-webauthn.env") {
+		t.Fatalf("ordinary Local unit inherited the Hosting signer RP identity:\n%s", combined)
+	}
 	if !strings.Contains(combined, "SupplementaryGroups=fscf-example") ||
 		!strings.Contains(combined, "RuntimeDirectoryMode=0755") ||
 		!strings.Contains(combined, "RuntimeDirectory=fased-local/example fased-local/example/application fased-local/example/operator fased-local/example/control") ||
@@ -781,6 +784,7 @@ func TestTargetAdapterStagesCanonicalHostingServices(t *testing.T) {
 		"Environment=FASED_STATE_DIR=" + config.OwnerStateRoot, "Environment=FASED_HOST_PROFILE=hosting",
 		"Environment=FASED_PLUGIN_STATUS_CACHE_PATH=" + filepath.Join(config.OwnerStateRoot, "cache", "plugin-status.json"),
 		"-state-db /var/lib/fased-signerd/state.db", "-update-gate /var/lib/fased-signer-update-gate/active",
+		"EnvironmentFile=/etc/fased/signerd-webauthn.env",
 	} {
 		if !strings.Contains(combined, required) {
 			t.Fatalf("canonical Hosting units are missing %q:\n%s", required, combined)

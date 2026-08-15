@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/engine"
@@ -136,6 +137,20 @@ type fakeCurrentConvergence struct {
 	err   error
 }
 
+type fakeCurrentRepair struct {
+	calls          int
+	transactionID  string
+	manifestDigest string
+	err            error
+}
+
+func (repair *fakeCurrentRepair) RepairCurrent(_ context.Context, transactionID string, _ model.Manifest, manifestDigest string) (string, error) {
+	repair.calls++
+	repair.transactionID = transactionID
+	repair.manifestDigest = manifestDigest
+	return digestB, repair.err
+}
+
 func (verifier *fakeCurrentConvergence) VerifyCurrent(context.Context, model.Manifest, string) (string, error) {
 	verifier.calls++
 	return digestA, verifier.err
@@ -213,6 +228,40 @@ func TestConvergeRecoversDurableUnfinishedTransactionBeforeNewWork(t *testing.T)
 	}
 	if supervisor.recovers != 1 || supervisor.runs != 0 || locks != 1 || releases != 1 || response.Outcome != string(engine.OutcomeAlreadyCurrent) {
 		t.Fatalf("new convergence did not recover first under the durable lock: response=%+v recovers=%d runs=%d locks=%d releases=%d", response, supervisor.recovers, supervisor.runs, locks, releases)
+	}
+}
+
+func TestRepairCurrentBindsInstalledGenerationAndManifestUnderMutationLock(t *testing.T) {
+	inventory, target := targetContract()
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal, Platform: platform(),
+		ActiveGeneration: &target, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+		ReleaseSequence: 12, SecurityEpoch: 3,
+	}
+	locks, releases := 0, 0
+	repair := &fakeCurrentRepair{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     fakeStore{manifest: &manifest, manifestDigest: digestA, locks: &locks, releases: &releases},
+		Inventory: &fakeInventory{}, Supervisor: &fakeSupervisor{}, CurrentRepair: repair,
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.OperationRepairCurrent, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Outcome != "REPAIRED" || response.ActiveGenerationID != target.ID || response.ConvergenceReceiptDigest != digestB ||
+		repair.calls != 1 || repair.transactionID != requestID || repair.manifestDigest != digestA || locks != 1 || releases != 1 {
+		t.Fatalf("repair identity or lock evidence mismatch: response=%+v repair=%+v locks=%d releases=%d", response, repair, locks, releases)
+	}
+
+	request.ExpectedManifestDigest = digestB
+	if _, err := service.Handle(context.Background(), request); err == nil {
+		t.Fatal("repair accepted a stale manifest selector")
+	}
+	if repair.calls != 1 {
+		t.Fatal("stale repair reached the platform adapter")
 	}
 }
 
@@ -653,5 +702,72 @@ func TestUnknownNewerManifestRejectsBeforeAnyMutation(t *testing.T) {
 	}
 	if locks != 0 || stages != 0 || bindings.calls != 0 || supervisor.runs != 0 {
 		t.Fatalf("unknown-newer installation reached mutation: locks=%d stages=%d inventory=%d runs=%d", locks, stages, bindings.calls, supervisor.runs)
+	}
+}
+
+func TestRollbackBindsSignedPreviousGenerationAuthorization(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inventory, target := targetContract()
+	active := generation(digestA, "0.1.77", commitA)
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal, Platform: platform(),
+		ActiveGeneration: &active, PreviousGeneration: &target,
+		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+		ReleaseSequence: 13, SecurityEpoch: 3,
+	}
+	authorization := &model.RollbackAuthorization{
+		SchemaVersion:       model.RollbackAuthorizationSchemaVersion,
+		CurrentGenerationID: active.ID, TargetGenerationID: target.ID,
+		CurrentReleaseSequence: 13, TargetReleaseSequence: 12, SecurityEpoch: 3,
+		Operator: "release-owner", Reason: "restore verified previous generation",
+		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(time.Minute).Format(time.RFC3339),
+		EnvelopeDigest: digestB,
+	}
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target},
+		Inventory: bindings, Supervisor: supervisor, NewID: func() (string, error) { return transactionID, nil },
+		Now: func() time.Time { return now },
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
+		Operation: protocol.OperationRollback, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA,
+		RollbackAuthorization: authorization}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil || response.Outcome != "UPDATED" {
+		t.Fatalf("authorized rollback failed: response=%+v err=%v", response, err)
+	}
+	if supervisor.tx.PlanAction != string(planner.ActionRollback) || supervisor.tx.RollbackAuthorizationDigest != authorization.EnvelopeDigest ||
+		supervisor.tx.Previous == nil || supervisor.tx.Previous.ID != active.ID {
+		t.Fatalf("rollback transaction lost immutable bindings: %+v", supervisor.tx)
+	}
+	if bindings.calls != 1 || supervisor.runs != 1 {
+		t.Fatalf("rollback execution count is wrong: inventory=%d runs=%d", bindings.calls, supervisor.runs)
+	}
+}
+
+func TestRollbackRejectsGenerationOutsideCommittedWindow(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inventory, target := targetContract()
+	active := generation(digestA, "0.1.77", commitA)
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal, Platform: platform(),
+		ActiveGeneration: &active, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities, ReleaseSequence: 13, SecurityEpoch: 3}
+	authorization := &model.RollbackAuthorization{SchemaVersion: model.RollbackAuthorizationSchemaVersion,
+		CurrentGenerationID: active.ID, TargetGenerationID: target.ID, CurrentReleaseSequence: 13, TargetReleaseSequence: 12, SecurityEpoch: 3,
+		Operator: "release-owner", Reason: "restore verified previous generation", IssuedAt: now.Add(-time.Minute).Format(time.RFC3339),
+		ExpiresAt: now.Add(time.Minute).Format(time.RFC3339), EnvelopeDigest: digestB}
+	bindings := &fakeInventory{}
+	supervisor := &fakeSupervisor{}
+	service := Service{Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target},
+		Inventory: bindings, Supervisor: supervisor, Now: func() time.Time { return now }}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationRollback,
+		TargetGenerationID: target.ID, ExpectedManifestDigest: digestA, RollbackAuthorization: authorization}
+	if _, err := service.Handle(context.Background(), request); err == nil {
+		t.Fatal("authorized but unretained rollback generation was accepted")
+	}
+	if bindings.calls != 0 || supervisor.runs != 0 {
+		t.Fatal("unretained rollback target reached mutation")
 	}
 }

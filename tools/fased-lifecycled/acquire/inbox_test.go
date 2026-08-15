@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -135,5 +136,58 @@ func TestCopyBoundedStopsAtSignedSize(t *testing.T) {
 	written, err := copyBounded(context.Background(), &output, io.LimitReader(bytes.NewReader([]byte("too large")), 9), 3)
 	if err == nil || written > 3 {
 		t.Fatalf("oversized stream was not bounded: written=%d err=%v", written, err)
+	}
+}
+
+func TestInboxPruneRemovesOnlyValidatedObjectsAndIsIdempotent(t *testing.T) {
+	root := filepath.Join(privateTestRoot(t), "lifecycle")
+	inbox, err := OpenInbox(root, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inbox.Close()
+	data := []byte("committed downstream bytes")
+	asset := testAsset("asset.tar.gz", data)
+	object, err := inbox.Put(context.Background(), asset, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := object.Close(); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := inbox.Prune()
+	if err != nil || removed != 1 {
+		t.Fatalf("prune removed=%d err=%v", removed, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "inbox", asset.SHA256[len("sha256:"):])); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("digest directory survived prune: %v", err)
+	}
+	if removed, err := inbox.Prune(); err != nil || removed != 0 {
+		t.Fatalf("idempotent prune removed=%d err=%v", removed, err)
+	}
+}
+
+func TestInboxPrunePreservesEverythingOnUnexpectedEntry(t *testing.T) {
+	root := filepath.Join(privateTestRoot(t), "lifecycle")
+	inbox, err := OpenInbox(root, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inbox.Close()
+	data := []byte("preserved failure evidence")
+	asset := testAsset("asset", data)
+	object, err := inbox.Put(context.Background(), asset, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = object.Close()
+	if err := os.WriteFile(filepath.Join(root, "inbox", "unexpected"), []byte("stop"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inbox.Prune(); err == nil {
+		t.Fatal("unexpected inbox entry did not stop cleanup")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "inbox", asset.SHA256[len("sha256:"):], asset.Name)); err != nil {
+		t.Fatalf("validated object was deleted before complete validation: %v", err)
 	}
 }

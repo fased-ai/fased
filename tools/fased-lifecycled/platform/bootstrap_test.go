@@ -273,6 +273,7 @@ func TestBootstrapPathPlanIsCanonicalAndBounded(t *testing.T) {
 		{Path: "/opt/fased/local/local/plugin-code", UID: 0, GID: 0, Mode: 0o755},
 		{Path: "/opt/fased/lifecycle", UID: 0, GID: 0, Mode: 0o755},
 		{Path: "/opt/fased/lifecycle/supervisor-v1", UID: 0, GID: 0, Mode: 0o755},
+		{Path: "/var/lib/fased-local/local/lifecycle/logs", UID: 0, GID: 0, Mode: 0o700},
 		{Path: "/var/lib/fased-local/local", UID: 0, GID: 0, Mode: 0o755},
 		{Path: "/var/lib/fased-local/local/controller", UID: 0, GID: 899, Mode: 0o710},
 		{Path: "/var/lib/fased-local/local/lifecycle", UID: 0, GID: 0, Mode: 0o700},
@@ -308,6 +309,29 @@ func TestHostingBootstrapPathPlanUsesSharedCanonicalRoots(t *testing.T) {
 		paths["/var/lib/fased-signerd"].UID != principals.Signer.UID || paths["/var/lib/fased-host-updater"].Mode != 0o700 ||
 		paths["/home/app/.fased"].GID != principals.Groups.Config.GID || paths["/home/app/.fased/plugin-data"].UID != principals.Gateway.UID || paths["/home/app/.fased/plugin-data"].Mode != os.ModeSetgid|0o770 {
 		t.Fatalf("unexpected Hosting path plan: %+v", got)
+	}
+}
+
+func TestDarwinBootstrapPathPlanCreatesPersistentSignerRuntimeRoot(t *testing.T) {
+	principals := BootstrapPrincipals{
+		Operator: Principal{UID: 501, GID: 20}, Gateway: Principal{UID: 401, GID: 401}, Signer: Principal{UID: 402, GID: 402},
+		Groups: BootstrapGroups{Gateway: GroupRecord{GID: 401}, Signer: GroupRecord{GID: 402}, Operator: GroupRecord{GID: 403}, Config: GroupRecord{GID: 404}},
+	}
+	config, err := NewDarwinConfig(model.ProfileProtectedLocal, "example", "/Users/owner/.fased", 18789, principals.Operator, principals.Gateway, principals.Signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BootstrapPathPlan(config, principals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]BootstrapPath{}
+	for _, spec := range plan {
+		paths[spec.Path] = spec
+	}
+	runtimeRoot := paths[config.RuntimeRoot]
+	if runtimeRoot.UID != principals.Signer.UID || runtimeRoot.GID != principals.Signer.GID || runtimeRoot.Mode != 0o755 {
+		t.Fatalf("Darwin signer runtime root is not restart-safe: %+v", runtimeRoot)
 	}
 }
 

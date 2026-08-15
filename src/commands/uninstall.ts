@@ -93,6 +93,13 @@ async function removeMacApp(runtime: RuntimeEnv, dryRun?: boolean) {
 }
 
 export async function uninstallCommand(runtime: RuntimeEnv, opts: UninstallOptions) {
+  if (process.env.FASED_RUNTIME_SOURCE === "go-lifecycle") {
+    runtime.error(
+      "Managed installations must be uninstalled by the verified Go lifecycle; no application-owned service or state mutation was attempted.",
+    );
+    runtime.exit(1);
+    return;
+  }
   const { scopes, hadExplicit } = buildScopeSelection(opts);
   const interactive = !opts.nonInteractive;
   if (!interactive && !opts.yes) {
@@ -179,7 +186,7 @@ export async function uninstallCommand(runtime: RuntimeEnv, opts: UninstallOptio
     await removeMacApp(runtime, dryRun);
   }
 
-  runtime.log("CLI still installed. Remove via npm/pnpm if desired.");
+  runtime.log("Developer/source CLI remains; remove its checkout or local link separately.");
 
   if (scopes.has("state") && !scopes.has("workspace")) {
     const home = resolveHomeDir();

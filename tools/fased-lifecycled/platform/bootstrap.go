@@ -45,10 +45,11 @@ type PrincipalSystem interface {
 }
 
 type BootstrapRequest struct {
-	Profile        model.Profile
-	InstanceID     string
-	OperatorUser   string
-	OwnerStateRoot string
+	Profile         model.Profile
+	InstanceID      string
+	OperatorUser    string
+	OwnerStateRoot  string
+	OperatingSystem string
 }
 
 type PrincipalNames struct {
@@ -115,6 +116,12 @@ func ProvisionBootstrapPrincipals(ctx context.Context, system PrincipalSystem, r
 	if !filepath.IsAbs(request.OwnerStateRoot) || filepath.Clean(request.OwnerStateRoot) != request.OwnerStateRoot {
 		return BootstrapPrincipals{}, errors.New("bootstrap owner state root is invalid")
 	}
+	if request.OperatingSystem == "" {
+		request.OperatingSystem = "linux"
+	}
+	if request.OperatingSystem != "linux" && request.OperatingSystem != "darwin" {
+		return BootstrapPrincipals{}, errors.New("bootstrap operating system is unsupported")
+	}
 	groups := map[string]GroupRecord{}
 	for _, name := range []string{names.GatewayGroup, names.SignerGroup, names.OperatorGroup, names.ConfigGroup} {
 		group, ok, lookupErr := system.LookupGroup(ctx, name)
@@ -153,6 +160,12 @@ func ProvisionBootstrapPrincipals(ctx context.Context, system PrincipalSystem, r
 		names.GatewayUser: filepath.Join("/var/lib/fased-local", request.InstanceID),
 		names.SignerUser:  filepath.Join("/var/lib/fased-local", request.InstanceID, "signer"),
 	}
+	serviceShell := "/usr/sbin/nologin"
+	if request.OperatingSystem == "darwin" {
+		serviceHomes[names.GatewayUser] = filepath.Join("/Library/FasedState", request.InstanceID, "gateway")
+		serviceHomes[names.SignerUser] = filepath.Join("/Library/FasedState", request.InstanceID, "signer")
+		serviceShell = "/usr/bin/false"
+	}
 	if request.Profile == model.ProfileHosting {
 		serviceHomes[names.GatewayUser] = "/var/lib/fased-gateway"
 		serviceHomes[names.SignerUser] = "/var/lib/fased-signerd"
@@ -164,7 +177,7 @@ func ProvisionBootstrapPrincipals(ctx context.Context, system PrincipalSystem, r
 		}
 		created := false
 		if !exists {
-			if err := system.AddUser(ctx, AddUserRequest{Name: name, PrimaryGroup: group, Home: serviceHomes[name], Shell: "/usr/sbin/nologin", System: true}); err != nil {
+			if err := system.AddUser(ctx, AddUserRequest{Name: name, PrimaryGroup: group, Home: serviceHomes[name], Shell: serviceShell, System: true}); err != nil {
 				return AccountRecord{}, err
 			}
 			created = true
@@ -236,8 +249,9 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 	paths := []BootstrapPath{
 		{Path: config.InstallRoot, Mode: 0o755},
 		{Path: filepath.Join(config.InstallRoot, "plugin-code"), Mode: 0o755},
-		{Path: "/opt/fased/lifecycle", Mode: 0o755},
-		{Path: "/opt/fased/lifecycle/supervisor-v1", Mode: 0o755},
+		{Path: filepath.Dir(filepath.Dir(config.StableLifecycleHostPath())), Mode: 0o755},
+		{Path: filepath.Dir(config.StableLifecycleHostPath()), Mode: 0o755},
+		{Path: config.LifecycleLogRoot(), Mode: 0o700},
 	}
 	if config.Profile == model.ProfileProtectedLocal {
 		paths = append(paths,
@@ -246,6 +260,9 @@ func BootstrapPathPlan(config Config, principals BootstrapPrincipals) ([]Bootstr
 			BootstrapPath{Path: config.LifecycleRoot, Mode: 0o700},
 			BootstrapPath{Path: config.SignerStateRoot(), UID: config.Signer.UID, GID: config.Signer.GID, Mode: 0o700},
 		)
+		if config.IsDarwinLaunchd() {
+			paths = append(paths, BootstrapPath{Path: config.RuntimeRoot, UID: config.Signer.UID, GID: config.Signer.GID, Mode: 0o755})
+		}
 	} else {
 		paths = append(paths,
 			BootstrapPath{Path: config.LifecycleRoot, Mode: 0o700},

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"time"
 
 	"fased-lifecycled/model"
 )
@@ -18,19 +19,22 @@ type Operation string
 const (
 	OperationInspect            Operation = "INSPECT"
 	OperationConverge           Operation = "CONVERGE"
+	OperationRollback           Operation = "ROLLBACK"
+	OperationRepairCurrent      Operation = "REPAIR_CURRENT"
 	OperationRecover            Operation = "RECOVER"
 	OperationCompleteOnboarding Operation = "COMPLETE_ONBOARDING"
 )
 
 type Request struct {
-	SchemaVersion            uint32    `json:"schemaVersion"`
-	RequestID                string    `json:"requestId"`
-	Operation                Operation `json:"operation"`
-	TargetGenerationID       string    `json:"targetGenerationId,omitempty"`
-	SourceTopology           string    `json:"sourceTopology,omitempty"`
-	PublicPredecessorVersion string    `json:"publicPredecessorVersion,omitempty"`
-	ExpectedManifestDigest   string    `json:"expectedManifestDigest,omitempty"`
-	TransactionID            string    `json:"transactionId,omitempty"`
+	SchemaVersion            uint32                       `json:"schemaVersion"`
+	RequestID                string                       `json:"requestId"`
+	Operation                Operation                    `json:"operation"`
+	TargetGenerationID       string                       `json:"targetGenerationId,omitempty"`
+	SourceTopology           string                       `json:"sourceTopology,omitempty"`
+	PublicPredecessorVersion string                       `json:"publicPredecessorVersion,omitempty"`
+	ExpectedManifestDigest   string                       `json:"expectedManifestDigest,omitempty"`
+	TransactionID            string                       `json:"transactionId,omitempty"`
+	RollbackAuthorization    *model.RollbackAuthorization `json:"rollbackAuthorization,omitempty"`
 }
 
 type Response struct {
@@ -80,10 +84,13 @@ func (request Request) Validate() error {
 	}
 	switch request.Operation {
 	case OperationInspect, OperationCompleteOnboarding:
-		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.PublicPredecessorVersion != "" || request.ExpectedManifestDigest != "" || request.TransactionID != "" {
+		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.PublicPredecessorVersion != "" || request.ExpectedManifestDigest != "" || request.TransactionID != "" || request.RollbackAuthorization != nil {
 			return fmt.Errorf("%s does not accept mutation selectors", request.Operation)
 		}
 	case OperationConverge:
+		if request.RollbackAuthorization != nil {
+			return errors.New("converge does not accept rollback authorization")
+		}
 		if !digestPattern.MatchString(request.TargetGenerationID) {
 			return errors.New("converge requires a target generation digest")
 		}
@@ -106,11 +113,31 @@ func (request Request) Validate() error {
 		if request.TransactionID != "" {
 			return errors.New("converge allocates its own transaction identity")
 		}
+	case OperationRollback:
+		if !digestPattern.MatchString(request.TargetGenerationID) || !digestPattern.MatchString(request.ExpectedManifestDigest) {
+			return errors.New("rollback requires exact target and manifest digests")
+		}
+		if request.SourceTopology != "" || request.PublicPredecessorVersion != "" || request.TransactionID != "" || request.RollbackAuthorization == nil {
+			return errors.New("rollback accepts only signed installed identity selectors")
+		}
+		if request.RollbackAuthorization.TargetGenerationID != request.TargetGenerationID {
+			return errors.New("rollback target differs from its authorization")
+		}
+		if err := request.RollbackAuthorization.ValidateAt(time.Now().UTC()); err != nil {
+			return fmt.Errorf("rollback authorization: %w", err)
+		}
+	case OperationRepairCurrent:
+		if !digestPattern.MatchString(request.TargetGenerationID) || !digestPattern.MatchString(request.ExpectedManifestDigest) {
+			return errors.New("repair-current requires exact target and manifest digests")
+		}
+		if request.SourceTopology != "" || request.PublicPredecessorVersion != "" || request.TransactionID != "" || request.RollbackAuthorization != nil {
+			return errors.New("repair-current accepts only installed identity selectors")
+		}
 	case OperationRecover:
 		if !uuidPattern.MatchString(request.TransactionID) {
 			return errors.New("recover requires a transaction id")
 		}
-		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.PublicPredecessorVersion != "" || request.ExpectedManifestDigest != "" {
+		if request.TargetGenerationID != "" || request.SourceTopology != "" || request.PublicPredecessorVersion != "" || request.ExpectedManifestDigest != "" || request.RollbackAuthorization != nil {
 			return errors.New("recover uses journal-bound generation identity")
 		}
 	default:

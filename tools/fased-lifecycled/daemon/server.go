@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"syscall"
 	"time"
 
 	"fased-lifecycled/protocol"
@@ -84,6 +83,9 @@ func (server *Server) HandlePeer(ctx context.Context, connection net.Conn, peer 
 	if err != nil {
 		return err
 	}
+	if request.Operation == protocol.OperationRollback && peer.UID != 0 {
+		return errors.New("rollback requires the root-authorized lifecycle client")
+	}
 	operationCtx, cancel := context.WithTimeout(ctx, server.OperationTimeout)
 	defer cancel()
 	response, operationErr := server.Handler.Handle(operationCtx, request)
@@ -116,27 +118,4 @@ func (server *Server) validate() error {
 		return errors.New("lifecycle server requires bounded positive timeouts")
 	}
 	return nil
-}
-
-func UnixPeer(connection *net.UnixConn) (Peer, error) {
-	raw, err := connection.SyscallConn()
-	if err != nil {
-		return Peer{}, err
-	}
-	var peer Peer
-	var controlErr error
-	if err := raw.Control(func(fd uintptr) {
-		credentials, err := syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-		if err != nil {
-			controlErr = err
-			return
-		}
-		peer = Peer{UID: credentials.Uid, GID: credentials.Gid}
-	}); err != nil {
-		return Peer{}, err
-	}
-	if controlErr != nil {
-		return Peer{}, fmt.Errorf("read lifecycle peer credentials: %w", controlErr)
-	}
-	return peer, nil
 }

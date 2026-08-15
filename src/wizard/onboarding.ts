@@ -1094,6 +1094,11 @@ export async function runOnboardingWizard(
     String(process.env.FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE ?? "").trim() === "1";
   const skipNativeSignerBuild =
     String(process.env.FASED_SKIP_NATIVE_SIGNER_BUILD ?? "").trim() === "1";
+  if (buildNativeSignerFromSource && process.env.FASED_RUNTIME_SOURCE?.trim() === "go-lifecycle") {
+    throw new Error(
+      "A managed installation cannot replace its attested signer with a source build; run `fased repair` to restore the generation-bound signer.",
+    );
+  }
   if (buildNativeSignerFromSource) {
     if (skipNativeSignerBuild) {
       if (flow !== "quickstart") {

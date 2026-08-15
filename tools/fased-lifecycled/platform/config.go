@@ -15,7 +15,7 @@ import (
 	"fased-lifecycled/model"
 )
 
-const CurrentConfigSchemaVersion uint32 = 1
+const CurrentConfigSchemaVersion uint32 = 2
 
 type Principal struct {
 	UID uint32 `json:"uid"`
@@ -24,6 +24,8 @@ type Principal struct {
 
 type Config struct {
 	SchemaVersion    uint32        `json:"schemaVersion"`
+	OperatingSystem  string        `json:"operatingSystem,omitempty"`
+	ServiceManager   string        `json:"serviceManager,omitempty"`
 	Profile          model.Profile `json:"profile"`
 	InstanceID       string        `json:"instanceId"`
 	OwnerStateRoot   string        `json:"ownerStateRoot"`
@@ -45,7 +47,18 @@ func NewConfig(profile model.Profile, instanceID, ownerStateRoot string, operato
 }
 
 func NewConfigWithGatewayPort(profile model.Profile, instanceID, ownerStateRoot string, gatewayPort uint16, operator, gateway, signer Principal) (Config, error) {
-	config, err := deriveConfig(profile, instanceID, ownerStateRoot, gatewayPort, operator, gateway, signer)
+	config, err := deriveConfig(1, "linux", "systemd", profile, instanceID, ownerStateRoot, gatewayPort, operator, gateway, signer)
+	if err != nil {
+		return Config{}, err
+	}
+	if err := config.Validate(); err != nil {
+		return Config{}, err
+	}
+	return config, nil
+}
+
+func NewDarwinConfig(profile model.Profile, instanceID, ownerStateRoot string, gatewayPort uint16, operator, gateway, signer Principal) (Config, error) {
+	config, err := deriveConfig(2, "darwin", "launchd", profile, instanceID, ownerStateRoot, gatewayPort, operator, gateway, signer)
 	if err != nil {
 		return Config{}, err
 	}
@@ -59,7 +72,7 @@ func (config Config) Validate() error {
 	if config.SchemaVersion > CurrentConfigSchemaVersion {
 		return errors.New("platform configuration schema is newer than supported")
 	}
-	if config.SchemaVersion != CurrentConfigSchemaVersion || !instancePattern.MatchString(config.InstanceID) {
+	if (config.SchemaVersion != 1 && config.SchemaVersion != CurrentConfigSchemaVersion) || !instancePattern.MatchString(config.InstanceID) {
 		return errors.New("platform configuration schema or instance identity is invalid")
 	}
 	if config.Profile != model.ProfileProtectedLocal && config.Profile != model.ProfileHosting {
@@ -89,7 +102,16 @@ func (config Config) Validate() error {
 			return fmt.Errorf("platform %s path contains unsupported whitespace or control characters", name)
 		}
 	}
-	expected, err := deriveConfig(config.Profile, config.InstanceID, config.OwnerStateRoot, config.GatewayPort, config.Operator, config.Gateway, config.Signer)
+	operatingSystem, serviceManager := config.OperatingSystem, config.ServiceManager
+	if config.SchemaVersion == 1 {
+		if operatingSystem != "" || serviceManager != "" {
+			return errors.New("legacy Linux platform configuration must not declare platform selectors")
+		}
+		operatingSystem, serviceManager = "linux", "systemd"
+	} else if operatingSystem != "darwin" || serviceManager != "launchd" || config.Profile != model.ProfileProtectedLocal {
+		return errors.New("platform configuration selectors are unsupported")
+	}
+	expected, err := deriveConfig(config.SchemaVersion, operatingSystem, serviceManager, config.Profile, config.InstanceID, config.OwnerStateRoot, config.GatewayPort, config.Operator, config.Gateway, config.Signer)
 	if err != nil {
 		return err
 	}
@@ -99,7 +121,7 @@ func (config Config) Validate() error {
 	return nil
 }
 
-func deriveConfig(profile model.Profile, instanceID, ownerStateRoot string, gatewayPort uint16, operator, gateway, signer Principal) (Config, error) {
+func deriveConfig(schemaVersion uint32, operatingSystem, serviceManager string, profile model.Profile, instanceID, ownerStateRoot string, gatewayPort uint16, operator, gateway, signer Principal) (Config, error) {
 	prefix := "local"
 	if profile == model.ProfileHosting {
 		prefix = "hosting"
@@ -107,12 +129,28 @@ func deriveConfig(profile model.Profile, instanceID, ownerStateRoot string, gate
 		return Config{}, fmt.Errorf("unsupported platform profile %q", profile)
 	}
 	config := Config{
-		SchemaVersion: CurrentConfigSchemaVersion, Profile: profile, InstanceID: instanceID,
+		SchemaVersion: schemaVersion, Profile: profile, InstanceID: instanceID,
 		OwnerStateRoot: ownerStateRoot, Operator: operator, Gateway: gateway, Signer: signer, GatewayPort: gatewayPort,
 		InstallRoot:      filepath.Join("/opt/fased", prefix, instanceID),
 		LifecycleRoot:    filepath.Join("/var/lib/fased-"+prefix, instanceID, "lifecycle"),
 		ProductStateRoot: filepath.Join("/var/lib/fased-"+prefix, instanceID),
 		UnitRoot:         "/etc/systemd/system", RuntimeRoot: filepath.Join("/run/fased-"+prefix, instanceID),
+	}
+	if schemaVersion == 2 && operatingSystem == "darwin" && serviceManager == "launchd" {
+		if profile != model.ProfileProtectedLocal {
+			return Config{}, errors.New("Darwin Hosting is unsupported")
+		}
+		config.OperatingSystem = operatingSystem
+		config.ServiceManager = serviceManager
+		config.InstallRoot = filepath.Join("/Library/Fased", "local", instanceID)
+		config.LifecycleRoot = filepath.Join("/Library/FasedLifecycle", instanceID)
+		config.ProductStateRoot = filepath.Join("/Library/FasedState", instanceID)
+		config.UnitRoot = "/Library/LaunchDaemons"
+		config.RuntimeRoot = filepath.Join(config.ProductStateRoot, "runtime")
+		return config, nil
+	}
+	if schemaVersion != 1 || operatingSystem != "linux" || serviceManager != "systemd" {
+		return Config{}, errors.New("unsupported platform configuration")
 	}
 	if profile == model.ProfileHosting {
 		config.InstallRoot = "/opt/fased"
@@ -151,6 +189,13 @@ func (config Config) GatewayGroupName() string {
 	return "fased-gateway"
 }
 
+func (config Config) GatewayUserName() string {
+	if config.Profile == model.ProfileProtectedLocal {
+		return "fsgw-" + config.InstanceID
+	}
+	return "fased-gateway"
+}
+
 func (config Config) OperatorGroupName() string {
 	if config.Profile == model.ProfileProtectedLocal {
 		return "fsop-" + config.InstanceID
@@ -177,6 +222,9 @@ func (config Config) OwnerHome() string {
 }
 
 func (config Config) SupervisorRuntimeRoot() string {
+	if config.OperatingSystem == "darwin" {
+		return filepath.Join(config.LifecycleRoot, "runtime")
+	}
 	if config.Profile == model.ProfileProtectedLocal {
 		return filepath.Join("/run/fased-local-controller", config.InstanceID)
 	}
@@ -202,6 +250,9 @@ func (config Config) SignerStateRoot() string {
 }
 
 func (config Config) UpdateGatePath() string {
+	if config.OperatingSystem == "darwin" {
+		return filepath.Join(config.ProductStateRoot, "controller", "signer-update-gate")
+	}
 	if config.Profile == model.ProfileProtectedLocal {
 		return filepath.Join(config.ProductStateRoot, "controller", "signer-update-gate")
 	}
@@ -225,7 +276,39 @@ func (config Config) Identity() (model.PlatformIdentity, error) {
 	if err != nil {
 		return model.PlatformIdentity{}, err
 	}
+	if config.OperatingSystem == "darwin" {
+		return model.NewPlatformIdentityForAdapter(config.Profile, config.InstanceID, digest, model.PlatformAdapterDarwinLaunchd)
+	}
 	return model.NewPlatformIdentity(config.Profile, config.InstanceID, digest)
+}
+
+func (config Config) StableLifecycleHostPath() string {
+	if config.OperatingSystem == "darwin" {
+		return "/Library/FasedLifecycle/supervisor-v1/fased-lifecycled"
+	}
+	return StableLifecycleHostPath
+}
+
+func (config Config) BootstrapHostPath() string {
+	if config.OperatingSystem == "darwin" {
+		return "/Library/FasedLifecycle/bootstrap-v1/fased-bootstrap"
+	}
+	return FixedBootstrapPath
+}
+
+func (config Config) LifecycleLogRoot() string {
+	return filepath.Join(config.LifecycleRoot, "logs")
+}
+
+func (config Config) IsDarwinLaunchd() bool {
+	return config.SchemaVersion == 2 && config.OperatingSystem == "darwin" && config.ServiceManager == "launchd"
+}
+
+func (config Config) ServiceDefinitionPath(service string) string {
+	if config.IsDarwinLaunchd() {
+		return filepath.Join(config.UnitRoot, service+".plist")
+	}
+	return filepath.Join(config.UnitRoot, service)
 }
 
 func DecodeConfig(data []byte) (Config, error) {

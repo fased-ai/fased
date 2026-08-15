@@ -5,13 +5,16 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-type Systemd interface {
+var errSystemdUnavailable = errors.New("systemctl is unavailable")
+
+type ServiceManager interface {
 	DaemonReload(context.Context) error
 	ResetFailed(context.Context, string) error
 	Stop(context.Context, string) error
@@ -22,8 +25,20 @@ type Systemd interface {
 	IsActive(context.Context, string) error
 }
 
+// Systemd is retained as an internal source-compatibility alias while the
+// lifecycle adapters transition to the service-manager-neutral name.
+type Systemd = ServiceManager
+
 type CommandSystemd struct {
 	Binary string
+}
+
+func (systemd CommandSystemd) runTestablePath() error {
+	info, err := os.Lstat(systemd.Binary)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 || info.Mode().Perm()&0o111 == 0 {
+		return errSystemdUnavailable
+	}
+	return nil
 }
 
 type ServiceIdentity struct {
@@ -35,9 +50,11 @@ type ServiceIdentity struct {
 	ExecStart                     string
 }
 
-type SystemdInspector interface {
+type ServiceInspector interface {
 	Inspect(context.Context, string) (ServiceIdentity, error)
 }
+
+type SystemdInspector = ServiceInspector
 
 var (
 	systemdUnitPattern       = regexp.MustCompile(`^[A-Za-z0-9_.@-]+\.service$`)

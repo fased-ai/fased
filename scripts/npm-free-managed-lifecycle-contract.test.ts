@@ -147,6 +147,23 @@ describe("npm-free managed lifecycle", () => {
     }
   });
 
+  it("fences application-owned privileged mutation in Go-managed runtimes", async () => {
+    const [service, tailscale, onboarding, uninstall] = await Promise.all([
+      source("src/daemon/service.ts"),
+      source("src/infra/tailscale.ts"),
+      source("src/wizard/onboarding.ts"),
+      source("src/commands/uninstall.ts"),
+    ]);
+    expect(service).toContain(
+      "Managed Gateway service mutation is owned by the verified Go lifecycle",
+    );
+    expect(tailscale).toContain("is owned by the verified Go lifecycle in managed installations");
+    expect(onboarding).toContain("cannot replace its attested signer with a source build");
+    expect(uninstall).toContain(
+      "Managed installations must be uninstalled by the verified Go lifecycle",
+    );
+  });
+
   it("removes npm/global status and mutation routes from runtime and CI", async () => {
     const updateCheck = await source("src/infra/update-check.ts");
     const entry = await source("fased.mjs");

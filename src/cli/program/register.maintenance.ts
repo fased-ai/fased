@@ -108,11 +108,11 @@ export function registerMaintenanceCommands(program: Command) {
 
   program
     .command("uninstall")
-    .description("Uninstall the gateway service + local data (CLI remains)")
+    .description("Uninstall managed Fased safely or select developer/source cleanup scopes")
     .addHelpText(
       "after",
       () =>
-        `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/uninstall", "docs.fased.ai/cli/uninstall")}\n`,
+        `\n${theme.muted("Managed installs:")} services and executable generations are removed by Go; configuration, workspaces, and signer custody are preserved.\n${theme.muted("Docs:")} ${formatDocsLink("/cli/uninstall", "docs.fased.ai/cli/uninstall")}\n`,
     )
     .option("--service", "Remove the gateway service", false)
     .option("--state", "Remove state + config", false)

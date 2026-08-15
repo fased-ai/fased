@@ -59,6 +59,14 @@ managed users.
    for public acquisition or owner-machine evidence.
 9. Local and Hosting differ only through platform adapters.
 10. Candidate P1 repeats already-green branch predicates against final bytes.
+11. Managed repair is bound to the exact installed manifest and generation; it
+    cannot select a release or change state schemas. Managed uninstall is a
+    monotonic Go transaction that preserves owner data and signer custody by
+    default and rejects legacy application deletion scopes.
+12. Hosting uninstall restores only controls claimed by a write-once
+    first-install ownership baseline. Later updates cannot replace that
+    baseline or claim pre-existing Tailscale, Serve, SSH/firewall, update, or
+    signer configuration.
 
 ## Checkpoints
 
@@ -145,6 +153,13 @@ Execute one checkpoint at a time and stop with exact evidence.
 - Delete candidate controller worker, pathname importer, generic shared-state
   owner, managed Node/gh bootstrap and superseded fixtures/routes.
 - Reject stale production references.
+- Fence application-owned repair and uninstall before any managed mutation.
+- Prove exact-current repair rollback and crash-resumable uninstall while
+  preserving configuration, workspaces, plugin data, signer custody, and the
+  durable instance/account identity needed for reinstall.
+- Keep every retained platform row blocked until its real service-manager and
+  peer-auth adapter has command-backed evidence; an empty Darwin or WSL2
+  adapter is not parity.
 
 ### D10 — Branch proof
 

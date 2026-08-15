@@ -156,6 +156,37 @@ describe("auditGatewayServiceConfig", () => {
     ).toEqual([]);
   });
 
+  it("accepts immutable Go lifecycle generation launchers without a service PATH", async () => {
+    for (const program of [
+      "/opt/fased/local/0123456789abcdef/generations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/payload/bin/fased-gateway-launch", // pragma: allowlist secret
+      "/opt/fased/generations/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/payload/bin/fased-gateway-launch",
+    ]) {
+      const audit = await auditGatewayServiceConfig({
+        env: { HOME: "/home/alice" },
+        platform: "linux",
+        expectedGatewayToken: "config-owned-token",
+        command: {
+          programArguments: [program],
+          environment: {
+            FASED_RUNTIME_SOURCE: "go-lifecycle",
+          },
+          sourcePath: "/etc/systemd/system/fased-gateway.service",
+        },
+      });
+
+      expect(
+        audit.issues.filter((issue) =>
+          [
+            SERVICE_AUDIT_CODES.gatewayCommandMissing,
+            SERVICE_AUDIT_CODES.gatewayTokenMismatch,
+            SERVICE_AUDIT_CODES.gatewayPathMissing,
+            SERVICE_AUDIT_CODES.gatewayPathMissingDirs,
+          ].includes(issue.code as never),
+        ),
+      ).toEqual([]);
+    }
+  });
+
   it("reads gateway service ports from split and equals-form arguments", () => {
     expect(
       readGatewayServiceCommandPort(["/usr/bin/node", "entry.js", "gateway", "--port", "18888"]),

@@ -119,7 +119,11 @@ func (adapter *t2Adapter) Prepare(_ context.Context, tx model.Transaction) error
 		return errors.New("T2 adapter target payload is unavailable")
 	}
 	renderer := &TargetAdapter{Config: adapter.config, Identity: adapter.identity}
-	if err := adapter.units.Prepare(tx.ID, renderer.renderTargetUnits(payload, tx.Target, "")); err != nil {
+	definitions, err := renderer.renderTargetUnits(payload, tx.Target, "")
+	if err != nil {
+		return err
+	}
+	if err := adapter.units.Prepare(tx.ID, definitions); err != nil {
 		return err
 	}
 	adapter.lastTarget = tx.Target
@@ -405,7 +409,11 @@ func TestLifecycleT2SystemdControllerTransition(t *testing.T) {
 	}
 	renderer := &TargetAdapter{Config: config, Identity: identity}
 	initialTransaction := t2UUID()
-	if err := units.Prepare(initialTransaction, renderer.renderTargetUnits(payloads[generationA.ID], generationA, "")); err != nil {
+	definitions, err := renderer.renderTargetUnits(payloads[generationA.ID], generationA, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := units.Prepare(initialTransaction, definitions); err != nil {
 		t.Fatal(err)
 	}
 	if err := units.Activate(initialTransaction, []string{identity.Services["gateway"], identity.Services["signer"]}); err != nil {

@@ -1,7 +1,5 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { OnboardOptions } from "../commands/onboard-types.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { isHostingProfile } from "./onboarding.types.js";
@@ -49,7 +47,9 @@ const CURRENT_MARKER_KEYS = new Set([
   "transactionId",
   "gatewayPort",
   "tailscaleDns",
+  "tailscaleVersion",
   "tailscaleServeReady",
+  "signerWebAuthnReady",
   "firewallReady",
   "sshHardened",
   "fail2banReady",
@@ -59,11 +59,6 @@ const CURRENT_MARKER_KEYS = new Set([
   "preparedBy",
 ]);
 const KNOWN_MARKER_KEYS = new Set([...LEGACY_MARKER_KEYS, ...CURRENT_MARKER_KEYS]);
-
-function resolveHostSecurityLogPath(): string {
-  const home = process.env.HOME?.trim() || os.homedir();
-  return path.join(home, ".fased", "logs", "onboarding-host-security.log");
-}
 
 function runReadOnlyProbe(command: string, args: string[]) {
   const result = spawnSync(command, args, {
@@ -152,13 +147,26 @@ function markerHasExpectedRootState(values: Map<string, string>): boolean {
     ) &&
     values.get("gatewayPort") === "18789" &&
     /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(values.get("tailscaleDns") || "") &&
+    /^\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?$/.test(values.get("tailscaleVersion") || "") &&
     values.get("tailscaleServeReady") === "true" &&
+    values.get("signerWebAuthnReady") === "true" &&
     lifecycleStates.every((value) => value === "pending" || value === "true") &&
     new Set(lifecycleStates).size === 1 &&
     values.get("signerReady") === "true" &&
     values.get("appSudoDisabled") === "true" &&
     values.get("preparedBy") === "root"
   );
+}
+
+export function hasRootPreparedHostingMarker(
+  markerPath = HOSTING_PREREQUISITES_MARKER,
+  requiredUid = 0,
+): boolean {
+  try {
+    return markerHasExpectedRootState(readRootPreparedMarker(markerPath, requiredUid));
+  } catch {
+    return false;
+  }
 }
 
 function verifyRootPreparedHostingPrerequisites(params?: {
@@ -245,14 +253,13 @@ export async function applyHostingSecurity(params: {
 }): Promise<HostSecuritySummary> {
   const { opts, runtime } = params;
   const profile: HostSetupProfile = isHostingProfile(opts.hostProfile) ? "hosting" : "local";
-  const logPath = resolveHostSecurityLogPath();
   if (profile !== "hosting") {
-    return { profile, checks: [], enforced: false, logPath };
+    return { profile, checks: [], enforced: false };
   }
   if (process.platform !== "linux") {
     runtime.error("Hosting setup failed: the maintained Hosting profile requires Linux.");
     runtime.exit(1);
-    return { profile, checks: [], enforced: false, logPath };
+    return { profile, checks: [], enforced: false };
   }
   if (process.env.FASED_HOST_ROOT_PREPARED?.trim() !== "1") {
     runtime.error(
@@ -262,7 +269,7 @@ export async function applyHostingSecurity(params: {
       "The app account cannot repair host prerequisites and is never given sudo access.",
     );
     runtime.exit(1);
-    return { profile, checks: [], enforced: false, logPath };
+    return { profile, checks: [], enforced: false };
   }
 
   const checks = verifyRootPreparedHostingPrerequisites();
@@ -273,10 +280,11 @@ export async function applyHostingSecurity(params: {
     );
     runtime.exit(1);
   }
-  return { profile, checks, enforced, logPath };
+  return { profile, checks, enforced };
 }
 
 export const __testing = {
+  hasRootPreparedHostingMarker,
   markerHasExpectedRootState,
   readRootPreparedMarker,
   verifyRootPreparedHostingPrerequisites,

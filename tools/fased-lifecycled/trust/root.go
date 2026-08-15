@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"fased-lifecycled/model"
 )
 
 const (
@@ -66,6 +68,18 @@ func (root VerifiedRoot) ReleaseAuthority() ReleaseAuthority {
 		return ReleaseAuthority{}
 	}
 	return *root.metadata.ReleaseAuthority
+}
+
+// AuthorizeGeneration rejects a rollback target revoked by the current root.
+// A valid rollback grant can narrow authority but cannot override revocation.
+func (root VerifiedRoot) AuthorizeGeneration(generation model.Generation) error {
+	if err := generation.Validate(); err != nil {
+		return err
+	}
+	if contains(root.metadata.Revocations.ReleaseVersions, generation.Version) || contains(root.metadata.Revocations.TargetDigests, generation.ID) {
+		return errors.New("rollback target is revoked by the current lifecycle root")
+	}
+	return nil
 }
 
 func SignRoot(metadata RootMetadata, keys []SigningKey) ([]byte, error) {

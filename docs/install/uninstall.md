@@ -1,5 +1,5 @@
 ---
-summary: "Uninstall Fased completely (CLI, service, state, workspace)"
+summary: "Safely uninstall managed Fased while preserving state, or clean a source checkout."
 read_when:
   - You want to remove Fased from a machine
   - The gateway service is still running after uninstall
@@ -8,12 +8,12 @@ title: "Uninstall"
 
 # Uninstall
 
-Two paths:
+Two distinct paths:
 
-- **Easy path** if `fased` is still installed.
-- **Manual service removal** if the CLI is gone but the service is still running.
+- **Managed Local/Hosting** uses the verified Go lifecycle and preserves data.
+- **Developer/source or legacy cleanup** uses the unprivileged/manual tools.
 
-## Easy path (CLI still installed)
+## Managed Local or Hosting
 
 Recommended: use the built-in uninstaller:
 
@@ -24,10 +24,30 @@ fased uninstall
 Non-interactive:
 
 ```bash
-fased uninstall --all --yes --non-interactive
+fased uninstall --yes --non-interactive
 ```
 
-Manual steps (same result):
+The transaction:
+
+- restores only Hosting Tailscale, private Serve, signer WebAuthn, firewall,
+  SSH, fail2ban, and automatic-update controls that the first managed install
+  recorded as Fased-owned;
+- stops, disables, and removes the exact generated Gateway, signer, and
+  lifecycle-supervisor services;
+- removes executable generations and managed projections;
+- preserves `~/.fased`, workspaces, plugin data, signer custody, and durable
+  account identity for a safe verified reinstall;
+- records monotonic progress so an interrupted uninstall can resume.
+
+Managed uninstall rejects `--state`, `--workspace`, `--app`, `--all`, and
+`--dry-run`. Back up and erase preserved data only as a separate, explicit
+owner action after uninstall has completed.
+
+## Developer/source or legacy cleanup
+
+The following manual steps do **not** replace the managed Go transaction. Use
+them only for a source checkout or an older installation that never entered the
+Go lifecycle.
 
 1. Stop the gateway service:
 
@@ -74,7 +94,7 @@ Notes:
 - If you used profiles (`--profile` / `FASED_PROFILE`), repeat step 3 for each state dir (defaults are `~/.fased-<profile>`).
 - In remote mode, the state dir lives on the **gateway host**, so run steps 1-4 there too.
 
-## Manual service removal (CLI not installed)
+## Legacy manual service removal (CLI not installed)
 
 Use this if the gateway service keeps running but `fased` is missing.
 
@@ -116,17 +136,10 @@ Remove-Item -Force "$env:USERPROFILE\.fased\gateway.cmd"
 
 If you used a profile, delete the matching task name and `~\.fased-<profile>\gateway.cmd`.
 
-## Normal install vs source checkout
-
-### Normal install (repo `install.sh`)
-
-If you used the repo-backed `install.sh`, uninstall the gateway service first.
-Then remove the repo checkout and `~/.fased` data if you want a full wipe.
-
-### Source checkout (git clone)
+## Source checkout (git clone)
 
 If you run from a repo checkout with the installed `fased` command:
 
-1. Uninstall the gateway service **before** deleting the repo (use the easy path above or manual service removal).
+1. Uninstall the source gateway service **before** deleting the repo (use the developer/source steps above).
 2. Delete the repo directory.
 3. Remove state + workspace as shown above.

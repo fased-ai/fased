@@ -11,9 +11,58 @@ import (
 	"syscall"
 	"testing"
 
+	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
+	"fased-lifecycled/store"
 )
+
+func TestManagedInitializationFastPathRequiresExactPolicyAndReleaseAuthority(t *testing.T) {
+	config, err := platform.NewConfig(
+		model.ProfileProtectedLocal, "0123456789abcdef", "/home/owner/.fased",
+		platform.Principal{UID: 1000, GID: 1000},
+		platform.Principal{UID: 1001, GID: 1001},
+		platform.Principal{UID: 1002, GID: 1002},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationID := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	digest := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	manifest := model.Manifest{Profile: config.Profile, Platform: identity, ActiveGeneration: &model.Generation{ID: generationID}}
+	operator := platform.AccountRecord{Name: "owner", UID: 1000, GID: 1000, Home: "/home/owner"}
+	authority := store.CandidateAuthority{
+		GenerationID: generationID, ReleaseSequence: 5, SecurityEpoch: 1,
+		ManifestMin: 1, ManifestMax: 2, ReleaseIndex: digest, ReleaseAuthority: digest, PluginLockDigest: digest,
+	}
+	policy := platform.UpdatePolicy{SchemaVersion: 1, Profile: config.Profile, InstanceID: config.InstanceID, Channel: "beta"}
+	fast, err := managedInitializationInputsMatch(manifest, config, operator, config.OwnerStateRoot, config.GatewayPort, "beta",
+		authority, policy, 5, 1, 1, 2, digest, digest, digest)
+	if err != nil || !fast {
+		t.Fatalf("exact managed current inputs did not select the no-bootstrap path: fast=%v err=%v", fast, err)
+	}
+	policy.Channel = "stable"
+	fast, err = managedInitializationInputsMatch(manifest, config, operator, config.OwnerStateRoot, config.GatewayPort, "beta",
+		authority, policy, 5, 1, 1, 2, digest, digest, digest)
+	if err != nil || fast {
+		t.Fatalf("different root channel policy selected the no-bootstrap path: fast=%v err=%v", fast, err)
+	}
+	policy.Channel = "beta"
+	fast, err = managedInitializationInputsMatch(manifest, config, operator, config.OwnerStateRoot, config.GatewayPort, "beta",
+		authority, policy, 6, 1, 1, 2, digest, digest, digest)
+	if err != nil || fast {
+		t.Fatalf("different signed release authority selected the no-bootstrap path: fast=%v err=%v", fast, err)
+	}
+	operator.Home = "/home/other"
+	if _, err := managedInitializationInputsMatch(manifest, config, operator, config.OwnerStateRoot, config.GatewayPort, "beta",
+		authority, policy, 5, 1, 1, 2, digest, digest, digest); err == nil {
+		t.Fatal("different operator identity was accepted for the managed fast path")
+	}
+}
 
 func TestWriteConvergenceResponseEmitsBoundedFailureBeforeReturningError(t *testing.T) {
 	for _, outcome := range []string{"ROLLED_BACK", "RECOVERY_PENDING", "REPAIR_REQUIRED", "REJECT_UNKNOWN_NEWER", "REJECT_DOWNGRADE"} {
