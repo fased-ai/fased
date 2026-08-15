@@ -96,7 +96,7 @@ async function discoverDraft(options: {
 
 describe("GitHub channel draft recovery", () => {
   it("waits through delayed list visibility and returns the exact draft identity", async () => {
-    const target = "f3f5570a8d89965c02ee578511e5647eb7e5071b";
+    const target = "a".repeat(40);
     const result = await discoverDraft({
       attempts: 5,
       expectedTarget: target,
@@ -109,13 +109,13 @@ describe("GitHub channel draft recovery", () => {
   });
 
   it("rejects a same-tag draft with a different source identity", async () => {
-    const target = "f3f5570a8d89965c02ee578511e5647eb7e5071b";
+    const target = "a".repeat(40);
 
     await expect(
       discoverDraft({
         attempts: 2,
         expectedTarget: target,
-        observedTarget: "0000000000000000000000000000000000000000",
+        observedTarget: "0".repeat(40),
         visibleAfter: 1,
       }),
     ).rejects.toMatchObject({
