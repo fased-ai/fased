@@ -634,7 +634,7 @@ FIXTURE_NODE_MODULES="$(readlink -f "$ROOT_DIR/node_modules")"
   echo "The lifecycle fixture requires the frozen dependency directory." >&2
   exit 1
 }
-ln -s /fixture-node-modules "$FIXTURE_TOOLS_DIR/scripts/node_modules"
+ln -s "$ROOT_DIR/node_modules" "$FIXTURE_TOOLS_DIR/scripts/node_modules"
 
 IFS=',' read -r -a distro_list <<<"$DISTROS"
 IFS=',' read -r -a scenario_list <<<"$SCENARIOS"
@@ -670,7 +670,7 @@ run_fixture_scenario() {
     -e "FASED_FIXTURE_PUBLIC_ACQUISITION=$PUBLIC_ACQUISITION" \
     -v "$FIXTURE_TOOLS_DIR/scripts:/fixture-tools:ro,z" \
     -v "$FIXTURE_PREINSTALLED_TOOLS_DIR:/fixture-preinstalled-tools:ro,z" \
-    -v "$FIXTURE_NODE_MODULES:/fixture-node-modules:ro,z" \
+    -v "$FIXTURE_NODE_MODULES:$ROOT_DIR/node_modules:ro,z" \
     -v "$FIXTURE_TOOLS_DIR/scripts/docker/protected-local-systemd/lifecycle-acceptance.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,z" \
     -v "$predecessor_capsule_dir:/predecessor-capsule:ro,z" \

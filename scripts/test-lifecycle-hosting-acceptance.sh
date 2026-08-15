@@ -189,7 +189,7 @@ git -C "$ROOT_DIR" archive "$fixture_source_commit" -- \
 fixture_node_modules="$(readlink -f "$ROOT_DIR/node_modules")"
 fixture_node="$(readlink -f "$(command -v node)")"
 [[ -d "$fixture_node_modules" && -x "$fixture_node" ]]
-ln -s /fixture-node-modules "$fixture_tools_dir/scripts/node_modules"
+ln -s "$ROOT_DIR/node_modules" "$fixture_tools_dir/scripts/node_modules"
 
 IFS=',' read -r -a distro_list <<<"$DISTROS"
 IFS=',' read -r -a scenario_list <<<"$SCENARIOS"
@@ -277,7 +277,7 @@ run_scenario_body() {
     -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor" \
     -e "FASED_FIXTURE_PREDECESSOR_CLASS=$PREDECESSOR_CLASS" \
     -v "$fixture_tools_dir/scripts:/fixture-tools:ro,Z" \
-    -v "$fixture_node_modules:/fixture-node-modules:ro,Z" \
+    -v "$fixture_node_modules:$ROOT_DIR/node_modules:ro,z" \
     -v "$fixture_node:/fixture-node:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$predecessor_dir:/predecessor-capsule:ro,Z" \

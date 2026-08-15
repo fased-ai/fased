@@ -115,8 +115,8 @@ describe("attested Go lifecycle artifact layout", () => {
 
   it("does not nest dependency mounts below a read-only fixture mount", () => {
     for (const fixture of [localFixture, hostingFixture]) {
-      expect(fixture).toContain("ln -s /fixture-node-modules");
-      expect(fixture).toContain(":/fixture-node-modules:ro,");
+      expect(fixture).toContain('ln -s "$ROOT_DIR/node_modules"');
+      expect(fixture).toContain(":$ROOT_DIR/node_modules:ro,");
       expect(fixture).not.toContain(":/fixture-tools/node_modules:ro,");
     }
     expect(hostingFixture).toContain(":/fixture-node:ro,");
