@@ -1,6 +1,6 @@
 {
   "name": "@fased/slack",
-  "version": "0.1.76-rc.91",
+  "version": "0.1.76-rc.92",
   "private": true,
   "description": "FasedAgent Slack channel plugin",
   "files": [
@@ -16,7 +16,7 @@
     "@slack/web-api": "^7.14.1"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.91"
+    "@fased/fased": "^0.1.76-rc.92"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {

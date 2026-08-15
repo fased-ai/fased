@@ -1,6 +1,6 @@
 {
   "name": "@fased/fased",
-  "version": "0.1.76-rc.91",
+  "version": "0.1.76-rc.92",
   "description": "Fased Agent self-hosted AI gateway with channels, tools, plugins, and operator modules",
   "keywords": [
     "ai-agent",
