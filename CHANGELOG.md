@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.92
+
+- Give raw-tar creation and gzip compression independent bounded inactivity
+  budgets while retaining destination-side progress and atomic cleanup.
+- Prove that large raw archives can resume after a quiet interval longer than
+  the gzip inactivity budget without weakening stalled-gzip detection.
+
 ## 0.1.76-rc.91
 
 - Publish release archives through separate verified and fsynced raw-tar and
