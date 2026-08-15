@@ -146,6 +146,20 @@ describe("release archive writer", () => {
     expect(result.manifestEntries).toBe(linkedEntries + 2);
     expect(result.entries).toBe(result.manifestEntries);
     expect(result.rawSize).toBeGreaterThan(0);
+
+    const archivedFileTypes = new Map<string, string>();
+    await tar.t({
+      file: destination,
+      gzip: true,
+      strict: true,
+      onReadEntry: (entry) => {
+        if (entry.path.endsWith(".txt")) {
+          archivedFileTypes.set(entry.path, entry.type);
+        }
+      },
+    });
+    expect(archivedFileTypes.size).toBe(linkedEntries + 1);
+    expect(new Set(archivedFileTypes.values())).toEqual(new Set(["File"]));
   });
 
   it("rejects roots that can escape or reinterpret the explicit manifest", async () => {

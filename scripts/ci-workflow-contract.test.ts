@@ -606,6 +606,8 @@ describe("CI workflow routing", () => {
     const p1FreshText = p1Fresh?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const p1UpdateText = p1Update?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const p1HostingText = p1Hosting?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const predecessorCapsulesText =
+      predecessorCapsules?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const refreshRootHead = workflow.jobs?.["refresh-root-head"];
     const refreshRootHeadText =
@@ -712,6 +714,10 @@ describe("CI workflow routing", () => {
     expect(candidateText).toContain("--dependency-archive");
     expect(candidateText).toContain("fased-hosted-deps-linux-");
     expect(candidateText).toContain("--release-manifest");
+    expect(predecessorCapsulesText).toContain("--pattern fased-lifecycled-linux-amd64");
+    expect(predecessorCapsulesText).toContain(
+      '--lifecycle-binary "$source_dir/fased-lifecycled-linux-amd64"',
+    );
     expect(candidateText.indexOf("build-hosted-release-manifest.mjs")).toBeLessThan(
       candidateText.indexOf("assemble-lifecycle-generation.mjs"),
     );

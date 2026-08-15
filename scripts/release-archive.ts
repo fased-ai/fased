@@ -451,16 +451,16 @@ function createManifestArchiveStream(
   const statCache = new Map(
     manifest.map((entry) => [path.resolve(cwd, ...entry.path.split("/")), entry.stat]),
   );
-  const linkCache = new Map<`${number}:${number}`, string>();
-
   return Readable.from(
     (async function* () {
       for (const manifestEntry of manifest) {
         const absolute = path.resolve(cwd, ...manifestEntry.path.split("/"));
+        // The Go dependency store deliberately rejects tar hard links. Do not
+        // share tar's inode cache across entries: every manifest file must be
+        // encoded independently as a regular file.
         const entry = new tar.WriteEntry(manifestEntry.path, {
           absolute,
           cwd,
-          linkCache,
           noMtime,
           portable: true,
           statCache,
