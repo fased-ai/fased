@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.93
+
+- Build release archives from a validated deterministic manifest with
+  unsupported-entry rejection and per-entry progress receipts.
+- Remove redundant runtime archives, legacy fixed-name application archives,
+  and fabricated branch-platform copies from candidate inventory.
+- Build independent native release families concurrently while preserving
+  exact commit, tree, and lockfile cache identity.
+
 ## 0.1.76-rc.92
 
 - Give raw-tar creation and gzip compression independent bounded inactivity
