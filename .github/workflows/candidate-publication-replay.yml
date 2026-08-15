@@ -419,8 +419,9 @@ jobs:
       - name: Advance signed managed channel to the exact public candidate
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: >-
           bash scripts/publish-lifecycle-channel.sh
           "${{ runner.temp }}/fased-hosting-candidate"
-          "${{ inputs.source_commit }}"
+          "${SOURCE_COMMIT}"
