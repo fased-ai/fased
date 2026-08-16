@@ -822,8 +822,9 @@ run_fixture_scenario() {
     run_container cp \
       "$name:/var/lib/fased-protected-local-fixture/lifecycle-operations.json" \
       "$operations_receipt"
-    jq -e --arg commit "$COMMIT" \
+    jq -e --arg commit "$COMMIT" --arg predecessor_class "$MANAGED_PREDECESSOR_CLASS" \
       '.status == "PASS" and .evidenceClass == "PASS" and .commit == $commit and
+       .predecessorClass == $predecessor_class and
        .repair.status == "PASS" and .repair.exactUnitRestored == true and
        .uninstall.status == "PASS" and .uninstall.managedAuthorityRemoved == true' \
       "$operations_receipt" >/dev/null

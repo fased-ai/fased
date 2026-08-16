@@ -813,6 +813,7 @@ if [[ "$phase" == "verify-operations" ]]; then
   grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
     printf '127.0.0.1 github.com\n' >>/etc/hosts
   instance="$(jq -er .instanceId "$snapshot")"
+  predecessor_class="$(jq -er .predecessorClass "$snapshot")"
   gateway_token="$(jq -er '.gateway.auth.token' "$state/fased.json")"
   runtime="$(resolve_protected_runtime "$instance")"
   mapfile -t env_args < <(operator_env "$instance")
@@ -826,13 +827,34 @@ if [[ "$phase" == "verify-operations" ]]; then
 
   wait_for_gateway_version "$version"
   verify_three_services "$instance"
-  sha256sum \
+  owner_preservation_paths=(
     "$state/fased.json" \
     "$state/identity/device.json" \
-    "$state/wallet/provider-registry.v1.json" \
-    "$state/sat-mining/wallets/agent/mining.sqlite" \
-    "$state/plugin-data/fixture/state.json" \
-    >"$owner_preservation"
+    "$state/wallet/provider-registry.v1.json"
+  )
+  case "$predecessor_class" in
+    public-stable)
+      owner_preservation_paths+=(
+        "$state/extensions/stable-bridge/fased.plugin.json"
+        "$state/extensions/stable-bridge/package.json"
+        "$state/extensions/stable-bridge/index.js"
+        "$state/plugin-data/stable-bridge/state.json"
+        "$state/sat-mining/stable-bridge-history.json"
+        "$state/workspace/stable-bridge.txt"
+      )
+      ;;
+    canonical-managed)
+      owner_preservation_paths+=(
+        "$state/sat-mining/wallets/agent/mining.sqlite"
+        "$state/plugin-data/fixture/state.json"
+      )
+      ;;
+    *)
+      echo "Unsupported managed operations predecessor class: $predecessor_class" >&2
+      exit 1
+      ;;
+  esac
+  sha256sum "${owner_preservation_paths[@]}" >"$owner_preservation"
   sha256sum "/var/lib/fased-local/$instance/signer/master.key" \
     >"$signer_preservation"
 
@@ -877,12 +899,14 @@ if [[ "$phase" == "verify-operations" ]]; then
     --arg commit "$commit" \
     --arg instance "$instance" \
     --arg version "$version" \
+    --arg predecessorClass "$predecessor_class" \
     --arg repairDigest "sha256:$(sha256sum /tmp/fased-managed-repair.out | awk '{print $1}')" \
     --arg uninstallDigest "sha256:$(sha256sum /tmp/fased-managed-uninstall.json | awk '{print $1}')" \
     --arg ownerDigest "sha256:$(sha256sum "$owner_preservation" | awk '{print $1}')" \
     --arg signerDigest "sha256:$(sha256sum "$signer_preservation" | awk '{print $1}')" \
     '{schemaVersion:1,role:"fased-managed-operations-acceptance",status:"PASS",
       evidenceClass:"PASS",commit:$commit,instanceId:$instance,version:$version,
+      predecessorClass:$predecessorClass,
       repair:{status:"PASS",outputDigest:$repairDigest,exactUnitRestored:true},
       uninstall:{status:"PASS",outputDigest:$uninstallDigest,managedAuthorityRemoved:true},
       preservation:{ownerStateDigest:$ownerDigest,signerCustodyDigest:$signerDigest}}' \
@@ -1806,11 +1830,13 @@ EOF_STABLE_BRIDGE_DROPIN
     key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
     jq -n \
       --arg instanceId "$instance" \
+      --arg predecessorClass "$predecessor_class" \
       --arg agentReadinessSha256 "$agent_readiness_sha" \
       --arg vaultReadinessSha256 "$vault_readiness_sha" \
       --arg masterKeySha256 "$key_sha" \
       '{
         instanceId: $instanceId,
+        predecessorClass: $predecessorClass,
         agentReadinessSha256: $agentReadinessSha256,
         vaultReadinessSha256: $vaultReadinessSha256,
         masterKeySha256: $masterKeySha256
@@ -2060,11 +2086,13 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
   jq -n \
     --arg instanceId "$instance" \
+    --arg predecessorClass "$predecessor_class" \
     --arg agentReadinessSha256 "$agent_readiness_sha" \
     --arg vaultReadinessSha256 "$vault_readiness_sha" \
     --arg masterKeySha256 "$key_sha" \
     '{
       instanceId: $instanceId,
+      predecessorClass: $predecessorClass,
       agentReadinessSha256: $agentReadinessSha256,
       vaultReadinessSha256: $vaultReadinessSha256,
       masterKeySha256: $masterKeySha256

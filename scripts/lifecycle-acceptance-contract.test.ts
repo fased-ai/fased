@@ -292,14 +292,33 @@ describe("lifecycle acceptance contract", () => {
         fixture.indexOf('if [[ "$phase" == "verify-operations" ]]'),
       ),
     );
+    const verifyReboot = fixture.slice(
+      fixture.indexOf('if [[ "$phase" == "verify-reboot" ]]'),
+      fixture.indexOf('if [[ "$phase" == "verify-operations" ]]'),
+    );
     expect(operations).toContain('grep -Fqx "127.0.0.1 github.com" /etc/hosts');
     expect(operations).toContain('"$state/bin/fased" repair --timeout 120');
     expect(operations).toContain('"$state/bin/fased" uninstall --yes --non-interactive --json');
+    expect(operations).toContain('predecessor_class="$(jq -er .predecessorClass "$snapshot")"');
+    expect(verifyReboot).not.toContain(".predecessorClass");
+    expect(fixture.match(/predecessorClass: \$predecessorClass/g)?.length).toBe(2);
+    expect(operations).toContain('case "$predecessor_class" in');
+    expect(operations).toContain("public-stable)");
+    expect(operations).toContain('"$state/extensions/stable-bridge/fased.plugin.json"');
+    expect(operations).toContain('"$state/plugin-data/stable-bridge/state.json"');
+    expect(operations).toContain('"$state/sat-mining/stable-bridge-history.json"');
+    expect(operations).toContain('"$state/workspace/stable-bridge.txt"');
+    expect(operations).toContain("canonical-managed)");
+    expect(operations).toContain('"$state/sat-mining/wallets/agent/mining.sqlite"');
+    expect(operations).toContain('"$state/plugin-data/fixture/state.json"');
+    expect(operations).toContain("predecessorClass:$predecessorClass");
     expect(operations).toContain('sha256sum --check "$owner_preservation"');
     expect(operations).toContain('sha256sum --check "$signer_preservation"');
     expect(wrapper).toContain(
       "/usr/local/bin/fased-protected-local-systemd-fixture verify-operations",
     );
+    expect(wrapper).toContain('--arg predecessor_class "$MANAGED_PREDECESSOR_CLASS"');
+    expect(wrapper).toContain(".predecessorClass == $predecessor_class");
     expect(wrapper).toContain('operations_receipt="$receipt.operations"');
   });
 
