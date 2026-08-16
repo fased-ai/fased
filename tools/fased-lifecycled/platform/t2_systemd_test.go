@@ -3,6 +3,9 @@
 package platform
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -20,27 +23,41 @@ import (
 	"testing"
 	"time"
 
+	"fased-lifecycled/acquire"
+	"fased-lifecycled/bundle"
 	"fased-lifecycled/engine"
 	"fased-lifecycled/model"
 	"fased-lifecycled/store"
+	"fased-lifecycled/trust"
 )
 
 type t2Receipt struct {
-	SchemaVersion         uint32               `json:"schemaVersion"`
-	Status                string               `json:"status"`
-	InstanceID            string               `json:"instanceId"`
-	SourceCommit          string               `json:"sourceCommit"`
-	SourceTree            string               `json:"sourceTree"`
-	FailureInjected       bool                 `json:"failureInjected"`
-	ExactRollback         bool                 `json:"exactRollback"`
-	RetryCommitted        bool                 `json:"retryCommitted"`
-	CriticalBefore        string               `json:"criticalBefore"`
-	CriticalAfterRollback string               `json:"criticalAfterRollback"`
-	CriticalAfterCommit   string               `json:"criticalAfterCommit"`
-	Initial               t2ServiceObservation `json:"initial"`
-	Restored              t2ServiceObservation `json:"restored"`
-	Committed             t2ServiceObservation `json:"committed"`
-	ConvergenceReceipt    string               `json:"convergenceReceipt"`
+	SchemaVersion         uint32                 `json:"schemaVersion"`
+	Status                string                 `json:"status"`
+	InstanceID            string                 `json:"instanceId"`
+	SourceCommit          string                 `json:"sourceCommit"`
+	SourceTree            string                 `json:"sourceTree"`
+	FailureInjected       bool                   `json:"failureInjected"`
+	ExactRollback         bool                   `json:"exactRollback"`
+	RetryCommitted        bool                   `json:"retryCommitted"`
+	CriticalBefore        string                 `json:"criticalBefore"`
+	CriticalAfterRollback string                 `json:"criticalAfterRollback"`
+	CriticalAfterCommit   string                 `json:"criticalAfterCommit"`
+	Initial               t2ServiceObservation   `json:"initial"`
+	Restored              t2ServiceObservation   `json:"restored"`
+	Committed             t2ServiceObservation   `json:"committed"`
+	Retention             t2RetentionObservation `json:"retention"`
+	ConvergenceReceipt    string                 `json:"convergenceReceipt"`
+}
+
+type t2RetentionObservation struct {
+	ActiveGenerationID   string   `json:"activeGenerationId"`
+	PreviousGenerationID string   `json:"previousGenerationId"`
+	CurrentPointer       string   `json:"currentPointer"`
+	PreviousPointer      string   `json:"previousPointer"`
+	RemovedGenerations   []string `json:"removedGenerations"`
+	RemovedDependencies  []string `json:"removedDependencies"`
+	RemovedInboxObjects  int      `json:"removedInboxObjects"`
 }
 
 type t2ServiceObservation struct {
@@ -190,7 +207,7 @@ func (adapter *t2Adapter) Verify(ctx context.Context, tx model.Transaction) (eng
 }
 
 func (adapter *t2Adapter) Commit(_ context.Context, tx model.Transaction) error {
-	return t2SetCurrent(adapter.config.InstallRoot, adapter.payloads[tx.Target.ID])
+	return adapter.state.ActivateGeneration(tx.Target.ID, tx.Previous.ID, tx.PredecessorManifestSchema)
 }
 
 func (adapter *t2Adapter) Converge(ctx context.Context, tx model.Transaction) (engine.ConvergenceReceipt, error) {
@@ -198,8 +215,8 @@ func (adapter *t2Adapter) Converge(ctx context.Context, tx model.Transaction) (e
 	if err != nil || manifest.ActiveGeneration == nil || manifest.ActiveGeneration.ID != tx.Target.ID {
 		return engine.ConvergenceReceipt{}, errors.New("T2 committed manifest does not bind the target")
 	}
-	current, err := os.Readlink(filepath.Join(adapter.config.InstallRoot, "current"))
-	if err != nil || current != filepath.Base(adapter.payloads[tx.Target.ID]) {
+	current, err := adapter.state.ResolveGeneration("current")
+	if err != nil || current.ID != tx.Target.ID {
 		return engine.ConvergenceReceipt{}, errors.New("T2 current pointer does not bind the target")
 	}
 	observation, err := adapter.observe(ctx, tx.Target)
@@ -226,7 +243,7 @@ func (adapter *t2Adapter) Restore(ctx context.Context, tx model.Transaction) err
 	if err := adapter.systemd.DaemonReload(ctx); err != nil {
 		return err
 	}
-	if err := t2SetCurrent(adapter.config.InstallRoot, adapter.payloads[tx.Previous.ID]); err != nil {
+	if err := adapter.state.ActivateGeneration(tx.Previous.ID, "", tx.PredecessorManifestSchema); err != nil {
 		return err
 	}
 	for _, unit := range adapter.startOrder() {
@@ -370,7 +387,7 @@ func TestLifecycleT2SystemdControllerTransition(t *testing.T) {
 		}
 		createdGroups = append(createdGroups, name)
 	}
-	if err := t2PrepareRoots(config, worker, fixtureGIDs[2]); err != nil {
+	if err := t2PrepareRoots(config, fixtureGIDs[2]); err != nil {
 		t.Fatal(err)
 	}
 	state, err := store.OpenLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
@@ -382,29 +399,43 @@ func TestLifecycleT2SystemdControllerTransition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	generationA := t2Generation("a", "1.2.2")
-	generationB := t2Generation("b", "1.2.3")
-	payloads := map[string]string{
-		generationA.ID: filepath.Join(config.InstallRoot, "payload-a"),
-		generationB.ID: filepath.Join(config.InstallRoot, "payload-b"),
+	capabilities := model.CapabilityRanges{
+		Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
+		Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
+	}
+	stateSchemas := map[string]uint32{"signer": 2}
+	retainedDependency, err := t2ImportDependency(state, config.LifecycleRoot, "retained")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleDependency, err := t2ImportDependency(state, config.LifecycleRoot, "stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationA, payloadA, err := t2PrepareGeneration(config, worker, "a", "1.2.2", retainedDependency, stateSchemas, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationB, payloadB, err := t2PrepareGeneration(config, worker, "b", "1.2.3", retainedDependency, stateSchemas, capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloads := map[string]string{generationA.ID: payloadA, generationB.ID: payloadB}
+	if err := os.WriteFile(filepath.Join(payloadB, "fail-first-start"), []byte("fail\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	criticalPath := filepath.Join(config.OwnerStateRoot, "critical-state.json")
 	criticalDigest, err := t2FileDigest(criticalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	capabilities := model.CapabilityRanges{
-		Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
-		Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
-	}
-	stateSchemas := map[string]uint32{"signer": 2}
 	manifestDigest, err := state.CommitManifest(model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion,
 		Profile: config.Profile, Platform: identity, ActiveGeneration: &generationA,
 		StateSchemas: stateSchemas, Capabilities: capabilities, ReleaseSequence: 1, SecurityEpoch: 1}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := t2SetCurrent(config.InstallRoot, payloads[generationA.ID]); err != nil {
+	if err := state.ActivateGeneration(generationA.ID, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	renderer := &TargetAdapter{Config: config, Identity: identity}
@@ -469,11 +500,15 @@ func TestLifecycleT2SystemdControllerTransition(t *testing.T) {
 		adapter.committed.Gateway.Executable != filepath.Join(payloads[generationB.ID], "bin/fased-gateway-launch") {
 		t.Fatal("committed services are not bound to generation B")
 	}
+	retention, err := t2PruneCommittedState(state, config, generationA, generationB, staleDependency)
+	if err != nil {
+		t.Fatal(err)
+	}
 	receipt := t2Receipt{SchemaVersion: 1, Status: "PASS", InstanceID: instanceID,
 		SourceCommit: os.Getenv("FASED_T2_SOURCE_COMMIT"), SourceTree: os.Getenv("FASED_T2_SOURCE_TREE"),
 		FailureInjected: true, ExactRollback: true, RetryCommitted: true,
 		CriticalBefore: criticalDigest, CriticalAfterRollback: afterRollback, CriticalAfterCommit: afterCommit,
-		Initial: initial, Restored: adapter.restored, Committed: adapter.committed,
+		Initial: initial, Restored: adapter.restored, Committed: adapter.committed, Retention: retention,
 		ConvergenceReceipt: result.ConvergenceReceiptDigest}
 	data, err := json.MarshalIndent(receipt, "", "  ")
 	if err != nil {
@@ -519,7 +554,7 @@ func t2Generation(value, version string) model.Generation {
 		Commit: strings.Repeat(value, 40), Tree: strings.Repeat(value, 40), ArtifactSetDigest: "sha256:" + strings.Repeat(value, 64)}
 }
 
-func t2PrepareRoots(config Config, worker string, configGID uint32) error {
+func t2PrepareRoots(config Config, configGID uint32) error {
 	for _, path := range []string{config.InstallRoot, config.LifecycleRoot, config.ProductStateRoot,
 		config.SignerStateRoot(), filepath.Dir(config.UpdateGatePath()), config.OwnerStateRoot} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
@@ -538,32 +573,140 @@ func t2PrepareRoots(config Config, worker string, configGID uint32) error {
 	if err := os.Chmod(config.SignerStateRoot(), 0o700); err != nil {
 		return err
 	}
-	for _, name := range []string{"payload-a", "payload-b"} {
-		payload := filepath.Join(config.InstallRoot, name)
-		for _, path := range []string{filepath.Join(payload, "bin"), filepath.Join(payload, "runtime", "scripts")} {
-			if err := os.MkdirAll(path, 0o755); err != nil {
-				return err
-			}
-		}
-		for _, binary := range []string{"fased-signerd", "fased-gateway-launch"} {
-			data, err := os.ReadFile(worker)
-			if err != nil {
-				return err
-			}
-			if err := os.WriteFile(filepath.Join(payload, "bin", binary), data, 0o755); err != nil {
-				return err
-			}
-		}
-	}
-	if err := os.WriteFile(filepath.Join(config.InstallRoot, "payload-b", "fail-first-start"), []byte("fail\n"), 0o600); err != nil {
-		return err
-	}
 	critical := []byte("{\"wallet\":\"preserved\",\"signer\":\"v2\"}\n")
 	criticalPath := filepath.Join(config.OwnerStateRoot, "critical-state.json")
 	if err := os.WriteFile(criticalPath, critical, 0o660); err != nil {
 		return err
 	}
 	return os.Chown(criticalPath, int(config.Operator.UID), int(configGID))
+}
+
+func t2PrepareGeneration(config Config, worker, label, version string, dependency bundle.DependencyLayer, schemas map[string]uint32, capabilities model.CapabilityRanges) (model.Generation, string, error) {
+	staging := filepath.Join(config.InstallRoot, ".t2-generation-"+label)
+	if err := os.MkdirAll(filepath.Join(staging, "bin"), 0o755); err != nil {
+		return model.Generation{}, "", err
+	}
+	if err := os.MkdirAll(filepath.Join(staging, "runtime"), 0o755); err != nil {
+		return model.Generation{}, "", err
+	}
+	for _, binary := range []string{"fased-signerd", "fased-gateway-launch"} {
+		data, err := os.ReadFile(worker)
+		if err != nil {
+			return model.Generation{}, "", err
+		}
+		if err := os.WriteFile(filepath.Join(staging, "bin", binary), data, 0o755); err != nil {
+			return model.Generation{}, "", err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(staging, "runtime.txt"), []byte("T2 generation "+label+"\n"), 0o644); err != nil {
+		return model.Generation{}, "", err
+	}
+	inventory, generation, err := bundle.InspectWithDependency(staging, version, strings.Repeat(label, 40), strings.Repeat(label, 40), schemas, capabilities, dependency)
+	if err != nil {
+		return model.Generation{}, "", err
+	}
+	root := filepath.Join(config.InstallRoot, "generations", strings.TrimPrefix(generation.ID, "sha256:"))
+	if err := os.MkdirAll(root, 0o711); err != nil {
+		return model.Generation{}, "", err
+	}
+	payload := filepath.Join(root, "payload")
+	if err := os.Rename(staging, payload); err != nil {
+		return model.Generation{}, "", err
+	}
+	data, err := bundle.CanonicalInventoryJSON(inventory)
+	if err != nil {
+		return model.Generation{}, "", err
+	}
+	if err := os.WriteFile(filepath.Join(root, "inventory.json"), data, 0o600); err != nil {
+		return model.Generation{}, "", err
+	}
+	if err := os.Chmod(root, 0o711); err != nil {
+		return model.Generation{}, "", err
+	}
+	return generation, payload, nil
+}
+
+func t2ImportDependency(state *store.Store, lifecycleRoot, label string) (bundle.DependencyLayer, error) {
+	var raw bytes.Buffer
+	compressed := gzip.NewWriter(&raw)
+	archive := tar.NewWriter(compressed)
+	if err := archive.WriteHeader(&tar.Header{Name: "node_modules", Typeflag: tar.TypeDir, Mode: 0o755}); err != nil {
+		return bundle.DependencyLayer{}, err
+	}
+	contents := []byte("T2 dependency " + label + "\n")
+	if err := archive.WriteHeader(&tar.Header{Name: "node_modules/t2-" + label + ".txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(contents))}); err != nil {
+		return bundle.DependencyLayer{}, err
+	}
+	if _, err := archive.Write(contents); err != nil {
+		return bundle.DependencyLayer{}, err
+	}
+	if err := archive.Close(); err != nil {
+		return bundle.DependencyLayer{}, err
+	}
+	if err := compressed.Close(); err != nil {
+		return bundle.DependencyLayer{}, err
+	}
+	digest := sha256.Sum256(raw.Bytes())
+	layer := bundle.DependencyLayer{Hash: strings.TrimPrefix(t2Digest("dependency-"+label), "sha256:"), Asset: "fased-deps-linux-x64.tar.gz", ArchiveSHA256: "sha256:" + hex.EncodeToString(digest[:])}
+	path := filepath.Join(lifecycleRoot, "t2-dependency-"+label+".tar.gz")
+	if err := os.WriteFile(path, raw.Bytes(), 0o600); err != nil {
+		return bundle.DependencyLayer{}, err
+	}
+	if err := state.ImportDependencyArchive(path, layer); err != nil {
+		return bundle.DependencyLayer{}, err
+	}
+	return layer, nil
+}
+
+func t2PruneCommittedState(state *store.Store, config Config, previous, active model.Generation, staleDependency bundle.DependencyLayer) (t2RetentionObservation, error) {
+	manifest, _, err := state.ReadManifest()
+	if err != nil || manifest.ActiveGeneration == nil || manifest.PreviousGeneration == nil || manifest.ActiveGeneration.ID != active.ID || manifest.PreviousGeneration.ID != previous.ID {
+		return t2RetentionObservation{}, errors.New("T2 committed manifest does not retain the active and previous rollback window")
+	}
+	current, err := state.ResolveGeneration("current")
+	if err != nil || current.ID != active.ID {
+		return t2RetentionObservation{}, errors.New("T2 current pointer does not retain the committed active generation")
+	}
+	previousPointer, err := state.ResolveGeneration("previous")
+	if err != nil || previousPointer.ID != previous.ID {
+		return t2RetentionObservation{}, errors.New("T2 previous pointer does not retain the committed rollback generation")
+	}
+	stale := t2Generation("c", "1.2.1")
+	stalePath := filepath.Join(config.InstallRoot, "generations", strings.TrimPrefix(stale.ID, "sha256:"))
+	if err := os.MkdirAll(stalePath, 0o711); err != nil {
+		return t2RetentionObservation{}, err
+	}
+	removedGenerations, err := state.PruneGenerations()
+	if err != nil || len(removedGenerations) != 1 || removedGenerations[0] != stale.ID {
+		return t2RetentionObservation{}, fmt.Errorf("T2 generation pruning outcome=%v err=%v", removedGenerations, err)
+	}
+	if _, err := os.Lstat(stalePath); !errors.Is(err, os.ErrNotExist) {
+		return t2RetentionObservation{}, errors.New("T2 stale generation survived production pruning")
+	}
+	removedDependencies, err := state.PruneDependencies()
+	wantDependency := staleDependency.Hash + "-" + strings.TrimPrefix(staleDependency.ArchiveSHA256, "sha256:")
+	if err != nil || len(removedDependencies) != 1 || removedDependencies[0] != wantDependency {
+		return t2RetentionObservation{}, fmt.Errorf("T2 dependency pruning outcome=%v err=%v", removedDependencies, err)
+	}
+	inbox, err := acquire.OpenInbox(config.LifecycleRoot, 0)
+	if err != nil {
+		return t2RetentionObservation{}, err
+	}
+	defer inbox.Close()
+	contents := []byte("T2 committed acquisition object\n")
+	digest := sha256.Sum256(contents)
+	object, err := inbox.Put(context.Background(), trust.Asset{Name: "t2-committed.asset", Size: uint64(len(contents)), SHA256: "sha256:" + hex.EncodeToString(digest[:])}, bytes.NewReader(contents))
+	if err != nil {
+		return t2RetentionObservation{}, err
+	}
+	if err := object.Close(); err != nil {
+		return t2RetentionObservation{}, err
+	}
+	removedInboxObjects, err := inbox.Prune()
+	if err != nil || removedInboxObjects != 1 {
+		return t2RetentionObservation{}, fmt.Errorf("T2 inbox pruning outcome=%d err=%v", removedInboxObjects, err)
+	}
+	return t2RetentionObservation{ActiveGenerationID: active.ID, PreviousGenerationID: previous.ID, CurrentPointer: current.ID, PreviousPointer: previousPointer.ID, RemovedGenerations: removedGenerations, RemovedDependencies: removedDependencies, RemovedInboxObjects: removedInboxObjects}, nil
 }
 
 func t2FixturePrincipals(operator Principal, serviceGID uint32) (Principal, Principal, error) {
@@ -622,15 +765,6 @@ func t2CreateAliasGroup(name string, gid uint32) error {
 		return fmt.Errorf("create T2 alias group %s: %w: %s", name, err, output)
 	}
 	return nil
-}
-
-func t2SetCurrent(installRoot, payload string) error {
-	temporary := filepath.Join(installRoot, ".current-t2")
-	_ = os.Remove(temporary)
-	if err := os.Symlink(filepath.Base(payload), temporary); err != nil {
-		return err
-	}
-	return os.Rename(temporary, filepath.Join(installRoot, "current"))
 }
 
 func t2Cleanup(config Config, identity model.PlatformIdentity, systemd CommandSystemd, groups []string) {

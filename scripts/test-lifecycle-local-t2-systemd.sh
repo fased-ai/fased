@@ -17,11 +17,35 @@ if [[ "$source_uid" == 0 || "$source_gid" == 0 ]]; then
   exit 1
 fi
 
+ensure_clean_source_worktree() {
+  local phase="$1"
+  local status
+  status="$(git -C "$repo_root" status --porcelain=v1 --untracked-files=normal)"
+  if [[ -n "$status" ]]; then
+    echo "Refusing root T2 $phase: source worktree is dirty." >&2
+    printf '%s\n' "$status" >&2
+    exit 1
+  fi
+}
+
+ensure_source_identity_unchanged() {
+  local current_commit
+  local current_tree
+  current_commit="$(git -C "$repo_root" rev-parse HEAD)"
+  current_tree="$(git -C "$repo_root" rev-parse 'HEAD^{tree}')"
+  if [[ "$current_commit" != "$source_commit" || "$current_tree" != "$source_tree" ]]; then
+    echo "Refusing T2 PASS: source HEAD/tree changed during execution." >&2
+    exit 1
+  fi
+  ensure_clean_source_worktree "post-receipt verification"
+}
+
+source_commit="$(git -C "$repo_root" rev-parse HEAD)"
+source_tree="$(git -C "$repo_root" rev-parse 'HEAD^{tree}')"
+ensure_clean_source_worktree "preflight"
 instance="t2$(/usr/bin/od -An -N6 -tx1 /dev/urandom | /usr/bin/tr -d ' \n')"
 worker_root="$(mktemp -d /tmp/fased-lifecycle-t2-worker.XXXXXX)"
 receipt="/tmp/fased-lifecycle-t2-${instance}.json"
-source_commit="$(git -C "$repo_root" rev-parse HEAD)"
-source_tree="$(git -C "$repo_root" rev-parse 'HEAD^{tree}')"
 
 for group in "fscf-$instance" "fsop-$instance" "fsgw-$instance"; do
   if getent group "$group" >/dev/null; then
@@ -69,10 +93,28 @@ GOCACHE="$worker_root/go-cache" \
   -run '^TestLifecycleT2SystemdControllerTransition$'
 
 test -s "$receipt"
+ensure_source_identity_unchanged
 jq -e --arg commit "$source_commit" --arg tree "$source_tree" \
   '.status == "PASS" and .sourceCommit == $commit and .sourceTree == $tree and
    .failureInjected == true and .exactRollback == true and .retryCommitted == true and
-   .criticalBefore == .criticalAfterRollback and .criticalBefore == .criticalAfterCommit' \
+   .criticalBefore == .criticalAfterRollback and .criticalBefore == .criticalAfterCommit and
+   .initial.generationId == .restored.generationId and .committed.generationId != .initial.generationId and
+   .initial.signer.mainPid > 0 and .initial.gateway.mainPid > 0 and
+   .restored.signer.mainPid > 0 and .restored.gateway.mainPid > 0 and
+   .committed.signer.mainPid > 0 and .committed.gateway.mainPid > 0 and
+   .initial.signer.invocationId != .restored.signer.invocationId and
+   .initial.gateway.invocationId != .restored.gateway.invocationId and
+   .restored.signer.invocationId != .committed.signer.invocationId and
+   .restored.gateway.invocationId != .committed.gateway.invocationId and
+   .initial.signer.unit != "" and .initial.gateway.unit != "" and
+   .committed.signer.executable != "" and .committed.gateway.executable != "" and
+   .committed.socket.path != "" and .committed.socket.mode == 432 and
+   .retention.activeGenerationId == .committed.generationId and
+   .retention.currentPointer == .retention.activeGenerationId and
+   .retention.previousPointer == .retention.previousGenerationId and
+   (.retention.removedGenerations | length == 1) and
+   (.retention.removedDependencies | length == 1) and
+   .retention.removedInboxObjects == 1' \
   "$receipt" >/dev/null
 chown "$source_uid:$source_gid" "$receipt"
 chmod 0600 "$receipt"

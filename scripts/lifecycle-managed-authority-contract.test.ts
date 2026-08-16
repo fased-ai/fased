@@ -11,21 +11,19 @@ function contract() {
 }
 
 describe("managed lifecycle authority contract", () => {
-  it("separates privileged lifecycle mutation from application and plugin logic", () => {
+  it("leaves only owner-operated Hosting/Tailscale acceptance as retained blockers", () => {
     const result = loadManagedAuthorityContract();
     expect(result.profileCount).toBe(6);
     expect(result.retainedProfileCount).toBe(2);
     expect(result.deferredProfileCount).toBe(4);
     expect(result.capabilityCount).toBeGreaterThan(25);
-    expect(result.blockers).toEqual(
-      expect.arrayContaining([
-        "hosting-tailscale-install-auth-and-identity",
-        "hosting-provider-access-handoff",
-        "retained-platform-command-acceptance",
-        "managed-repair",
-        "managed-uninstall",
-      ]),
-    );
+    expect(result.blockers).toEqual([
+      "hosting-tailscale-install-auth-and-identity",
+      "hosting-private-serve",
+      "hosting-provider-access-handoff",
+      "hosting-firewall-ssh-fail2ban-updates",
+      "hosting-root-receipt-and-recovery",
+    ]);
     expect(result.blockers).not.toContain("first-install-stage-zero-trust");
     expect(result.blockers).not.toContain("root-owned-managed-runtime-detection");
     expect(result.blockers).not.toContain("managed-third-party-plugin-mutation-fence");
@@ -35,6 +33,40 @@ describe("managed lifecycle authority contract", () => {
     expect(result.blockers).not.toContain("wsl2-preflight-and-systemd-convergence");
     expect(result.blockers).not.toContain("retained-platform-native-assets");
     expect(result.blockers).not.toContain("deferred-platform-pre-mutation-enforcement");
+  });
+
+  it("binds local command closure to the four promoted managed capabilities", () => {
+    const value = contract();
+    const capabilities = new Map(
+      value.capabilities.map((capability: { id: string; status: string; evidence: string[] }) => [
+        capability.id,
+        capability,
+      ]),
+    );
+    const expected = {
+      "retained-platform-command-acceptance": [
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/test-lifecycle-local-t2-systemd.sh",
+        "tools/fased-lifecycled/platform/t2_systemd_test.go",
+      ],
+      "managed-repair": [
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh",
+      ],
+      "managed-uninstall": [
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh",
+      ],
+      "authorized-rollback-and-pruning": [
+        "scripts/test-lifecycle-local-t2-systemd.sh",
+        "tools/fased-lifecycled/platform/t2_systemd_test.go",
+      ],
+    };
+
+    for (const [id, evidence] of Object.entries(expected)) {
+      expect(capabilities.get(id)).toMatchObject({ status: "implemented" });
+      expect(capabilities.get(id)?.evidence).toEqual(expect.arrayContaining(evidence));
+    }
   });
 
   it("locks the first stable support matrix to x64 Local and Hosting", () => {

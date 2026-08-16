@@ -303,6 +303,37 @@ describe("lifecycle acceptance contract", () => {
     expect(wrapper).toContain('operations_receipt="$receipt.operations"');
   });
 
+  it("fails closed when root T2 source identity is dirty or drifts", () => {
+    const wrapper = readFileSync(
+      new URL("./test-lifecycle-local-t2-systemd.sh", import.meta.url),
+      "utf8",
+    );
+    const sourceCommit = wrapper.indexOf('source_commit="$(git -C "$repo_root" rev-parse HEAD)"');
+    const sourceTree = wrapper.indexOf(
+      'source_tree="$(git -C "$repo_root" rev-parse \'HEAD^{tree}\')"',
+    );
+    const preflight = wrapper.indexOf('ensure_clean_source_worktree "preflight"');
+    const workerRoot = wrapper.indexOf('worker_root="$(mktemp -d');
+    const receiptCheck = wrapper.indexOf('test -s "$receipt"');
+    const postReceipt = wrapper.indexOf("ensure_source_identity_unchanged", receiptCheck);
+    const receiptAssertions = wrapper.indexOf("jq -e --arg commit");
+
+    expect(wrapper).toContain('git -C "$repo_root" status --porcelain=v1 --untracked-files=normal');
+    expect(wrapper).toContain('source_commit="$(git -C "$repo_root" rev-parse HEAD)"');
+    expect(wrapper).toContain('source_tree="$(git -C "$repo_root" rev-parse \'HEAD^{tree}\')"');
+    expect(wrapper).toContain('current_commit="$(git -C "$repo_root" rev-parse HEAD)"');
+    expect(wrapper).toContain('current_tree="$(git -C "$repo_root" rev-parse \'HEAD^{tree}\')"');
+    expect(wrapper).toContain('"$current_commit" != "$source_commit"');
+    expect(wrapper).toContain('"$current_tree" != "$source_tree"');
+    expect(wrapper).toContain('ensure_clean_source_worktree "post-receipt verification"');
+    expect(sourceCommit).toBeGreaterThan(-1);
+    expect(sourceTree).toBeGreaterThan(sourceCommit);
+    expect(preflight).toBeGreaterThan(sourceTree);
+    expect(workerRoot).toBeGreaterThan(preflight);
+    expect(postReceipt).toBeGreaterThan(receiptCheck);
+    expect(postReceipt).toBeLessThan(receiptAssertions);
+  });
+
   it("keeps release validation bound to the npm-free managed lifecycle contract", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),

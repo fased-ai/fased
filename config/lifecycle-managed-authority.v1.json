@@ -310,9 +310,11 @@
       ],
       "evidence": [
         "scripts/lifecycle-acceptance-contract.test.ts",
-        "scripts/hosted-security-boundary.test.ts"
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/test-lifecycle-local-t2-systemd.sh",
+        "tools/fased-lifecycled/platform/t2_systemd_test.go"
       ],
-      "status": "partial"
+      "status": "implemented"
     },
     {
       "id": "deferred-platform-pre-mutation-enforcement",
@@ -357,9 +359,11 @@
       ],
       "evidence": [
         "tools/fased-lifecycled/platform/repair_current_test.go",
-        "tools/fased-lifecycled/daemon/service_test.go"
+        "tools/fased-lifecycled/daemon/service_test.go",
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"
       ],
-      "status": "partial"
+      "status": "implemented"
     },
     {
       "id": "managed-uninstall",
@@ -374,9 +378,11 @@
       "evidence": [
         "tools/fased-lifecycled/platform/managed_uninstall_test.go",
         "tools/fased-lifecycled/hostsecurity/participant_test.go",
-        "tools/fased-lifecycled/cmd/fased-bootstrap/main_test.go"
+        "tools/fased-lifecycled/cmd/fased-bootstrap/main_test.go",
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"
       ],
-      "status": "partial"
+      "status": "implemented"
     },
     {
       "id": "authorized-rollback-and-pruning",
@@ -403,9 +409,11 @@
         "tools/fased-lifecycled/platform/target_adapter_test.go",
         "tools/fased-lifecycled/store/generation_prune_test.go",
         "tools/fased-lifecycled/store/dependency_prune_test.go",
-        "tools/fased-lifecycled/acquire/inbox_test.go"
+        "tools/fased-lifecycled/acquire/inbox_test.go",
+        "scripts/test-lifecycle-local-t2-systemd.sh",
+        "tools/fased-lifecycled/platform/t2_systemd_test.go"
       ],
-      "status": "partial"
+      "status": "implemented"
     },
     {
       "id": "managed-application-mutation-fence",
