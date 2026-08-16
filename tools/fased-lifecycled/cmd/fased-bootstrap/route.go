@@ -690,7 +690,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		prepared, prepareErr := participant.Prepare(ctx, hostsecurity.Request{
 			TransactionID: hostingTransactionID, Release: result.Version, Channel: request.Channel,
 			GatewayPort: request.GatewayPort, OperatorUser: operator.Name,
-			AuthKeyFile: request.TailscaleAuthKeyFile, Interactive: publicRequestIsInteractive(request), RequireExistingHardening: request.Operation != "install",
+			AuthKeyFile: request.TailscaleAuthKeyFile, Interactive: publicRequestAllowsBrowserAuthentication(request), RequireExistingHardening: request.Operation != "install",
 		})
 		if prepareErr != nil {
 			return prepareErr
@@ -876,16 +876,12 @@ func pathExists(path string) (bool, error) {
 	return false, err
 }
 
-func publicRequestIsInteractive(request publicLifecycleRequest) bool {
-	if request.JSON {
-		return false
-	}
-	for _, argument := range request.OnboardArgs {
-		if argument == "--non-interactive" {
-			return false
-		}
-	}
-	return true
+func publicRequestAllowsBrowserAuthentication(request publicLifecycleRequest) bool {
+	// Application onboarding and root-owned Tailscale authentication are
+	// independent. A scripted onboarding payload must not suppress the browser
+	// login URL. JSON is the explicit headless lifecycle boundary and therefore
+	// requires --ts-authkey-file when the host is not authenticated already.
+	return !request.JSON
 }
 
 const maxHostingSecurityLogBytes = 8 << 20

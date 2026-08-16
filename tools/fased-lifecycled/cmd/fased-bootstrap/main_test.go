@@ -654,17 +654,17 @@ func TestOnboardingCommandBindsCanonicalProfileEnvironment(t *testing.T) {
 	}
 }
 
-func TestHostingInteractionIsExplicitlyDisabledForAutomation(t *testing.T) {
-	if !publicRequestIsInteractive(publicLifecycleRequest{Operation: "install"}) {
+func TestHostingBrowserAuthenticationIsIndependentFromApplicationOnboarding(t *testing.T) {
+	if !publicRequestAllowsBrowserAuthentication(publicLifecycleRequest{Operation: "install"}) {
 		t.Fatal("ordinary installer lost interactive Tailscale authentication")
 	}
-	for _, request := range []publicLifecycleRequest{
-		{Operation: "install", JSON: true},
-		{Operation: "install", OnboardArgs: []string{"--non-interactive"}},
-	} {
-		if publicRequestIsInteractive(request) {
-			t.Fatalf("automated Hosting request selected an interactive auth flow: %+v", request)
-		}
+	if !publicRequestAllowsBrowserAuthentication(publicLifecycleRequest{
+		Operation: "install", OnboardArgs: []string{"--non-interactive"},
+	}) {
+		t.Fatal("scripted application onboarding suppressed the Tailscale login URL")
+	}
+	if publicRequestAllowsBrowserAuthentication(publicLifecycleRequest{Operation: "install", JSON: true}) {
+		t.Fatal("JSON Hosting request selected an interactive auth flow")
 	}
 }
 
