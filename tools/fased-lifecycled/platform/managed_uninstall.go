@@ -73,6 +73,7 @@ type ManagedUninstaller struct {
 	RootPrefix          string
 	ExpectedUID         uint32
 	RestoreHostSecurity func(context.Context) error
+	syncDir             func(string) error
 }
 
 func (uninstaller *ManagedUninstaller) Run(ctx context.Context) (ManagedUninstallRecord, error) {
@@ -318,7 +319,11 @@ func (uninstaller *ManagedUninstaller) removePluginLockProjection() error {
 	if !bytes.Equal(data, uninstaller.PluginLockData) {
 		return nil
 	}
-	return os.Remove(uninstaller.resolve(path))
+	resolved := uninstaller.resolve(path)
+	if err := os.Remove(resolved); err != nil {
+		return err
+	}
+	return uninstaller.syncDirectory(filepath.Dir(resolved))
 }
 
 func (uninstaller *ManagedUninstaller) removeManagedRoots() error {
@@ -365,6 +370,9 @@ func (uninstaller *ManagedUninstaller) pruneLifecycleState() error {
 		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
 			return err
 		}
+		if err := uninstaller.syncDirectory(root); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -385,7 +393,13 @@ func (uninstaller *ManagedUninstaller) writeRecord(record ManagedUninstallRecord
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return writeAtomicRootOwnedFile(path, append(data, '\n'), 0o600, uninstaller.ExpectedUID)
+	return writeAtomicRootOwnedFileWithDirectorySync(
+		path,
+		append(data, '\n'),
+		0o600,
+		uninstaller.ExpectedUID,
+		uninstaller.syncDirectory,
+	)
 }
 
 func readManagedUninstallRecord(path string, expectedUID uint32) (ManagedUninstallRecord, error) {
@@ -440,7 +454,10 @@ func (uninstaller *ManagedUninstaller) removeExactFile(path string, expected []b
 	if !bytes.Equal(data, expected) {
 		return fmt.Errorf("managed uninstall refused modified file %s", path)
 	}
-	return os.Remove(resolved)
+	if err := os.Remove(resolved); err != nil {
+		return err
+	}
+	return uninstaller.syncDirectory(filepath.Dir(resolved))
 }
 
 func readExactRootFile(path string, mode os.FileMode, uid uint32, limit int64) ([]byte, error) {
@@ -469,6 +486,10 @@ func readExactRootFile(path string, mode os.FileMode, uid uint32, limit int64) (
 }
 
 func writeAtomicRootOwnedFile(path string, data []byte, mode os.FileMode, uid uint32) error {
+	return writeAtomicRootOwnedFileWithDirectorySync(path, data, mode, uid, syncManagedUninstallDirectory)
+}
+
+func writeAtomicRootOwnedFileWithDirectorySync(path string, data []byte, mode os.FileMode, uid uint32, syncDir func(string) error) error {
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".fased-uninstall-*")
 	if err != nil {
 		return err
@@ -494,7 +515,29 @@ func writeAtomicRootOwnedFile(path string, data []byte, mode os.FileMode, uid ui
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, path)
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+func (uninstaller *ManagedUninstaller) syncDirectory(path string) error {
+	if uninstaller.syncDir != nil {
+		return uninstaller.syncDir(path)
+	}
+	return syncManagedUninstallDirectory(path)
+}
+
+func syncManagedUninstallDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := directory.Sync(); err != nil {
+		_ = directory.Close()
+		return err
+	}
+	return directory.Close()
 }
 
 func (uninstaller *ManagedUninstaller) removeTree(path string) error {
@@ -506,7 +549,10 @@ func (uninstaller *ManagedUninstaller) removeTree(path string) error {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.Join(err, fmt.Errorf("managed uninstall tree is unsafe: %s", path))
 	}
-	return os.RemoveAll(resolved)
+	if err := os.RemoveAll(resolved); err != nil {
+		return err
+	}
+	return uninstaller.syncDirectory(filepath.Dir(resolved))
 }
 
 func (uninstaller *ManagedUninstaller) removePath(path string) error {
@@ -519,12 +565,18 @@ func (uninstaller *ManagedUninstaller) removePath(path string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || info.Mode().IsRegular() {
-		return os.Remove(resolved)
+		if err := os.Remove(resolved); err != nil {
+			return err
+		}
+		return uninstaller.syncDirectory(filepath.Dir(resolved))
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("managed uninstall path is unsafe: %s", path)
 	}
-	return os.RemoveAll(resolved)
+	if err := os.RemoveAll(resolved); err != nil {
+		return err
+	}
+	return uninstaller.syncDirectory(filepath.Dir(resolved))
 }
 
 func (uninstaller *ManagedUninstaller) resolve(path string) string {

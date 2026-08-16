@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,5 +188,67 @@ func TestManagedUninstallRefusesUnsafeOwnerPluginLock(t *testing.T) {
 	}
 	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("unsafe owner plugin lock was deleted: info=%+v err=%v", info, err)
+	}
+}
+
+func TestManagedUninstallResumesAfterManagedRootDirectorySyncFailure(t *testing.T) {
+	uninstaller, _, _ := managedUninstallFixture(t)
+	installRoot := uninstaller.resolve(uninstaller.Config.InstallRoot)
+	failParent := filepath.Dir(installRoot)
+	failed := false
+	uninstaller.syncDir = func(path string) error {
+		if path == failParent && !failed {
+			failed = true
+			return errors.New("injected managed-root directory sync failure")
+		}
+		return syncDirectory(path)
+	}
+
+	if record, err := uninstaller.Run(context.Background()); err == nil || record.Completed || !failed {
+		t.Fatalf("managed uninstall did not stop at durable managed-root boundary: record=%+v err=%v failed=%t", record, err, failed)
+	}
+	if _, err := os.Lstat(installRoot); !os.IsNotExist(err) {
+		t.Fatalf("injected failure did not occur after managed-root deletion: %v", err)
+	}
+	persisted, err := readManagedUninstallRecord(uninstaller.resolve(uninstaller.recordPath()), uninstaller.ExpectedUID)
+	if err != nil || persisted.Completed || persisted.ManagedRootsRemoved {
+		t.Fatalf("interrupted uninstall journal could short-circuit recovery: record=%+v err=%v", persisted, err)
+	}
+
+	resumed := *uninstaller
+	resumed.syncDir = nil
+	record, err := resumed.Run(context.Background())
+	if err != nil || !record.Completed || !record.ManagedRootsRemoved {
+		t.Fatalf("managed uninstall did not resume after directory sync failure: record=%+v err=%v", record, err)
+	}
+	for _, removed := range []string{
+		installRoot,
+		resumed.resolve(filepath.Join(resumed.Config.ProductStateRoot, "controller")),
+		resumed.resolve(resumed.Config.RuntimeRoot),
+	} {
+		if _, err := os.Lstat(removed); !os.IsNotExist(err) {
+			t.Fatalf("managed residue survived resumed uninstall at %s: %v", removed, err)
+		}
+	}
+}
+
+func TestManagedUninstallStopsBeforeMutationWhenJournalDirectorySyncFails(t *testing.T) {
+	uninstaller, _, calls := managedUninstallFixture(t)
+	journalDirectory := filepath.Dir(uninstaller.resolve(uninstaller.recordPath()))
+	uninstaller.syncDir = func(path string) error {
+		if path == journalDirectory {
+			return errors.New("injected uninstall journal directory sync failure")
+		}
+		return syncManagedUninstallDirectory(path)
+	}
+
+	if record, err := uninstaller.Run(context.Background()); err == nil || record.Completed {
+		t.Fatalf("managed uninstall continued without a durable initial journal: record=%+v err=%v", record, err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("managed uninstall mutated services before durable journal confirmation: %v", *calls)
+	}
+	if _, err := os.Lstat(uninstaller.resolve(uninstaller.Config.InstallRoot)); err != nil {
+		t.Fatalf("managed root changed before durable journal confirmation: %v", err)
 	}
 }
