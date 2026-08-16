@@ -11,11 +11,14 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
-	hardeningSnapshotSchema uint32 = 1
-	firewallUnitName               = "fased-hosting-firewall.service"
+	hardeningSnapshotSchema     uint32 = 1
+	firewallUnitName                   = "fased-hosting-firewall.service"
+	hardeningConvergenceTimeout        = 15 * time.Second
+	hardeningConvergencePoll           = 100 * time.Millisecond
 )
 
 type hardeningFileSnapshot struct {
@@ -141,7 +144,29 @@ func (host LinuxHost) CommitHardening(ctx context.Context, encoded string) error
 	if err := host.run(ctx, "/usr/bin/systemctl", []string{"restart", snapshot.SSHService}, nil, log, log, nil); err != nil {
 		return errors.Join(err, host.RestoreHardening(ctx, encoded))
 	}
+	if err := host.waitForHardening(ctx); err != nil {
+		return errors.Join(err, host.RestoreHardening(ctx, encoded))
+	}
 	return nil
+}
+
+func (host LinuxHost) waitForHardening(ctx context.Context) error {
+	deadline := time.NewTimer(hardeningConvergenceTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(hardeningConvergencePoll)
+	defer ticker.Stop()
+	for {
+		if host.hardeningReady(ctx) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("Hosting hardening services did not become ready before the bounded deadline")
+		case <-ticker.C:
+		}
+	}
 }
 
 func (host LinuxHost) RestoreHardening(ctx context.Context, encoded string) error {

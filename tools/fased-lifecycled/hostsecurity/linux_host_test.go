@@ -11,9 +11,15 @@ import (
 )
 
 type fixtureRunner struct {
-	outputs map[string][]byte
-	errors  map[string]error
-	calls   []string
+	outputs   map[string][]byte
+	errors    map[string]error
+	sequences map[string][]fixtureOutput
+	calls     []string
+}
+
+type fixtureOutput struct {
+	data []byte
+	err  error
 }
 
 func commandKey(command string, args []string) string {
@@ -32,6 +38,11 @@ func (runner *fixtureRunner) Run(_ context.Context, command string, args []strin
 func (runner *fixtureRunner) Output(ctx context.Context, command string, args ...string) ([]byte, error) {
 	key := commandKey(command, args)
 	runner.calls = append(runner.calls, key)
+	if sequence := runner.sequences[key]; len(sequence) > 0 {
+		result := sequence[0]
+		runner.sequences[key] = sequence[1:]
+		return result.data, result.err
+	}
 	return runner.outputs[key], runner.errors[key]
 }
 
@@ -52,9 +63,50 @@ func linuxHostFixture(t *testing.T) (LinuxHost, *fixtureRunner, string) {
 	if err := os.WriteFile(filepath.Join(root, "etc/ssh/sshd_config.d/01-fased-hardening.conf"), []byte(sshHardeningConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runner := &fixtureRunner{outputs: map[string][]byte{}, errors: map[string]error{}}
+	runner := &fixtureRunner{outputs: map[string][]byte{}, errors: map[string]error{}, sequences: map[string][]fixtureOutput{}}
 	host := LinuxHost{Runner: runner, HTTPClient: NewLinuxHost().HTTPClient, RootPrefix: root}
 	return host, runner, root
+}
+
+func TestHardeningConvergenceWaitsForFail2banControlReadiness(t *testing.T) {
+	host, runner, root := linuxHostFixture(t)
+	for path, data := range map[string]string{
+		"etc/fased/hosting-firewall.nft":                renderFirewallConfig(),
+		"etc/systemd/system/" + firewallUnitName:        renderFirewallUnit("/usr/sbin/nft"),
+		"etc/fail2ban/jail.d/fased-sshd.local":          fail2banConfig,
+		"etc/apt/apt.conf.d/52fased-security-updates":   aptAutomaticConfig,
+		"etc/ssh/sshd_config.d/01-fased-hardening.conf": sshHardeningConfig,
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner.outputs["/usr/sbin/nft list table inet fased_hosting"] = []byte(`table inet fased_hosting { chain input { iifname "tailscale0" tcp dport { 22, 443 } accept; tcp dport 22 drop; } }`)
+	for _, key := range []string{
+		"/usr/bin/systemctl is-active --quiet " + firewallUnitName,
+		"/usr/bin/systemctl is-enabled --quiet " + firewallUnitName,
+		"/usr/bin/systemctl is-active --quiet fail2ban.service",
+		"/usr/bin/systemctl is-enabled --quiet fail2ban.service",
+		"/usr/bin/systemctl is-active --quiet apt-daily-upgrade.timer",
+		"/usr/bin/systemctl is-enabled --quiet apt-daily-upgrade.timer",
+	} {
+		runner.outputs[key] = []byte("ready\n")
+	}
+	runner.outputs["/usr/sbin/sshd -T"] = []byte("passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin no\npubkeyauthentication yes\n")
+	runner.sequences["/usr/bin/fail2ban-client status sshd"] = []fixtureOutput{
+		{err: errors.New("control socket not ready")},
+		{data: []byte("Jail list: sshd\n")},
+	}
+	if err := host.waitForHardening(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.sequences["/usr/bin/fail2ban-client status sshd"]) != 0 {
+		t.Fatal("hardening readiness did not retry the transient fail2ban control failure")
+	}
 }
 
 func TestLinuxHostInspectionBindsPrivateTailscaleAndHardening(t *testing.T) {
