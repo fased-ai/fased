@@ -1652,7 +1652,7 @@ describe("renderWallet", () => {
                 isNative: false,
                 address: "Ata1111111111111111111111111111111111111111",
                 program: "mint-usdc",
-                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
                 logoUri: "https://img.example/usdc.png",
                 verificationStatus: "verified",
                 verificationSource: "jupiter",
@@ -1855,7 +1855,7 @@ describe("renderWallet", () => {
                 isNative: false,
                 address: "Ata1111111111111111111111111111111111111111",
                 program: "2qwAVnGm1234567890123456789kg1jVfP7",
-                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
               },
             ],
           },
