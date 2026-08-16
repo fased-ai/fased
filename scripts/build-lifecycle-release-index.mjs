@@ -10,10 +10,7 @@ import * as tar from "tar";
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const GIT = /^[a-f0-9]{40}$/u;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
-const architectures = [
-  { name: "x64", go: "amd64" },
-  { name: "arm64", go: "arm64" },
-];
+const architectures = [{ name: "x64", go: "amd64" }];
 
 async function asset(directory, name) {
   const file = path.join(directory, name);
@@ -87,10 +84,6 @@ async function generationMetadata(directory, version, architecture) {
   }
 }
 
-function same(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 export async function buildLifecycleReleaseIndex(options) {
   const {
     assetsDir,
@@ -143,14 +136,6 @@ export async function buildLifecycleReleaseIndex(options) {
     }
   }
   const baseline = records.x64.inventory;
-  if (
-    !same(baseline.stateSchemas, records.arm64.inventory.stateSchemas) ||
-    !same(baseline.capabilities, records.arm64.inventory.capabilities) ||
-    records.x64.pluginLockDigest !== records.arm64.pluginLockDigest
-  ) {
-    throw new Error("release-index architecture contracts disagree");
-  }
-
   const application = {};
   const dependencyLayer = {};
   const lifecycleHost = {};

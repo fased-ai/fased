@@ -153,6 +153,39 @@ func serveTargetsLoopback(data []byte, port uint16) bool {
 	return bytes.Contains(data, []byte(needle))
 }
 
+func serveSnapshotHasNoRoutes(data string) bool {
+	var root map[string]any
+	if json.Unmarshal([]byte(data), &root) != nil {
+		return false
+	}
+	delete(root, "version")
+	delete(root, "Version")
+	return emptyJSONContainer(root)
+}
+
+func emptyJSONContainer(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case map[string]any:
+		for _, child := range typed {
+			if !emptyJSONContainer(child) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, child := range typed {
+			if !emptyJSONContainer(child) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func (host LinuxHost) commandSucceeds(ctx context.Context, command string, args ...string) bool {
 	if host.RootPrefix != "" {
 		// Fixture runners bind fixed logical command paths themselves.
@@ -322,7 +355,7 @@ func (host LinuxHost) RestorePrivateServe(ctx context.Context, previous string) 
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(previous) == "" {
+	if strings.TrimSpace(previous) == "" || serveSnapshotHasNoRoutes(previous) {
 		return host.Runner.Run(ctx, tailscale, []string{"serve", "reset"}, nil, io.Discard, io.Discard, nil)
 	}
 	temporary, err := os.CreateTemp("", "fased-tailscale-serve-*.json")

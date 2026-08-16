@@ -23,12 +23,10 @@ const ROOT_POLICY_SHA256 = "23d3e8235a39729d6ae37a5784eaa717a47e4ac725f5a416e787
 const LIFECYCLE_TARGETS = Object.freeze({
   bootstrap: "install.sh",
   lifecycleLinuxX64: "fased-lifecycled-linux-amd64",
-  lifecycleLinuxArm64: "fased-lifecycled-linux-arm64",
   evidenceVerifier: "fased-privileged-release-evidence.mjs",
 });
 const COMPONENT_SBOM_NAMES = Object.freeze({
   applicationX64: (version) => `fased-hosted-components-linux-x64-v${version}.spdx.json`,
-  applicationArm64: (version) => `fased-hosted-components-linux-arm64-v${version}.spdx.json`,
   signer: (version) => `fased-signerd-components-v${version}.spdx.json`,
 });
 
@@ -133,17 +131,13 @@ function parseReleaseManifest(value, expectedRelease) {
   exactKeys(value, ["schemaVersion", "release", "application", "signer"], "release manifest");
   exactKeys(value.release, ["version", "tag", "commit"], "release manifest identity");
   exactKeys(value.application, ["linux"], "release application platforms");
-  exactKeys(value.application.linux, ["x64", "arm64"], "release application architectures");
+  exactKeys(value.application.linux, ["x64"], "release application architectures");
   exactKeys(
     value.signer,
     ["release", "capabilities", "capabilitiesDigest", "platforms"],
     "release signer",
   );
-  exactKeys(
-    value.signer.platforms,
-    ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"],
-    "release signer platforms",
-  );
+  exactKeys(value.signer.platforms, ["linux-amd64"], "release signer platforms");
   if (
     value.schemaVersion !== 2 ||
     canonicalJSON(value.release) !== canonicalJSON(expectedRelease) ||
@@ -157,7 +151,7 @@ function parseReleaseManifest(value, expectedRelease) {
   }
 
   const artifacts = [];
-  for (const architecture of ["x64", "arm64"]) {
+  for (const architecture of ["x64"]) {
     const selected = value.application.linux[architecture];
     exactKeys(selected, ["artifact", "dependencies"], `release application ${architecture}`);
     exactKeys(selected.artifact, ["asset", "sha256"], `release application ${architecture} asset`);
@@ -182,7 +176,7 @@ function parseReleaseManifest(value, expectedRelease) {
       ),
     );
   }
-  for (const platform of ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"]) {
+  for (const platform of ["linux-amd64"]) {
     const selected = value.signer.platforms[platform];
     exactKeys(selected, ["asset", "sha256"], `release signer ${platform}`);
     artifacts.push(artifactEntry(`signer-${platform}`, selected.asset, selected.sha256));
@@ -199,7 +193,7 @@ function parseLifecycleMetadata(value, expectedRelease) {
   exactKeys(value.release, ["version", "tag", "commit"], "lifecycle release identity");
   exactKeys(
     value.targets,
-    ["bootstrap", "lifecycleLinuxX64", "lifecycleLinuxArm64", "evidenceVerifier"],
+    ["bootstrap", "lifecycleLinuxX64", "evidenceVerifier"],
     "lifecycle targets",
   );
   exactKeys(value.evidence, ["provenance", "sbom", "vex"], "lifecycle evidence");
@@ -213,7 +207,7 @@ function parseLifecycleMetadata(value, expectedRelease) {
     canonicalJSON(value.policy) !==
       canonicalJSON({
         channels: expectedRelease.version.includes("-") ? ["beta"] : ["beta", "stable"],
-        platforms: ["linux-arm64", "linux-x64"],
+        platforms: ["linux-x64"],
         lifecycleProtocol: 1,
       })
   ) {
@@ -335,7 +329,6 @@ async function mergeComponentPackages(assetsDir, version) {
   const packages = new Map();
   for (const name of [
     COMPONENT_SBOM_NAMES.applicationX64(version),
-    COMPONENT_SBOM_NAMES.applicationArm64(version),
     COMPONENT_SBOM_NAMES.signer(version),
   ]) {
     const value = await readJSON(path.join(assetsDir, name), `component SBOM ${name}`);

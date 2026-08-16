@@ -9,9 +9,16 @@ title: "Raspberry Pi"
 
 # Fased on Raspberry Pi
 
+<Warning>
+Raspberry Pi and Linux arm64 are deferred from the first managed stable matrix.
+The public installer rejects arm64 before download, sudo, cache, or `/opt`
+mutation. Do not copy x64 release assets onto a Pi or use this page as managed
+installation guidance.
+</Warning>
+
 ## Goal
 
-Run a persistent, always-on Fased Gateway on a Raspberry Pi.
+Plan or test a future Raspberry Pi port from source.
 
 Perfect for:
 
@@ -76,8 +83,8 @@ sudo apt install -y curl ca-certificates
 sudo timedatectl set-timezone America/Chicago  # Change to your timezone
 ```
 
-The Fased installer installs and verifies the supported Node runtime. Do not
-run a separate remote NodeSource setup script for the normal path.
+Contributor testing requires its own Node and pnpm toolchain. There is no
+supported managed arm64 runtime in the first stable matrix.
 
 ## 5) Add Swap (Important for 2GB or less)
 
@@ -98,39 +105,26 @@ echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 ```
 
-## 6) Install Fased
+## 6) Contributor source test only
 
-For the normal always-on Pi path, enter a root shell:
-
-```bash
-sudo -i
-```
-
-Then run the exact [fresh Hosting command](/install/vps#3-install-fased). Its
-small streamed bootstrap verifies the tagged ARM64 runtime before persistent
-Fased setup, starts Tailscale through signed OS packages, separates the `app`
-operator from the Gateway service account, and runs onboarding.
-
-<Accordion title="Advanced: hackable source checkout">
-  Contributors who intentionally need a source tree can use:
+Contributors who intentionally accept an unsupported development environment
+can use a non-root checkout:
 
 ```bash
 git clone https://github.com/fased-ai/fased.git fased
 cd fased
 pnpm install
 pnpm build:app
-./install.sh --no-onboard
+bash scripts/install-development.sh --no-onboard
 ```
 
-This is a contributor/debug path, not the normal Pi installation.
-</Accordion>
+This is a contributor/debug path, not a managed Pi installation. Do not use it
+for production Wallet custody or as release acceptance.
 
 ## 7) Private access before onboarding
 
-The Hosting installer handles Tailscale login and private access checks. Open
-the printed login URL on your own computer and confirm the requested private
-SSH test before allowing public SSH hardening. Do not run an app-owned checkout
-with sudo.
+No managed Hosting hardening is available for Pi/arm64 in the first matrix.
+Do not run the source checkout with sudo or assume it manages SSH/firewall.
 
 ## 8) Run Onboarding
 

@@ -8,7 +8,8 @@ title: "Platforms"
 
 # Platforms
 
-Fased core runs through the Gateway. **Node is the recommended runtime**.
+Fased core runs through the Gateway. Managed releases bundle an exact Node
+runtime; users do not install Node globally.
 
 The normal setup path is:
 
@@ -30,9 +31,10 @@ flowchart TD
   class mac,mobile,always node;
 ```
 
-Companion apps exist for macOS and mobile nodes. Windows and Linux companion apps
-are planned, but the Gateway is fully supported today. On Windows, the practical
-path is WSL2.
+The first managed stable matrix is Linux x86_64 with systemd: protected Local,
+Ubuntu-compatible Hosting, and Rocky-compatible Hosting. macOS, WSL2, Linux
+arm64, and native Windows are deferred. Source development on those platforms
+does not constitute managed support.
 
 ## Current UI model
 
@@ -47,10 +49,11 @@ path is WSL2.
 
 ## Choose your OS
 
-- [macOS](/platforms/macos): Gateway plus native menu bar companion.
+- [macOS](/platforms/macos): compatibility and source-development information;
+  managed install/update is deferred.
 - [Linux](/platforms/linux): Gateway host, local machine, VPS, or always-on node.
-- [Windows](/platforms/windows): WSL2 for the Gateway. Native companion app is
-  planned.
+- [Windows](/platforms/windows): manage a supported remote Linux VPS; managed
+  WSL2/native Windows installation is deferred.
 - [iOS](/platforms/ios): mobile node connected to another Gateway.
 - [Android](/platforms/android): mobile node connected to another Gateway.
 - [Raspberry Pi](/platforms/raspberry-pi): low-power always-on Gateway host.
@@ -77,14 +80,15 @@ full Docker Gateway is Local only. Fly.io and Render are
 
 ## Gateway service install (CLI)
 
-Use one of these (all supported):
+These commands are for contributor/source runtimes only:
 
 - Wizard (recommended): `fased onboard --install-daemon`
 - Direct: `fased gateway install`
 - Configure flow: `fased configure` → select **Gateway service**
 - Repair/migrate: `fased doctor` (offers to install or fix the service)
 
-The service target depends on OS:
+They are not alternatives to the Go lifecycle in a managed installation. The
+source-runtime service target depends on OS:
 
 - macOS: LaunchAgent (`ai.fased.gateway` or `ai.fased.<profile>`; legacy
   `com.fased.*`)

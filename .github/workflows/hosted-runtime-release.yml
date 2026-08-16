@@ -286,8 +286,6 @@ jobs:
         include:
           - arch: x64
             runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -326,7 +324,6 @@ jobs:
         run: |
           set -euo pipefail
           go_arch=amd64
-          if [[ "${{ matrix.arch }}" == arm64 ]]; then go_arch=arm64; fi
           for executable in \
             "dist-native/release/fased-signerd-linux-${go_arch}" \
             "dist-native/release/fased-lifecycled-linux-${go_arch}"; do
@@ -393,8 +390,7 @@ jobs:
             --source install.sh \
             --output dist-native/release/install.sh \
             --version "$package_version" \
-            --bootstrap-x64 dist-native/release/fased-bootstrap-linux-x64 \
-            --bootstrap-arm64 dist-native/release/fased-bootstrap-linux-arm64
+            --bootstrap-x64 dist-native/release/fased-bootstrap-linux-x64
           bash -n dist-native/release/install.sh
           grep -Fxq "install_entry_release_identity=\"${package_version}\"" \
             dist-native/release/install.sh
@@ -521,12 +517,11 @@ jobs:
             --version "$package_version" \
             --commit "$GITHUB_SHA" \
             --output .artifacts/hosted-runtime/fased-hosted-release-v2.json
-          for architecture in x64 arm64; do
+          for architecture in x64; do
             bash scripts/fetch-node-runtime.sh "$architecture" ".artifacts/node-runtime/$architecture"
           done
-          for architecture in x64 arm64; do
+          for architecture in x64; do
             go_arch=amd64
-            if [[ "$architecture" == arm64 ]]; then go_arch=arm64; fi
             signer=".artifacts/hosted-runtime/fased-signerd-linux-${go_arch}"
             inventory_tool=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"
             chmod 0755 "$signer" "$inventory_tool"

@@ -21,6 +21,7 @@ export function resolveNativeSignerOperatorLifecycle(
     .trim()
     .toLowerCase();
   if (hostProfile === "hosting") {
+    const ownerHelperPath = managedSignerOwnerHelperPath(env);
     const installRoot = String(env.FASED_LIFECYCLE_INSTALL_ROOT ?? "/opt/fased").trim();
     if (installRoot !== "/opt/fased") {
       throw new Error("Hosting lifecycle install root is not canonical");
@@ -32,12 +33,13 @@ export function resolveNativeSignerOperatorLifecycle(
       applicationSocketPath: "/run/fased-signerd/app.sock",
       operatorSocketPath: "/run/fased-signerd/operator.sock",
       controlSocketPath: "/run/fased-signerd/control.sock",
-      ownerHelperPath: "/usr/local/sbin/fased-signer-owner",
+      ownerHelperPath,
     };
   }
   if (!isProtectedLocalSigner(env)) {
     return undefined;
   }
+  const ownerHelperPath = managedSignerOwnerHelperPath(env);
   const instanceId = String(env.FASED_PROTECTED_LOCAL_INSTANCE ?? "").trim();
   if (!/^[a-f0-9]{16}$/u.test(instanceId)) {
     throw new Error("Protected Local signer instance identity is missing or invalid");
@@ -74,6 +76,14 @@ export function resolveNativeSignerOperatorLifecycle(
     applicationSocketPath: `/run/fased-local/${instanceId}/application/app.sock`,
     operatorSocketPath: `/run/fased-local/${instanceId}/operator/operator.sock`,
     controlSocketPath: `/run/fased-local/${instanceId}/control/control.sock`,
-    ownerHelperPath: `/usr/local/sbin/fased-local-signer-owner-${instanceId}`,
+    ownerHelperPath,
   };
+}
+
+function managedSignerOwnerHelperPath(env: NodeJS.ProcessEnv): string {
+  const ownerHome = String(env.HOME ?? "").trim();
+  if (!path.isAbsolute(ownerHome) || path.resolve(ownerHome) !== ownerHome) {
+    throw new Error("Managed signer owner home is missing or invalid");
+  }
+  return path.join(ownerHome, ".fased", "bin", "fased-signer-owner");
 }

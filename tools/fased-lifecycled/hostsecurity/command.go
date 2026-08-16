@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"syscall"
 )
 
 const maxCommandOutput = 1 << 20
@@ -54,9 +55,19 @@ func (writer *boundedWriter) Write(data []byte) (int, error) {
 func fixedExecutable(candidates ...string) (string, error) {
 	for _, candidate := range candidates {
 		info, err := os.Lstat(candidate)
-		if err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o111 != 0 {
+		stat, statOK := infoSyscallStat(info)
+		if err == nil && statOK && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 &&
+			info.Mode().Perm()&0o111 != 0 && info.Mode().Perm()&0o022 == 0 && stat.Uid == 0 && stat.Nlink >= 1 {
 			return candidate, nil
 		}
 	}
-	return "", errors.New("required fixed system executable is unavailable")
+	return "", errors.New("required fixed root-owned system executable is unavailable")
+}
+
+func infoSyscallStat(info os.FileInfo) (*syscall.Stat_t, bool) {
+	if info == nil {
+		return nil, false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return stat, ok
 }

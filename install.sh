@@ -3,7 +3,6 @@ set -euo pipefail
 
 install_entry_release_identity="__FASED_RELEASE_IDENTITY__"
 bootstrap_sha256_x64="__FASED_BOOTSTRAP_SHA256_X64__"
-bootstrap_sha256_arm64="__FASED_BOOTSTRAP_SHA256_ARM64__"
 version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
 digest_pattern='^[0-9a-f]{64}$'
 
@@ -98,8 +97,7 @@ case "$(uname -s)" in
 esac
 case "$(uname -m)" in
   x86_64|amd64) arch="x64"; bootstrap_sha256="$bootstrap_sha256_x64" ;;
-  aarch64|arm64) arch="arm64"; bootstrap_sha256="$bootstrap_sha256_arm64" ;;
-  *) echo "Fased installer: unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  *) echo "Fased installer: the first managed lifecycle release supports Linux x86_64 only; architecture $(uname -m) is deferred." >&2; exit 1 ;;
 esac
 [[ "$bootstrap_sha256" =~ $digest_pattern ]] || { echo "Fased installer: bootstrap digest was not stamped." >&2; exit 1; }
 

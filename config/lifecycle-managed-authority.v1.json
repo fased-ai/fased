@@ -6,29 +6,59 @@
     {
       "id": "linux-protected-local",
       "support": "retained",
-      "platforms": ["linux-x64", "linux-arm64"],
+      "platforms": ["linux-x64"],
+      "serviceManager": "systemd"
+    },
+    {
+      "id": "linux-arm64-protected-local",
+      "support": "deferred",
+      "platforms": ["linux-arm64"],
       "serviceManager": "systemd"
     },
     {
       "id": "wsl2-protected-local",
-      "support": "retained",
+      "support": "deferred",
       "platforms": ["linux-x64", "linux-arm64"],
       "serviceManager": "systemd"
     },
     {
       "id": "linux-hosting",
       "support": "retained",
-      "platforms": ["ubuntu-x64", "ubuntu-arm64", "rocky-x64", "rocky-arm64"],
+      "platforms": ["ubuntu-x64", "rocky-x64"],
+      "serviceManager": "systemd"
+    },
+    {
+      "id": "linux-arm64-hosting",
+      "support": "deferred",
+      "platforms": ["ubuntu-arm64", "rocky-arm64"],
       "serviceManager": "systemd"
     },
     {
       "id": "darwin-protected-local",
-      "support": "retained",
+      "support": "deferred",
       "platforms": ["darwin-x64", "darwin-arm64"],
       "serviceManager": "launchd"
     }
   ],
   "capabilities": [
+    {
+      "id": "first-install-stage-zero-trust",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-bootstrap-distribution",
+      "implementation": [
+        "install.sh",
+        "scripts/stamp-release-installer.mjs",
+        "docs/install/installer.md"
+      ],
+      "evidence": [
+        "scripts/install-release-pin.test.ts",
+        "scripts/install-platform-preflight.test.ts",
+        "scripts/stamp-release-installer.test.ts",
+        "scripts/lifecycle-redesign-security-contract.test.ts"
+      ],
+      "status": "implemented"
+    },
     {
       "id": "signed-target-selection",
       "boundary": "managed",
@@ -164,6 +194,22 @@
       "status": "partial"
     },
     {
+      "id": "hosting-authentic-tailscale-h0",
+      "boundary": "managed",
+      "profiles": ["linux-hosting"],
+      "owner": "go-host-security-adapter-and-acceptance",
+      "implementation": [
+        "tools/fased-lifecycled/hostsecurity/tailscale_install_linux.go",
+        "scripts/test-lifecycle-hosting-tailscale-h0.sh",
+        "tools/fased-lifecycled/hostsecurity/tailscale_h0_test.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/hostsecurity/linux_host_test.go",
+        "tools/fased-lifecycled/hostsecurity/tailscale_h0_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
       "id": "hosting-private-serve",
       "boundary": "managed",
       "profiles": ["linux-hosting"],
@@ -233,6 +279,63 @@
         "tools/fased-lifecycled/platform/config_test.go"
       ],
       "status": "partial"
+    },
+    {
+      "id": "retained-platform-native-assets",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "release-build",
+      "implementation": [
+        ".github/workflows/hosted-runtime-release.yml",
+        "scripts/build-hosted-runtime-artifact.ts",
+        "scripts/build-hosted-release-manifest.mjs",
+        "scripts/build-lifecycle-release-index.mjs",
+        "install.sh"
+      ],
+      "evidence": [
+        "scripts/install-platform-preflight.test.ts",
+        "scripts/hosted-installer-artifact-layout.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "retained-platform-command-acceptance",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "platform-adapters-and-acceptance",
+      "implementation": [
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/test-lifecycle-hosting-acceptance.sh",
+        "scripts/run-lifecycle-local0.sh"
+      ],
+      "evidence": [
+        "scripts/lifecycle-acceptance-contract.test.ts",
+        "scripts/hosted-security-boundary.test.ts"
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "deferred-platform-pre-mutation-enforcement",
+      "boundary": "managed",
+      "profiles": [
+        "linux-arm64-protected-local",
+        "linux-arm64-hosting",
+        "wsl2-protected-local",
+        "darwin-protected-local"
+      ],
+      "owner": "public-installer-and-release-build",
+      "implementation": [
+        ".github/workflows/hosted-runtime-release.yml",
+        "scripts/release-fased-signerd.sh",
+        "scripts/release-fased-lifecycled.sh",
+        "scripts/stamp-release-installer.mjs",
+        "install.sh"
+      ],
+      "evidence": [
+        "scripts/install-platform-preflight.test.ts",
+        "scripts/hosted-installer-artifact-layout.test.ts"
+      ],
+      "status": "implemented"
     },
     {
       "id": "wsl2-preflight-and-systemd-convergence",
@@ -310,16 +413,70 @@
       "profiles": ["*"],
       "owner": "go-lifecycle",
       "implementation": [
+        "config/lifecycle-managed-mutation-inventory.v1.json",
         "src/daemon/service.ts",
         "src/infra/tailscale.ts",
+        "src/infra/restart.ts",
+        "src/wizard/onboarding.finalize.ts",
         "src/wizard/onboarding.ts",
+        "src/commands/uninstall.ts",
+        "scripts/fased-signer-owner-hosting.sh"
+      ],
+      "evidence": [
+        "scripts/lifecycle-managed-mutation-inventory.test.ts",
+        "src/daemon/service.managed-boundary.test.ts",
+        "src/infra/tailscale.test.ts",
+        "src/infra/restart.managed-boundary.test.ts",
+        "src/wizard/onboarding.finalize.test.ts",
+        "src/commands/uninstall.managed-boundary.test.ts",
+        "scripts/npm-free-managed-lifecycle-contract.test.ts",
+        "scripts/signer-owner-maintenance.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "root-owned-managed-runtime-detection",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle-and-application-projection",
+      "implementation": [
+        "tools/fased-lifecycled/platform/cli_projection.go",
+        "tools/fased-lifecycled/platform/discovery.go",
+        "src/infra/managed-runtime-authority.ts",
+        "src/version.ts",
+        "src/daemon/service.ts",
+        "src/infra/tailscale.ts",
         "src/commands/uninstall.ts"
       ],
       "evidence": [
+        "tools/fased-lifecycled/platform/cli_projection_test.go",
+        "tools/fased-lifecycled/platform/discovery_test.go",
+        "src/infra/managed-runtime-authority.test.ts",
+        "src/version.test.ts",
         "src/daemon/service.managed-boundary.test.ts",
         "src/infra/tailscale.test.ts",
-        "src/commands/uninstall.managed-boundary.test.ts",
-        "scripts/npm-free-managed-lifecycle-contract.test.ts"
+        "src/commands/uninstall.managed-boundary.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "managed-third-party-plugin-mutation-fence",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "application-managed-runtime-fence",
+      "implementation": [
+        "src/infra/managed-runtime-authority.ts",
+        "src/plugins/install.ts",
+        "src/plugins/update.ts",
+        "src/commands/onboarding/plugin-install.ts",
+        "src/gateway/server-methods/plugins-marketplace.ts"
+      ],
+      "evidence": [
+        "src/infra/managed-runtime-authority.test.ts",
+        "src/plugins/install.test.ts",
+        "src/plugins/update.test.ts",
+        "src/commands/onboarding/plugin-install.test.ts",
+        "src/gateway/server-methods/plugins-marketplace.test.ts"
       ],
       "status": "implemented"
     },
@@ -335,7 +492,7 @@
     {
       "id": "third-party-plugin-transaction",
       "boundary": "separate-unprivileged",
-      "profiles": ["*"],
+      "profiles": ["developer-source"],
       "owner": "application-plugin-manager",
       "implementation": ["src/plugins/install.ts", "src/plugins/uninstall.ts"],
       "evidence": ["src/plugins/install.test.ts", "src/plugins/uninstall.test.ts"],

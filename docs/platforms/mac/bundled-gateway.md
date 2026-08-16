@@ -9,25 +9,24 @@ title: "Gateway on macOS"
 
 # Gateway on macOS (external launchd)
 
-The macOS app bundle no longer ships Node/Bun or the Gateway runtime. The app
-expects an **external** `fased` CLI install, does not spawn the Gateway as a
-child process, and manages a per‑user launchd service to keep the Gateway
-running (or attaches to an existing local Gateway if one is already running).
+Managed macOS install/update is deferred from the first stable matrix. This
+page describes compatibility and source-development behavior only; the app
+does not download a separate npm/global CLI or claim a native managed
+lifecycle.
 
 ## Install the CLI (required for local mode)
 
 You need Node 24 recommended, or Node 22.14+ with `node:sqlite`, on the Mac.
-Then install `fased` from the public repo checkout:
+Then install `fased` from a contributor checkout:
 
 ```bash
 git clone https://github.com/fased-ai/fased.git fased
 cd fased
-./install.sh --no-onboard
+bash scripts/install-development.sh --no-onboard
 ```
 
-The macOS app’s **Install CLI** button uses the Fased CLI installer and installs
-into `~/.fased`. Use the manual repo-backed flow above when you are testing a
-local checkout.
+The macOS app has no public **Install CLI** authority. Use the manual
+repo-backed flow above only when testing a local checkout.
 
 ## Launchd (Gateway as LaunchAgent)
 
@@ -42,7 +41,7 @@ Plist location (per‑user):
 
 Manager:
 
-- The macOS app owns LaunchAgent install/update in Local mode.
+- The macOS app may manage a LaunchAgent only in compatibility/source mode.
 - The CLI can also install it: `fased gateway install`.
 
 Behavior:
@@ -58,8 +57,8 @@ Logging:
 
 ## Version compatibility
 
-The macOS app checks the gateway version against its own version. If they’re
-incompatible, update the global CLI to match the app version.
+The macOS app checks the gateway version against its own version. This does not
+turn the compatibility path into a supported managed release.
 
 ## Smoke check
 

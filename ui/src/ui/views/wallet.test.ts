@@ -618,7 +618,7 @@ describe("describeVaultSignerApproval", () => {
       }),
     ).toMatchObject({
       summary: "Not enrolled",
-      setupCommand: expect.stringContaining("/usr/local/sbin/fased-signer-enroll"),
+      setupCommand: expect.stringContaining("fased-signer-owner webauthn-enroll"),
     });
   });
 

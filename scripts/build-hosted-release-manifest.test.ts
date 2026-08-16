@@ -15,7 +15,7 @@ const digest = (value: string | Buffer) => createHash("sha256").update(value).di
 
 function fixture() {
   const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosted-release-v2-"));
-  for (const architecture of ["x64", "arm64"]) {
+  for (const architecture of ["x64"]) {
     const app = `app-${architecture}`;
     const dependencies = `dependencies-${architecture}`;
     const appAsset = `fased-hosted-app-v2-linux-${architecture}-v${version}.tar.gz`;
@@ -47,12 +47,7 @@ function fixture() {
     path.join(assetsDir, "fased-signerd-release.json"),
     `${JSON.stringify(signerIdentity)}\n`,
   );
-  for (const asset of [
-    "fased-signerd-linux-amd64",
-    "fased-signerd-linux-arm64",
-    "fased-signerd-darwin-amd64",
-    "fased-signerd-darwin-arm64",
-  ]) {
+  for (const asset of ["fased-signerd-linux-amd64"]) {
     fs.writeFileSync(path.join(assetsDir, asset), asset);
   }
   return assetsDir;
@@ -96,7 +91,7 @@ describe("unified hosted release manifest v2", () => {
   it("rejects changed artifact bytes even when a sidecar claims the old digest", async () => {
     const assetsDir = fixture();
     fs.appendFileSync(
-      path.join(assetsDir, `fased-hosted-app-v2-linux-arm64-v${version}.tar.gz`),
+      path.join(assetsDir, `fased-hosted-app-v2-linux-x64-v${version}.tar.gz`),
       "x",
     );
     await expect(buildHostedReleaseManifest({ assetsDir, version, commit })).rejects.toThrow(

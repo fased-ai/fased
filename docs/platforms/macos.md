@@ -9,6 +9,13 @@ title: "macOS"
 
 # Fased macOS
 
+<Warning>
+Managed macOS install/update is deferred from the first stable matrix. The app
+may connect to a supported remote Linux Gateway or participate in explicit
+source-development compatibility tests, but it does not install a public
+npm/global CLI or own a supported managed LaunchAgent lifecycle.
+</Warning>
+
 The macOS app is the menu-bar companion for Fased. It owns macOS permissions,
 connects to a local or remote Gateway, and exposes Mac capabilities as a node.
 
@@ -25,13 +32,12 @@ and one-click entry into the browser Control UI.
 - Starts the local node host service in **remote** mode and stops it in
   **local** mode.
 - Optionally hosts **PeekabooBridge** for UI automation.
-- Installs the `fased` CLI on request with the app installer; developers
-  can still use the repo-backed `./install.sh --no-onboard` flow manually.
+- Uses a repo-backed CLI only for explicit source-development compatibility.
 
 ## Local vs remote mode
 
-- **Local** (default): the app attaches to a running local Gateway if present;
-  otherwise it enables the launchd service via `fased gateway install`.
+- **Local compatibility:** the app may attach to an already running
+  source-development Gateway. It is not a managed public install.
 - **Remote**: the app connects to a Gateway over SSH/Tailscale and does not
   start a local Gateway.
   The app starts the local **node host service** so the remote Gateway can reach
@@ -58,7 +64,7 @@ flowchart TD
 
 ## Launchd control
 
-The app manages a per-user LaunchAgent labeled `ai.fased.gateway`
+In compatibility/source mode, the app may manage a per-user LaunchAgent labeled `ai.fased.gateway`
 or `ai.fased.<profile>` when using `--profile`/`FASED_PROFILE`. Legacy
 `com.fased.*` agents still unload.
 
@@ -69,8 +75,7 @@ launchctl bootout gui/$UID/ai.fased.gateway
 
 Replace the label with `ai.fased.<profile>` when running a named profile.
 
-If the LaunchAgent isn’t installed, enable it from the app or run
-`fased gateway install`.
+Do not treat this LaunchAgent as lifecycle-managed release evidence.
 
 ## Node capabilities (mac)
 
@@ -131,13 +136,14 @@ automation.
 
 ## Onboarding flow (typical)
 
-1. Install and launch **FasedAgent.app**.
+1. Build and launch **FasedAgent.app** from a contributor checkout.
 2. Complete the permissions checklist (TCC prompts).
-3. Ensure **Local** mode is active and the Gateway is running.
+3. Connect to a supported remote Linux Gateway, or start an explicit
+   source-development Gateway.
 4. Open `http://localhost:18789` for the Control UI.
 5. Finish normal setup in **Agents**: choose model refs, channel accounts,
    skills, tools, memory, and tasks for the selected Agent.
-6. Install the CLI if you want terminal access.
+6. Use the repo-backed developer CLI if you need terminal access.
 
 ## Build & dev workflow (native)
 

@@ -23,7 +23,7 @@ const dependency = {
   dependencyHash: "c".repeat(64),
 };
 const signerPlatforms = Object.fromEntries(
-  ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"].map((platform) => [
+  ["linux-amd64"].map((platform) => [
     platform,
     { asset: `fased-signerd-${platform}`, sha256: "d".repeat(64) },
   ]),
@@ -34,7 +34,6 @@ const valid = () => ({
   application: {
     linux: {
       x64: { artifact, dependencies: dependency },
-      arm64: { artifact: { ...artifact, asset: "arm-app.tar.gz" }, dependencies: dependency },
     },
   },
   signer: {

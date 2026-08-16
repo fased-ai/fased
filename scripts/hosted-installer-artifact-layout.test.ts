@@ -156,13 +156,14 @@ describe("attested Go lifecycle artifact layout", () => {
     );
   });
 
-  it("keeps branch proof assets truthful and production lanes platform-real", () => {
+  it("keeps branch proof assets truthful and publishes only the retained x64 lane", () => {
     expect(localFixture).not.toContain("copy_branch_x64_fixture_aliases");
     expect(localFixture).not.toContain('cp --reflink=auto "$signer_source"');
     expect(localFixture).not.toContain('cp --reflink=auto "$ARTIFACT_DIR/$x64_app"');
     expect(localFixture).toContain("--profile branch-x64");
     expect(releaseWorkflow).toContain("matrix.arch");
-    expect(releaseWorkflow).toContain("ubuntu-24.04-arm");
+    expect(releaseWorkflow).not.toContain("ubuntu-24.04-arm");
+    expect(releaseWorkflow).not.toContain("- arch: arm64");
   });
 
   it("builds independent native release families with bounded concurrency", () => {

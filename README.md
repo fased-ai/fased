@@ -33,10 +33,10 @@ Public install is repo-backed:
 
 ### Local vs VPS Hosting
 
-| Path        | Runs where                            | Private access                           | Normal operator                            |
-| ----------- | ------------------------------------- | ---------------------------------------- | ------------------------------------------ |
-| Local       | macOS, Linux, or WSL2 Ubuntu          | Your local OS; Tailscale optional        | Your OS account                            |
-| VPS Hosting | Ubuntu/Fedora/RHEL-family systemd VPS | Tailscale plus provider-console recovery | `app`; Gateway isolated as `fased-gateway` |
+| Path        | Runs where                        | Private access                           | Normal operator                            |
+| ----------- | --------------------------------- | ---------------------------------------- | ------------------------------------------ |
+| Local       | Linux x86_64 with systemd         | Loopback on your local OS                | Your OS account                            |
+| VPS Hosting | Ubuntu or Rocky-compatible x86_64 | Tailscale plus provider-console recovery | `app`; Gateway isolated as `fased-gateway` |
 
 If you lose access to the Tailscale account used for a hosted VPS, normal
 dashboard and SSH access can be lost. Recovery then depends on the VPS
@@ -45,29 +45,10 @@ recovery options and VPS provider console access working.
 
 ### Local install
 
-Use this on your own machine:
-
-- **macOS:** run the command in Terminal.
-- **Windows:** install WSL2 with Ubuntu, then run the command inside the Ubuntu
-  shell.
-- **Linux:** run the command in your distro terminal.
-
-Windows requires Windows 11 or Windows 10 version 2004/build 19041 or newer.
-Open PowerShell **as Administrator** only to install WSL2:
-
-```powershell
-wsl --install -d Ubuntu
-```
-
-Restart Windows if requested, open the **Ubuntu** application, create the Linux
-username/password on first launch, and run the Fased command below in that
-Ubuntu shell. Do not run the Fased installer in PowerShell, Command Prompt, Git
-Bash, or native Windows Node.js. Fased wallet signing requires Unix sockets and
-therefore runs through WSL2 on Windows.
-
-The published npm package also rejects native Windows. If npm reports
-`EBADPLATFORM`, open Ubuntu in WSL2 and install or run Fased there; do not force
-the package installation with npm platform overrides.
+The first managed lifecycle release supports Linux x86_64 with systemd. macOS,
+WSL2, Linux arm64, and native Windows are deferred until each has native
+artifacts and command-backed acceptance. Contributor source builds remain a
+separate pnpm workflow and are not managed installations.
 
 ```bash
 curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
@@ -94,17 +75,12 @@ dashboard HTTP 200, and gateway online state. Later, use `fased health` as the
 single pass/fail check for the running Gateway. Use `fased health --verbose`
 only when you want optional channel details.
 
-On Windows, local install means WSL2/Ubuntu. Hosted VPS management is different:
-use PowerShell or Windows Terminal with the Windows Tailscale app online unless
-you intentionally installed and logged into Tailscale inside WSL too.
-
 ### VPS Hosting install
 
-Use this on the VPS that will run Fased all the time. Ubuntu LTS is the
-recommended default for a first hosted setup. Debian is close to the same path.
-Fedora/RHEL-family and other Linux VPS systems can work, but use their
-OS-specific package-manager commands when a minimal image is missing basic
-tools.
+Use this on the x86_64 VPS that will run Fased all the time. Ubuntu LTS is the
+recommended default; the retained alternative is Rocky-compatible Linux with
+systemd. Other distributions and arm64 are deferred from the first managed
+lifecycle release.
 
 A 1 vCPU / 1 GB RAM VPS can work as a minimum test node, but expect slow
 install/onboarding. For a smoother public node, use at least 2 GB RAM; 2 vCPU /
@@ -263,16 +239,17 @@ when you want to install first and run onboarding later.
 
 Hosted support boundary:
 
-- **Hosted VPS hardening:** Ubuntu/Fedora/RHEL-family Linux with systemd.
-- **Local/dev install:** Alpine, Arch, macOS, FreeBSD, WSL2, and common Linux
-  desktops until their hosted hardening paths are validated separately.
+- **Managed Local:** Linux x86_64 with systemd.
+- **Managed VPS Hosting:** Ubuntu or Rocky-compatible x86_64 with systemd.
+- **Deferred:** macOS, WSL2, Linux arm64, native Windows, and other
+  distributions. Source/developer workflows are separate and do not imply
+  managed support.
 
 ## Update
 
-For a local running install, open the Fased install directory first:
+For a managed Local installation:
 
 ```bash
-cd ~/fased
 fased update status
 fased update
 ```
@@ -463,9 +440,11 @@ Marketplace and Mining integration is intentionally task-ledger aware:
 
 ## Development
 
-Fresh machines and hosted VPS installs should use the curl bootstrap because it
-can install missing OS tools, Git, and Node. Use the explicit Local profile on
-your own machine:
+Supported fresh machines and hosted VPS installs use the curl bootstrap to
+acquire the stamped Go bootstrap and the signed runtime artifact. Managed
+installation never installs Fased through npm or builds the product with pnpm
+on the target host. Use the explicit Local profile on a supported Linux x86_64
+machine:
 
 ```bash
 curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local

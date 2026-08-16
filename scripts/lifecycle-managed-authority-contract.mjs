@@ -76,19 +76,23 @@ export function validateManagedAuthorityContract(contract, { release = false } =
   if (!Array.isArray(contract.profiles) || contract.profiles.length === 0) {
     fail("profiles are empty");
   }
-  const profiles = new Set();
+  const profiles = new Map();
+  let retainedProfileCount = 0;
   for (const profile of contract.profiles) {
     exactKeys(profile, PROFILE_KEYS, `profile ${String(profile?.id)}`);
     if (
       typeof profile.id !== "string" ||
       profiles.has(profile.id) ||
-      profile.support !== "retained" ||
+      !["retained", "deferred"].includes(profile.support) ||
       typeof profile.serviceManager !== "string"
     ) {
       fail(`profile ${String(profile.id)} is invalid`);
     }
     uniqueStrings(profile.platforms, `profile ${profile.id} platforms`);
-    profiles.add(profile.id);
+    profiles.set(profile.id, profile.support);
+    if (profile.support === "retained") {
+      retainedProfileCount += 1;
+    }
   }
 
   if (!Array.isArray(contract.capabilities) || contract.capabilities.length === 0) {
@@ -130,7 +134,10 @@ export function validateManagedAuthorityContract(contract, { release = false } =
         }
         verifyRepoPaths(capability.implementation, `capability ${capability.id} implementation`);
         verifyRepoPaths(capability.evidence, `capability ${capability.id} evidence`);
-      } else {
+      } else if (
+        capability.profiles.includes("*") ||
+        capability.profiles.some((profile) => profiles.get(profile) === "retained")
+      ) {
         blockers.push(capability.id);
       }
     } else if (
@@ -148,6 +155,8 @@ export function validateManagedAuthorityContract(contract, { release = false } =
   }
   return Object.freeze({
     profileCount: profiles.size,
+    retainedProfileCount,
+    deferredProfileCount: profiles.size - retainedProfileCount,
     capabilityCount: capabilities.size,
     blockers,
   });

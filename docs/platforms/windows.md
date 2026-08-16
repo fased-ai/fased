@@ -1,5 +1,5 @@
 ---
-summary: "Run Fased locally in WSL2 Ubuntu, or manage a remote VPS from Windows."
+summary: "Use Windows to access a supported remote Linux VPS; managed WSL2 Local is deferred."
 read_when:
   - Installing Fased on Windows
   - Accessing a Fased VPS from Windows
@@ -8,20 +8,28 @@ title: "Windows (WSL2)"
 
 # Windows
 
-There are two different Windows workflows:
+The first managed stable matrix does **not** include native Windows or WSL2.
+There are two distinct uses:
 
-- **Fased runs on this Windows PC:** install and run it inside WSL2 Ubuntu.
+- **Source development:** maintainers may run an unsupported checkout inside
+  WSL2 Ubuntu.
 - **Fased runs on a VPS:** use native Windows Tailscale and SSH; Fased runs on
   the remote Linux VPS, not in Windows or WSL.
 
 <Tabs>
   <Tab title="Local Fased in WSL2">
+    <Warning>
+    Managed WSL2 Local installation is deferred. Do not run the public
+    `install.sh` inside WSL2 until WSL2 has its own systemd convergence and
+    command-backed acceptance package.
+    </Warning>
+
     Fased Local requires Windows 11 or Windows 10 version 2004/build 19041 or
     newer. The wallet signer uses Unix sockets, so native Windows Node.js,
     PowerShell, Command Prompt, Git Bash, and WSL1 are not supported runtimes.
     The published npm package intentionally rejects native Windows with
     `EBADPLATFORM`; do not override npm's platform check. WSL2 reports Linux and
-    receives the supported Linux package and signer asset.
+    can be used for contributor source testing only.
 
     ### 1. Administrator PowerShell
 
@@ -46,12 +54,13 @@ There are two different Windows workflows:
     ```bash
     uname -s
     ps -p 1 -o comm=
-    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
-      | bash -s -- --local
+    git clone https://github.com/fased-ai/fased.git
+    cd fased
+    bash scripts/install-development.sh
     ```
 
-    `uname -s` must print `Linux`; PID 1 must be `systemd`. Keep every later
-    `fased` command in Ubuntu:
+    `uname -s` must print `Linux`; PID 1 must be `systemd`. This is an
+    unsupported contributor environment, not managed release evidence.
 
     ```bash
     fased health
@@ -119,9 +128,8 @@ There are two different Windows workflows:
   </Accordion>
 
   <Accordion title="Wallet signer behavior on WSL2">
-    First-wallet setup downloads the version-matched Linux signer, verifies its
-    checksum and release attestation, and installs it automatically. Users do
-    not install Go.
+    Source-development Wallet behavior is not a supported managed WSL2 custody
+    boundary. Do not use it for reserve funds.
 
     Local WSL2 runs Gateway and signer under the same Linux account. Keep Local
     wallet balances limited. VPS Hosting uses an independent signer account;
@@ -152,7 +160,7 @@ There are two different Windows workflows:
     Private access and recovery.
   </Card>
   <Card title="Updating" href="/install/updating" icon="refresh-cw">
-    Update Local WSL2 or a VPS runtime.
+    Update a supported Linux VPS runtime.
   </Card>
   <Card title="Microsoft WSL guide" href="https://learn.microsoft.com/windows/wsl/install" icon="windows">
     Official Windows setup documentation.

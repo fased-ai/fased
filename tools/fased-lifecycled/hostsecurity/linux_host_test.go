@@ -2,6 +2,7 @@ package hostsecurity
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -85,7 +86,7 @@ func TestHardeningConvergenceWaitsForFail2banControlReadiness(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	runner.outputs["/usr/sbin/nft list table inet fased_hosting"] = []byte(`table inet fased_hosting { chain input { iifname "tailscale0" tcp dport { 22, 443 } accept; tcp dport 22 drop; } }`)
+	runner.outputs["/usr/sbin/nft list table inet fased_hosting"] = []byte(`table inet fased_hosting { chain input { policy drop; ct state established,related accept; iifname "lo" accept; iifname "tailscale0" tcp dport { 22, 443 } accept; } }`)
 	for _, key := range []string{
 		"/usr/bin/systemctl is-active --quiet " + firewallUnitName,
 		"/usr/bin/systemctl is-enabled --quiet " + firewallUnitName,
@@ -142,7 +143,7 @@ func TestLinuxHostInspectionBindsPrivateTailscaleAndHardening(t *testing.T) {
 	}
 	runner.outputs["/usr/bin/fail2ban-client status sshd"] = []byte("Status for the jail: sshd\n")
 	runner.outputs["/usr/sbin/sshd -T"] = []byte("passwordauthentication no\npermitrootlogin no\npubkeyauthentication yes\n")
-	runner.outputs["/usr/sbin/nft list table inet fased_hosting"] = []byte(`table inet fased_hosting { chain input { iifname "tailscale0" tcp dport 22 accept; tcp dport 22 drop; } }`)
+	runner.outputs["/usr/sbin/nft list table inet fased_hosting"] = []byte(`table inet fased_hosting { chain input { policy drop; ct state established,related accept; iifname "lo" accept; iifname "tailscale0" tcp dport { 22, 443 } accept; } }`)
 	runner.errors["/usr/sbin/runuser -u app -- /usr/bin/sudo -n true"] = errors.New("not authorized")
 	inspection, err := host.Inspect(context.Background(), 18789, "app")
 	if err != nil {
@@ -165,6 +166,58 @@ func TestLinuxHostRejectsFunnelAndNonLoopbackServe(t *testing.T) {
 	}
 }
 
+func TestHostingFirewallDefaultsClosedAndAllowsOnlyPrivateAdministration(t *testing.T) {
+	config := renderFirewallConfig()
+	for _, required := range []string{
+		"policy drop", "ct state established,related accept", `iifname "lo" accept`,
+		`iifname "tailscale0" tcp dport { 22, 443 } accept`, "ip protocol icmp accept",
+	} {
+		if !strings.Contains(config, required) {
+			t.Fatalf("Hosting firewall omitted %q:\n%s", required, config)
+		}
+	}
+	for _, forbidden := range []string{"policy accept", "tcp dport 18789 accept", "iifname != \"tailscale0\" tcp dport 22 accept"} {
+		if strings.Contains(config, forbidden) {
+			t.Fatalf("Hosting firewall exposed a public path %q:\n%s", forbidden, config)
+		}
+	}
+}
+
+func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing.T) {
+	host, runner, _ := linuxHostFixture(t)
+	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades"} {
+		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} "+name] = []byte("ii ")
+	}
+	encoded, err := host.SnapshotHardening(context.Background(), "app", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(call, "apt-get update") || strings.Contains(call, "apt-get install") {
+			t.Fatalf("snapshot mutated the package database: %s", call)
+		}
+	}
+	snapshot, err := decodeHardeningSnapshot(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range snapshot.Packages {
+		snapshot.Packages[index].Installed = false
+	}
+	encodedBytes, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.calls = nil
+	if err := host.RestoreHardening(context.Background(), string(encodedBytes)); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.calls, "\n")
+	if !strings.Contains(joined, "/usr/bin/apt-get remove -y nftables fail2ban unattended-upgrades") {
+		t.Fatalf("rollback did not remove exactly the transaction-added packages:\n%s", joined)
+	}
+}
+
 func TestLinuxHostConfiguresAndRestoresServeWithoutCallerDNS(t *testing.T) {
 	host, runner, _ := linuxHostFixture(t)
 	runner.errors["/usr/bin/tailscale serve get-config --all"] = errors.New("not configured")
@@ -181,6 +234,22 @@ func TestLinuxHostConfiguresAndRestoresServeWithoutCallerDNS(t *testing.T) {
 	joined := strings.Join(runner.calls, "\n")
 	if !strings.Contains(joined, "/usr/bin/tailscale serve --bg --yes http://127.0.0.1:18789") || !strings.Contains(joined, "/usr/bin/tailscale serve reset") {
 		t.Fatalf("Serve transaction did not use bounded commands:\n%s", joined)
+	}
+}
+
+func TestLinuxHostRestoresModernEmptyServeSnapshotWithReset(t *testing.T) {
+	host, runner, _ := linuxHostFixture(t)
+	runner.outputs["/usr/bin/tailscale serve get-config --all"] = []byte(`{"version":"0.0.1","Services":{}}`)
+	previous, err := host.SnapshotPrivateServe(context.Background())
+	if err != nil || previous == "" {
+		t.Fatalf("snapshot modern empty Serve config: previous=%q err=%v", previous, err)
+	}
+	if err := host.RestorePrivateServe(context.Background(), previous); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.calls, "\n")
+	if !strings.Contains(joined, "/usr/bin/tailscale serve reset") || strings.Contains(joined, "serve set-config") {
+		t.Fatalf("empty modern Serve snapshot was not reset safely:\n%s", joined)
 	}
 }
 

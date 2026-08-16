@@ -1,3 +1,4 @@
+import { isManagedLifecycleRuntime } from "../infra/managed-runtime-authority.js";
 import {
   installLaunchAgent,
   isLaunchAgentLoaded,
@@ -89,7 +90,7 @@ function managedLifecycleServiceFence(): GatewayService {
 }
 
 export function resolveGatewayService(): GatewayService {
-  const goManaged = process.env.FASED_RUNTIME_SOURCE?.trim() === "go-lifecycle";
+  const goManaged = isManagedLifecycleRuntime();
   if (goManaged && process.platform === "linux") {
     return resolveHostedSystemdService() ?? managedLifecycleServiceFence();
   }

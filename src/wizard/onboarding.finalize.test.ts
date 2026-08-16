@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildGatewayServiceRestartAttempts,
   buildGatewayWsUrlFromHttpUrl,
@@ -204,6 +204,17 @@ describe("formatLocalDashboardReady", () => {
 });
 
 describe("buildGatewayServiceRestartAttempts", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("does not expose systemd or process-signal restart attempts in a managed runtime", () => {
+    vi.stubEnv("FASED_RUNTIME_SOURCE", "go-lifecycle");
+
+    expect(buildGatewayServiceRestartAttempts("fased-gateway", "local")).toEqual([]);
+    expect(buildGatewayServiceRestartAttempts("fased-gateway", "hosting")).toEqual([]);
+  });
+
   it("uses user service first for local profile restarts", () => {
     const labels = buildGatewayServiceRestartAttempts("fased-gateway", "local").map(
       (attempt) => attempt.label,

@@ -325,7 +325,7 @@ export function describeVaultSignerApproval(
       detail:
         "No signer-owned approval device is enrolled. Run the native signer-owner ceremony from the host terminal; ordinary Gateway JavaScript cannot enroll it.",
       setupCommand:
-        "Local: ~/.fased/bin/fased-signer-enroll · Hosting root console: /usr/local/sbin/fased-signer-enroll",
+        "Local: ~/.fased/bin/fased-signer-enroll · Managed Local/Hosting: sudo ~/.fased/bin/fased-signer-owner webauthn-enroll",
     };
   }
   return {

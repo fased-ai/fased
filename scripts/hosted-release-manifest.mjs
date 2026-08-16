@@ -105,9 +105,9 @@ export function parseHostedReleaseManifestV2(value, expected = {}) {
   }
 
   exactKeys(value.application, ["linux"], "hosted application platforms");
-  exactKeys(value.application.linux, ["x64", "arm64"], "hosted Linux architectures");
+  exactKeys(value.application.linux, ["x64"], "hosted Linux architectures");
   const application = { linux: {} };
-  for (const architecture of ["x64", "arm64"]) {
+  for (const architecture of ["x64"]) {
     const entry = value.application.linux[architecture];
     exactKeys(entry, ["artifact", "dependencies"], `hosted Linux ${architecture} entry`);
     exactKeys(
@@ -148,13 +148,9 @@ export function parseHostedReleaseManifestV2(value, expected = {}) {
   ) {
     throw new Error("hosted app and signer release identities do not match");
   }
-  exactKeys(
-    value.signer.platforms,
-    ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"],
-    "hosted signer platforms",
-  );
+  exactKeys(value.signer.platforms, ["linux-amd64"], "hosted signer platforms");
   const platforms = {};
-  for (const platform of ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"]) {
+  for (const platform of ["linux-amd64"]) {
     platforms[platform] = parseArtifact(value.signer.platforms[platform], `signer ${platform}`);
   }
   return Object.freeze({

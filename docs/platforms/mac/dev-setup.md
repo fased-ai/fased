@@ -47,20 +47,15 @@ For dev run modes, signing flags, and Team ID troubleshooting, see the
 
 ## 3. Install the CLI
 
-The macOS app expects a global `fased` CLI install to manage background tasks.
+Managed macOS installation is deferred. For development, use the repo-backed
+CLI from the same checkout as the app.
 
-**To install it (recommended):**
-
-1. Open the macOS app.
-2. Go to the **General** settings tab.
-3. Click **"Install CLI"**.
-
-Alternatively, install it manually:
+Install the developer CLI manually:
 
 ```bash
 git clone https://github.com/fased-ai/fased.git fased
 cd fased
-./install.sh --no-onboard
+bash scripts/install-development.sh --no-onboard
 ```
 
 ## Troubleshooting

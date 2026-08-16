@@ -1136,9 +1136,7 @@ function nativeSignerLifecycleEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 function signerOwnerCeremonyPrefix(
   lifecycle: NonNullable<ReturnType<typeof resolveNativeSignerOperatorLifecycle>>,
 ): string {
-  return lifecycle.profile === "hosting"
-    ? lifecycle.ownerHelperPath
-    : `sudo ${lifecycle.ownerHelperPath}`;
+  return `sudo ${lifecycle.ownerHelperPath}`;
 }
 
 function invokeNativeSignerWalletCreate(params: {

@@ -89,11 +89,13 @@ describe("stable lifecycle appliance security closure", () => {
 
   it("keeps core update separate from plugin-code update", async () => {
     const update = await source("src/cli/update-cli/update-command.ts");
+    const discovery = await source("src/plugins/discovery.ts");
 
     expect(update).not.toContain("updatePluginsAfterCoreUpdate");
     expect(update).not.toContain("syncPluginsForUpdateChannel");
     expect(update).not.toContain("updateNpmInstalledPlugins");
-    expect(update).toContain("fased plugins update as a separate transaction");
+    expect(update).not.toContain("installPluginFromNpmSpec");
+    expect(discovery).toContain("install code through fased plugins update");
   });
 
   it("demolishes the candidate-controlled root target controller", async () => {

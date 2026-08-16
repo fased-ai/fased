@@ -7,6 +7,7 @@ import {
 } from "../../channels/plugins/catalog.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { resolveFasedAgentPackageRootSync } from "../../infra/fased-root.js";
+import { isManagedLifecycleRuntime } from "../../infra/managed-runtime-authority.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { installPluginFromNpmSpec } from "../../plugins/install.js";
 import { buildNpmResolutionInstallFields } from "../../plugins/installs.js";
@@ -119,6 +120,17 @@ export async function ensureOnboardingPluginInstalled(params: {
   const { entry, prompter, runtime, workspaceDir } = params;
   let next = params.cfg;
   const localPath = resolveLocalPath(entry, workspaceDir);
+  const bundledLocalPlugin =
+    entry.delivery === "bundled" &&
+    (entry.catalogSource === "bundled" || entry.catalogSource === "official-catalog") &&
+    Boolean(localPath);
+  if (isManagedLifecycleRuntime() && !bundledLocalPlugin) {
+    await prompter.note(
+      "Managed installations bundle Fased-owned plugins inside the signed core artifact. Third-party plugin code installation is disabled until the separate digest-bound plugin transaction is available.",
+      "Plugin install",
+    );
+    return { cfg: next, installed: false };
+  }
   const defaultChoice = resolveInstallDefaultChoice({
     cfg: next,
     entry,
@@ -136,9 +148,7 @@ export async function ensureOnboardingPluginInstalled(params: {
   }
 
   if (choice === "local" && localPath) {
-    const isBundledLocalPlugin =
-      entry.delivery === "bundled" &&
-      (entry.catalogSource === "bundled" || entry.catalogSource === "official-catalog");
+    const isBundledLocalPlugin = bundledLocalPlugin;
     next = finalizeInstalledPluginConfig({
       config: next,
       pluginId: entry.id,

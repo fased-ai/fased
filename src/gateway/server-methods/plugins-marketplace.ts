@@ -5,6 +5,7 @@ import {
 } from "../../agents/agent-scope.js";
 import { resolveChannelPluginExpectedPluginIds } from "../../channels/plugins/catalog.js";
 import { loadConfig, writeConfigFile } from "../../config/config.js";
+import { isManagedLifecycleRuntime } from "../../infra/managed-runtime-authority.js";
 import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
 import { resolvePluginAdminRpcActionSourceKeys } from "../../plugins/config-state.js";
 import { installPluginFromNpmSpec } from "../../plugins/install.js";
@@ -279,6 +280,18 @@ export const pluginsMarketplaceHandlers: GatewayRequestHandlers = {
       respond,
     });
     if (!resolved) {
+      return;
+    }
+
+    if (isManagedLifecycleRuntime() && resolved.plugin.origin !== "bundled") {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.UNAVAILABLE,
+          "Managed installations enable bundled Fased plugins only; third-party plugin code installation awaits the separate digest-bound transaction.",
+        ),
+      );
       return;
     }
 

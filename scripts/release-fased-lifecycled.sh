@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GO_BIN="${FASED_GO_BIN:-$(command -v go || true)}"
 OUT="${ROOT}/dist-native/release"
-TARGETS="${FASED_LIFECYCLE_TARGETS:-linux/amd64,linux/arm64}"
+TARGETS="${FASED_LIFECYCLE_TARGETS:-linux/amd64}"
 [[ -n "$GO_BIN" && -x "$GO_BIN" ]] || { echo "Go binary not found" >&2; exit 1; }
 mkdir -p "$OUT" "${GOCACHE:-/tmp/fased-lifecycled-go-cache}"
 export GOCACHE="${GOCACHE:-/tmp/fased-lifecycled-go-cache}"

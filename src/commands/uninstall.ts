@@ -2,6 +2,7 @@ import path from "node:path";
 import { cancel, confirm, isCancel, multiselect } from "@clack/prompts";
 import { isNixMode } from "../config/config.js";
 import { resolveGatewayService } from "../daemon/service.js";
+import { isManagedLifecycleRuntime } from "../infra/managed-runtime-authority.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { stylePromptHint, stylePromptMessage, stylePromptTitle } from "../terminal/prompt-style.js";
 import { resolveHomeDir } from "../utils.js";
@@ -93,7 +94,7 @@ async function removeMacApp(runtime: RuntimeEnv, dryRun?: boolean) {
 }
 
 export async function uninstallCommand(runtime: RuntimeEnv, opts: UninstallOptions) {
-  if (process.env.FASED_RUNTIME_SOURCE === "go-lifecycle") {
+  if (isManagedLifecycleRuntime()) {
     runtime.error(
       "Managed installations must be uninstalled by the verified Go lifecycle; no application-owned service or state mutation was attempted.",
     );

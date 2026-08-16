@@ -8,9 +8,9 @@ title: "Linux App"
 
 # Linux App
 
-The Gateway is fully supported on Linux. **Node is the normal runtime**. Bun is
-experimental for the Gateway because some channel adapters depend on Node
-behavior.
+The first managed stable matrix supports Linux x86_64 with systemd. Managed
+artifacts bundle an exact Node runtime. Linux arm64, WSL2, and non-systemd
+managed installation are deferred.
 
 Native Linux companion apps are planned. Contributions are welcome.
 
@@ -31,11 +31,9 @@ verified Hosting installer then installs/starts Tailscale, creates the non-root
 `app` runtime, and guides the private dashboard and SSH check. No source
 checkout, manual Tailscale bootstrap, or SSH tunnel is part of the normal path.
 
-Auto-install supports common Linux families: Ubuntu, Debian, Kali,
-Fedora, CentOS, AlmaLinux, Rocky Linux, CloudLinux, Oracle Linux, Amazon Linux,
-openSUSE, SLES, Alpine, and Arch. It uses the system package manager, installs
-Node 24 where the platform supports it, then verifies `node:sqlite` before setup
-continues.
+The retained Hosting hardening matrix is Ubuntu-compatible and Rocky-compatible
+x86_64. Other distribution adapters require separate package, rollback, and
+command-backed acceptance before being advertised.
 
 Step-by-step VPS guide: [Hetzner](/install/hetzner) or the general
 [VPS hosting](/install/vps) hub.
@@ -54,7 +52,9 @@ Step-by-step VPS guide: [Hetzner](/install/hetzner) or the general
 
 ## Gateway service install (CLI)
 
-Use one of these:
+Managed installations use `fased update`, `fased repair`, and `fased uninstall`
+through the root-owned Go lifecycle. The following are source-development
+commands only:
 
 ```
 fased onboard --install-daemon
@@ -80,11 +80,11 @@ Repair/migrate:
 fased doctor
 ```
 
-## System control (systemd user unit)
+## Source-development system control
 
-Fased installs a systemd **user** service by default. Use a **system** service
-only when you intentionally run a shared host-level service. The full unit
-example and guidance live in the [Gateway runbook](/gateway).
+Do not use a hand-written user unit for a managed installation. Managed Local
+and Hosting use lifecycle-generated root-owned system units with isolated
+service identities. The example below applies only to a contributor checkout.
 
 Minimal setup:
 

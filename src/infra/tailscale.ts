@@ -6,12 +6,13 @@ import { runExec } from "../process/exec.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
 import { ensureBinary } from "./binaries.js";
+import { isManagedLifecycleRuntime } from "./managed-runtime-authority.js";
 
 function assertApplicationTailscaleMutationAllowed(
   operation: string,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  if (env.FASED_RUNTIME_SOURCE?.trim() === "go-lifecycle") {
+  if (isManagedLifecycleRuntime({ env })) {
     throw new Error(`${operation} is owned by the verified Go lifecycle in managed installations`);
   }
 }
