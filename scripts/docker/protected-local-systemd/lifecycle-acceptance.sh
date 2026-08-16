@@ -807,6 +807,11 @@ fi
 
 if [[ "$phase" == "verify-operations" ]]; then
   [[ -f "$snapshot" ]]
+  # Podman regenerates /etc/hosts on container restart. Rebind the exact
+  # unpublished release transport before exercising an acquisition-backed
+  # repair so the branch-pinned bootstrap cannot reach public release bytes.
+  grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
+    printf '127.0.0.1 github.com\n' >>/etc/hosts
   instance="$(jq -er .instanceId "$snapshot")"
   gateway_token="$(jq -er '.gateway.auth.token' "$state/fased.json")"
   runtime="$(resolve_protected_runtime "$instance")"
