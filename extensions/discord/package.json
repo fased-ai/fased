@@ -1,6 +1,6 @@
 {
   "name": "@fased/discord",
-  "version": "0.1.76-rc.96",
+  "version": "0.1.76-rc.97",
   "private": true,
   "description": "FasedAgent Discord channel plugin",
   "files": [
@@ -19,7 +19,7 @@
     "opusscript": "^0.1.1"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.96"
+    "@fased/fased": "^0.1.76-rc.97"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {

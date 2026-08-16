@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.97
+
+- Converge managed Local and Hosting installation, update, repair, uninstall,
+  rollback, and pruning under the signed Go lifecycle controller.
+- Preserve signer custody, Wallet, Mining, Network, plugin, and operator state
+  across takeover, update, restart, repair, and removal transactions.
+- Add exact command-backed LOCAL0 and root/systemd acceptance for lifecycle
+  rollback, retry, crash recovery, retention, and `Already current` behavior.
+
 ## 0.1.76-rc.96
 
 - Remove obsolete version-specific predecessor fixture inputs from trusted

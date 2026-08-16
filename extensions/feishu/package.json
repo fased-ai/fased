@@ -1,6 +1,6 @@
 {
   "name": "@fased/feishu",
-  "version": "0.1.76-rc.96",
+  "version": "0.1.76-rc.97",
   "private": true,
   "description": "FasedAgent Feishu/Lark channel plugin (community maintained by @m1heng)",
   "files": [
@@ -18,7 +18,7 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.96"
+    "@fased/fased": "^0.1.76-rc.97"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
