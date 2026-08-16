@@ -311,6 +311,7 @@ func (participant Participant) abort(ctx context.Context, state State, cause err
 	failures = append(failures, participant.Store.RemoveReceiptOwned(state.TransactionID))
 	state.Phase = PhaseAborted
 	state.RuntimeReady, state.AccessConfirmed, state.HardeningCommitted = false, false, false
+	state.HardeningAdopted, state.LegacyHardeningAdopted = false, false
 	if err := participant.Store.WriteState(state); err != nil {
 		failures = append(failures, err)
 	}

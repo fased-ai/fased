@@ -193,6 +193,38 @@ func TestHostingSecurityPrepareFailureRollsBackExternalAccess(t *testing.T) {
 	}
 }
 
+func TestHostingSecurityLegacyUpdateAbortIsTerminalAndRetryable(t *testing.T) {
+	participant, host, request := fixture(t)
+	request.RequireExistingHardening = true
+	host.signerWebAuthn = "existing.tailnet.ts.net"
+	host.inspection = Inspection{
+		TailscaleInstalled: true, TailscaleRunning: true, Authenticated: true,
+		TailscaleDNS: "existing.tailnet.ts.net", TailscaleIPv4: "100.100.1.2",
+		TailscaleVersion: "1.88.1", PrivateServeReady: true,
+		SignerWebAuthnReady: true, LegacyHardeningReady: true, SignerReady: true,
+	}
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil || !state.LegacyHardeningAdopted || !state.AccessConfirmed {
+		t.Fatalf("legacy update prepare: state=%+v err=%v", state, err)
+	}
+	if _, err := participant.MarkRuntimeReady(context.Background(), state.TransactionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := participant.Abort(context.Background(), state.TransactionID); err != nil {
+		t.Fatalf("legacy update abort did not converge: %v", err)
+	}
+	aborted, err := participant.Store.ReadState()
+	if err != nil || aborted.Phase != PhaseAborted || aborted.AccessConfirmed ||
+		aborted.LegacyHardeningAdopted || aborted.HardeningAdopted {
+		t.Fatalf("legacy update abort retained a non-terminal adoption state: %+v err=%v", aborted, err)
+	}
+	request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	request.Release = "1.2.3-rc.5"
+	if retried, err := participant.Prepare(context.Background(), request); err != nil || retried.Phase != PhasePrepared {
+		t.Fatalf("identical legacy update retry did not prepare: state=%+v err=%v", retried, err)
+	}
+}
+
 func TestHostingSecurityUpdateAdoptsExistingHardening(t *testing.T) {
 	participant, host, request := fixture(t)
 	host.inspection = Inspection{TailscaleInstalled: true, TailscaleRunning: true, Authenticated: true,
