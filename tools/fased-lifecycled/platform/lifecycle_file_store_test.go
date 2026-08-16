@@ -3,6 +3,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"fased-lifecycled/model"
@@ -55,6 +56,12 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	if err := store.Prepare("transaction", files); err != nil {
 		t.Fatal(err)
 	}
+	for target, want := range map[string]string{targets[0]: "helper\n", targets[1]: "wrapper\n"} {
+		staged, err := os.ReadFile(filepath.Join(store.workspace("transaction"), "staged", store.recordName(target)))
+		if err != nil || string(staged) != want {
+			t.Fatalf("signer-owner staging record is not unique and exact: target=%s got=%q want=%q err=%v", target, staged, want, err)
+		}
+	}
 	cliProjectionPath := store.resolve(CanonicalCLIProjectionPath(config))
 	if _, err := os.Lstat(cliProjectionPath); !os.IsNotExist(err) {
 		t.Fatalf("CLI projection became visible before commit: %v", err)
@@ -63,10 +70,10 @@ func TestDiskLifecycleFileStoreActivatesAndRestoresExactSignerOwnerFiles(t *test
 	if err := store.Activate("transaction", allTargets); err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range targets {
+	for target, want := range map[string]string{targets[0]: "helper\n", targets[1]: "wrapper\n"} {
 		data, err := os.ReadFile(store.resolve(target))
-		if err != nil || string(data) == "old\n" {
-			t.Fatalf("lifecycle file was not activated: %s", target)
+		if err != nil || string(data) != want {
+			t.Fatalf("lifecycle file was not activated exactly: target=%s got=%q want=%q err=%v", target, data, want, err)
 		}
 	}
 	projectionPath := store.resolve(CanonicalInstallProjectionPath(config))
@@ -130,6 +137,25 @@ func TestDiskLifecycleFileStoreRejectsUnexpectedRootFiles(t *testing.T) {
 	}
 	if err := store.Prepare("transaction", map[string]LifecycleFile{"/usr/local/sbin/unrelated": {Data: []byte("bad"), Mode: 0o755}}); err == nil {
 		t.Fatal("unexpected root lifecycle file was accepted")
+	}
+}
+
+func TestDiskLifecycleFileStoreRejectsStagingNameCollisions(t *testing.T) {
+	operator, gateway, signer := principals()
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewDiskLifecycleFileStore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.validateStagingNames(map[string]LifecycleFile{
+		"/unrecognized/first":  {},
+		"/unrecognized/second": {},
+	})
+	if err == nil || !strings.Contains(err.Error(), "staging name \"wrapper\" collides") {
+		t.Fatalf("staging name collision did not fail closed: %v", err)
 	}
 }
 
