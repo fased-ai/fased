@@ -189,6 +189,10 @@ describe("D8 unified lifecycle acceptance", () => {
       new URL("./prepare-branch-predecessor-capsule.sh", import.meta.url),
       "utf8",
     );
+    const fixtureOnlyPaths = readFileSync(
+      new URL("./lifecycle-fixture-only-paths.sh", import.meta.url),
+      "utf8",
+    );
     expect(runner).toContain("restore-predecessor-capsule.mjs");
     expect(runner).toContain("lifecycle-receipt-verifier.mjs");
     expect(runner).not.toContain('"$predecessor_repo/install.sh"');
@@ -220,10 +224,13 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(wrapper).toContain("--acquisition-evidence-class SUPPORTING");
     expect(hostingWrapper).toContain("--evidence-class PASS");
     expect(hostingWrapper).toContain("--acquisition-evidence-class SUPPORTING");
-    expect(wrapper).toContain("lifecycle-d8-contract");
-    expect(wrapper).toContain("scripts/lifecycle-configuration-preservation\\.(mjs|test\\.ts)");
+    expect(wrapper).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
+    expect(fixtureOnlyPaths).toContain("lifecycle-d8-contract");
+    expect(fixtureOnlyPaths).toContain(
+      "scripts/lifecycle-configuration-preservation\\.(mjs|test\\.ts)",
+    );
     expect(hostingWrapper).toContain("scripts/lifecycle-configuration-preservation.mjs");
-    expect(capsuleWrapper).toContain("lifecycle-configuration-preservation");
+    expect(capsuleWrapper).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
     expect(runner).not.toContain("systemctl list-units --all --no-pager 'fased-*'");
     const hostingManagedUpdate = hosting.slice(hosting.indexOf("  managed-update)"));
     expect(hostingManagedUpdate.indexOf("acceptance_mark restart-health")).toBeLessThan(
