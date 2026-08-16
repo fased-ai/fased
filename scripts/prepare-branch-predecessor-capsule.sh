@@ -60,6 +60,14 @@ reuse_cached_capsule() {
        .installationClass.kind == $installationClass and
        .compatibilityDigest == $compatibility and .expectedReceiptDigest == $acceptance' \
       "$source_descriptor" >/dev/null || continue
+    if [[ "$PROFILE" == "hosting" && "$INSTALLATION_CLASS" == "public-stable" ]]; then
+      jq -e '
+        ([.entries[].path] | index("etc/fased/hosting-prerequisites")) != null and
+        ([.entries[].path] | index("etc/fased/signerd-webauthn.env")) != null and
+        ([.entries[].path] | index("etc/ssh/sshd_config.d/01-fased-hardening.conf")) != null and
+        ([.entries[].path] | index("etc/fail2ban/jail.d/fased-sshd.local")) != null
+      ' "$source_descriptor" >/dev/null || continue
+    fi
     [[ "$(jq -er .archive.sha256 "$source_descriptor")" == "$archive_digest" ]] || continue
     jq -e --arg profile "$PROFILE" --arg descriptor "$descriptor_digest" --arg archive "$archive_digest" \
       '.role == "fased-predecessor-capsule-branch-proof" and .publishable == false and

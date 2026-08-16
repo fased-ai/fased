@@ -145,6 +145,15 @@ describe("public predecessor capsule builder", () => {
           cipher: "aes-256-gcm",
           publicKey: walletRegistry.wallets[0].addresses.solana,
         });
+        expect(archive.get("etc/fased/hosting-prerequisites")?.bytes.toString("utf8")).toContain(
+          "tailscaleDns=fased-fixture.tailnet.ts.net\n",
+        );
+        expect(archive.get("etc/fased/hosting-prerequisites")?.bytes.toString("utf8")).toContain(
+          "tailnetSshConfirmed=true\n",
+        );
+        expect(archive.get("etc/fased/signerd-webauthn.env")?.bytes.toString("utf8")).toContain(
+          "FASED_WALLET_WEBAUTHN_RP_ID=fased-fixture.tailnet.ts.net\n",
+        );
       } else {
         expect(walletRegistry.wallets).toEqual([]);
       }

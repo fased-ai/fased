@@ -28,7 +28,7 @@ predecessor_capsule_branch_proof=/predecessor-capsule/fased-predecessor-branch-p
 predecessor_capsule_authorization=/run/fased-predecessor-capsule-fixture-authorized
 fixture_transport_root=/var/lib/fased-hosting-fixture
 fixture_tls="$fixture_transport_root/tls"
-export NO_PROXY="github.com,registry.npmjs.org,127.0.0.1,localhost"
+export NO_PROXY="github.com,registry.npmjs.org,pkgs.tailscale.com,127.0.0.1,localhost"
 export no_proxy="$NO_PROXY"
 
 diagnostics() {
@@ -48,17 +48,168 @@ diagnostics() {
 }
 trap diagnostics EXIT
 
-install_tailscale_fixture() {
-  cat >/usr/bin/tailscale <<'EOF_TAILSCALE'
+install_hosting_package_fixtures() {
+  install -d -m 0755 -o root -g root /usr/local/libexec
+  install -m 0755 -o root -g root /usr/bin/apt-get \
+    /usr/local/libexec/fased-fixture-apt-get-real
+  cat >/usr/local/libexec/fased-install-tailscale-fixture <<'EOF_INSTALL_TAILSCALE'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "status" && "${2:-}" == "--json" ]]; then
-  printf '%s\n' '{"BackendState":"Running","Self":{"TailscaleIPs":["100.64.0.10"]}}'
-  exit 0
-fi
-exit 1
+set -euo pipefail
+install -d -m 0700 -o root -g root /var/lib/fased-hosting-fixture/tailscale
+cat >/usr/bin/tailscale <<'EOF_TAILSCALE'
+#!/usr/bin/env bash
+set -euo pipefail
+state=/var/lib/fased-hosting-fixture/tailscale
+authenticated="$state/authenticated"
+serve_config="$state/serve.json"
+case "${1:-}" in
+  status)
+    if [[ "${2:-}" == "--json" ]]; then
+      if [[ -f "$authenticated" ]]; then
+        printf '%s\n' '{"BackendState":"Running","Self":{"DNSName":"fased-fixture.tailnet.ts.net.","TailscaleIPs":["100.64.0.10"]}}'
+      else
+        printf '%s\n' '{"BackendState":"NeedsLogin","Self":{"DNSName":"","TailscaleIPs":[]}}'
+      fi
+      exit 0
+    fi
+    [[ -f "$authenticated" ]] || exit 1
+    printf '%s\n' '100.64.0.10 fased-fixture.tailnet.ts.net'
+    ;;
+  version)
+    printf '%s\n' '1.88.1'
+    ;;
+  ip)
+    [[ "${2:-}" == "-4" && -f "$authenticated" ]] || exit 1
+    printf '%s\n' '100.64.0.10'
+    ;;
+  up)
+    [[ " $* " == *' --ssh '* ]] || exit 1
+    printf '%s\n' 'https://login.tailscale.com/a/fased-fixture'
+    : >"$authenticated"
+    ;;
+  logout)
+    rm -f -- "$authenticated"
+    ;;
+  serve)
+    case "${2:-}" in
+      status)
+        [[ -f "$serve_config" ]] || exit 1
+        cat "$serve_config"
+        ;;
+      get-config)
+        [[ "${3:-}" == "--all" && -f "$serve_config" ]] || exit 1
+        cat "$serve_config"
+        ;;
+      reset)
+        rm -f -- "$serve_config"
+        ;;
+      set-config)
+        [[ -f "${3:-}" && "${4:-}" == "--all" ]] || exit 1
+        install -m 0600 -o root -g root "$3" "$serve_config"
+        ;;
+      --bg)
+        [[ "${3:-}" == "--yes" && "${4:-}" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] || exit 1
+        printf '{"Proxy":"%s"}\n' "$4" >"$serve_config"
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
 EOF_TAILSCALE
   chown root:root /usr/bin/tailscale
   chmod 0755 /usr/bin/tailscale
+cat >/etc/systemd/system/tailscaled.service <<'EOF_TAILSCALED_UNIT'
+[Unit]
+Description=Tailscale daemon fixture
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sleep infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF_TAILSCALED_UNIT
+chown root:root /etc/systemd/system/tailscaled.service
+chmod 0644 /etc/systemd/system/tailscaled.service
+systemctl daemon-reload
+EOF_INSTALL_TAILSCALE
+  chmod 0755 /usr/local/libexec/fased-install-tailscale-fixture
+
+  cat >/usr/bin/apt-get <<'EOF_APT_FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -eq 3 && "$1" == "remove" && "$2" == "-y" && "$3" == "tailscale" ]]; then
+  systemctl stop tailscaled.service >/dev/null 2>&1 || true
+  systemctl disable tailscaled.service >/dev/null 2>&1 || true
+  rm -f -- /usr/bin/tailscale /etc/systemd/system/tailscaled.service
+  systemctl daemon-reload
+  exit 0
+fi
+if [[ "$#" -eq 6 && "$1" == "-o" && "$2" == "APT::Get::AllowUnauthenticated=false" &&
+  "$3" == "install" && "$4" == "-y" && "$5" == "--no-install-recommends" &&
+  "$6" == "tailscale" ]]; then
+  /usr/local/libexec/fased-install-tailscale-fixture
+  exit 0
+fi
+if [[ "$#" -eq 6 && "$1" == "install" && "$2" == "-y" &&
+  "$3" == "--no-install-recommends" && "$4" == "nftables" &&
+  "$5" == "fail2ban" && "$6" == "unattended-upgrades" ]]; then
+  command -v nft >/dev/null
+  command -v fail2ban-client >/dev/null
+  systemctl cat apt-daily-upgrade.timer >/dev/null
+  exit 0
+fi
+if [[ "$#" -eq 1 && "$1" == "update" ]]; then
+  exit 0
+fi
+if [[ "$#" -eq 11 && "$1" == "-o" &&
+  "$2" == "Dir::Etc::sourcelist=/etc/apt/sources.list.d/tailscale.list" &&
+  "$3" == "-o" && "$4" == "Dir::Etc::sourceparts=-" &&
+  "$5" == "-o" && "$6" == "Acquire::AllowInsecureRepositories=false" &&
+  "$7" == "-o" && "$8" == "Acquire::AllowDowngradeToInsecureRepositories=false" &&
+  "$9" == "-o" && "$10" == "APT::Get::AllowUnauthenticated=false" &&
+  "$11" == "update" ]]; then
+    grep -Fqx 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu noble main' \
+      /etc/apt/sources.list.d/tailscale.list
+    test -s /usr/share/keyrings/tailscale-archive-keyring.gpg
+  exit 0
+fi
+echo "fixture apt-get refused unexpected arguments: $*" >&2
+exit 64
+EOF_APT_FIXTURE
+  chown root:root /usr/bin/apt-get
+  chmod 0755 /usr/bin/apt-get
+}
+
+install_tailscale_fixture() {
+  command -v tailscale >/dev/null 2>&1 || \
+    /usr/local/libexec/fased-install-tailscale-fixture
+  systemctl enable --now tailscaled.service >/dev/null
+  tailscale status --json | jq -e '.BackendState == "Running"' >/dev/null 2>&1 || \
+    tailscale up --ssh >/dev/null
+  tailscale serve status --json >/dev/null 2>&1 || \
+    tailscale serve --bg --yes "http://127.0.0.1:${gateway_port}"
+}
+
+prepare_provider_access_fixture() {
+  systemctl enable --now ssh.service >/dev/null
+  systemctl is-active --quiet ssh.service
+}
+
+prepare_legacy_host_security_fixture() {
+  systemctl enable --now fail2ban.service apt-daily-upgrade.timer >/dev/null
+  ufw --force reset >/dev/null
+  ufw default deny incoming >/dev/null
+  ufw default allow outgoing >/dev/null
+  ufw allow in on tailscale0 to any port 22 proto tcp >/dev/null
+  ufw allow in on tailscale0 to any port 443 proto tcp >/dev/null
+  ufw deny 22/tcp >/dev/null
+  ufw --force enable >/dev/null
+  systemctl restart ssh.service fail2ban.service
+  ufw status verbose | grep -Fq 'Status: active'
+  fail2ban-client status sshd | grep -Fqi 'jail list'
 }
 
 install_release_transport_fixture() {
@@ -75,7 +226,7 @@ install_release_transport_fixture() {
     -keyout "$fixture_tls/github.key" \
     -out "$fixture_tls/github.csr" >/dev/null 2>&1
   cat >"$fixture_tls/github.ext" <<'EOF_FIXTURE_TLS_EXT'
-subjectAltName=DNS:github.com,DNS:registry.npmjs.org
+subjectAltName=DNS:github.com,DNS:registry.npmjs.org,DNS:pkgs.tailscale.com
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
 EOF_FIXTURE_TLS_EXT
@@ -101,6 +252,8 @@ EOF_FIXTURE_TLS_EXT
     printf '127.0.0.1 github.com\n' >>/etc/hosts
   grep -Fqx "127.0.0.1 registry.npmjs.org" /etc/hosts ||
     printf '127.0.0.1 registry.npmjs.org\n' >>/etc/hosts
+  grep -Fqx "127.0.0.1 pkgs.tailscale.com" /etc/hosts ||
+    printf '127.0.0.1 pkgs.tailscale.com\n' >>/etc/hosts
   cat >/usr/local/libexec/fased-hosting-release-server.mjs <<'EOF_RELEASE_SERVER'
 import fs from "node:fs";
 import https from "node:https";
@@ -126,6 +279,14 @@ function serve(response, name) {
   }
 }
 
+function serveBytes(response, body) {
+  response.writeHead(200, {
+    "content-type": "application/octet-stream",
+    "content-length": Buffer.byteLength(body),
+  });
+  response.end(body);
+}
+
 function selectFixtureTrustAsset(asset) {
   const branchAsset = {
     "fased-lifecycle-root-v1.json": "fased-branch-root.json",
@@ -144,6 +305,19 @@ https.createServer(
     if (request.method !== "GET" || !request.url) {
       response.writeHead(404).end();
       return;
+    }
+    if (request.headers.host === "pkgs.tailscale.com") {
+      if (request.url === "/stable/ubuntu/noble.noarmor.gpg") {
+        serveBytes(response, "fased-fixture-tailscale-key\n");
+        return;
+      }
+      if (request.url === "/stable/ubuntu/noble.tailscale-keyring.list") {
+        serveBytes(
+          response,
+          "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu noble main\n",
+        );
+        return;
+      }
     }
     if (request.url === "/@fased%2ffased/beta" || request.url === "/@fased%2ffased/latest") {
       const body = JSON.stringify({ version });
@@ -207,6 +381,8 @@ start_release_transport_server() {
     printf '127.0.0.1 github.com\n' >>/etc/hosts
   grep -Fqx "127.0.0.1 registry.npmjs.org" /etc/hosts ||
     printf '127.0.0.1 registry.npmjs.org\n' >>/etc/hosts
+  grep -Fqx "127.0.0.1 pkgs.tailscale.com" /etc/hosts ||
+    printf '127.0.0.1 pkgs.tailscale.com\n' >>/etc/hosts
   FASED_FIXTURE_VERSION="$version" \
     /fixture-node /usr/local/libexec/fased-hosting-release-server.mjs \
     >/tmp/fased-hosting-release-server.log 2>&1 &
@@ -309,6 +485,7 @@ run_public_installer() {
       --hosting \
       --release "v$version" \
       --update-channel beta \
+      --tailnet-access-confirmed \
       -- \
       --non-interactive \
       --accept-risk \
@@ -543,10 +720,17 @@ restore_public_predecessor() {
 
 case "$phase" in
   install)
-    install_tailscale_fixture
     ! command -v node >/dev/null 2>&1
+    ! command -v tailscale >/dev/null 2>&1
     install_release_transport_fixture
+    install_hosting_package_fixtures
+    prepare_provider_access_fixture
     run_public_installer >/tmp/fased-hosting-install.out 2>/tmp/fased-hosting-install.err
+    jq -e '.phase == "COMMITTED" and .tailscaleInstalledByTransaction == true and
+      .authenticatedByTransaction == true and .tailscaleDns == "fased-fixture.tailnet.ts.net"' \
+      /var/lib/fased-host-security/active.json >/dev/null
+    grep -Fq 'https://login.tailscale.com/a/fased-fixture' /tmp/fased-hosting-install.out
+    ! grep -Fq 'Type the Tailscale DNS name' /tmp/fased-hosting-install.out
     ! command -v node >/dev/null 2>&1
     acceptance_start
     assert_healthy
@@ -582,8 +766,11 @@ case "$phase" in
     test -f "$predecessor_capsule_descriptor"
     test -s "$predecessor_capsule_attestation" || test -s "$predecessor_capsule_branch_proof"
     restore_public_predecessor
-    install_tailscale_fixture
     install_release_transport_fixture
+    install_hosting_package_fixtures
+    prepare_provider_access_fixture
+    install_tailscale_fixture
+    prepare_legacy_host_security_fixture
     test "$(jq -er .profile /home/app/.fased/install.json)" = hosting
     test "$(jq -er .runtime.activeVersion /home/app/.fased/install.json)" = "$predecessor_version"
     sha256sum \

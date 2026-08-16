@@ -232,7 +232,8 @@ func TestTailscaleRepositoryAndServiceRollbackUsesPreMutationSnapshot(t *testing
 		t.Fatalf("new repository key was retained: %v", err)
 	}
 	joined := strings.Join(runner.calls, "\n")
-	if !strings.Contains(joined, "systemctl disable tailscaled.service") || !strings.Contains(joined, "systemctl stop tailscaled.service") {
+	if !strings.Contains(joined, "systemctl disable tailscaled.service") || !strings.Contains(joined, "systemctl stop tailscaled.service") ||
+		!strings.Contains(joined, "apt-get remove -y tailscale") {
 		t.Fatalf("new tailscaled service state was not rolled back:\n%s", joined)
 	}
 }

@@ -368,6 +368,33 @@ export async function buildPublicPredecessorCapsule({
       for (const [name, contents] of hostingUnits()) {
         entries.push(await write(source, `etc/systemd/system/${name}`, contents, 0o600));
       }
+      const tailscaleDns = "fased-fixture.tailnet.ts.net";
+      entries.push(
+        await write(
+          source,
+          "etc/fased/hosting-prerequisites",
+          `schemaVersion=2\nrelease=${version}\ngatewayPort=18789\ntailscaleDns=${tailscaleDns}\ntailnetSshConfirmed=true\ntailscaleServeReady=true\nfirewallReady=true\nsshHardened=true\nfail2banReady=true\nautomaticUpdatesReady=true\nsignerReady=true\nappSudoDisabled=true\npreparedBy=root\n`,
+          0o644,
+        ),
+        await write(
+          source,
+          "etc/fased/signerd-webauthn.env",
+          `FASED_WALLET_WEBAUTHN_RP_ID=${tailscaleDns}\nFASED_WALLET_WEBAUTHN_ORIGINS=https://${tailscaleDns}\n`,
+          0o644,
+        ),
+        await write(
+          source,
+          "etc/ssh/sshd_config.d/01-fased-hardening.conf",
+          "PasswordAuthentication no\nPermitRootLogin no\n",
+          0o644,
+        ),
+        await write(
+          source,
+          "etc/fail2ban/jail.d/fased-sshd.local",
+          "[sshd]\nenabled = true\nbackend = systemd\nbanaction = nftables-multiport\n",
+          0o644,
+        ),
+      );
     }
     const compatibilityDigest = await sha256(compatibilityIndexPath);
     const acceptanceDigest = await sha256(acceptanceContractPath);

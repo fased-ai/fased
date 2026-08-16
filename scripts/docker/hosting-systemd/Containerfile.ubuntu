@@ -9,18 +9,23 @@ RUN apt-get update \
     ca-certificates \
     curl \
     dbus \
+    fail2ban \
     findutils \
     gawk \
     git \
     grep \
     iproute2 \
     jq \
+    nftables \
+    openssh-server \
     openssl \
     passwd \
     procps \
     sudo \
     systemd \
     tar \
+    ufw \
+    unattended-upgrades \
     util-linux \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* \

@@ -103,6 +103,7 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(fixtureOnlyPaths).toContain("npm-free-managed-lifecycle-contract");
     expect(fixtureOnlyPaths).toContain("docs/maintainers/codex-skills/fased-release-manager/");
     expect(fixtureOnlyPaths).toContain("scripts/run-lifecycle-local0\\.sh");
+    expect(fixtureOnlyPaths).toContain("Containerfile\\.(ubuntu|rocky)");
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {

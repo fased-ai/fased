@@ -13,9 +13,10 @@ import (
 const tailscaleInstallSnapshotSchema uint32 = 1
 
 type tailscaleInstallSnapshot struct {
-	SchemaVersion uint32                   `json:"schemaVersion"`
-	Files         []hardeningFileSnapshot  `json:"files"`
-	Service       hardeningServiceSnapshot `json:"service"`
+	SchemaVersion  uint32                   `json:"schemaVersion"`
+	PackageExisted bool                     `json:"packageExisted"`
+	Files          []hardeningFileSnapshot  `json:"files"`
+	Service        hardeningServiceSnapshot `json:"service"`
 }
 
 func (host LinuxHost) SnapshotTailscaleInstall(ctx context.Context) (string, error) {
@@ -32,7 +33,8 @@ func (host LinuxHost) SnapshotTailscaleInstall(ctx context.Context) (string, err
 	default:
 		return "", errors.New("unsupported Hosting distribution for Tailscale transaction")
 	}
-	snapshot := tailscaleInstallSnapshot{SchemaVersion: tailscaleInstallSnapshotSchema,
+	_, binaryErr := host.tailscaleBinary()
+	snapshot := tailscaleInstallSnapshot{SchemaVersion: tailscaleInstallSnapshotSchema, PackageExisted: binaryErr == nil,
 		Service: hardeningServiceSnapshot{Name: "tailscaled.service",
 			Enabled: host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-enabled", "--quiet", "tailscaled.service"),
 			Active:  host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "tailscaled.service")}}
@@ -56,6 +58,17 @@ func (host LinuxHost) RestoreTailscaleInstall(ctx context.Context, encoded strin
 		return err
 	}
 	var failures []error
+	currentActive := host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-active", "--quiet", snapshot.Service.Name)
+	if !snapshot.Service.Active && currentActive {
+		failures = append(failures, host.run(ctx, "/usr/bin/systemctl", []string{"stop", snapshot.Service.Name}, nil, io.Discard, io.Discard, nil))
+	}
+	currentEnabled := host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-enabled", "--quiet", snapshot.Service.Name)
+	if !snapshot.Service.Enabled && currentEnabled {
+		failures = append(failures, host.run(ctx, "/usr/bin/systemctl", []string{"disable", snapshot.Service.Name}, nil, io.Discard, io.Discard, nil))
+	}
+	if !snapshot.PackageExisted {
+		failures = append(failures, host.removeTailscalePackage(ctx))
+	}
 	for _, file := range snapshot.Files {
 		path := host.path(file.Path)
 		if !file.Exists {
@@ -66,19 +79,56 @@ func (host LinuxHost) RestoreTailscaleInstall(ctx context.Context, encoded strin
 		}
 		failures = append(failures, restoreOneHardeningFile(host, file))
 	}
-	currentEnabled := host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-enabled", "--quiet", snapshot.Service.Name)
+	currentEnabled = host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-enabled", "--quiet", snapshot.Service.Name)
 	if snapshot.Service.Enabled && !currentEnabled {
 		failures = append(failures, host.run(ctx, "/usr/bin/systemctl", []string{"enable", snapshot.Service.Name}, nil, io.Discard, io.Discard, nil))
-	} else if !snapshot.Service.Enabled && currentEnabled {
-		failures = append(failures, host.run(ctx, "/usr/bin/systemctl", []string{"disable", snapshot.Service.Name}, nil, io.Discard, io.Discard, nil))
 	}
-	currentActive := host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-active", "--quiet", snapshot.Service.Name)
+	currentActive = host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-active", "--quiet", snapshot.Service.Name)
 	if snapshot.Service.Active && !currentActive {
 		failures = append(failures, host.run(ctx, "/usr/bin/systemctl", []string{"start", snapshot.Service.Name}, nil, io.Discard, io.Discard, nil))
-	} else if !snapshot.Service.Active && currentActive {
-		failures = append(failures, host.run(ctx, "/usr/bin/systemctl", []string{"stop", snapshot.Service.Name}, nil, io.Discard, io.Discard, nil))
 	}
 	return errors.Join(failures...)
+}
+
+func (host LinuxHost) removeTailscalePackage(ctx context.Context) error {
+	release, err := parseOSRelease(host.path("/etc/os-release"))
+	if err != nil {
+		return err
+	}
+	var command string
+	var args []string
+	var environment []string
+	switch release["ID"] {
+	case "ubuntu", "debian":
+		command, err = fixedExecutable("/usr/bin/apt-get", "/bin/apt-get")
+		args = []string{"remove", "-y", "tailscale"}
+		environment = []string{"DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a"}
+	case "fedora", "centos", "rhel", "rocky", "almalinux", "ol", "cloudlinux":
+		command, err = fixedExecutable("/usr/bin/dnf5", "/usr/bin/dnf", "/usr/bin/yum")
+		args = []string{"remove", "-y", "tailscale"}
+	default:
+		return errors.New("unsupported Hosting distribution for Tailscale package rollback")
+	}
+	if host.RootPrefix != "" {
+		if release["ID"] == "ubuntu" || release["ID"] == "debian" {
+			command = "/usr/bin/apt-get"
+		} else {
+			command = "/usr/bin/dnf"
+		}
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := host.Runner.Run(ctx, command, args, nil, io.Discard, io.Discard, environment); err != nil {
+		return err
+	}
+	if host.RootPrefix == "" {
+		if _, err := host.tailscaleBinary(); err == nil {
+			return errors.New("Tailscale package rollback left the CLI installed")
+		}
+	}
+	return nil
 }
 
 func restoreOneHardeningFile(host LinuxHost, file hardeningFileSnapshot) error {
