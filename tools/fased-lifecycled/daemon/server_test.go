@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"fased-lifecycled/model"
 	"fased-lifecycled/protocol"
 )
 
@@ -15,6 +16,34 @@ type transportHandler struct {
 	calls   int
 	fail    error
 	outcome string
+}
+
+func TestServerRequiresRootPeerForRollback(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	handler := &transportHandler{}
+	server := &Server{Handler: handler, AllowedUIDs: map[uint32]struct{}{0: {}, 1000: {}}, ReadTimeout: time.Second, WriteTimeout: time.Second, OperationTimeout: time.Second}
+	client, daemonConnection := net.Pipe()
+	defer client.Close()
+	done := make(chan error, 1)
+	go func() {
+		defer daemonConnection.Close()
+		done <- server.HandlePeer(context.Background(), daemonConnection, Peer{UID: 1000})
+	}()
+	request := protocol.Request{SchemaVersion: 1, RequestID: requestID, Operation: protocol.OperationRollback,
+		TargetGenerationID: digestA, ExpectedManifestDigest: digestA,
+		RollbackAuthorization: &model.RollbackAuthorization{
+			SchemaVersion:       model.RollbackAuthorizationSchemaVersion,
+			CurrentGenerationID: digestB, TargetGenerationID: digestA,
+			CurrentReleaseSequence: 13, TargetReleaseSequence: 12, SecurityEpoch: 3,
+			Operator: "release-owner", Reason: "restore verified previous generation",
+			IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(time.Minute).Format(time.RFC3339), EnvelopeDigest: digestA,
+		}}
+	if err := json.NewEncoder(client).Encode(request); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil || handler.calls != 0 {
+		t.Fatalf("unprivileged rollback reached handler: calls=%d err=%v", handler.calls, err)
+	}
 }
 
 func (handler *transportHandler) Handle(_ context.Context, request protocol.Request) (protocol.Response, error) {

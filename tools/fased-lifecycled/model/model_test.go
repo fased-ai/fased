@@ -285,6 +285,26 @@ func TestPlatformIdentityUsesThreeServicesAndReadsLegacyControllerTopology(t *te
 	}
 }
 
+func TestDarwinPlatformIdentityUsesExactLaunchdLabels(t *testing.T) {
+	identity, err := NewPlatformIdentityForAdapter(ProfileProtectedLocal, "test-instance", testDigestA, PlatformAdapterDarwinLaunchd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Adapter != "darwin-launchd-local-v1" || identity.Services["supervisor"] != "ai.fased.lifecycle.test-instance" || identity.Validate(ProfileProtectedLocal) != nil {
+		t.Fatalf("unexpected Darwin platform identity: %+v", identity)
+	}
+	tampered := identity
+	tampered.Services = map[string]string{
+		"gateway": identity.Services["gateway"], "signer": identity.Services["signer"], "supervisor": "ai.fased.lifecycle.other",
+	}
+	if err := tampered.Validate(ProfileProtectedLocal); err == nil {
+		t.Fatal("tampered Darwin service label was accepted")
+	}
+	if _, err := NewPlatformIdentityForAdapter(ProfileHosting, "hosting", testDigestA, PlatformAdapterDarwinLaunchd); err == nil {
+		t.Fatal("Darwin Hosting identity was accepted")
+	}
+}
+
 func TestStrictJSONRejectsProcessIdentityAndTrailingData(t *testing.T) {
 	manifest := `{
 		"schemaVersion":1,

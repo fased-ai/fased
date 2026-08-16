@@ -6,6 +6,16 @@ import { runExec } from "../process/exec.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
 import { ensureBinary } from "./binaries.js";
+import { isManagedLifecycleRuntime } from "./managed-runtime-authority.js";
+
+function assertApplicationTailscaleMutationAllowed(
+  operation: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (isManagedLifecycleRuntime({ env })) {
+    throw new Error(`${operation} is owned by the verified Go lifecycle in managed installations`);
+  }
+}
 
 function parsePossiblyNoisyJsonObject(stdout: string): Record<string, unknown> {
   const trimmed = stdout.trim();
@@ -305,6 +315,7 @@ export async function ensureFunnel(
   runtime: RuntimeEnv = defaultRuntime,
   prompt: typeof promptYesNo = promptYesNo,
 ) {
+  assertApplicationTailscaleMutationAllowed("Tailscale Funnel mutation");
   // Ensure Funnel is enabled and publish the webhook port.
   try {
     const tailscaleBin = await getTailscaleBinary();
@@ -390,6 +401,7 @@ export async function ensureFunnel(
 }
 
 export async function enableTailscaleServe(port: number, exec: typeof runExec = runExec) {
+  assertApplicationTailscaleMutationAllowed("Tailscale Serve mutation");
   const tailscaleBin = await getTailscaleBinary();
   await execWithSudoFallback(
     exec,
@@ -403,6 +415,7 @@ export async function enableTailscaleServe(port: number, exec: typeof runExec = 
 }
 
 export async function disableTailscaleServe(exec: typeof runExec = runExec) {
+  assertApplicationTailscaleMutationAllowed("Tailscale Serve mutation");
   const tailscaleBin = await getTailscaleBinary();
   await execWithSudoFallback(exec, tailscaleBin, ["serve", "reset"], {
     maxBuffer: 200_000,
@@ -411,6 +424,7 @@ export async function disableTailscaleServe(exec: typeof runExec = runExec) {
 }
 
 export async function enableTailscaleFunnel(port: number, exec: typeof runExec = runExec) {
+  assertApplicationTailscaleMutationAllowed("Tailscale Funnel mutation");
   const tailscaleBin = await getTailscaleBinary();
   await execWithSudoFallback(exec, tailscaleBin, ["funnel", "--bg", "--yes", `${port}`], {
     maxBuffer: 200_000,
@@ -419,6 +433,7 @@ export async function enableTailscaleFunnel(port: number, exec: typeof runExec =
 }
 
 export async function disableTailscaleFunnel(exec: typeof runExec = runExec) {
+  assertApplicationTailscaleMutationAllowed("Tailscale Funnel mutation");
   const tailscaleBin = await getTailscaleBinary();
   await execWithSudoFallback(exec, tailscaleBin, ["funnel", "reset"], {
     maxBuffer: 200_000,

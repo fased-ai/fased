@@ -26,6 +26,7 @@ const clearPluginManifestRegistryCache = vi.hoisted(() => vi.fn());
 const scheduleGatewaySigusr1Restart = vi.hoisted(() =>
   vi.fn(() => ({ scheduled: true, coalesced: false, delayMs: 0 })),
 );
+const isManagedLifecycleRuntime = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("../../plugins/marketplace.js", () => ({
   buildPluginMarketplaceReport,
@@ -52,6 +53,10 @@ vi.mock("../../plugins/manifest-registry.js", () => ({
 
 vi.mock("../../infra/restart.js", () => ({
   scheduleGatewaySigusr1Restart,
+}));
+
+vi.mock("../../infra/managed-runtime-authority.js", () => ({
+  isManagedLifecycleRuntime,
 }));
 
 type RespondCall = [boolean, unknown?, { code: number; message: string }?];
@@ -134,6 +139,8 @@ describe("plugins.marketplace handlers", () => {
     finalizeInstalledPluginConfig.mockReset();
     clearPluginManifestRegistryCache.mockReset();
     scheduleGatewaySigusr1Restart.mockReset();
+    isManagedLifecycleRuntime.mockReset();
+    isManagedLifecycleRuntime.mockReturnValue(false);
     buildPluginMarketplaceReport.mockReturnValue(createBaseReport());
     resolvePluginMarketplaceEntry.mockImplementation(({ report, idOrName }) =>
       report.plugins.find(
@@ -301,6 +308,34 @@ describe("plugins.marketplace handlers", () => {
         loadPath: "/tmp/extensions/demo",
       }),
     );
+  });
+
+  it("refuses non-bundled plugin code installation in a managed runtime", async () => {
+    isManagedLifecycleRuntime.mockReturnValue(true);
+    buildPluginMarketplaceReport.mockReturnValue({
+      ...createBaseReport(),
+      plugins: [
+        {
+          ...createBaseReport().plugins[0],
+          status: "available",
+          enabled: false,
+          loaded: false,
+          hasInstallRecord: false,
+          actions: ["status", "install"],
+          installOptions: { npmSpec: "@fased/demo" },
+        },
+      ],
+    });
+
+    const { respond, invoke } = createInvoke("plugins.marketplace.install", { id: "demo" });
+    await invoke();
+
+    const call = respond.mock.calls[0] as RespondCall | undefined;
+    expect(call?.[0]).toBe(false);
+    expect(call?.[2]?.code).toBe(ErrorCodes.UNAVAILABLE);
+    expect(call?.[2]?.message).toContain("digest-bound");
+    expect(installPluginFromNpmSpec).not.toHaveBeenCalled();
+    expect(finalizeInstalledPluginConfig).not.toHaveBeenCalled();
   });
 
   it("enables a bundled local plugin without adding it as a config load path", async () => {

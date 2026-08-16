@@ -139,7 +139,7 @@ async function releaseCreatedAt(commit: string): Promise<string> {
 }
 
 async function activePnpmStore(): Promise<string> {
-  const { stdout } = await execFileAsync("pnpm", ["store", "path", "--silent"], {
+  const { stdout } = await execFileAsync("pnpm", ["store", "path"], {
     cwd: rootDir,
     maxBuffer: 1024 * 1024,
   });

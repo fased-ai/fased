@@ -43,6 +43,7 @@ const baseEntry: ChannelPluginCatalogEntry = {
 };
 
 beforeEach(() => {
+  vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
 
@@ -86,6 +87,26 @@ function expectPluginLoadedFromLocalPath(
 }
 
 describe("ensureOnboardingPluginInstalled", () => {
+  it("does not prompt for or install third-party plugin code in a managed runtime", async () => {
+    vi.stubEnv("FASED_RUNTIME_SOURCE", "go-lifecycle");
+    const runtime = makeRuntime();
+    const select = vi.fn();
+    const note = vi.fn();
+    const prompter = makePrompter({ select: select as never, note: note as never });
+
+    const result = await ensureOnboardingPluginInstalled({
+      cfg: {},
+      entry: baseEntry,
+      prompter,
+      runtime,
+    });
+
+    expect(result).toEqual({ cfg: {}, installed: false });
+    expect(select).not.toHaveBeenCalled();
+    expect(installPluginFromNpmSpec).not.toHaveBeenCalled();
+    expect(note).toHaveBeenCalledWith(expect.stringContaining("digest-bound"), "Plugin install");
+  });
+
   it("installs from npm and enables the plugin", async () => {
     const runtime = makeRuntime();
     const prompter = makePrompter({

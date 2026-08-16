@@ -3,7 +3,6 @@ set -euo pipefail
 
 install_entry_release_identity="__FASED_RELEASE_IDENTITY__"
 bootstrap_sha256_x64="__FASED_BOOTSTRAP_SHA256_X64__"
-bootstrap_sha256_arm64="__FASED_BOOTSTRAP_SHA256_ARM64__"
 version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
 digest_pattern='^[0-9a-f]{64}$'
 
@@ -37,6 +36,8 @@ operator_user=""
 gateway_port="18789"
 verbose=0
 onboard=1
+tailscale_authkey_file=""
+tailnet_access_confirmed=0
 onboard_args=()
 
 while [[ $# -gt 0 ]]; do
@@ -55,6 +56,10 @@ while [[ $# -gt 0 ]]; do
     --operator-user)
       [[ $# -ge 2 ]] || { echo "Fased installer: --operator-user needs a value." >&2; exit 1; }
       operator_user="$2"; shift 2 ;;
+    --ts-authkey-file)
+      [[ $# -ge 2 ]] || { echo "Fased installer: --ts-authkey-file needs a value." >&2; exit 1; }
+      tailscale_authkey_file="$2"; shift 2 ;;
+    --tailnet-access-confirmed) tailnet_access_confirmed=1; shift ;;
     --no-onboard) onboard=0; shift ;;
     --verbose) verbose=1; shift ;;
     --)
@@ -64,7 +69,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       printf '%s\n' \
-        'Usage: install.sh [--local|--hosting] [--release vX.Y.Z] [--update-channel stable|beta] [--verbose] [-- <onboard args>]' \
+        'Usage: install.sh [--local|--hosting] [--release vX.Y.Z] [--update-channel stable|beta] [--ts-authkey-file /root/key] [--verbose] [-- <onboard args>]' \
         'Contributor checkouts use scripts/install-development.sh.'
       exit 0
       ;;
@@ -79,6 +84,10 @@ if [[ -z "$channel" ]]; then
 fi
 [[ "$channel" == "stable" || "$channel" == "beta" ]] || { echo "Fased installer: channel must be stable or beta." >&2; exit 1; }
 [[ "$release" != *-* || "$channel" == "beta" ]] || { echo "Fased installer: prereleases require beta." >&2; exit 1; }
+if [[ "$profile" != "hosting" && ( -n "$tailscale_authkey_file" || "$tailnet_access_confirmed" -eq 1 ) ]]; then
+  echo "Fased installer: Tailscale Hosting options require --hosting." >&2
+  exit 1
+fi
 [[ "$release" == "$install_entry_release_identity" ]] || { echo "Fased installer: requested release differs from this immutable installer." >&2; exit 1; }
 [[ "$gateway_port" =~ ^[0-9]+$ && "$gateway_port" -ge 1 && "$gateway_port" -le 65535 ]] || { echo "Fased installer: invalid Gateway port." >&2; exit 1; }
 
@@ -88,8 +97,7 @@ case "$(uname -s)" in
 esac
 case "$(uname -m)" in
   x86_64|amd64) arch="x64"; bootstrap_sha256="$bootstrap_sha256_x64" ;;
-  aarch64|arm64) arch="arm64"; bootstrap_sha256="$bootstrap_sha256_arm64" ;;
-  *) echo "Fased installer: unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  *) echo "Fased installer: the first managed lifecycle release supports Linux x86_64 only; architecture $(uname -m) is deferred." >&2; exit 1 ;;
 esac
 [[ "$bootstrap_sha256" =~ $digest_pattern ]] || { echo "Fased installer: bootstrap digest was not stamped." >&2; exit 1; }
 
@@ -148,6 +156,8 @@ bootstrap_args=(
 )
 [[ "$verbose" -eq 1 ]] && bootstrap_args+=(--verbose)
 [[ "$onboard" -eq 0 ]] && bootstrap_args+=(--no-onboard)
+[[ -n "$tailscale_authkey_file" ]] && bootstrap_args+=(--ts-authkey-file "$tailscale_authkey_file")
+[[ "$tailnet_access_confirmed" -eq 1 ]] && bootstrap_args+=(--tailnet-access-confirmed)
 if [[ ${#onboard_args[@]} -gt 0 ]]; then bootstrap_args+=(-- "${onboard_args[@]}"); fi
 
 echo "Fased: applying ${profile} release ${release}..."

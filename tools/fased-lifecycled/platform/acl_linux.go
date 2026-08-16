@@ -7,28 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
 )
 
-const maxACLOutput = 64 << 10
-
 var aclEntryPattern = regexp.MustCompile(`^(?:default:)?(?:user|group|mask|other):(?:[0-9]+)?:[rwx-]{3}$`)
-
-type ACLSnapshot struct {
-	raw     []byte
-	entries map[string]string
-}
-
-type HomeACL interface {
-	Capture(context.Context, string) (ACLSnapshot, error)
-	HasExactTraversal(ACLSnapshot, uint32) (bool, error)
-	GrantTraversal(context.Context, string, uint32, ACLSnapshot) error
-	Restore(context.Context, string, ACLSnapshot) error
-}
 
 func (acl *LinuxACL) HasExactTraversal(snapshot ACLSnapshot, gatewayUID uint32) (bool, error) {
 	if gatewayUID == 0 || len(snapshot.entries) == 0 {
@@ -44,29 +29,9 @@ func (acl *LinuxACL) HasExactTraversal(snapshot ACLSnapshot, gatewayUID uint32) 
 	return true, nil
 }
 
-type ACLCommandRunner interface {
-	Run(context.Context, string, []string, []byte) ([]byte, error)
-}
-
 type LinuxACL struct {
 	getfacl, setfacl string
 	runner           ACLCommandRunner
-}
-
-type execACLRunner struct{}
-
-func (execACLRunner) Run(ctx context.Context, path string, arguments []string, input []byte) ([]byte, error) {
-	command := exec.CommandContext(ctx, path, arguments...)
-	command.Env = []string{"HOME=/root", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-	command.Stdin = bytes.NewReader(input)
-	output, err := command.CombinedOutput()
-	if len(output) > maxACLOutput {
-		return nil, errors.New("ACL command output exceeds limit")
-	}
-	if err != nil {
-		return output, fmt.Errorf("ACL command failed: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return output, nil
 }
 
 func NewLinuxACL() (*LinuxACL, error) {
@@ -200,16 +165,4 @@ func parseACL(data []byte) (map[string]string, error) {
 		}
 	}
 	return entries, nil
-}
-
-func sameACL(left, right map[string]string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for key, value := range left {
-		if right[key] != value {
-			return false
-		}
-	}
-	return true
 }

@@ -83,7 +83,10 @@ export function usesRootManagedGatewayLauncher(programArguments?: string[]): boo
       const normalized = path.posix.normalize(arg.replaceAll("\\", "/"));
       return (
         normalized === "/usr/local/libexec/fased-gateway-launch" ||
-        /^\/opt\/fased\/local\/[a-f0-9]{16}\/gateway-launch$/u.test(normalized)
+        /^\/opt\/fased\/local\/[a-f0-9]{16}\/gateway-launch$/u.test(normalized) ||
+        /^\/opt\/fased\/(?:local\/[a-f0-9]{16}\/)?generations\/[a-f0-9]{64}\/payload\/bin\/fased-gateway-launch$/u.test(
+          normalized,
+        )
       );
     }),
   );
@@ -324,6 +327,12 @@ function auditGatewayServicePath(
   }
   const servicePath = command?.environment?.PATH;
   if (!servicePath) {
+    // The immutable Go lifecycle launcher owns its complete execution
+    // environment. Requiring an application-visible service PATH here would
+    // misclassify the canonical root-generated unit and invite a legacy repair.
+    if (usesRootManagedGatewayLauncher(command?.programArguments)) {
+      return;
+    }
     issues.push({
       code: SERVICE_AUDIT_CODES.gatewayPathMissing,
       message: "Gateway service PATH is not set; the daemon should use a minimal PATH.",

@@ -18,6 +18,8 @@ import (
 )
 
 var canonicalAssetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,255}$`)
+var canonicalDigestDirectory = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var canonicalStagingObject = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 type Inbox struct {
 	root     *os.Root
@@ -59,6 +61,116 @@ func (inbox *Inbox) Close() error {
 		return nil
 	}
 	return inbox.root.Close()
+}
+
+// Prune removes verified acquisition objects only after their caller has
+// committed every downstream lifecycle transaction. It validates the complete
+// inbox before deleting anything so an unexpected entry preserves all evidence
+// and fails closed.
+func (inbox *Inbox) Prune() (int, error) {
+	if inbox == nil || inbox.root == nil {
+		return 0, errors.New("artifact inbox is unavailable")
+	}
+	entries, err := readRootDirectory(inbox.root, ".")
+	if err != nil {
+		return 0, err
+	}
+	targets := make([]string, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == ".staging" {
+			if err := inbox.validateStagingDirectory(); err != nil {
+				return 0, err
+			}
+			staged, err := readRootDirectory(inbox.root, name)
+			if err != nil {
+				return 0, err
+			}
+			for _, object := range staged {
+				targets = append(targets, filepath.Join(name, object.Name()))
+			}
+			continue
+		}
+		if !canonicalDigestDirectory.MatchString(name) {
+			return 0, fmt.Errorf("artifact inbox contains unexpected entry %q", name)
+		}
+		if err := inbox.validateDigestDirectory(name); err != nil {
+			return 0, err
+		}
+		targets = append(targets, name)
+	}
+	for _, target := range targets {
+		if err := inbox.root.RemoveAll(target); err != nil {
+			return 0, err
+		}
+	}
+	if err := syncDirectory(inbox.root); err != nil {
+		return 0, err
+	}
+	return len(targets), nil
+}
+
+func (inbox *Inbox) validateStagingDirectory() error {
+	info, err := inbox.root.Lstat(".staging")
+	if err != nil || validateDirectoryInfo(info, inbox.ownerUID, true) != nil {
+		return errors.Join(err, errors.New("artifact staging directory is unsafe"))
+	}
+	entries, err := readRootDirectory(inbox.root, ".staging")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !canonicalStagingObject.MatchString(entry.Name()) {
+			return errors.New("artifact staging directory contains an unexpected entry")
+		}
+		info, err := inbox.root.Lstat(filepath.Join(".staging", entry.Name()))
+		if err != nil || !safePrunableInboxObject(info, inbox.ownerUID, true) {
+			return errors.Join(err, errors.New("artifact staging object is unsafe"))
+		}
+	}
+	return nil
+}
+
+func (inbox *Inbox) validateDigestDirectory(name string) error {
+	info, err := inbox.root.Lstat(name)
+	if err != nil || validateDirectoryInfo(info, inbox.ownerUID, true) != nil {
+		return errors.Join(err, errors.New("artifact digest directory is unsafe"))
+	}
+	entries, err := readRootDirectory(inbox.root, name)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !canonicalAssetName.MatchString(entry.Name()) {
+			return errors.New("artifact digest directory contains an unexpected entry")
+		}
+		info, err := inbox.root.Lstat(filepath.Join(name, entry.Name()))
+		if err != nil || !safePrunableInboxObject(info, inbox.ownerUID, false) {
+			return errors.Join(err, errors.New("artifact inbox object is unsafe"))
+		}
+	}
+	return nil
+}
+
+func safePrunableInboxObject(info os.FileInfo, ownerUID uint32, staging bool) bool {
+	if info == nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Nlink != 1 || (stat.Uid != 0 && stat.Uid != ownerUID) {
+		return false
+	}
+	mode := info.Mode().Perm()
+	return mode == 0o400 || staging && mode == 0o600
+}
+
+func readRootDirectory(root *os.Root, name string) ([]os.DirEntry, error) {
+	directory, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	return directory.ReadDir(-1)
 }
 
 func (inbox *Inbox) Put(ctx context.Context, asset trust.Asset, source io.Reader) (*Object, error) {

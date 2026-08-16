@@ -2,6 +2,8 @@ package platform
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -90,5 +92,26 @@ func TestHostingNetworkPolicyRejectsPublicGatewayListeners(t *testing.T) {
 		if err := RejectPublicGatewayListener(private, 18789); err != nil {
 			t.Fatalf("private listener was rejected: %s: %v", private, err)
 		}
+	}
+}
+
+func TestHostingNetworkPolicyRequiresPrivateServeAndExactSignerIdentity(t *testing.T) {
+	if !privateServeTargetsLoopback([]byte(`{"AllowFunnel":false,"Proxy":"http://127.0.0.1:18789"}`), 18789) {
+		t.Fatal("private loopback Serve route was rejected")
+	}
+	if privateServeTargetsLoopback([]byte(`{"AllowFunnel":true,"Proxy":"http://127.0.0.1:18789"}`), 18789) ||
+		privateServeTargetsLoopback([]byte(`{"Proxy":"http://0.0.0.0:18789"}`), 18789) {
+		t.Fatal("public Serve route was accepted")
+	}
+	path := filepath.Join(t.TempDir(), "signerd-webauthn.env")
+	dns := "fased.tailnet.ts.net"
+	if err := os.WriteFile(path, []byte("FASED_WALLET_WEBAUTHN_RP_ID="+dns+"\nFASED_WALLET_WEBAUTHN_ORIGINS=https://"+dns+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySignerWebAuthnFile(path, dns, uint32(os.Getuid())); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySignerWebAuthnFile(path, "attacker.tailnet.ts.net", uint32(os.Getuid())); err == nil {
+		t.Fatal("mismatched signer RP identity was accepted")
 	}
 }

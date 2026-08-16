@@ -2,6 +2,7 @@ package platform
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -107,6 +108,10 @@ func CanonicalInstallProjection(config Config, tx model.Transaction) (InstallPro
 		value := tx.PublicPredecessorVersion
 		previous = &value
 	}
+	return canonicalInstallProjection(config, identity, tx.Target, previous), nil
+}
+
+func canonicalInstallProjection(config Config, identity model.PlatformIdentity, active model.Generation, previous *string) InstallProjection {
 	return InstallProjection{
 		SchemaVersion: CurrentInstallProjectionSchemaVersion,
 		Profile:       config.Profile,
@@ -114,7 +119,7 @@ func CanonicalInstallProjection(config Config, tx model.Transaction) (InstallPro
 		StateDir:      config.OwnerStateRoot,
 		ConfigPath:    filepath.Join(config.OwnerStateRoot, "fased.json"),
 		Runtime: InstallProjectionRuntime{
-			ActiveVersion: tx.Target.Version, PreviousVersion: previous,
+			ActiveVersion: active.Version, PreviousVersion: previous,
 			CurrentLink:  filepath.Join(config.InstallRoot, "current"),
 			PreviousLink: filepath.Join(config.InstallRoot, "previous"),
 			ReleasesDir:  filepath.Join(config.InstallRoot, "generations"),
@@ -123,7 +128,7 @@ func CanonicalInstallProjection(config Config, tx model.Transaction) (InstallPro
 			Name: identity.Services["gateway"], Scope: "system",
 			Launcher: filepath.Join(config.InstallRoot, "current", "payload", "bin", "fased-gateway-launch"),
 		},
-	}, nil
+	}
 }
 
 func CanonicalInstallProjectionJSON(config Config, tx model.Transaction) ([]byte, error) {
@@ -131,6 +136,35 @@ func CanonicalInstallProjectionJSON(config Config, tx model.Transaction) ([]byte
 	if err != nil {
 		return nil, err
 	}
+	data, err := json.Marshal(projection)
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+func CanonicalInstallProjectionForManifestJSON(config Config, manifest model.Manifest) ([]byte, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	if err := manifest.Validate(); err != nil || manifest.Profile != config.Profile || manifest.ActiveGeneration == nil {
+		return nil, errors.Join(err, errors.New("install projection manifest is invalid"))
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		return nil, err
+	}
+	configuredDigest, err := identity.Digest(manifest.Profile)
+	manifestDigest, manifestErr := manifest.Platform.Digest(manifest.Profile)
+	if err != nil || manifestErr != nil || configuredDigest != manifestDigest {
+		return nil, errors.New("install projection manifest does not match platform identity")
+	}
+	var previous *string
+	if manifest.PreviousGeneration != nil {
+		value := manifest.PreviousGeneration.Version
+		previous = &value
+	}
+	projection := canonicalInstallProjection(config, identity, *manifest.ActiveGeneration, previous)
 	data, err := json.Marshal(projection)
 	if err != nil {
 		return nil, err

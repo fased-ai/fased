@@ -87,8 +87,14 @@ func main() {
 }
 
 func run(args []string, output io.Writer) error {
-	if len(args) > 0 && (args[0] == "install" || args[0] == "update") {
+	if len(args) > 0 && (args[0] == "install" || args[0] == "update" || args[0] == "repair") {
 		return runPublicLifecycle(args[0], args[1:], output)
+	}
+	if len(args) > 0 && args[0] == "uninstall" {
+		return runPublicUninstall(args[1:], output)
+	}
+	if len(args) > 0 && args[0] == "rollback" {
+		return runPublicRollback(args[1:], output)
 	}
 	if len(args) > 0 && args[0] == "status" {
 		return runPublicLifecycleStatus(args[1:], output)
@@ -120,6 +126,9 @@ func run(args []string, output io.Writer) error {
 	result, err := execute(ctx, request)
 	if err != nil {
 		return err
+	}
+	if err := pruneAcquisitionInbox(request.StateRoot); err != nil {
+		return fmt.Errorf("lifecycle host committed but verified acquisition cleanup is pending: %w", err)
 	}
 	_, err = fmt.Fprintf(output, "Lifecycle host ready: %s sequence=%d epoch=%d digest=%s\n", result.Version, result.ReleaseSequence, result.SecurityEpoch, result.HostDigest)
 	return err

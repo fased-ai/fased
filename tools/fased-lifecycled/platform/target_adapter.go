@@ -33,6 +33,14 @@ type CurrentGenerationResolver interface {
 	ResolveGeneration(string) (model.Generation, error)
 }
 
+type GenerationPruner interface {
+	PruneGenerations() ([]string, error)
+}
+
+type DependencyPruner interface {
+	PruneDependencies() ([]string, error)
+}
+
 type Predecessor interface {
 	Prepare(context.Context, model.Transaction) error
 	Quiesce(context.Context, model.Transaction) error
@@ -146,9 +154,17 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return err
 	}
-	if err := adapter.Units.Prepare(tx.ID, adapter.renderTargetUnits(payload, tx.Target, dependency)); err != nil {
+	definitions, err := adapter.renderTargetUnits(payload, tx.Target, dependency)
+	if err != nil {
 		return err
 	}
+	if err := adapter.Units.Prepare(tx.ID, definitions); err != nil {
+		return err
+	}
+	return adapter.prepareLifecycleFiles(tx, payload, pluginLock, nil)
+}
+
+func (adapter *TargetAdapter) prepareLifecycleFiles(tx model.Transaction, payload string, pluginLock PreparedPluginLock, installProjection []byte) error {
 	helper, err := os.ReadFile(filepath.Join(payload, "runtime/scripts/fased-signer-owner-hosting.sh"))
 	if err != nil {
 		return err
@@ -157,9 +173,12 @@ func (adapter *TargetAdapter) Prepare(ctx context.Context, tx model.Transaction)
 	if err != nil {
 		return err
 	}
-	projection, err := CanonicalInstallProjectionJSON(adapter.Config, tx)
-	if err != nil {
-		return err
+	projection := installProjection
+	if projection == nil {
+		projection, err = CanonicalInstallProjectionJSON(adapter.Config, tx)
+		if err != nil {
+			return err
+		}
 	}
 	cliProjection, err := CanonicalCLIProjectionJSON(adapter.Config)
 	if err != nil {
@@ -506,9 +525,9 @@ func (adapter *TargetAdapter) currentConvergenceEvidence(ctx context.Context, ma
 	if err != nil || current != *manifest.ActiveGeneration {
 		return terminalConvergenceEvidence{}, errors.New("current generation pointer differs from the committed manifest")
 	}
-	inspector, ok := adapter.Systemd.(SystemdInspector)
+	inspector, ok := adapter.Systemd.(ServiceInspector)
 	if !ok {
-		return terminalConvergenceEvidence{}, errors.New("systemd adapter cannot prove live process identity")
+		return terminalConvergenceEvidence{}, errors.New("service manager cannot prove live process identity")
 	}
 	payload, err := adapter.Generations.GenerationPayloadPath(current.ID)
 	if err != nil {
@@ -528,7 +547,7 @@ func (adapter *TargetAdapter) currentConvergenceEvidence(ctx context.Context, ma
 	}
 	readiness, err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, current)
 	if err != nil || readiness.PID != gateway.MainPID {
-		return terminalConvergenceEvidence{}, errors.New("Gateway readiness process differs from systemd MainPID")
+		return terminalConvergenceEvidence{}, errors.New("Gateway readiness process differs from the service-manager process identity")
 	}
 	plugin, err := adapter.Plugins.Verify(ctx, current)
 	if err != nil || !validDigest(plugin.Digest) {
@@ -558,7 +577,20 @@ func validDigest(value string) bool {
 }
 
 func (adapter *TargetAdapter) Finalize(_ context.Context, tx model.Transaction) error {
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx))
+	if err := errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx)); err != nil {
+		return err
+	}
+	if pruner, ok := adapter.Generations.(GenerationPruner); ok {
+		if _, err := pruner.PruneGenerations(); err != nil {
+			return err
+		}
+	}
+	if pruner, ok := adapter.Generations.(DependencyPruner); ok {
+		if _, err := pruner.PruneDependencies(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (adapter *TargetAdapter) Restore(ctx context.Context, tx model.Transaction) error {
@@ -659,7 +691,10 @@ func (adapter *TargetAdapter) deferFreshGateway(tx model.Transaction) bool {
 		tx.PlanAction == "INSTALL" && tx.Previous == nil
 }
 
-func (adapter *TargetAdapter) renderTargetUnits(payload string, target model.Generation, dependency string) map[string][]byte {
+func (adapter *TargetAdapter) renderTargetUnits(payload string, target model.Generation, dependency string) (map[string][]byte, error) {
+	if adapter.Config.IsDarwinLaunchd() {
+		return adapter.renderTargetLaunchdPlists(payload, target, dependency)
+	}
 	runtimeDirectory := strings.TrimPrefix(adapter.Config.RuntimeRoot, "/run/")
 	if adapter.Config.Profile == model.ProfileProtectedLocal {
 		runtimeDirectory = strings.Join([]string{
@@ -673,6 +708,10 @@ func (adapter *TargetAdapter) renderTargetUnits(payload string, target model.Gen
 	if dependency != "" {
 		dependencyMount = fmt.Sprintf("BindReadOnlyPaths=%s:%s\n", dependency, filepath.Join(payload, "runtime/node_modules"))
 	}
+	signerEnvironment := ""
+	if adapter.Config.Profile == model.ProfileHosting {
+		signerEnvironment = "EnvironmentFile=/etc/fased/signerd-webauthn.env\n"
+	}
 	signer := fmt.Sprintf(`[Unit]
 Description=Fased native signer (%s)
 After=network-online.target
@@ -685,7 +724,7 @@ Group=%d
 RuntimeDirectory=%s
 RuntimeDirectoryMode=0755
 UMask=0077
-ExecStart=%s -socket %s -operator-socket %s -control-socket %s -socket-mode 0660 -socket-group %s -operator-socket-group %s -application-uid %d -operator-uid %d -control-uid %d -state-db %s/state.db -master-key %s/master.key -update-gate %s -audit-log %s/audit.jsonl
+%sExecStart=%s -socket %s -operator-socket %s -control-socket %s -socket-mode 0660 -socket-group %s -operator-socket-group %s -application-uid %d -operator-uid %d -control-uid %d -state-db %s/state.db -master-key %s/master.key -update-gate %s -audit-log %s/audit.jsonl
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -701,7 +740,7 @@ AmbientCapabilities=
 [Install]
 WantedBy=multi-user.target
 `, adapter.Config.InstanceID, adapter.Config.Signer.UID, adapter.Config.Signer.GID,
-		runtimeDirectory, filepath.Join(payload, "bin/fased-signerd"), adapter.Config.ApplicationSocket(),
+		runtimeDirectory, signerEnvironment, filepath.Join(payload, "bin/fased-signerd"), adapter.Config.ApplicationSocket(),
 		adapter.Config.OperatorSocket(), adapter.Config.ControlSocket(), adapter.Config.GatewayGroupName(), adapter.Config.OperatorGroupName(), adapter.Config.Gateway.UID,
 		adapter.Config.Operator.UID, adapter.Config.Signer.UID, signerState, signerState,
 		updateGate, signerState, signerState, adapter.Config.RuntimeRoot)
@@ -760,7 +799,47 @@ WantedBy=multi-user.target
 		filepath.Join(payload, "bin/fased-gateway-launch"), dependencyMount, adapter.Config.OwnerStateRoot)
 	return map[string][]byte{
 		adapter.Identity.Services["signer"]: []byte(signer), adapter.Identity.Services["gateway"]: []byte(gateway),
+	}, nil
+}
+
+func (adapter *TargetAdapter) renderTargetLaunchdPlists(payload string, target model.Generation, dependency string) (map[string][]byte, error) {
+	signerState := adapter.Config.SignerStateRoot()
+	signer, signerErr := renderLaunchdPlist(launchdPlistSpec{
+		Label: adapter.Identity.Services["signer"], User: adapter.Config.SignerUserName(), Group: adapter.Config.SignerUserName(), Umask: 0o077,
+		ProgramArguments: []string{
+			filepath.Join(payload, "bin/fased-signerd"), "-socket", adapter.Config.ApplicationSocket(), "-operator-socket", adapter.Config.OperatorSocket(),
+			"-control-socket", adapter.Config.ControlSocket(), "-socket-mode", "0660", "-socket-group", adapter.Config.GatewayGroupName(),
+			"-operator-socket-group", adapter.Config.OperatorGroupName(), "-application-uid", fmt.Sprint(adapter.Config.Gateway.UID), "-operator-uid", fmt.Sprint(adapter.Config.Operator.UID),
+			"-control-uid", fmt.Sprint(adapter.Config.Signer.UID), "-state-db", filepath.Join(signerState, "state.db"), "-master-key", filepath.Join(signerState, "master.key"),
+			"-update-gate", adapter.Config.UpdateGatePath(), "-audit-log", filepath.Join(signerState, "audit.jsonl"),
+		},
+		Environment: map[string]string{"HOME": signerState, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+		StdoutPath:  filepath.Join(adapter.Config.LifecycleLogRoot(), "signer.log"), StderrPath: filepath.Join(adapter.Config.LifecycleLogRoot(), "signer.err.log"),
+	})
+	gatewayEnvironment := map[string]string{
+		"HOME": adapter.Config.OwnerHome(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "FASED_STATE_DIR": adapter.Config.OwnerStateRoot,
+		"FASED_CONFIG_PATH": filepath.Join(adapter.Config.OwnerStateRoot, "fased.json"), "FASED_CONFIG_DIR": adapter.Config.OwnerStateRoot,
+		"FASED_PLUGIN_STATUS_CACHE_PATH": filepath.Join(adapter.Config.OwnerStateRoot, "cache/plugin-status.json"),
+		"FASED_PLUGIN_READINESS_PATH":    filepath.Join(adapter.Config.OwnerStateRoot, "cache/plugin-readiness.json"),
+		"FASED_PLUGIN_CODE_ROOT":         filepath.Join(adapter.Config.InstallRoot, "plugin-code"), "FASED_PLUGIN_DATA_ROOT": filepath.Join(adapter.Config.OwnerStateRoot, "plugin-data"),
+		"FASED_PLUGIN_LOCK_PATH": filepath.Join(adapter.Config.OwnerStateRoot, "plugin.lock.json"), "FASED_GENERATION_ID": target.ID,
+		"FASED_MANAGED_RUNTIME_ROOT": filepath.Join(payload, "runtime"), "FASED_GATEWAY_MODE": "managed", "FASED_MANAGED_INTERNAL": "1",
+		"FASED_GATEWAY_SERVICE": "1", "FASED_RUNTIME_SOURCE": "go-lifecycle", "FASED_VERSION": target.Version, "FASED_HOST_PROFILE": "local",
+		"FASED_PROTECTED_LOCAL": "1", "FASED_PROTECTED_LOCAL_INSTANCE": adapter.Config.InstanceID, "FASED_GATEWAY_PORT": fmt.Sprint(adapter.Config.GatewayPort),
+		"FASED_WALLET_LOCAL_SIGNER_SOCKET": adapter.Config.ApplicationSocket(), "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE": "external", "FASED_WALLET_SIGNER_STATE_DIR": signerState,
 	}
+	if dependency != "" {
+		gatewayEnvironment["NODE_PATH"] = dependency
+	}
+	gateway, gatewayErr := renderLaunchdPlist(launchdPlistSpec{
+		Label: adapter.Identity.Services["gateway"], User: adapter.Config.GatewayUserName(), Group: adapter.Config.GatewayGroupName(), Umask: 0o007,
+		ProgramArguments: []string{filepath.Join(payload, "bin/fased-gateway-launch")}, WorkingDirectory: filepath.Join(payload, "runtime"), Environment: gatewayEnvironment,
+		StdoutPath: filepath.Join(adapter.Config.LifecycleLogRoot(), "gateway.log"), StderrPath: filepath.Join(adapter.Config.LifecycleLogRoot(), "gateway.err.log"),
+	})
+	if signerErr != nil || gatewayErr != nil {
+		return nil, errors.Join(signerErr, gatewayErr, errors.New("render Darwin target service definitions"))
+	}
+	return map[string][]byte{adapter.Identity.Services["signer"]: signer, adapter.Identity.Services["gateway"]: gateway}, nil
 }
 
 func profileEnvironment(profile model.Profile) string {

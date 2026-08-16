@@ -214,6 +214,7 @@ var (
 	instanceIDPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	serviceNamePattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	unitNamePattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.service$`)
+	launchdLabelPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$`)
 	operatorPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$`)
 )
 
@@ -257,7 +258,11 @@ func (p PlatformIdentity) Validate(profile Profile) error {
 	if !digestPattern.MatchString(p.ConfigurationDigest) {
 		return errors.New("platform configuration must be a lowercase sha256 digest")
 	}
-	expected, err := NewPlatformIdentity(profile, p.InstanceID, p.ConfigurationDigest)
+	adapterFamily := PlatformAdapterLinuxSystemd
+	if p.Adapter == darwinPlatformAdapter(profile) {
+		adapterFamily = PlatformAdapterDarwinLaunchd
+	}
+	expected, err := NewPlatformIdentityForAdapter(profile, p.InstanceID, p.ConfigurationDigest, adapterFamily)
 	if err != nil {
 		return err
 	}
@@ -280,7 +285,11 @@ func (p PlatformIdentity) Validate(profile Profile) error {
 	}
 	for _, role := range required {
 		unit, ok := p.Services[role]
-		if !ok || !serviceNamePattern.MatchString(role) || !unitNamePattern.MatchString(unit) || unit != expected.Services[role] {
+		validService := unitNamePattern.MatchString(unit)
+		if adapterFamily == PlatformAdapterDarwinLaunchd {
+			validService = launchdLabelPattern.MatchString(unit)
+		}
+		if !ok || !serviceNamePattern.MatchString(role) || !validService || unit != expected.Services[role] {
 			return fmt.Errorf("platform service %q is missing or invalid", role)
 		}
 	}
@@ -288,21 +297,30 @@ func (p PlatformIdentity) Validate(profile Profile) error {
 }
 
 func NewPlatformIdentity(profile Profile, instanceID, configurationDigest string) (PlatformIdentity, error) {
-	return platformIdentity(profile, instanceID, configurationDigest, false)
+	return NewPlatformIdentityForAdapter(profile, instanceID, configurationDigest, PlatformAdapterLinuxSystemd)
+}
+
+const (
+	PlatformAdapterLinuxSystemd  = "linux-systemd"
+	PlatformAdapterDarwinLaunchd = "darwin-launchd"
+)
+
+func NewPlatformIdentityForAdapter(profile Profile, instanceID, configurationDigest, adapterFamily string) (PlatformIdentity, error) {
+	return platformIdentity(profile, instanceID, configurationDigest, false, adapterFamily)
 }
 
 // LegacyControllerPlatformIdentity exists only to decode and inspect the v1
 // controller-worker topology during bridge discovery. New installations and
 // transactions must use NewPlatformIdentity's three-service topology.
 func LegacyControllerPlatformIdentity(profile Profile, instanceID, configurationDigest string) (PlatformIdentity, error) {
-	return platformIdentity(profile, instanceID, configurationDigest, true)
+	return platformIdentity(profile, instanceID, configurationDigest, true, PlatformAdapterLinuxSystemd)
 }
 
 func (p PlatformIdentity) IsLegacyControllerWorker(profile Profile) bool {
 	return p.Adapter == legacyPlatformAdapter(profile) && p.Validate(profile) == nil
 }
 
-func platformIdentity(profile Profile, instanceID, configurationDigest string, legacy bool) (PlatformIdentity, error) {
+func platformIdentity(profile Profile, instanceID, configurationDigest string, legacy bool, adapterFamily string) (PlatformIdentity, error) {
 	if err := validateProfile(profile); err != nil {
 		return PlatformIdentity{}, err
 	}
@@ -312,6 +330,12 @@ func platformIdentity(profile Profile, instanceID, configurationDigest string, l
 	if !digestPattern.MatchString(configurationDigest) {
 		return PlatformIdentity{}, errors.New("platform configuration must be a lowercase sha256 digest")
 	}
+	if adapterFamily != PlatformAdapterLinuxSystemd && adapterFamily != PlatformAdapterDarwinLaunchd {
+		return PlatformIdentity{}, errors.New("platform adapter family is unsupported")
+	}
+	if legacy && adapterFamily != PlatformAdapterLinuxSystemd {
+		return PlatformIdentity{}, errors.New("legacy controller topology is Linux-only")
+	}
 	adapter := "linux-systemd-local-v2"
 	services := map[string]string{
 		"gateway":    fmt.Sprintf("fased-gateway-%s.service", instanceID),
@@ -319,10 +343,21 @@ func platformIdentity(profile Profile, instanceID, configurationDigest string, l
 		"supervisor": fmt.Sprintf("fased-local-controller-%s.service", instanceID),
 	}
 	if profile == ProfileHosting {
+		if adapterFamily == PlatformAdapterDarwinLaunchd {
+			return PlatformIdentity{}, errors.New("Darwin Hosting is unsupported")
+		}
 		adapter = "linux-systemd-hosting-v2"
 		services = map[string]string{
 			"gateway": "fased-gateway.service",
 			"signer":  "fased-signerd.service", "supervisor": "fased-host-updater.service",
+		}
+	}
+	if adapterFamily == PlatformAdapterDarwinLaunchd {
+		adapter = darwinPlatformAdapter(profile)
+		services = map[string]string{
+			"gateway":    fmt.Sprintf("ai.fased.gateway.%s", instanceID),
+			"signer":     fmt.Sprintf("ai.fased.signerd.%s", instanceID),
+			"supervisor": fmt.Sprintf("ai.fased.lifecycle.%s", instanceID),
 		}
 	}
 	if legacy {
@@ -334,6 +369,13 @@ func platformIdentity(profile Profile, instanceID, configurationDigest string, l
 		}
 	}
 	return PlatformIdentity{Adapter: adapter, InstanceID: instanceID, ConfigurationDigest: configurationDigest, Services: services}, nil
+}
+
+func darwinPlatformAdapter(profile Profile) string {
+	if profile != ProfileProtectedLocal {
+		return ""
+	}
+	return "darwin-launchd-local-v1"
 }
 
 func legacyPlatformAdapter(profile Profile) string {

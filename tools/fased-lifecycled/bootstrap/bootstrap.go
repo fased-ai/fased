@@ -27,6 +27,7 @@ type PlatformBootstrapRequest struct {
 	InstanceIDAssertion     string
 	OperatorUser            string
 	OwnerStateRoot          string
+	UpdateChannel           string
 	GatewayPort             uint16
 	ExpectedRegistryOwner   uint32
 	RegistryPath            string
@@ -36,6 +37,7 @@ type PlatformBootstrapRequest struct {
 	ACL                     platform.HomeACL
 	Systemd                 platform.Systemd
 	BridgePublicStable      bool
+	OperatingSystem         string
 	InstanceIDSource        platform.InstanceIDSource
 	ExistingConfigValidator func(platform.Config) error
 }
@@ -47,8 +49,13 @@ type PlatformBootstrapResult struct {
 }
 
 func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapRequest) (PlatformBootstrapResult, error) {
+	if request.OperatingSystem == "" {
+		request.OperatingSystem = "linux"
+	}
 	if request.Principals == nil || request.Systemd == nil || request.GatewayPort == 0 || len(request.StableDaemon) == 0 ||
-		!filepath.IsAbs(request.JournalPath) {
+		(request.UpdateChannel != "stable" && request.UpdateChannel != "beta") ||
+		(request.OperatingSystem != "linux" && request.OperatingSystem != "darwin") || !filepath.IsAbs(request.JournalPath) ||
+		(request.OperatingSystem == "darwin" && request.Profile != model.ProfileProtectedLocal) {
 		return PlatformBootstrapResult{}, errors.New("platform bootstrap dependencies are incomplete")
 	}
 	operator, exists, err := request.Principals.LookupUser(ctx, request.OperatorUser)
@@ -64,7 +71,7 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 	steps := []platform.BootstrapStep{}
 	if request.Profile == model.ProfileProtectedLocal {
 		if request.RegistryPath == "" {
-			request.RegistryPath = platform.LocalInstanceRegistryPath
+			request.RegistryPath = platform.LocalInstanceRegistryPathForOS(request.OperatingSystem)
 		}
 		allocation, err = platform.PlanLocalInstance(request.RegistryPath, request.ExpectedRegistryOwner, platform.LocalInstanceRequest{
 			TransactionID: request.TransactionID, OperatorUID: operator.UID, OperatorUser: request.OperatorUser,
@@ -92,7 +99,7 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		return PlatformBootstrapResult{}, errors.New("platform bootstrap profile is unsupported")
 	}
 
-	configPath := platformConfigPath(request.Profile, instanceID)
+	configPath := platformConfigPath(request.OperatingSystem, request.Profile, instanceID)
 	existingConfig, configExists, err := readExistingPlatformConfig(configPath)
 	if err != nil {
 		return PlatformBootstrapResult{}, err
@@ -109,13 +116,16 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhasePrincipals, Apply: func() (platform.BootstrapUndo, error) {
 		var changes *platform.PrincipalChanges
 		principals, changes, err = platform.ProvisionBootstrapPrincipalsTransactional(ctx, request.Principals, platform.BootstrapRequest{
-			Profile: request.Profile, InstanceID: instanceID, OperatorUser: request.OperatorUser, OwnerStateRoot: request.OwnerStateRoot,
+			Profile: request.Profile, InstanceID: instanceID, OperatorUser: request.OperatorUser, OwnerStateRoot: request.OwnerStateRoot, OperatingSystem: request.OperatingSystem,
 		})
 		if err != nil {
 			return nil, err
 		}
-		config, err = platform.NewConfigWithGatewayPort(request.Profile, instanceID, request.OwnerStateRoot, request.GatewayPort,
-			principals.Operator, principals.Gateway, principals.Signer)
+		if request.OperatingSystem == "darwin" {
+			config, err = platform.NewDarwinConfig(request.Profile, instanceID, request.OwnerStateRoot, request.GatewayPort, principals.Operator, principals.Gateway, principals.Signer)
+		} else {
+			config, err = platform.NewConfigWithGatewayPort(request.Profile, instanceID, request.OwnerStateRoot, request.GatewayPort, principals.Operator, principals.Gateway, principals.Signer)
+		}
 		if err != nil {
 			return nil, errors.Join(err, changes.Rollback(ctx))
 		}
@@ -176,7 +186,7 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		}, nil
 	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseDaemon, Apply: func() (platform.BootstrapUndo, error) {
-		replacement, err := platform.InstallFileTransactional(platform.StableLifecycleHostPath, request.StableDaemon, 0o755, 0, 0)
+		replacement, err := platform.InstallFileTransactional(config.StableLifecycleHostPath(), request.StableDaemon, 0o755, 0, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -194,7 +204,11 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		if err != nil {
 			return nil, err
 		}
-		return replacement.Rollback, nil
+		policy, _, err := platform.InstallUpdatePolicyTransactional(config, request.UpdateChannel)
+		if err != nil {
+			return nil, errors.Join(err, replacement.Rollback())
+		}
+		return func() error { return errors.Join(policy.Rollback(), replacement.Rollback()) }, nil
 	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseLauncher, Apply: func() (platform.BootstrapUndo, error) {
 		data, err := platform.RenderCLILauncher(config)
@@ -237,7 +251,7 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 				return nil, err
 			}
 		}
-		replacement, err := platform.InstallFileTransactional(filepath.Join(config.UnitRoot, unit), unitData, 0o644, 0, 0)
+		replacement, err := platform.InstallFileTransactional(config.ServiceDefinitionPath(unit), unitData, 0o644, 0, 0)
 		if err != nil {
 			if wasActive {
 				_ = request.Systemd.Start(ctx, unit)
@@ -311,7 +325,10 @@ func validateBootstrapOperator(request PlatformBootstrapRequest, operator platfo
 
 var timeNow = time.Now
 
-func platformConfigPath(profile model.Profile, instanceID string) string {
+func platformConfigPath(operatingSystem string, profile model.Profile, instanceID string) string {
+	if operatingSystem == "darwin" {
+		return platform.LocalPlatformConfigPathForOS(operatingSystem, instanceID)
+	}
 	if profile == model.ProfileHosting {
 		return "/var/lib/fased-lifecycled/platform.json"
 	}

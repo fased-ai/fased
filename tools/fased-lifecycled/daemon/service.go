@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/engine"
@@ -54,6 +55,10 @@ type CurrentConvergenceVerifier interface {
 	VerifyCurrent(context.Context, model.Manifest, string) (string, error)
 }
 
+type CurrentRepairer interface {
+	RepairCurrent(context.Context, string, model.Manifest, string) (string, error)
+}
+
 type IDGenerator func() (string, error)
 
 type Service struct {
@@ -65,7 +70,9 @@ type Service struct {
 	Onboarding          OnboardingCompleter
 	PredecessorEvidence PublicPredecessorEvidenceVerifier
 	CurrentConvergence  CurrentConvergenceVerifier
+	CurrentRepair       CurrentRepairer
 	NewID               IDGenerator
+	Now                 func() time.Time
 	mutationMu          sync.Mutex
 }
 
@@ -86,6 +93,10 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 		return service.inspect(request)
 	case protocol.OperationConverge:
 		return service.converge(ctx, request)
+	case protocol.OperationRollback:
+		return service.converge(ctx, request)
+	case protocol.OperationRepairCurrent:
+		return service.repairCurrent(ctx, request)
 	case protocol.OperationRecover:
 		return service.recover(ctx, request)
 	case protocol.OperationCompleteOnboarding:
@@ -93,6 +104,42 @@ func (service *Service) Handle(ctx context.Context, request protocol.Request) (p
 	default:
 		return protocol.Response{}, errors.New("unsupported lifecycle operation")
 	}
+}
+
+func (service *Service) repairCurrent(ctx context.Context, request protocol.Request) (protocol.Response, error) {
+	if service.CurrentRepair == nil {
+		return protocol.Response{}, errors.New("managed repair adapter is unavailable")
+	}
+	manifest, manifestDigest, err := service.Store.ReadManifest()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if err := manifest.Validate(); err != nil || manifest.Profile != service.Profile || manifest.ActiveGeneration == nil {
+		return protocol.Response{}, errors.Join(err, errors.New("managed repair requires a valid active installation"))
+	}
+	platformDigest, err := service.Platform.Digest(service.Profile)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	installedPlatformDigest, digestErr := manifest.Platform.Digest(manifest.Profile)
+	if digestErr != nil || installedPlatformDigest != platformDigest || request.TargetGenerationID != manifest.ActiveGeneration.ID || request.ExpectedManifestDigest != manifestDigest {
+		return protocol.Response{}, errors.New("managed repair identity differs from the installed generation")
+	}
+	lock, err := service.Store.AcquireUpdateLock(request.RequestID)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	digest, repairErr := service.CurrentRepair.RepairCurrent(ctx, request.RequestID, manifest, manifestDigest)
+	releaseErr := lock.Release()
+	if repairErr != nil || releaseErr != nil {
+		return protocol.Response{}, errors.Join(repairErr, releaseErr)
+	}
+	if !validConvergenceDigest(digest) {
+		return protocol.Response{}, errors.New("managed repair lacks terminal convergence proof")
+	}
+	result := response(request, "REPAIRED", "", manifest.ActiveGeneration.ID)
+	result.ConvergenceReceiptDigest = digest
+	return result, nil
 }
 
 // RecoverPending converges an unfinished durable transaction before the
@@ -246,12 +293,21 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	if inventory.Capabilities.Supervisor.Min > supervisorCapability || inventory.Capabilities.Supervisor.Max < supervisorCapability {
 		return protocol.Response{}, errors.New("target generation requires an unsupported stable supervisor capability")
 	}
-	plan, err := planner.BuildForInstallation(installation, planner.Target{
+	target := planner.Target{
 		Profile: service.Profile, Generation: generation,
 		StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
 		ReleaseSequence: authority.ReleaseSequence, SecurityEpoch: authority.SecurityEpoch,
 		ManifestMin: authority.ManifestMin, ManifestMax: authority.ManifestMax,
-	})
+	}
+	var plan planner.Plan
+	if request.Operation == protocol.OperationRollback {
+		if installation.Kind != planner.InstallationManaged || installed.PreviousGeneration == nil || installed.PreviousGeneration.ID != request.TargetGenerationID {
+			return protocol.Response{}, errors.New("rollback target must be the committed previous generation")
+		}
+		plan, err = planner.BuildForInstallationAuthorized(installation, target, request.RollbackAuthorization, service.Now().UTC())
+	} else {
+		plan, err = planner.BuildForInstallation(installation, target)
+	}
 	if err != nil {
 		return protocol.Response{}, err
 	}
@@ -267,7 +323,7 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		result := response(request, string(plan.Action), "", generation.ID)
 		result.ConvergenceReceiptDigest = digest
 		return result, nil
-	case planner.ActionRepairRequired, planner.ActionRejectUnknownNewer:
+	case planner.ActionRepairRequired, planner.ActionRejectUnknownNewer, planner.ActionRejectDowngrade:
 		return response(request, string(plan.Action), "", generation.ID), nil
 	}
 	transactionID, err := service.NewID()
@@ -309,7 +365,8 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		ReleaseSequence: authority.ReleaseSequence, SecurityEpoch: authority.SecurityEpoch,
 		ReleaseIndexDigest: authority.ReleaseIndex, ReleaseAuthorityDigest: authority.ReleaseAuthority,
 		TargetManifestProtocolMin: authority.ManifestMin, TargetManifestProtocolMax: authority.ManifestMax,
-		Target: generation, Previous: previous, ManifestDigest: manifestDigest,
+		RollbackAuthorizationDigest: plan.RollbackAuthorizationDigest,
+		Target:                      generation, Previous: previous, ManifestDigest: manifestDigest,
 		TargetStateSchemas: inventory.StateSchemas, TargetCapabilities: inventory.Capabilities,
 		StateInventoryDigest: stateDigest, MigrationPlanDigest: plan.Digest,
 		SignerPlanDigest: signerPlanDigest,
@@ -357,6 +414,9 @@ func (service *Service) validate() error {
 	}
 	if service.NewID == nil {
 		service.NewID = randomUUID
+	}
+	if service.Now == nil {
+		service.Now = func() time.Time { return time.Now().UTC() }
 	}
 	if service.Profile != model.ProfileProtectedLocal && service.Profile != model.ProfileHosting {
 		return errors.New("lifecycle daemon profile is invalid")

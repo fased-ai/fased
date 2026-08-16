@@ -12,7 +12,6 @@ const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
 const TARGET_NAMES = Object.freeze({
   bootstrap: "install.sh",
   lifecycleLinuxX64: "fased-lifecycled-linux-amd64",
-  lifecycleLinuxArm64: "fased-lifecycled-linux-arm64",
   evidenceVerifier: "fased-privileged-release-evidence.mjs",
 });
 const EVIDENCE_NAMES = Object.freeze({
@@ -130,7 +129,7 @@ export async function buildLifecycleTrustMetadata({
     },
     policy: {
       channels: version.includes("-") ? ["beta"] : ["beta", "stable"],
-      platforms: ["linux-arm64", "linux-x64"],
+      platforms: ["linux-x64"],
       lifecycleProtocol: 1,
     },
     targets,

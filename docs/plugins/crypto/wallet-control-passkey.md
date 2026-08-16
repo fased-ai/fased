@@ -33,7 +33,10 @@ A native Vault may optionally use a signer-owned approval device for exact
 manual Vault reviews. The Vault's **Security** panel explains this separate
 readiness requirement; it does not enroll the device through ordinary Gateway
 JavaScript. Enrollment is a native signer-owner ceremony. On Hosting, run
-`/usr/local/sbin/fased-signer-enroll` from the provider root console. It is
+`sudo /home/app/.fased/bin/fased-signer-owner webauthn-enroll` from the
+provider root console. This signed, lifecycle-installed wrapper holds the
+Hosting mutation lock, exposes only a private temporary Tailscale Serve path,
+and restores the prior Serve configuration when the ceremony ends. It is
 separate from the Control UI account passkey.
 
 Agent and Mining do not receive a passkey prompt for automatic operations inside

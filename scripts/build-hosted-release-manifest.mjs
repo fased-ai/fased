@@ -57,7 +57,7 @@ function parseAppIdentity(value, expectedVersion, expectedCommit) {
     value.schemaVersion !== 1 ||
     value.version !== expectedVersion ||
     value.commit !== expectedCommit ||
-    !new Set(["x64", "arm64"]).has(value.architecture) ||
+    value.architecture !== "x64" ||
     !DIGEST_PATTERN.test(value.dependencyHash || "") ||
     !DIGEST_PATTERN.test(value.app.sha256 || "") ||
     !DIGEST_PATTERN.test(value.dependencies.sha256 || "")
@@ -102,7 +102,7 @@ export async function buildHostedReleaseManifest({
     throw new Error("hosted release manifest profile is unsupported");
   }
   const fixtureOnly = profile === "branch-x64";
-  const architectures = fixtureOnly ? ["x64"] : ["x64", "arm64"];
+  const architectures = ["x64"];
   const application = {};
   for (const architecture of architectures) {
     const identityName = `fased-hosted-app-v2-linux-${architecture}-v${version}.tar.gz.release.json`;
@@ -135,14 +135,7 @@ export async function buildHostedReleaseManifest({
     commit,
   );
   const signerPlatforms = {};
-  const signerAssets = fixtureOnly
-    ? [["linux-amd64", "fased-signerd-linux-amd64"]]
-    : [
-        ["linux-amd64", "fased-signerd-linux-amd64"],
-        ["linux-arm64", "fased-signerd-linux-arm64"],
-        ["darwin-amd64", "fased-signerd-darwin-amd64"],
-        ["darwin-arm64", "fased-signerd-darwin-arm64"],
-      ];
+  const signerAssets = [["linux-amd64", "fased-signerd-linux-amd64"]];
   for (const [platform, asset] of signerAssets) {
     signerPlatforms[platform] = { asset, sha256: await sha256(path.join(assetsDir, asset)) };
   }

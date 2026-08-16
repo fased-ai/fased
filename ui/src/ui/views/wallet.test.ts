@@ -618,7 +618,7 @@ describe("describeVaultSignerApproval", () => {
       }),
     ).toMatchObject({
       summary: "Not enrolled",
-      setupCommand: expect.stringContaining("/usr/local/sbin/fased-signer-enroll"),
+      setupCommand: expect.stringContaining("fased-signer-owner webauthn-enroll"),
     });
   });
 
@@ -796,7 +796,7 @@ describe("renderWallet", () => {
                 isNative: false,
                 address: "SatAta111111111111111111111111111111111111",
                 program: "SatMint111111111111111111111111111111111",
-                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
               },
             ],
           },
@@ -1418,7 +1418,7 @@ describe("renderWallet", () => {
                 isNative: false,
                 address: "Ata1111111111111111111111111111111111111111",
                 program: "SatMint",
-                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
               },
             ],
           },
@@ -1652,7 +1652,7 @@ describe("renderWallet", () => {
                 isNative: false,
                 address: "Ata1111111111111111111111111111111111111111",
                 program: "mint-usdc",
-                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
                 logoUri: "https://img.example/usdc.png",
                 verificationStatus: "verified",
                 verificationSource: "jupiter",
@@ -1855,7 +1855,7 @@ describe("renderWallet", () => {
                 isNative: false,
                 address: "Ata1111111111111111111111111111111111111111",
                 program: "2qwAVnGm1234567890123456789kg1jVfP7",
-                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
               },
             ],
           },

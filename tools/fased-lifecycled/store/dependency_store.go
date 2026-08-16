@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"fased-lifecycled/bundle"
+	"fased-lifecycled/model"
 )
 
 const (
@@ -55,6 +56,9 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 		if err := s.verifyDependencyPath(destination, layer); err != nil {
 			return err
 		}
+		if normalizedDependencyMarker(destination) {
+			return nil
+		}
 		return normalizeDependencyMarker(destination)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -62,6 +66,9 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 	legacy := s.dependencyPath(layer.Hash)
 	if _, err := os.Lstat(legacy); err == nil {
 		if verifyErr := s.verifyDependencyPath(legacy, layer); verifyErr == nil {
+			if normalizedDependencyMarker(legacy) {
+				return nil
+			}
 			return normalizeDependencyMarker(legacy)
 		} else if !errors.Is(verifyErr, errDependencyLayerIdentityDiffers) {
 			return verifyErr
@@ -110,6 +117,11 @@ func (s *Store) ImportDependencyArchive(archive string, layer bundle.DependencyL
 	return syncDirectory(root)
 }
 
+func normalizedDependencyMarker(root string) bool {
+	info, err := os.Lstat(filepath.Join(root, dependencyMarkerName))
+	return err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm() == 0o644
+}
+
 func normalizeDependencyMarker(root string) error {
 	path := filepath.Join(root, dependencyMarkerName)
 	before, err := os.Lstat(path)
@@ -152,7 +164,11 @@ func (s *Store) GenerationDependency(generationID string) (*bundle.DependencyLay
 		}
 		inventory, err := bundle.DecodeInventory(data)
 		if err != nil {
-			return nil, err
+			legacy, legacyErr := s.committedLegacyPreviousInventory(root, generationID, data)
+			if legacyErr != nil {
+				return nil, errors.Join(err, legacyErr)
+			}
+			return legacy.Dependency, nil
 		}
 		generation, err := bundle.Identity(inventory)
 		if err != nil || generation.ID != generationID {
@@ -161,6 +177,26 @@ func (s *Store) GenerationDependency(generationID string) (*bundle.DependencyLay
 		return inventory.Dependency, nil
 	}
 	return nil, os.ErrNotExist
+}
+
+func (s *Store) committedLegacyPreviousInventory(root, generationID string, data []byte) (bundle.Inventory, error) {
+	manifest, _, err := s.ReadManifest()
+	if err != nil || manifest.SchemaVersion != model.CurrentManifestSchemaVersion || manifest.PreviousGeneration == nil ||
+		manifest.PreviousGeneration.ID != generationID {
+		return bundle.Inventory{}, errors.New("legacy dependency inventory is not the committed previous generation")
+	}
+	inventory, err := bundle.DecodeLegacyInstalledInventory(data)
+	if err != nil {
+		return bundle.Inventory{}, err
+	}
+	generation, err := bundle.IdentityLegacyInstalledInventory(inventory)
+	if err != nil || generation != *manifest.PreviousGeneration {
+		return bundle.Inventory{}, errors.New("legacy dependency inventory differs from the committed previous generation")
+	}
+	if err := bundle.VerifyLegacyInstalled(filepath.Join(root, generationPayloadName), inventory, generation); err != nil {
+		return bundle.Inventory{}, err
+	}
+	return inventory, nil
 }
 
 func (s *Store) GenerationDependencyPath(generationID string) (string, error) {

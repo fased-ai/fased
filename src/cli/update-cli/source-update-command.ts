@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isManagedLifecycleRuntime } from "../../infra/managed-runtime-authority.js";
 import { checkUpdateStatus } from "../../infra/update-check.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -33,7 +34,10 @@ function refuse(message: string): void {
 }
 
 export async function runDeveloperSourceUpdate(opts: UpdateCommandOptions = {}): Promise<void> {
-  if (MANAGED_RUNTIME_SOURCES.has(process.env.FASED_RUNTIME_SOURCE ?? "")) {
+  if (
+    MANAGED_RUNTIME_SOURCES.has(process.env.FASED_RUNTIME_SOURCE ?? "") ||
+    isManagedLifecycleRuntime()
+  ) {
     refuse(
       "Developer source update is unavailable in a managed installation; run fased update from the owner shell.",
     );

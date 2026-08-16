@@ -805,9 +805,119 @@ if [[ "$phase" == "verify-reboot" ]]; then
   exit 0
 fi
 
+if [[ "$phase" == "verify-operations" ]]; then
+  [[ -f "$snapshot" ]]
+  # Podman regenerates /etc/hosts on container restart. Rebind the exact
+  # unpublished release transport before exercising an acquisition-backed
+  # repair so the branch-pinned bootstrap cannot reach public release bytes.
+  grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
+    printf '127.0.0.1 github.com\n' >>/etc/hosts
+  instance="$(jq -er .instanceId "$snapshot")"
+  predecessor_class="$(jq -er .predecessorClass "$snapshot")"
+  gateway_token="$(jq -er '.gateway.auth.token' "$state/fased.json")"
+  runtime="$(resolve_protected_runtime "$instance")"
+  mapfile -t env_args < <(operator_env "$instance")
+  gateway_unit="fased-gateway-$instance.service"
+  signer_unit="fased-signerd-$instance.service"
+  supervisor_unit="fased-local-controller-$instance.service"
+  unit_path="/etc/systemd/system/$gateway_unit"
+  operations_receipt=/var/lib/fased-protected-local-fixture/lifecycle-operations.json
+  owner_preservation=/tmp/fased-managed-operations-owner.sha256
+  signer_preservation=/tmp/fased-managed-operations-signer.sha256
+
+  wait_for_gateway_version "$version"
+  verify_three_services "$instance"
+  owner_preservation_paths=(
+    "$state/fased.json" \
+    "$state/identity/device.json" \
+    "$state/wallet/provider-registry.v1.json"
+  )
+  case "$predecessor_class" in
+    public-stable)
+      owner_preservation_paths+=(
+        "$state/extensions/stable-bridge/fased.plugin.json"
+        "$state/extensions/stable-bridge/package.json"
+        "$state/extensions/stable-bridge/index.js"
+        "$state/plugin-data/stable-bridge/state.json"
+        "$state/sat-mining/stable-bridge-history.json"
+        "$state/workspace/stable-bridge.txt"
+      )
+      ;;
+    canonical-managed)
+      owner_preservation_paths+=(
+        "$state/sat-mining/wallets/agent/mining.sqlite"
+        "$state/plugin-data/fixture/state.json"
+      )
+      ;;
+    *)
+      echo "Unsupported managed operations predecessor class: $predecessor_class" >&2
+      exit 1
+      ;;
+  esac
+  sha256sum "${owner_preservation_paths[@]}" >"$owner_preservation"
+  sha256sum "/var/lib/fased-local/$instance/signer/master.key" \
+    >"$signer_preservation"
+
+  test -f "$unit_path"
+  cp "$unit_path" /tmp/fased-managed-repair-gateway.service
+  rm -f "$unit_path"
+  systemctl daemon-reload
+  test ! -e "$unit_path"
+  runuser -u testop -- env "${env_args[@]}" \
+    "$state/bin/fased" repair --timeout 120 \
+    >/tmp/fased-managed-repair.out 2>/tmp/fased-managed-repair.err
+  grep -F "Repaired successfully: $version" /tmp/fased-managed-repair.out >/dev/null
+  cmp /tmp/fased-managed-repair-gateway.service "$unit_path"
+  verify_three_services "$instance"
+  wait_for_gateway_version "$version"
+  sha256sum --check "$owner_preservation"
+  sha256sum --check "$signer_preservation"
+
+  runuser -u testop -- env "${env_args[@]}" \
+    "$state/bin/fased" uninstall --yes --non-interactive --json \
+    >/tmp/fased-managed-uninstall.json 2>/tmp/fased-managed-uninstall.err
+  jq -e --arg instance "$instance" \
+    '.status == "UNINSTALLED" and .profile == "protected-local" and
+     .instanceId == $instance and .ownerStatePreserved == true and
+     .signerStatePreserved == true' \
+    /tmp/fased-managed-uninstall.json >/dev/null
+  for unit in "$gateway_unit" "$signer_unit" "$supervisor_unit"; do
+    test ! -e "/etc/systemd/system/$unit"
+    ! systemctl is-enabled --quiet "$unit"
+    ! systemctl is-active --quiet "$unit"
+  done
+  test ! -e "/opt/fased/local/$instance"
+  test ! -e "$state/bin/fased"
+  test -f "/var/lib/fased-local/$instance/lifecycle/uninstalled.json"
+  jq -e '.completed == true and .managedRootsRemoved == true and
+    .launcherRemoved == true' \
+    "/var/lib/fased-local/$instance/lifecycle/uninstalled.json" >/dev/null
+  sha256sum --check "$owner_preservation"
+  sha256sum --check "$signer_preservation"
+
+  jq -n \
+    --arg commit "$commit" \
+    --arg instance "$instance" \
+    --arg version "$version" \
+    --arg predecessorClass "$predecessor_class" \
+    --arg repairDigest "sha256:$(sha256sum /tmp/fased-managed-repair.out | awk '{print $1}')" \
+    --arg uninstallDigest "sha256:$(sha256sum /tmp/fased-managed-uninstall.json | awk '{print $1}')" \
+    --arg ownerDigest "sha256:$(sha256sum "$owner_preservation" | awk '{print $1}')" \
+    --arg signerDigest "sha256:$(sha256sum "$signer_preservation" | awk '{print $1}')" \
+    '{schemaVersion:1,role:"fased-managed-operations-acceptance",status:"PASS",
+      evidenceClass:"PASS",commit:$commit,instanceId:$instance,version:$version,
+      predecessorClass:$predecessorClass,
+      repair:{status:"PASS",outputDigest:$repairDigest,exactUnitRestored:true},
+      uninstall:{status:"PASS",outputDigest:$uninstallDigest,managedAuthorityRemoved:true},
+      preservation:{ownerStateDigest:$ownerDigest,signerCustodyDigest:$signerDigest}}' \
+    >"$operations_receipt"
+  printf 'managed repair and uninstall fixture passed: %s\n' "$instance"
+  exit 0
+fi
+
 [[ "$phase" == "fresh-install" ||
   "$phase" == "managed-update" ]] || {
-  echo "usage: fased-protected-local-systemd-fixture fresh-install|managed-update|verify-reboot" >&2
+  echo "usage: fased-protected-local-systemd-fixture fresh-install|managed-update|verify-reboot|verify-operations" >&2
   exit 64
 }
 [[ "$public_acquisition" == "1" ]] || {
@@ -1720,11 +1830,13 @@ EOF_STABLE_BRIDGE_DROPIN
     key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
     jq -n \
       --arg instanceId "$instance" \
+      --arg predecessorClass "$predecessor_class" \
       --arg agentReadinessSha256 "$agent_readiness_sha" \
       --arg vaultReadinessSha256 "$vault_readiness_sha" \
       --arg masterKeySha256 "$key_sha" \
       '{
         instanceId: $instanceId,
+        predecessorClass: $predecessorClass,
         agentReadinessSha256: $agentReadinessSha256,
         vaultReadinessSha256: $vaultReadinessSha256,
         masterKeySha256: $masterKeySha256
@@ -1974,11 +2086,13 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   key_sha="$(sha256sum "/var/lib/fased-local/$instance/signer/master.key" | awk '{print $1}')"
   jq -n \
     --arg instanceId "$instance" \
+    --arg predecessorClass "$predecessor_class" \
     --arg agentReadinessSha256 "$agent_readiness_sha" \
     --arg vaultReadinessSha256 "$vault_readiness_sha" \
     --arg masterKeySha256 "$key_sha" \
     '{
       instanceId: $instanceId,
+      predecessorClass: $predecessorClass,
       agentReadinessSha256: $agentReadinessSha256,
       vaultReadinessSha256: $vaultReadinessSha256,
       masterKeySha256: $masterKeySha256

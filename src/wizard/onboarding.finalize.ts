@@ -46,6 +46,7 @@ import {
 } from "../gateway/control-ui-boot-check.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
 import { clearDeviceAuthStore } from "../infra/device-auth-store.js";
+import { isManagedLifecycleRuntime } from "../infra/managed-runtime-authority.js";
 import { enableTailscaleFunnel, enableTailscaleServe } from "../infra/tailscale.js";
 import { readManagedFederationTokenSummary } from "../managed/federation.js";
 import { readManagedReservationSummaries } from "../managed/tunnel.js";
@@ -506,6 +507,13 @@ export function formatHostedRootServiceRequiredFailure(params: {
 }
 
 async function migrateStrictVpsGatewayServices(): Promise<{ ok: boolean; detail?: string }> {
+  if (isManagedLifecycleRuntime()) {
+    return {
+      ok: false,
+      detail:
+        "Managed service migration is owned by the verified Go lifecycle; onboarding did not mutate user or system units.",
+    };
+  }
   return await runShell(
     [
       "systemctl --user disable --now fased-gateway 2>/dev/null || true",
@@ -665,6 +673,9 @@ export function buildGatewayServiceRestartAttempts(
   serviceName = "fased-gateway",
   profile: GatewayServiceRestartProfile = "local",
 ): GatewayServiceRestartAttempt[] {
+  if (isManagedLifecycleRuntime()) {
+    return [];
+  }
   const userAttempts = [
     {
       label: "user restart",
@@ -819,11 +830,20 @@ export function gatewayServiceMatchesCurrentInstall(params: {
       continue;
     }
     const basename = path.basename(value);
-    if (basename === "entry.js" || basename === "index.js" || basename === "fased.mjs") {
+    if (
+      basename === "entry.js" ||
+      basename === "index.js" ||
+      basename === "fased.mjs" ||
+      basename === "start-managed.sh"
+    ) {
       if (!isPathInside(repoRoot, value)) {
+        const expected =
+          basename === "start-managed.sh"
+            ? path.join(repoRoot, "scripts", "start-managed.sh")
+            : repoRoot;
         return {
           ok: false,
-          detail: `entrypoint ${value} is outside ${repoRoot}`,
+          detail: `entrypoint ${value} differs from ${expected}`,
         };
       }
     }

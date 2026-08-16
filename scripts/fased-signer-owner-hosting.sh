@@ -18,9 +18,14 @@ RUNUSER_BIN="/usr/sbin/runuser"
 ENV_BIN="/usr/bin/env"
 STAT_BIN="/usr/bin/stat"
 FLOCK_BIN="/usr/bin/flock"
+JQ_BIN="/usr/bin/jq"
+TAILSCALE_BIN="/usr/bin/tailscale"
 OWNER_LOCK="${FASED_SIGNER_OWNER_LOCK:-/run/lock/fased-signer-owner.lock}"
 UPDATE_GATE="${FASED_SIGNER_UPDATE_GATE:-/var/lib/fased-signer-update-gate/active}"
 UPDATE_JOURNAL="${FASED_SIGNER_UPDATE_JOURNAL:-/var/lib/fased-host-updater/active-signer-transaction.json}"
+HOSTING_MUTATION_LOCK="${FASED_HOSTING_MUTATION_LOCK:-/run/lock/fased-bootstrap-hosting.lock}"
+HOSTING_RECEIPT="${FASED_HOSTING_RECEIPT:-/etc/fased/hosting-prerequisites}"
+WEBAUTHN_ENV="${FASED_SIGNER_WEBAUTHN_ENV:-/etc/fased/signerd-webauthn.env}"
 OUTPUT_USER="${FASED_SIGNER_OUTPUT_USER:-root}"
 OUTPUT_UID="${FASED_SIGNER_OUTPUT_UID:-0}"
 OUTPUT_GID="${FASED_SIGNER_OUTPUT_GID:-0}"
@@ -45,14 +50,14 @@ ordinary operator or Gateway persistent control-socket access.
 EOF
 }
 
-LOCAL_ENROLLMENT=0
+ENROLLMENT=0
 LABEL=""
 if [[ "${1:-}" == "webauthn-enroll" ]]; then
-  [[ "${FASED_SIGNER_OWNER_LOCAL:-0}" == "1" && $# -le 2 ]] || {
+  [[ $# -le 2 ]] || {
     usage
     exit 64
   }
-  LOCAL_ENROLLMENT=1
+  ENROLLMENT=1
   LABEL="${2:-Wallet Operator}"
   [[ -n "$LABEL" && "${#LABEL}" -le 64 && "$LABEL" != *$'\n'* && "$LABEL" != *$'\r'* ]] || {
     echo "Authenticator label must be one non-empty line of at most 64 characters." >&2
@@ -142,19 +147,173 @@ chmod 0600 "$OWNER_LOCK"
 }
 
 work_dir=""
+hosting_work_dir=""
 handoff_dir=""
+server_pid=""
+serve_changed=0
+serve_snapshot=""
 cleanup() {
   local status=$?
+  local restore_failed=0
   trap - EXIT INT TERM HUP
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ "$serve_changed" == "1" && -s "$serve_snapshot" ]]; then
+    if "$JQ_BIN" -e '
+      (keys - ["Version", "version", "TCP", "Web", "Services"] | length) == 0 and
+      ((.TCP // {}) | length) == 0 and ((.Web // {}) | length) == 0 and
+      ((.Services // {}) | length) == 0
+    ' "$serve_snapshot" >/dev/null; then
+      "$TAILSCALE_BIN" serve reset >/dev/null 2>&1 || restore_failed=1
+    else
+      "$TAILSCALE_BIN" serve set-config "$serve_snapshot" --all >/dev/null 2>&1 || restore_failed=1
+    fi
+  fi
   if [[ -n "$work_dir" && -d "$work_dir" ]]; then
     rm -rf -- "$work_dir"
+  fi
+  if [[ -n "$hosting_work_dir" && -d "$hosting_work_dir" ]]; then
+    rm -rf -- "$hosting_work_dir"
   fi
   if [[ -n "$handoff_dir" && -d "$handoff_dir" ]]; then
     rm -rf -- "$handoff_dir"
   fi
+  if [[ "$restore_failed" == "1" ]]; then
+    echo "CRITICAL: could not restore the prior private Tailscale Serve configuration." >&2
+    exit 1
+  fi
   exit "$status"
 }
 trap cleanup EXIT INT TERM HUP
+
+run_hosting_enrollment() {
+  local rp_id=""
+  local origin=""
+  local status_json=""
+  local serve_json=""
+  local enrollment_url=""
+  local public_path="/_fased/signer-enrollment"
+  local listen="127.0.0.1:18791"
+
+  for executable in "$TAILSCALE_BIN" "$JQ_BIN"; do
+    [[ -f "$executable" && -x "$executable" && ! -L "$executable" ]] || {
+      echo "Required root-controlled executable is missing or unsafe: $executable" >&2
+      return 1
+    }
+    read -r owner mode links <<<"$($STAT_BIN -Lc '%u %a %h' "$executable")"
+    [[ "$owner" == "0" && "$links" -ge 1 && $((8#$mode & 8#22)) -eq 0 ]] || {
+      echo "Required executable is not root-owned and non-writable: $executable" >&2
+      return 1
+    }
+  done
+  for path in "$HOSTING_RECEIPT" "$WEBAUTHN_ENV"; do
+    [[ -f "$path" && ! -L "$path" ]] || {
+      echo "Committed Hosting identity is missing or unsafe: $path" >&2
+      return 1
+    }
+    read -r owner mode links <<<"$($STAT_BIN -Lc '%u %a %h' "$path")"
+    [[ "$owner" == "0" && "$mode" == "644" && "$links" == "1" ]] || {
+      echo "Committed Hosting identity has unsafe metadata: $path" >&2
+      return 1
+    }
+  done
+  grep -Fqx 'firewallReady=true' "$HOSTING_RECEIPT" || {
+    echo "Hosting hardening is not durably committed." >&2
+    return 1
+  }
+  while IFS='=' read -r name value; do
+    case "$name" in
+      FASED_WALLET_WEBAUTHN_RP_ID) rp_id="$value" ;;
+      FASED_WALLET_WEBAUTHN_ORIGINS) origin="$value" ;;
+      "") ;;
+      *) echo "Signer WebAuthn environment contains an unsupported setting." >&2; return 1 ;;
+    esac
+  done <"$WEBAUTHN_ENV"
+  [[ "$rp_id" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$origin" == "https://${rp_id}" ]] || {
+    echo "Signer WebAuthn identity differs from its private Tailscale origin." >&2
+    return 1
+  }
+
+  install -d -m 0755 -o root -g root "$(dirname "$HOSTING_MUTATION_LOCK")"
+  exec 8>"$HOSTING_MUTATION_LOCK"
+  chmod 0600 "$HOSTING_MUTATION_LOCK"
+  "$FLOCK_BIN" -n 8 || {
+    echo "A Hosting lifecycle transaction is active; retry after it completes." >&2
+    return 1
+  }
+  [[ ! -e "$UPDATE_GATE" && ! -e "$UPDATE_JOURNAL" ]] || {
+    echo "A paired signer update raced with enrollment; retry after recovery." >&2
+    return 1
+  }
+
+  status_json="$($TAILSCALE_BIN status --json)"
+  "$JQ_BIN" -e --arg dns "$rp_id" '
+    .BackendState == "Running" and ((.Self.DNSName // "") | rtrimstr(".")) == $dns
+  ' <<<"$status_json" >/dev/null || {
+    echo "Tailscale is not authenticated as the committed Hosting identity." >&2
+    return 1
+  }
+  serve_snapshot="$hosting_work_dir/tailscale-serve.json"
+  "$TAILSCALE_BIN" serve get-config --all >"$serve_snapshot"
+  chmod 0600 "$serve_snapshot"
+  if "$JQ_BIN" -e '.. | objects | select(.AllowFunnel == true)' "$serve_snapshot" >/dev/null; then
+    echo "Hosted signer enrollment refuses to run while Tailscale Funnel is active." >&2
+    return 1
+  fi
+
+  coproc SIGNER_ENROLLMENT_SERVER {
+    "$RUNUSER_BIN" -u "$SIGNER_USER" -- \
+      "$ENV_BIN" -i \
+      HOME="$SIGNER_HOME" \
+      LANG="C.UTF-8" \
+      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+      "$SIGNER_BIN" admin webauthn enrollment serve \
+      --control-socket "$CONTROL_SOCKET" \
+      --listen "$listen" \
+      --origin "$origin" \
+      --base-path "${public_path}/" \
+      --label "$LABEL" \
+      --update-gate "$UPDATE_GATE" \
+      --lock-file "$SIGNER_HOME/webauthn-enrollment.lock" \
+      --timeout 5m
+  }
+  server_pid="$SIGNER_ENROLLMENT_SERVER_PID"
+  if ! IFS= read -r enrollment_url <&"${SIGNER_ENROLLMENT_SERVER[0]}"; then
+    wait "$server_pid" || true
+    server_pid=""
+    echo "Native signer enrollment server did not start." >&2
+    return 1
+  fi
+  case "$enrollment_url" in
+    "${origin}${public_path}/#"?*) ;;
+    *) echo "Native signer returned an invalid enrollment URL." >&2; return 1 ;;
+  esac
+
+  serve_changed=1
+  "$TAILSCALE_BIN" serve --yes --bg --set-path "$public_path" "http://${listen}" >/dev/null
+  serve_json="$($TAILSCALE_BIN serve status --json)"
+  "$JQ_BIN" -e --arg path "$public_path" --arg proxy "http://${listen}" '
+    (tojson | contains($path)) and (tojson | contains($proxy)) and
+    ([.. | objects | select(.AllowFunnel == true)] | length) == 0
+  ' <<<"$serve_json" >/dev/null || {
+    echo "Private Tailscale Serve did not acknowledge the signer enrollment route." >&2
+    return 1
+  }
+
+  echo "Open this one-time URL on your own Tailscale-connected computer:"
+  echo "$enrollment_url"
+  echo "The URL expires in five minutes and becomes invalid after one successful enrollment."
+  unset enrollment_url
+  if ! wait "$server_pid"; then
+    server_pid=""
+    echo "Signer-owned WebAuthn enrollment did not complete." >&2
+    return 1
+  fi
+  server_pid=""
+  echo "Signer-owned WebAuthn credential enrolled successfully."
+}
 
 args=("$@")
 output_path=""
@@ -178,27 +337,33 @@ for ((index = 0; index < ${#args[@]}; index++)); do
   esac
 done
 
+if [[ "$ENROLLMENT" == "1" ]]; then
+  if [[ "${FASED_SIGNER_OWNER_LOCAL:-0}" == "1" ]]; then
+    "$RUNUSER_BIN" -u "$SIGNER_USER" -- \
+      "$ENV_BIN" -i \
+      HOME="$SIGNER_HOME" \
+      LANG="C.UTF-8" \
+      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+      "$SIGNER_BIN" admin webauthn enrollment serve \
+      --control-socket "$CONTROL_SOCKET" \
+      --listen 127.0.0.1:18791 \
+      --origin http://localhost:18791 \
+      --base-path /_fased/signer-enrollment/ \
+      --label "$LABEL" \
+      --update-gate "$UPDATE_GATE" \
+      --lock-file "$SIGNER_HOME/webauthn-enrollment.lock" \
+      --timeout 5m
+  else
+    hosting_work_dir="$(mktemp -d /run/fased-signer-enrollment.XXXXXX)"
+    chmod 0700 "$hosting_work_dir"
+    run_hosting_enrollment
+  fi
+  exit 0
+fi
+
 work_dir="$(mktemp -d "$SIGNER_HOME/.owner-ceremony.XXXXXX")"
 chown "$SIGNER_USER:$SIGNER_USER" "$work_dir"
 chmod 0700 "$work_dir"
-
-if [[ "$LOCAL_ENROLLMENT" == "1" ]]; then
-  "$RUNUSER_BIN" -u "$SIGNER_USER" -- \
-    "$ENV_BIN" -i \
-    HOME="$SIGNER_HOME" \
-    LANG="C.UTF-8" \
-    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-    "$SIGNER_BIN" admin webauthn enrollment serve \
-    --control-socket "$CONTROL_SOCKET" \
-    --listen 127.0.0.1:18791 \
-    --origin http://localhost:18791 \
-    --base-path /_fased/signer-enrollment/ \
-    --label "$LABEL" \
-    --update-gate "$UPDATE_GATE" \
-    --lock-file "$SIGNER_HOME/webauthn-enrollment.lock" \
-    --timeout 5m
-  exit 0
-fi
 
 if [[ -n "$input_path" ]]; then
   [[ "$input_path" == /* && -f "$input_path" && ! -L "$input_path" ]] || {

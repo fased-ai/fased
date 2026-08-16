@@ -124,6 +124,24 @@ func TestRootDelegationAndReleaseIndexVerification(t *testing.T) {
 	}
 }
 
+func TestRollbackGrantCannotOverrideCurrentRootRevocation(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	rootJSON, _ := testRoot(t, now)
+	pin := sha256.Sum256(rootJSON)
+	root, err := VerifyInitialRoot(rootJSON, hex.EncodeToString(pin[:]), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := model.Generation{ID: "sha256:" + strings.Repeat("a", 64), Version: "0.1.76", Commit: strings.Repeat("b", 40), Tree: strings.Repeat("c", 40), ArtifactSetDigest: "sha256:" + strings.Repeat("d", 64)}
+	if err := root.AuthorizeGeneration(generation); err != nil {
+		t.Fatalf("unrevoked generation rejected: %v", err)
+	}
+	root.metadata.Revocations.TargetDigests = []string{generation.ID}
+	if err := root.AuthorizeGeneration(generation); err == nil {
+		t.Fatal("root-revoked generation was authorized for rollback")
+	}
+}
+
 func TestGoVerifierAcceptsExistingProductionRoot(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "release", "lifecycle-trust", "root-v1", "fased-lifecycle-root-v1.json"))
 	if err != nil {

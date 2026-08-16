@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"syscall"
@@ -222,15 +223,17 @@ func runInventory(args []string, output io.Writer) error {
 func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags := flag.NewFlagSet("initialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var profileRaw, instanceID, ownerStateRoot, operatorUser, generationArchive, dependencyArchive, sourceTopology string
+	var profileRaw, instanceID, ownerStateRoot, operatorUser, updateChannel, generationArchive, dependencyArchive, sourceTopology string
 	var gatewayPort uint64
 	var releaseSequence, securityEpoch uint64
 	var manifestProtocolMin, manifestProtocolMax uint64
 	var releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest string
+	var repairCurrent bool
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
 	flags.StringVar(&operatorUser, "operator-user", "", "")
+	flags.StringVar(&updateChannel, "update-channel", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
 	flags.StringVar(&sourceTopology, "source-topology", "", "")
@@ -242,7 +245,9 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags.StringVar(&releaseIndexDigest, "release-index-digest", "", "")
 	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
 	flags.StringVar(&pluginLockDigest, "plugin-lock-digest", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 {
+	flags.BoolVar(&repairCurrent, "repair-current", false, "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 ||
+		(updateChannel != "stable" && updateChannel != "beta") {
 		return errors.New("invalid lifecycle initialization arguments")
 	}
 	if manifestProtocolMin > uint64(^uint32(0)) || manifestProtocolMax > uint64(^uint32(0)) {
@@ -252,16 +257,16 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	if operatorUser == "" {
 		return errors.New("lifecycle initialization requires an operator user")
 	}
-	initializationLock, err := acquireInitializationLock(profile)
+	initializationLock, err := acquireInitializationLockForOS(runtime.GOOS, profile)
 	if err != nil {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, initializationLock.Release()) }()
-	principalSystem, err := platform.NewLinuxPrincipalSystem()
+	principalSystem, err := platform.NewPrincipalSystem()
 	if err != nil {
 		return err
 	}
-	discovered, err := discoverInitialization(profile, instanceID, ownerStateRoot, operatorUser, principalSystem)
+	discovered, err := discoverInitialization(runtime.GOOS, profile, instanceID, ownerStateRoot, operatorUser, principalSystem)
 	if err != nil {
 		return err
 	}
@@ -284,15 +289,32 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	default:
 		return errors.New("installation discovery returned an unsupported class")
 	}
+	if repairCurrent && discovered.Installation.Kind != planner.InstallationManaged {
+		return errors.New("managed repair requires an existing canonical installation")
+	}
 	applyArguments, err := initializationApplyArguments("", generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, uint32(manifestProtocolMin), uint32(manifestProtocolMax), releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest)
 	if err != nil {
 		return err
 	}
-	homeACL, err := platform.NewLinuxACL()
+	if repairCurrent {
+		applyArguments = append(applyArguments, "--repair-current")
+	}
+	if discovered.Installation.Kind == planner.InstallationManaged && !repairCurrent {
+		configPath, fast, fastErr := managedInitializationFastPath(discovered.Installation, profile, instanceID, ownerStateRoot, operatorUser, uint16(gatewayPort), updateChannel,
+			releaseSequence, securityEpoch, uint32(manifestProtocolMin), uint32(manifestProtocolMax), releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest, principalSystem)
+		if fastErr != nil {
+			return fastErr
+		}
+		if fast {
+			applyArguments[1] = configPath
+			return applyVerifiedArchive(applyArguments, output)
+		}
+	}
+	homeACL, err := platform.NewHomeACL()
 	if err != nil {
 		return err
 	}
-	systemd, err := systemdClient()
+	serviceManager, err := platform.NewSystemServiceManager()
 	if err != nil {
 		return err
 	}
@@ -312,10 +334,10 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	defer cancel()
 	result, err := bootstrap.BeginPlatformBootstrap(ctx, bootstrap.PlatformBootstrapRequest{
 		TransactionID: transactionID, Profile: profile, InstanceIDAssertion: instanceID,
-		OperatorUser: operatorUser, OwnerStateRoot: ownerStateRoot, GatewayPort: uint16(gatewayPort),
-		ExpectedRegistryOwner: 0, RegistryPath: platform.LocalInstanceRegistryPath,
-		JournalPath:  filepath.Join("/var/lib/fased-lifecycle-bootstrap", transactionID+".json"),
-		StableDaemon: stableDaemon, Principals: principalSystem, ACL: homeACL, Systemd: systemd,
+		OperatorUser: operatorUser, OwnerStateRoot: ownerStateRoot, UpdateChannel: updateChannel, GatewayPort: uint16(gatewayPort),
+		ExpectedRegistryOwner: 0, RegistryPath: platform.LocalInstanceRegistryPathForOS(runtime.GOOS),
+		JournalPath:  filepath.Join(platform.BootstrapJournalRootForOS(runtime.GOOS), transactionID+".json"),
+		StableDaemon: stableDaemon, Principals: principalSystem, ACL: homeACL, Systemd: serviceManager, OperatingSystem: runtime.GOOS,
 		BridgePublicStable: discovered.Installation.Kind == planner.InstallationPublicStable,
 	})
 	if err != nil {
@@ -336,14 +358,131 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	return nil
 }
 
+func managedInitializationFastPath(
+	installation planner.Installation,
+	profile model.Profile,
+	instanceAssertion, ownerStateRoot, operatorUser string,
+	gatewayPort uint16,
+	updateChannel string,
+	releaseSequence, securityEpoch uint64,
+	manifestProtocolMin, manifestProtocolMax uint32,
+	releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest string,
+	principals platform.PrincipalSystem,
+) (string, bool, error) {
+	if installation.Kind != planner.InstallationManaged || installation.Manifest == nil || installation.Manifest.ActiveGeneration == nil {
+		return "", false, errors.New("managed fast path requires an installed active generation")
+	}
+	manifest := installation.Manifest
+	if instanceAssertion != "" && instanceAssertion != manifest.Platform.InstanceID {
+		return "", false, errors.New("caller instance assertion differs from the managed manifest")
+	}
+	configPath := platform.LocalPlatformConfigPathForOS(runtime.GOOS, manifest.Platform.InstanceID)
+	if profile == model.ProfileHosting {
+		configPath = "/var/lib/fased-lifecycled/platform.json"
+	}
+	config, err := loadConfig(configPath, 0)
+	if err != nil {
+		return "", false, err
+	}
+	operator, exists, err := principals.LookupUser(context.Background(), operatorUser)
+	if err != nil || !exists {
+		return "", false, errors.New("managed update operator is unavailable")
+	}
+	state, err := store.OpenExistingLayout(store.Layout{StateRoot: config.LifecycleRoot, InstallRoot: config.InstallRoot})
+	if err != nil {
+		return "", false, err
+	}
+	authority, bound, err := managedFastPathAuthority(state, *manifest)
+	if err != nil {
+		return "", false, err
+	}
+	if !bound {
+		return configPath, false, nil
+	}
+	policy, err := platform.ReadUpdatePolicy(config)
+	if errors.Is(err, os.ErrNotExist) {
+		return configPath, false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	fast, err := managedInitializationInputsMatch(*manifest, config, operator, ownerStateRoot, gatewayPort, updateChannel,
+		authority, policy, releaseSequence, securityEpoch, manifestProtocolMin, manifestProtocolMax,
+		releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest)
+	return configPath, fast, err
+}
+
+type candidateAuthorityReader interface {
+	ReadCandidateAuthority(string) (store.CandidateAuthority, error)
+}
+
+func managedFastPathAuthority(reader candidateAuthorityReader, manifest model.Manifest) (store.CandidateAuthority, bool, error) {
+	if manifest.ActiveGeneration == nil {
+		return store.CandidateAuthority{}, false, errors.New("managed fast path requires an installed active generation")
+	}
+	authority, err := reader.ReadCandidateAuthority(manifest.ActiveGeneration.ID)
+	if errors.Is(err, os.ErrNotExist) && manifest.SchemaVersion == 1 {
+		return store.CandidateAuthority{}, false, nil
+	}
+	if err != nil {
+		return store.CandidateAuthority{}, false, err
+	}
+	return authority, true, nil
+}
+
+func managedInitializationInputsMatch(
+	manifest model.Manifest,
+	config platform.Config,
+	operator platform.AccountRecord,
+	ownerStateRoot string,
+	gatewayPort uint16,
+	updateChannel string,
+	authority store.CandidateAuthority,
+	policy platform.UpdatePolicy,
+	releaseSequence, securityEpoch uint64,
+	manifestProtocolMin, manifestProtocolMax uint32,
+	releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest string,
+) (bool, error) {
+	if manifest.ActiveGeneration == nil || operator.UID != config.Operator.UID || operator.GID != config.Operator.GID ||
+		operator.Home != filepath.Dir(ownerStateRoot) || config.Profile != manifest.Profile || config.InstanceID != manifest.Platform.InstanceID ||
+		config.OwnerStateRoot != ownerStateRoot || config.GatewayPort != gatewayPort {
+		return false, errors.New("managed platform configuration differs from the authorized update identity")
+	}
+	configIdentity, err := config.Identity()
+	if err != nil {
+		return false, err
+	}
+	configDigest, err := configIdentity.Digest(manifest.Profile)
+	if err != nil {
+		return false, err
+	}
+	manifestDigest, err := manifest.Platform.Digest(manifest.Profile)
+	if err != nil || configDigest != manifestDigest {
+		return false, errors.New("managed manifest platform differs from its root configuration")
+	}
+	return policy.Channel == updateChannel &&
+		authority.GenerationID == manifest.ActiveGeneration.ID &&
+		authority.ReleaseSequence == releaseSequence && authority.SecurityEpoch == securityEpoch &&
+		authority.ManifestMin == manifestProtocolMin && authority.ManifestMax == manifestProtocolMax &&
+		authority.ReleaseIndex == releaseIndexDigest && authority.ReleaseAuthority == releaseAuthorityDigest &&
+		authority.PluginLockDigest == pluginLockDigest, nil
+}
+
 type initializationMutationLock struct{ file *os.File }
 
 func acquireInitializationLock(profile model.Profile) (*initializationMutationLock, error) {
+	return acquireInitializationLockForOS(runtime.GOOS, profile)
+}
+
+func acquireInitializationLockForOS(operatingSystem string, profile model.Profile) (*initializationMutationLock, error) {
 	var path string
 	switch profile {
 	case model.ProfileProtectedLocal:
-		path = "/run/lock/fased-bootstrap-local.lock"
+		path = platform.BootstrapMutationLockPathForOS(operatingSystem)
 	case model.ProfileHosting:
+		if operatingSystem != "linux" {
+			return nil, errors.New("Hosting lifecycle is supported only on Linux")
+		}
 		path = "/run/lock/fased-bootstrap-hosting.lock"
 	default:
 		return nil, errors.New("lifecycle initialization profile is unsupported")
@@ -436,14 +575,14 @@ func bootstrapPathRemovalFailures(err error) ([]*platform.BootstrapPathRemovalEr
 	return nil, false
 }
 
-func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, operatorUser string, principals platform.PrincipalSystem) (platform.DiscoveryResult, error) {
+func discoverInitialization(operatingSystem string, profile model.Profile, instanceID, ownerStateRoot, operatorUser string, principals platform.PrincipalSystem) (platform.DiscoveryResult, error) {
 	selectedInstance := instanceID
 	if profile == model.ProfileProtectedLocal && selectedInstance == "" {
 		operator, exists, err := principals.LookupUser(context.Background(), operatorUser)
 		if err != nil || !exists {
 			return platform.DiscoveryResult{}, errors.New("Local operator is unavailable during read-only discovery")
 		}
-		entry, found, err := platform.FindLocalInstance(platform.LocalInstanceRegistryPath, 0, operator.UID, operatorUser, string(profile), ownerStateRoot)
+		entry, found, err := platform.FindLocalInstance(platform.LocalInstanceRegistryPathForOS(operatingSystem), 0, operator.UID, operatorUser, string(profile), ownerStateRoot)
 		if err != nil {
 			return platform.DiscoveryResult{}, err
 		}
@@ -453,8 +592,8 @@ func discoverInitialization(profile model.Profile, instanceID, ownerStateRoot, o
 			selectedInstance = "unallocated"
 		}
 	}
-	manifestPath := filepath.Join("/var/lib/fased-local", selectedInstance, "lifecycle", "installation-manifest.json")
-	installRoot := filepath.Join("/opt/fased/local", selectedInstance)
+	manifestPath := filepath.Join(platform.LocalLifecycleRootForOS(operatingSystem, selectedInstance), "installation-manifest.json")
+	installRoot := platform.LocalInstallRootForOS(operatingSystem, selectedInstance)
 	if profile == model.ProfileHosting {
 		manifestPath = "/var/lib/fased-lifecycled/installation-manifest.json"
 		installRoot = "/opt/fased"
@@ -635,6 +774,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	var releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest string
 	var releaseSequence, securityEpoch uint64
 	var manifestProtocolMin, manifestProtocolMax uint64
+	var repairCurrent bool
 	flags.StringVar(&configPath, "config", "", "")
 	flags.StringVar(&generationArchive, "generation-archive", "", "")
 	flags.StringVar(&dependencyArchive, "dependency-archive", "", "")
@@ -647,6 +787,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	flags.StringVar(&releaseIndexDigest, "release-index-digest", "", "")
 	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
 	flags.StringVar(&pluginLockDigest, "plugin-lock-digest", "", "")
+	flags.BoolVar(&repairCurrent, "repair-current", false, "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid lifecycle apply arguments")
 	}
@@ -699,7 +840,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return readErr
 	}
-	systemd, err := systemdClient()
+	serviceManager, err := platform.NewSystemServiceManager()
 	if err != nil {
 		return err
 	}
@@ -709,8 +850,10 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	if err := systemd.Start(ctx, identity.Services["supervisor"]); err != nil {
-		return err
+	if err := serviceManager.IsActive(ctx, identity.Services["supervisor"]); err != nil {
+		if err := serviceManager.Start(ctx, identity.Services["supervisor"]); err != nil {
+			return err
+		}
 	}
 	if err := waitForSocket(ctx, config.SupervisorSocket()); err != nil {
 		return err
@@ -719,9 +862,13 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	operation := protocol.OperationConverge
+	if repairCurrent {
+		operation = protocol.OperationRepairCurrent
+	}
 	response, err := daemon.Call(ctx, config.SupervisorSocket(), protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
-		Operation: protocol.OperationConverge, TargetGenerationID: generation.ID,
+		Operation: operation, TargetGenerationID: generation.ID,
 		SourceTopology:           sourceTopology,
 		PublicPredecessorVersion: publicPredecessorVersion,
 		ExpectedManifestDigest:   expectedManifest,
@@ -736,7 +883,7 @@ func writeConvergenceResponse(output io.Writer, response protocol.Response) erro
 	if err := json.NewEncoder(output).Encode(response); err != nil {
 		return err
 	}
-	if response.Outcome != string(engine.OutcomeUpdated) && response.Outcome != string(engine.OutcomeAlreadyCurrent) {
+	if response.Outcome != string(engine.OutcomeUpdated) && response.Outcome != string(engine.OutcomeAlreadyCurrent) && response.Outcome != "REPAIRED" {
 		detail := response.Detail
 		if detail == "" {
 			detail = "lifecycle transaction did not commit"
@@ -847,11 +994,11 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	if err != nil {
 		return err
 	}
-	systemd, err := systemdClient()
+	serviceManager, err := platform.NewSystemServiceManager()
 	if err != nil {
 		return err
 	}
-	targetEngine, targetAdapter, err := installedTargetRuntime(config, identity, state, systemd)
+	targetEngine, targetAdapter, err := installedTargetRuntime(config, identity, state, serviceManager)
 	if err != nil {
 		return err
 	}
@@ -861,7 +1008,7 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 		Profile: config.Profile, OwnerStateRoot: config.OwnerStateRoot,
 		CanonicalManifestPath: filepath.Join(config.LifecycleRoot, "installation-manifest.json"), CanonicalInstallRoot: config.InstallRoot,
 	}}
-	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetAdapter, PredecessorEvidence: evidence, CurrentConvergence: targetAdapter}
+	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetAdapter, PredecessorEvidence: evidence, CurrentConvergence: targetAdapter, CurrentRepair: targetAdapter}
 	if err := service.RecoverPending(ctx); err != nil {
 		return fmt.Errorf("startup lifecycle recovery: %w", err)
 	}
@@ -876,7 +1023,7 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	return server.Serve(ctx, listener)
 }
 
-func installedTargetRuntime(config platform.Config, identity model.PlatformIdentity, state *store.Store, systemd platform.CommandSystemd) (*engine.TargetEngine, *platform.TargetAdapter, error) {
+func installedTargetRuntime(config platform.Config, identity model.PlatformIdentity, state *store.Store, serviceManager platform.Systemd) (*engine.TargetEngine, *platform.TargetAdapter, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, nil, err
@@ -902,11 +1049,10 @@ func installedTargetRuntime(config platform.Config, identity model.PlatformIdent
 		Generations: state, ExpectedGateUID: 0}
 	var predecessor platform.Predecessor = platform.NoPredecessor{}
 	var networkPolicy platform.NetworkPolicy = platform.NoNetworkPolicy{}
-	legacyPredecessor := &platform.LegacyControllerPredecessor{
-		Config: config, Systemd: systemd,
-		State: platform.CommandLegacyControllerState{Binary: "/usr/bin/systemctl"},
-	}
-	if config.Profile == model.ProfileProtectedLocal {
+	if config.IsDarwinLaunchd() {
+		predecessor = platform.NoPredecessor{}
+	} else if config.Profile == model.ProfileProtectedLocal {
+		legacyPredecessor := &platform.LegacyControllerPredecessor{Config: config, Systemd: serviceManager, State: platform.CommandLegacyControllerState{Binary: "/usr/bin/systemctl"}}
 		predecessor = platform.CombinedPredecessor{
 			Public: &platform.LocalPredecessor{Config: config, Systemd: platform.CommandUserSystemd{
 				Binary: "/usr/bin/systemctl", Principal: config.Operator, Home: config.OwnerHome(),
@@ -914,13 +1060,14 @@ func installedTargetRuntime(config platform.Config, identity model.PlatformIdent
 			Legacy: legacyPredecessor,
 		}
 	} else {
+		legacyPredecessor := &platform.LegacyControllerPredecessor{Config: config, Systemd: serviceManager, State: platform.CommandLegacyControllerState{Binary: "/usr/bin/systemctl"}}
 		predecessor = platform.CombinedPredecessor{
-			Public: &platform.HostingPredecessor{Config: config, Systemd: systemd, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}},
+			Public: &platform.HostingPredecessor{Config: config, Systemd: serviceManager, State: platform.CommandServiceState{Binary: "/usr/bin/systemctl"}},
 			Legacy: legacyPredecessor,
 		}
-		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss"}
+		networkPolicy = platform.CommandHostingNetworkPolicy{TailscaleBinary: "/usr/bin/tailscale", SocketBinary: "/usr/bin/ss", SignerWebAuthnPath: "/etc/fased/signerd-webauthn.env"}
 	}
-	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, TypedState: typedState, Systemd: systemd, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state, Plugins: platform.DiskPluginBoundary{Config: config, Resolver: state}}
+	targetAdapter := &platform.TargetAdapter{Config: config, Identity: identity, Units: units, Files: files, TypedState: typedState, Systemd: serviceManager, Generations: state, Health: platform.LoopbackGatewayHealth{}, Predecessor: predecessor, Fence: platform.DiskLocalPredecessorFence{}, Network: networkPolicy, Manifest: state, Plugins: platform.DiskPluginBoundary{Config: config, Resolver: state}}
 	targetEngine := &engine.TargetEngine{Journal: state, Generations: state,
 		Migrator: &migrator.SchemaMigrator{Registry: registry}, Signer: signerParticipant,
 		Adapter: targetAdapter, Installation: &platform.ManifestCommitter{Store: state, Identity: identity}}
@@ -944,15 +1091,6 @@ func loadConfig(path string, expectedUID int) (platform.Config, error) {
 		return platform.Config{}, err
 	}
 	return platform.DecodeConfig(data)
-}
-
-func systemdClient() (platform.CommandSystemd, error) {
-	for _, path := range []string{"/usr/bin/systemctl", "/bin/systemctl"} {
-		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
-			return platform.CommandSystemd{Binary: path}, nil
-		}
-	}
-	return platform.CommandSystemd{}, errors.New("systemctl is unavailable")
 }
 
 func listenBound(path string, mode os.FileMode, gid int) (*net.UnixListener, error) {
@@ -992,7 +1130,6 @@ func listenBound(path string, mode os.FileMode, gid int) (*net.UnixListener, err
 	return listener, nil
 }
 
-// systemd creates RuntimeDirectory entries using the daemon's root group.
 // The public supervisor socket is group-authorized, so its immediate parent
 // must carry the same fixed group or an authorized operator cannot traverse to
 // the socket. The private controller passes gid 0 and remains root-only.

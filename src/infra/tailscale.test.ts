@@ -13,9 +13,11 @@ const tailscaleBin = expect.stringMatching(/tailscale$/i);
 
 describe("tailscale helpers", () => {
   const originalForcedBinary = process.env.FASED_TEST_TAILSCALE_BINARY;
+  const originalRuntimeSource = process.env.FASED_RUNTIME_SOURCE;
 
   beforeEach(() => {
     process.env.FASED_TEST_TAILSCALE_BINARY = "tailscale";
+    delete process.env.FASED_RUNTIME_SOURCE;
   });
 
   afterEach(() => {
@@ -24,7 +26,25 @@ describe("tailscale helpers", () => {
     } else {
       process.env.FASED_TEST_TAILSCALE_BINARY = originalForcedBinary;
     }
+    if (originalRuntimeSource === undefined) {
+      delete process.env.FASED_RUNTIME_SOURCE;
+    } else {
+      process.env.FASED_RUNTIME_SOURCE = originalRuntimeSource;
+    }
     vi.restoreAllMocks();
+  });
+
+  it("refuses Tailscale mutation from a Go-managed application runtime", async () => {
+    process.env.FASED_RUNTIME_SOURCE = "go-lifecycle";
+    const exec = vi.fn();
+
+    await expect(enableTailscaleServe(3000, exec as never)).rejects.toThrow(
+      "owned by the verified Go lifecycle",
+    );
+    await expect(disableTailscaleServe(exec as never)).rejects.toThrow(
+      "owned by the verified Go lifecycle",
+    );
+    expect(exec).not.toHaveBeenCalled();
   });
 
   it("parses DNS name from tailscale status", async () => {

@@ -31,8 +31,8 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
 
 <Tabs>
   <Tab title="macOS">
-    **Homebrew** (recommended). If Homebrew already exists, `./install.sh` can
-    use it automatically.
+    **Homebrew** (recommended for source development). The public managed
+    installer does not support macOS in the first stable matrix.
 
     ```bash
     brew install node
@@ -101,12 +101,11 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
   </Tab>
   <Tab title="Windows / WSL2">
     Do not install Node with `winget`, Chocolatey, or a native Windows Node.js
-    installer for the public Fased runtime. Install WSL2 Ubuntu, open the
-    Ubuntu shell, and use the Ubuntu instructions in this page or let
-    `install.sh` install Node automatically. Native Windows Node.js cannot run
-    the Unix-socket wallet signer path, and the published npm package rejects
-    native Windows with `EBADPLATFORM`. Do not force installation with npm
-    platform overrides. See [Windows (WSL2)](/platforms/windows).
+    installer for a managed Fased runtime. WSL2 and native Windows are deferred
+    from the first managed stable matrix. Maintainers may use WSL2 for source
+    development with the Ubuntu instructions above; do not present that as a
+    supported public managed install. Native Windows Node.js cannot run the
+    Unix-socket wallet signer path. See [Windows](/platforms/windows).
   </Tab>
 </Tabs>
 
@@ -172,9 +171,9 @@ your shell has not reloaded its startup files yet.
         Then open a new terminal (or run `rehash` in zsh / `hash -r` in bash).
       </Tab>
       <Tab title="Windows / WSL2">
-        Add the same line to the Ubuntu shell startup file inside WSL2. Native
-        Windows Node.js is not a supported Fased runtime; use WSL2 for the
-        normal public install path.
+        Add the same line to the Ubuntu shell startup file inside WSL2 for a
+        source-development checkout. WSL2 and native Windows are not in the
+        first public managed matrix.
       </Tab>
     </Tabs>
 

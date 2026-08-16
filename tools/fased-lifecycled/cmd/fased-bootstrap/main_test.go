@@ -167,6 +167,10 @@ func TestPublicBootstrapRequiresTerminalGenerationAndConvergenceDigests(t *testi
 	if _, err := decodeTerminalLifecycleResponse(valid); err != nil {
 		t.Fatalf("valid terminal lifecycle response was rejected: %v", err)
 	}
+	repaired := []byte(strings.Replace(string(valid), `"UPDATED"`, `"REPAIRED"`, 1))
+	if _, err := decodeTerminalLifecycleResponse(repaired); err != nil {
+		t.Fatalf("valid terminal repair response was rejected: %v", err)
+	}
 	for name, candidate := range map[string][]byte{
 		"failure-outcome": []byte(strings.Replace(string(valid), `"UPDATED"`, `"REPAIR_REQUIRED"`, 1)),
 		"missing-receipt": []byte(strings.Replace(string(valid), `"convergenceReceiptDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"`, `"convergenceReceiptDigest":""`, 1)),
@@ -195,11 +199,25 @@ func TestPublicLifecycleRoutesInstallAndUpdateWithoutCallerTrustSelectors(t *tes
 	if update.Operation != "update" || update.Version != "" || update.Onboard {
 		t.Fatalf("update route was not bound: %+v", update)
 	}
+	if !update.ChannelExplicit {
+		t.Fatal("explicit update channel was not distinguished from the default")
+	}
+	implicit, err := parsePublicLifecycleRequest("update", []string{"--operator-user", "owner"})
+	if err != nil || implicit.ChannelExplicit {
+		t.Fatalf("implicit update channel was not preserved for installed-policy binding: request=%+v err=%v", implicit, err)
+	}
 	if update.GatewayPort != 0 {
 		t.Fatalf("update invented an installation port: %+v", update)
 	}
 	if update.Timeout != 8*time.Minute {
 		t.Fatalf("update lost its bounded default timeout: %+v", update)
+	}
+	repair, err := parsePublicLifecycleRequest("repair", []string{"--operator-user", "owner"})
+	if err != nil || repair.Operation != "repair" || repair.Version != "" || repair.Onboard {
+		t.Fatalf("managed repair route was not bound to installed identity: request=%+v err=%v", repair, err)
+	}
+	if _, err := parsePublicLifecycleRequest("repair", []string{"--channel", "beta", "--version", "0.1.76-rc.96", "--operator-user", "owner"}); err == nil {
+		t.Fatal("managed repair accepted a caller-selected release")
 	}
 	beta, err := parsePublicLifecycleRequest("update", []string{"--tag", "beta", "--timeout", "120", "--yes", "--operator-user", "owner"})
 	if err != nil || beta.Channel != "beta" || beta.Version != "" || beta.Timeout != 2*time.Minute {
@@ -220,6 +238,90 @@ func TestPublicLifecycleRoutesInstallAndUpdateWithoutCallerTrustSelectors(t *tes
 	}
 	if _, err := parsePublicLifecycleRequest("update", []string{"--profile", "protected-local", "--operator-user", "other"}); err == nil {
 		t.Fatal("update accepted an operator other than the authenticated sudo peer")
+	}
+	hosting, err := parsePublicLifecycleRequest("install", []string{"--profile", "hosting", "--channel", "beta", "--version", "0.1.76-rc.97", "--operator-user", "app", "--ts-authkey-file", "/root/tailscale.key", "--tailnet-access-confirmed"})
+	if err != nil || hosting.TailscaleAuthKeyFile != "/root/tailscale.key" || !hosting.TailnetAccessConfirmed {
+		t.Fatalf("Hosting security selectors were not bounded: request=%+v err=%v", hosting, err)
+	}
+	if _, err := parsePublicLifecycleRequest("install", []string{"--profile", "protected-local", "--version", "1.2.3", "--operator-user", "owner", "--ts-authkey-file", "/root/tailscale.key"}); err == nil {
+		t.Fatal("Local install accepted Hosting Tailscale authority")
+	}
+	if _, err := parsePublicLifecycleRequest("update", []string{"--profile", "hosting", "--operator-user", "owner", "--tailnet-access-confirmed"}); err == nil {
+		t.Fatal("update accepted an install-only tailnet confirmation")
+	}
+}
+
+func TestManagedUninstallRejectsLegacyDestructiveScopesBeforeAuthority(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"--profile", "protected-local", "--operator-user", "owner", "--yes", "--state"},
+		{"--profile", "protected-local", "--operator-user", "owner", "--yes", "--workspace"},
+		{"--profile", "protected-local", "--operator-user", "owner", "--yes", "--all"},
+		{"--profile", "protected-local", "--profile", "hosting", "--operator-user", "owner", "--yes"},
+	} {
+		if err := runPublicUninstall(arguments, io.Discard); err == nil || !strings.Contains(err.Error(), "invalid managed uninstall") && !strings.Contains(err.Error(), "selected exactly once") {
+			t.Fatalf("legacy destructive uninstall selector was accepted: args=%v err=%v", arguments, err)
+		}
+	}
+}
+
+func TestManagedRollbackRequiresExactAuthorizationFileBeforeAuthority(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"--profile", "protected-local", "--operator-user", "owner"},
+		{"--profile", "protected-local", "--profile", "hosting", "--operator-user", "owner", "--authorization-file", "/tmp/grant.json"},
+		{"--profile", "protected-local", "--operator-user", "owner", "--authorization-file", "relative.json"},
+		{"--profile", "protected-local", "--operator-user", "owner", "--authorization-file", "/tmp/grant.json", "--timeout", "601"},
+	} {
+		if err := runPublicRollback(arguments, io.Discard); err == nil || !strings.Contains(err.Error(), "invalid managed rollback") && !strings.Contains(err.Error(), "selected exactly once") {
+			t.Fatalf("unsafe rollback arguments were accepted: args=%v err=%v", arguments, err)
+		}
+	}
+}
+
+func TestRollbackInputReaderRequiresOneBoundSecureFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "grant.json")
+	if err := os.WriteFile(path, []byte("signed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readSecureRollbackInput(path, 64, uint32(os.Geteuid()))
+	if err != nil || string(data) != "signed\n" {
+		t.Fatalf("secure rollback input rejected: data=%q err=%v", data, err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSecureRollbackInput(path, 64, uint32(os.Geteuid())); err == nil {
+		t.Fatal("group/world-readable rollback input was accepted")
+	}
+	link := filepath.Join(root, "grant-link.json")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSecureRollbackInput(link, 64, uint32(os.Geteuid())); err == nil {
+		t.Fatal("symlinked rollback input was accepted")
+	}
+}
+
+func TestInstalledUpdateChannelUsesRootPolicyAndBoundsLegacyInference(t *testing.T) {
+	request := publicLifecycleRequest{Operation: "update", Channel: "stable"}
+	if err := bindInstalledUpdateChannel(&request, "beta", installedLifecycleStatus{Version: "0.1.76-rc.96"}); err != nil || request.Channel != "beta" {
+		t.Fatalf("root-owned beta policy was not selected: request=%+v err=%v", request, err)
+	}
+	explicit := publicLifecycleRequest{Operation: "update", Channel: "stable", ChannelExplicit: true}
+	if err := bindInstalledUpdateChannel(&explicit, "beta", installedLifecycleStatus{Version: "0.1.76-rc.96"}); err != nil || explicit.Channel != "stable" {
+		t.Fatalf("explicit channel selection was overwritten: request=%+v err=%v", explicit, err)
+	}
+	legacy := publicLifecycleRequest{Operation: "update", Channel: "stable"}
+	if err := bindInstalledUpdateChannel(&legacy, "", installedLifecycleStatus{Version: "0.1.76-rc.96"}); err != nil || legacy.Channel != "beta" {
+		t.Fatalf("legacy prerelease channel was not inferred once: request=%+v err=%v", legacy, err)
+	}
+	stable := publicLifecycleRequest{Operation: "update", Channel: "stable"}
+	if err := bindInstalledUpdateChannel(&stable, "", installedLifecycleStatus{Version: "0.1.75"}); err != nil || stable.Channel != "stable" {
+		t.Fatalf("legacy stable channel inference changed: request=%+v err=%v", stable, err)
+	}
+	unknown := publicLifecycleRequest{Operation: "update", Channel: "stable"}
+	if err := bindInstalledUpdateChannel(&unknown, "nightly", installedLifecycleStatus{Version: "0.1.75"}); err == nil {
+		t.Fatal("unknown installed update policy was accepted")
 	}
 }
 
@@ -541,14 +643,48 @@ func TestOnboardingCommandBindsCanonicalProfileEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostArgs := strings.Join(onboardingCommandArgs(publicLifecycleRequest{Profile: model.ProfileHosting, Channel: "beta"}, publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}, hosting, "/home/app/.fased/bin/fased"), "\n")
-	for _, required := range []string{"FASED_HOST_PROFILE=hosting", "FASED_HOST_ROOT_PREPARED=1", "FASED_UPDATE_CHANNEL=beta", "FASED_WALLET_LOCAL_SIGNER_SOCKET=" + hosting.ApplicationSocket()} {
+	hostArgs := strings.Join(onboardingCommandArgs(publicLifecycleRequest{Profile: model.ProfileHosting, Channel: "beta", Version: "0.1.76-rc.97"}, publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}, hosting, "/home/app/.fased/bin/fased"), "\n")
+	for _, required := range []string{"FASED_HOST_PROFILE=hosting", "FASED_HOST_ROOT_PREPARED=1", "FASED_UPDATE_CHANNEL=beta", "FASED_HOSTING_RELEASE=0.1.76-rc.97", "FASED_WALLET_LOCAL_SIGNER_SOCKET=" + hosting.ApplicationSocket()} {
 		if !strings.Contains(hostArgs, required) {
 			t.Fatalf("Hosting onboarding omitted %q from %s", required, hostArgs)
 		}
 	}
 	if strings.Contains(hostArgs, "FASED_PROTECTED_LOCAL=") {
 		t.Fatalf("Hosting onboarding inherited Local authority: %s", hostArgs)
+	}
+}
+
+func TestHostingBrowserAuthenticationIsIndependentFromApplicationOnboarding(t *testing.T) {
+	if !publicRequestAllowsBrowserAuthentication(publicLifecycleRequest{Operation: "install"}) {
+		t.Fatal("ordinary installer lost interactive Tailscale authentication")
+	}
+	if !publicRequestAllowsBrowserAuthentication(publicLifecycleRequest{
+		Operation: "install", OnboardArgs: []string{"--non-interactive"},
+	}) {
+		t.Fatal("scripted application onboarding suppressed the Tailscale login URL")
+	}
+	if publicRequestAllowsBrowserAuthentication(publicLifecycleRequest{Operation: "install", JSON: true}) {
+		t.Fatal("JSON Hosting request selected an interactive auth flow")
+	}
+}
+
+func TestHostingSecurityLogIsBoundedAndSecure(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "log")
+	path := filepath.Join(directory, "hosting-security.log")
+	log, err := openBoundedHostingSecurityLog(directory, path, uint32(os.Getuid()), 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written, err := log.Write([]byte("123456789")); err == nil || written != 8 {
+		t.Fatalf("oversized log write was not bounded: written=%d err=%v", written, err)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Size() != 8 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("bounded log identity: info=%v err=%v", info, err)
 	}
 }
 

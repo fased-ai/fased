@@ -63,6 +63,9 @@ func (store *DiskLifecycleFileStore) Prepare(transactionID string, files map[str
 	if err := store.validate(files); err != nil {
 		return err
 	}
+	if err := store.validateStagingNames(files); err != nil {
+		return err
+	}
 	workspace := store.workspace(transactionID)
 	for _, directory := range []string{"staged", "previous"} {
 		if err := os.MkdirAll(filepath.Join(workspace, directory), 0o700); err != nil {
@@ -115,6 +118,18 @@ func (store *DiskLifecycleFileStore) Prepare(transactionID string, files map[str
 		if err := writeAtomicFile(filepath.Join(workspace, "staged", name+".json"), append(encoded, '\n'), 0o600); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (store *DiskLifecycleFileStore) validateStagingNames(files map[string]LifecycleFile) error {
+	stagingNames := make(map[string]string, len(files))
+	for target := range files {
+		name := store.recordName(target)
+		if previous, exists := stagingNames[name]; exists && previous != target {
+			return fmt.Errorf("lifecycle file staging name %q collides for %q and %q", name, previous, target)
+		}
+		stagingNames[name] = target
 	}
 	return nil
 }
@@ -200,6 +215,13 @@ func (store *DiskLifecycleFileStore) validate(files map[string]LifecycleFile) er
 }
 
 func (store *DiskLifecycleFileStore) recordName(target string) string {
+	signerOwnerFiles := CanonicalSignerOwnerFiles(store.Config)
+	if target == signerOwnerFiles[0] {
+		return "helper"
+	}
+	if target == signerOwnerFiles[1] {
+		return "wrapper"
+	}
 	if target == CanonicalGatewayConfigPath(store.Config) {
 		return "gateway-config"
 	}

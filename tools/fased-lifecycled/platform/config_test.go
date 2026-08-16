@@ -86,3 +86,28 @@ func TestConfigDigestChangesWithOwnerOrPrincipal(t *testing.T) {
 		t.Fatal("owner-state substitution did not change platform identity")
 	}
 }
+
+func TestDarwinConfigDerivesLaunchdIdentityWithoutChangingLegacyLinuxSchema(t *testing.T) {
+	operator, gateway, signer := principals()
+	config, err := NewDarwinConfig(model.ProfileProtectedLocal, "example", "/Users/example/.fased", 18789, operator, gateway, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := config.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.SchemaVersion != 2 || !config.IsDarwinLaunchd() || config.UnitRoot != "/Library/LaunchDaemons" ||
+		config.InstallRoot != "/Library/Fased/local/example" || config.StableLifecycleHostPath() != "/Library/FasedLifecycle/supervisor-v1/fased-lifecycled" ||
+		config.RuntimeRoot != "/Library/FasedState/example/runtime" || config.SupervisorRuntimeRoot() != "/Library/FasedLifecycle/example/runtime" ||
+		identity.Adapter != "darwin-launchd-local-v1" || identity.Services["gateway"] != "ai.fased.gateway.example" {
+		t.Fatalf("unexpected Darwin config or identity: %+v %+v", config, identity)
+	}
+	if _, err := NewDarwinConfig(model.ProfileHosting, "hosting", "/Users/app/.fased", 18789, operator, gateway, signer); err == nil {
+		t.Fatal("Darwin Hosting was accepted")
+	}
+	linux, err := NewConfig(model.ProfileProtectedLocal, "example", "/home/example/.fased", operator, gateway, signer)
+	if err != nil || linux.SchemaVersion != 1 || linux.OperatingSystem != "" || linux.ServiceManager != "" {
+		t.Fatalf("legacy Linux config identity changed: %+v err=%v", linux, err)
+	}
+}

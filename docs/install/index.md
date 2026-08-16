@@ -13,21 +13,21 @@ remote Linux server.
 
 <Tabs>
   <Tab title="Local">
-    Run this in macOS Terminal, a Linux terminal, or an Ubuntu WSL2 shell:
+    Run this on Linux x86_64 with systemd:
 
     ```bash
     curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
-    Native Windows is not a Local runtime. Install and run Fased inside
-    [WSL2 Ubuntu](/platforms/windows), not PowerShell, Command Prompt, Git Bash,
-    or native Windows Node.js. Tailscale is optional for Local.
+    Local binds the Gateway to loopback and does not install or prompt for
+    Tailscale. macOS, WSL2, Linux arm64, and native Windows are deferred until
+    their native lifecycle assets and acceptance packages pass.
 
   </Tab>
 
   <Tab title="VPS Hosting">
-    Use a fresh Ubuntu LTS VPS for the simplest path. SSH into its root shell,
-    then run exactly:
+    Use a fresh x86_64 Ubuntu LTS VPS for the simplest path (Rocky-compatible
+    x86_64 is the retained alternative). SSH into its root shell, then run:
 
     ```bash
     curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
@@ -42,9 +42,8 @@ remote Linux server.
 </Tabs>
 
 <Note>
-The VPS command runs inside the VPS provider's root shell. Windows users may
-manage a VPS from PowerShell; WSL2 is required only when Fased itself runs
-locally on Windows.
+The VPS command runs inside the VPS provider's root shell. Your own computer
+may use any OS to perform the later Tailscale and SSH access check.
 </Note>
 
 ## After installation
@@ -68,18 +67,18 @@ fased update
   <Accordion title="Local or Hosting?">
     | Path | Runs where | Private access | Normal operator |
     | --- | --- | --- | --- |
-    | Local | macOS, Linux, or WSL2 Ubuntu | Local OS; Tailscale optional | Your OS account; protected Linux uses isolated Gateway/signer services |
-    | VPS Hosting | Ubuntu/Fedora/RHEL-family systemd VPS | Tailscale plus provider-console recovery | `app`; Gateway is isolated as `fased-gateway` |
+    | Local | Linux x86_64 with systemd | Loopback on the local OS | Your OS account; Gateway and signer use isolated services |
+    | VPS Hosting | Ubuntu or Rocky-compatible x86_64 | Tailscale plus provider-console recovery | `app`; Gateway is isolated as `fased-gateway` |
   </Accordion>
 
   <Accordion title="What the streamed installer trusts">
-    The command downloads `install.sh` from the latest immutable stable GitHub
-    Release. Release automation stamps it with that exact version before
-    attestation and never overwrites a published asset. An unstamped streamed
-    script exits before installation. The release entrypoint rejects overrides
-    and verifies the release workflow, tag, signed manifest, app layer,
-    dependency layer, supervisor/controller, signer, architecture, commit,
-    digests, and archive layout before persistent Fased changes.
+    The convenience command trusts HTTPS, GitHub Releases, and the Fased GitHub
+    release publisher for `install.sh`, because Bash executes that shell before
+    an installed Fased trust root exists. Its stamped digest binds the Go
+    bootstrap downloaded afterward, but cannot authenticate a shell that has
+    already been replaced. The Go bootstrap then verifies the signed release
+    channel, exact descriptors, artifacts, and rollback floors before managed
+    product mutation.
 
     To verify `install.sh` before Bash runs it, use
     [Advanced exact-tag verification](/install/installer#exact-tag-pre-execution-verification).
@@ -102,8 +101,8 @@ fased update
   <Card title="VPS Hosting" href="/install/vps" icon="server">
     Three normal steps, access checks, and collapsed troubleshooting.
   </Card>
-  <Card title="Windows (WSL2)" href="/platforms/windows" icon="windows">
-    Keep PowerShell and Ubuntu commands separate.
+  <Card title="Deferred platforms" href="/platforms/windows" icon="windows">
+    WSL2, macOS, arm64, and native Windows are not in the first managed matrix.
   </Card>
   <Card title="Advanced installer" href="/install/installer" icon="terminal">
     Exact-tag verification, flags, restrictions, repair, and recovery.

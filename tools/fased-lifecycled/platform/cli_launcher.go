@@ -23,6 +23,10 @@ func RenderCLILauncher(config Config) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	bootstrapStat := `read -r bootstrap_uid bootstrap_mode bootstrap_links <<<"$(/usr/bin/stat -Lc '%u %a %h' "$bootstrap")"`
+	if config.IsDarwinLaunchd() {
+		bootstrapStat = `read -r bootstrap_uid bootstrap_mode bootstrap_links <<<"$(/usr/bin/stat -f '%u %Lp %l' "$bootstrap")"`
+	}
 	script := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 install_root=%q
@@ -46,14 +50,20 @@ elif [[ "${1:-}" == "update" ]]; then
   elif [[ "${2:-}" != "wizard" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; then
     managed_operation="update"
   fi
+elif [[ "${1:-}" == "repair" ]]; then
+  managed_operation="${1}"
+elif [[ "${1:-}" == "uninstall" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; then
+  managed_operation="uninstall"
+elif [[ "${1:-}" == "rollback" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; then
+  managed_operation="rollback"
 fi
 if [[ -n "$managed_operation" ]]; then
-  bootstrap="/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap"
+  bootstrap=%q
   [[ -f "$bootstrap" && ! -L "$bootstrap" && -x "$bootstrap" ]] || {
     echo "Fased lifecycle client is unavailable; rerun the verified installer." >&2
     exit 1
   }
-  read -r bootstrap_uid bootstrap_mode bootstrap_links <<<"$(stat -Lc '%%u %%a %%h' "$bootstrap")"
+  %s
   [[ "$bootstrap_uid" == "0" && "$bootstrap_mode" == "555" && "$bootstrap_links" == "1" ]] || {
     echo "Fased lifecycle client is unsafe; rerun the verified installer." >&2
     exit 1
@@ -89,7 +99,7 @@ dependency_identity="$("$node_bin" -e '
 ' "$inventory")" || { echo "Fased dependency identity is invalid." >&2; exit 1; }
 read -r dependency_hash dependency_archive_hash <<<"$dependency_identity"
 binding="$current/node_modules"
-binding_target="$(readlink "$binding" 2>/dev/null || true)"
+binding_target="$(/usr/bin/readlink "$binding" 2>/dev/null || true)"
 case "$binding_target" in
   "../../dependencies/$dependency_hash-$dependency_archive_hash/node_modules")
     dependency="$install_root/dependencies/$dependency_hash-$dependency_archive_hash/node_modules"
@@ -103,7 +113,11 @@ case "$binding_target" in
     ;;
 esac
 [[ -d "$dependency" && ! -L "$dependency" ]] || { echo "Fased dependency layer is unavailable." >&2; exit 1; }
-[[ -L "$binding" && "$(readlink -f "$binding")" == "$dependency" ]] || {
+binding_real="$("$node_bin" -e 'const fs=require("node:fs");process.stdout.write(fs.realpathSync(process.argv[1]))' "$binding")" || {
+  echo "Fased generation dependency binding is invalid." >&2
+  exit 1
+}
+[[ -L "$binding" && "$binding_real" == "$dependency" ]] || {
   echo "Fased generation dependency binding is invalid." >&2
   exit 1
 }
@@ -115,7 +129,7 @@ exec "$node_bin" "$runtime" "$@"
 		projection.Environment["FASED_LIFECYCLE_CONFIG"], projection.Environment["FASED_LIFECYCLE_INSTALL_ROOT"],
 		projection.Environment["FASED_HOST_PROFILE"], projection.Environment["FASED_HOST_UPDATER_SOCKET"],
 		projection.Environment["FASED_WALLET_LOCAL_SIGNER_BIN"], projection.Environment["FASED_WALLET_LOCAL_SIGNER_SOCKET"],
-		localLauncherEnvironment(projection))
+		localLauncherEnvironment(projection), config.BootstrapHostPath(), bootstrapStat)
 	return []byte(script), nil
 }
 

@@ -1,17 +1,17 @@
 ---
-summary: "Install Fased on Oracle Cloud ARM with the maintained Hosting profile"
+summary: "Oracle Cloud guidance for the first Linux x64 Hosting matrix"
 read_when:
   - You want an always-on Fased node on Oracle Cloud
-  - You need the supported ARM64 VPS path
+  - You need to select a supported x64 VPS shape
 title: "Oracle Cloud"
 ---
 
 # Fased on Oracle Cloud (OCI)
 
-Oracle Ampere ARM64 instances can run the maintained Fased Hosting profile.
-Use the root-managed non-Docker installer; do not combine an app-owned checkout
-with `sudo`, and do not use the older `./install.sh --no-onboard` plus user
-daemon sequence for a VPS.
+Oracle Ampere ARM64 is deferred from the first managed stable matrix. Select an
+x86_64/AMD-compatible Oracle Cloud shape if available and verify `uname -m`
+prints `x86_64` before installation. Do not copy x64 artifacts onto ARM64 or
+force the installer past its pre-mutation architecture check.
 
 <Warning>
 The full Docker Gateway is Local only. It is not the OCI VPS installation path,
@@ -21,7 +21,7 @@ Gateway port (`18789`) through an OCI security list or public load balancer.
 
 ## 1. Create the instance
 
-Create an Ubuntu 24.04 ARM64 instance with an SSH key. Use the general
+Create an Ubuntu 24.04 x86_64 instance with an SSH key. Use the general
 [VPS sizing guidance](/install/vps#recommended-vps-size); 2 vCPU, 4 GB RAM, and
 at least 25 GB disk is a practical starting point. Retain OCI Console/Rescue
 access for emergency recovery.

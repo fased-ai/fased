@@ -14,8 +14,16 @@ func RenderSupervisorUnit(config Config) ([]byte, error) {
 		return nil, err
 	}
 	identity, err := config.Identity()
-	if err != nil {
-		return nil, err
+	if err != nil || identity.Services["supervisor"] == "" {
+		return nil, errors.Join(err, errors.New("platform identity has no supervisor service"))
+	}
+	if config.IsDarwinLaunchd() {
+		return renderLaunchdPlist(launchdPlistSpec{
+			Label: identity.Services["supervisor"], User: "root", Group: "wheel", Umask: 0o077,
+			ProgramArguments: []string{config.StableLifecycleHostPath(), "supervisor", "--config", filepath.Join(config.LifecycleRoot, "platform.json"), "--socket", config.SupervisorSocket()},
+			Environment:      map[string]string{"HOME": "/var/root", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+			StdoutPath:       filepath.Join(config.LifecycleLogRoot(), "supervisor.log"), StderrPath: filepath.Join(config.LifecycleLogRoot(), "supervisor.err.log"),
+		})
 	}
 	runtimeDirectory := strings.TrimPrefix(config.SupervisorRuntimeRoot(), "/run/")
 	unit := fmt.Sprintf(`[Unit]
@@ -49,11 +57,8 @@ AmbientCapabilities=CAP_SETUID CAP_SETGID
 
 [Install]
 WantedBy=multi-user.target
-`, config.InstanceID, runtimeDirectory, StableLifecycleHostPath, config.LifecycleRoot, config.SupervisorSocket(),
+`, config.InstanceID, runtimeDirectory, config.StableLifecycleHostPath(), config.LifecycleRoot, config.SupervisorSocket(),
 		config.InstallRoot, config.LifecycleRoot, config.ProductStateRoot, config.OwnerStateRoot,
 		config.UnitRoot, filepath.Dir(config.UpdateGatePath()), filepath.Dir(CanonicalProductVersionPath(config)))
-	if identity.Services["supervisor"] == "" {
-		return nil, errors.New("platform identity has no supervisor service")
-	}
 	return []byte(unit), nil
 }

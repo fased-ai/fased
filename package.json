@@ -45,7 +45,6 @@
     "scripts/lifecycle-trust-root.mjs",
     "scripts/lifecycle-trust-runtime.mjs",
     "scripts/privileged-release-evidence.mjs",
-    "scripts/fased-signer-enroll-hosting.sh",
     "scripts/fased-signer-network-hosting.sh",
     "scripts/fased-signer-owner-hosting.sh",
     "scripts/fased-signer-owner-policy.mjs",

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT}/dist-native/release"
-TARGETS="${FASED_SIGNER_TARGETS:-linux/amd64,linux/arm64,darwin/amd64,darwin/arm64}"
+TARGETS="${FASED_SIGNER_TARGETS:-linux/amd64}"
 GO_BIN="${FASED_GO_BIN:-}"
 MIN_GO_VERSION="1.25.13"
 GOTMPDIR_DEFAULT="${HOME:-$ROOT}/.cache/fased/go-tmp"

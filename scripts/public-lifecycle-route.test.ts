@@ -14,7 +14,7 @@ describe("D7 public lifecycle routing", () => {
     expect(installer).toContain("bootstrap_args=(\n  install");
     expect(installer).toContain('"$bootstrap" "${bootstrap_args[@]}"');
     expect(installer).toContain("__FASED_BOOTSTRAP_SHA256_X64__");
-    expect(installer).toContain("__FASED_BOOTSTRAP_SHA256_ARM64__");
+    expect(installer).not.toContain("__FASED_BOOTSTRAP_SHA256_ARM64__");
     expect(installer).toContain("scripts/install-development.sh");
     expect(installer).not.toMatch(/\b(?:node|nodejs|npm|pnpm|gh|jq)\b/u);
     expect(installer).not.toContain("generation-updater.mjs");
@@ -23,7 +23,11 @@ describe("D7 public lifecycle routing", () => {
   it("routes managed update through the fixed bootstrap before the application generation", async () => {
     const launcher = await source("tools/fased-lifecycled/platform/cli_launcher.go");
     const route = await source("tools/fased-lifecycled/cmd/fased-bootstrap/route.go");
-    expect(launcher).toContain("/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap");
+    const authority = await source("tools/fased-lifecycled/platform/update_authority.go");
+    expect(launcher).toContain("config.BootstrapHostPath()");
+    expect(authority).toContain(
+      'const FixedBootstrapPath = "/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap"',
+    );
     expect(launcher).toContain('managed_operation=""');
     expect(launcher).toContain('[[ "${1:-}" == "--update" ]]');
     expect(launcher).toContain('managed_operation="status"');

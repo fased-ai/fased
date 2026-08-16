@@ -1,0 +1,525 @@
+{
+  "schemaVersion": 1,
+  "role": "fased-managed-lifecycle-authority",
+  "releaseRule": "every-required-capability-must-be-implemented-and-proven",
+  "profiles": [
+    {
+      "id": "linux-protected-local",
+      "support": "retained",
+      "platforms": ["linux-x64"],
+      "serviceManager": "systemd"
+    },
+    {
+      "id": "linux-arm64-protected-local",
+      "support": "deferred",
+      "platforms": ["linux-arm64"],
+      "serviceManager": "systemd"
+    },
+    {
+      "id": "wsl2-protected-local",
+      "support": "deferred",
+      "platforms": ["linux-x64", "linux-arm64"],
+      "serviceManager": "systemd"
+    },
+    {
+      "id": "linux-hosting",
+      "support": "retained",
+      "platforms": ["ubuntu-x64", "rocky-x64"],
+      "serviceManager": "systemd"
+    },
+    {
+      "id": "linux-arm64-hosting",
+      "support": "deferred",
+      "platforms": ["ubuntu-arm64", "rocky-arm64"],
+      "serviceManager": "systemd"
+    },
+    {
+      "id": "darwin-protected-local",
+      "support": "deferred",
+      "platforms": ["darwin-x64", "darwin-arm64"],
+      "serviceManager": "launchd"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "first-install-stage-zero-trust",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-bootstrap-distribution",
+      "implementation": [
+        "install.sh",
+        "scripts/stamp-release-installer.mjs",
+        "docs/install/installer.md"
+      ],
+      "evidence": [
+        "scripts/install-release-pin.test.ts",
+        "scripts/install-platform-preflight.test.ts",
+        "scripts/stamp-release-installer.test.ts",
+        "scripts/lifecycle-redesign-security-contract.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "signed-target-selection",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-bootstrap",
+      "implementation": [
+        "tools/fased-lifecycled/trust",
+        "tools/fased-lifecycled/cmd/fased-bootstrap"
+      ],
+      "evidence": ["tools/fased-lifecycled/trust/trust_test.go"],
+      "status": "implemented"
+    },
+    {
+      "id": "root-update-channel-policy",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle",
+      "implementation": ["tools/fased-lifecycled/platform/update_policy.go"],
+      "evidence": ["tools/fased-lifecycled/platform/update_policy_test.go"],
+      "status": "implemented"
+    },
+    {
+      "id": "artifact-and-dependency-import",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-bootstrap",
+      "implementation": [
+        "tools/fased-lifecycled/acquire",
+        "tools/fased-lifecycled/store/dependency_store.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/acquire/inbox_test.go",
+        "tools/fased-lifecycled/store/store_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "principals-paths-acls-and-services",
+      "boundary": "managed",
+      "profiles": ["linux-protected-local", "wsl2-protected-local", "linux-hosting"],
+      "owner": "go-linux-systemd-adapter",
+      "implementation": [
+        "tools/fased-lifecycled/bootstrap",
+        "tools/fased-lifecycled/platform/bootstrap.go",
+        "tools/fased-lifecycled/platform/supervisor_unit.go"
+      ],
+      "evidence": ["tools/fased-lifecycled/platform/t2_systemd_test.go"],
+      "status": "implemented"
+    },
+    {
+      "id": "gateway-signer-transaction",
+      "boundary": "managed",
+      "profiles": ["linux-protected-local", "wsl2-protected-local", "linux-hosting"],
+      "owner": "go-lifecycle",
+      "implementation": [
+        "tools/fased-lifecycled/engine",
+        "tools/fased-lifecycled/platform/target_adapter.go",
+        "tools/fased-lifecycled/signer"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/engine/target_test.go",
+        "tools/fased-lifecycled/platform/target_adapter_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "typed-state-preservation",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle",
+      "implementation": [
+        "tools/fased-lifecycled/statebind",
+        "tools/fased-lifecycled/platform/typed_state_store.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/statebind/statebind_test.go",
+        "tools/fased-lifecycled/platform/typed_state_store_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "signer-custody-migration",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle-and-signer",
+      "implementation": [
+        "tools/fased-lifecycled/migrator",
+        "tools/fased-signerd/hosted_migration.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/migrator/hosted_signer_test.go",
+        "tools/fased-signerd/hosted_migration_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "core-plugin-integrity-boundary",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle",
+      "implementation": [
+        "tools/fased-lifecycled/platform/plugin_boundary.go",
+        "tools/fased-lifecycled/participant/plugin.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/platform/plugin_boundary_test.go",
+        "tools/fased-lifecycled/participant/plugin_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "already-current-no-mutation",
+      "boundary": "managed",
+      "profiles": ["linux-protected-local", "wsl2-protected-local", "linux-hosting"],
+      "owner": "go-bootstrap",
+      "implementation": [
+        "tools/fased-lifecycled/cmd/fased-lifecycled/main.go",
+        "tools/fased-lifecycled/store/dependency_store.go"
+      ],
+      "evidence": ["tools/fased-lifecycled/cmd/fased-lifecycled/main_test.go"],
+      "status": "implemented"
+    },
+    {
+      "id": "hosting-tailscale-install-auth-and-identity",
+      "boundary": "managed",
+      "profiles": ["linux-hosting"],
+      "owner": "go-host-security-adapter",
+      "implementation": [
+        "tools/fased-lifecycled/hostsecurity/linux_host.go",
+        "tools/fased-lifecycled/hostsecurity/tailscale_install_linux.go"
+      ],
+      "evidence": ["tools/fased-lifecycled/hostsecurity/linux_host_test.go"],
+      "status": "partial"
+    },
+    {
+      "id": "hosting-authentic-tailscale-h0",
+      "boundary": "managed",
+      "profiles": ["linux-hosting"],
+      "owner": "go-host-security-adapter-and-acceptance",
+      "implementation": [
+        "tools/fased-lifecycled/hostsecurity/tailscale_install_linux.go",
+        "scripts/test-lifecycle-hosting-tailscale-h0.sh",
+        "tools/fased-lifecycled/hostsecurity/tailscale_h0_test.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/hostsecurity/linux_host_test.go",
+        "tools/fased-lifecycled/hostsecurity/tailscale_h0_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "hosting-private-serve",
+      "boundary": "managed",
+      "profiles": ["linux-hosting"],
+      "owner": "go-host-security-adapter",
+      "implementation": [
+        "tools/fased-lifecycled/hostsecurity/linux_host.go",
+        "tools/fased-lifecycled/platform/network_policy.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/hostsecurity/linux_host_test.go",
+        "tools/fased-lifecycled/platform/hosting_predecessor_test.go"
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "hosting-provider-access-handoff",
+      "boundary": "managed",
+      "profiles": ["linux-hosting"],
+      "owner": "go-host-security-adapter",
+      "implementation": [
+        "tools/fased-lifecycled/hostsecurity/participant.go",
+        "tools/fased-lifecycled/cmd/fased-bootstrap/route.go"
+      ],
+      "evidence": ["tools/fased-lifecycled/hostsecurity/participant_test.go"],
+      "status": "partial"
+    },
+    {
+      "id": "hosting-firewall-ssh-fail2ban-updates",
+      "boundary": "managed",
+      "profiles": ["linux-hosting"],
+      "owner": "go-host-security-adapter",
+      "implementation": ["tools/fased-lifecycled/hostsecurity/hardening_linux.go"],
+      "evidence": ["tools/fased-lifecycled/hostsecurity/linux_host_test.go"],
+      "status": "partial"
+    },
+    {
+      "id": "hosting-root-receipt-and-recovery",
+      "boundary": "managed",
+      "profiles": ["linux-hosting"],
+      "owner": "go-host-security-adapter",
+      "implementation": [
+        "tools/fased-lifecycled/hostsecurity/participant.go",
+        "tools/fased-lifecycled/hostsecurity/store.go",
+        "tools/fased-lifecycled/hostsecurity/lock.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/hostsecurity/participant_test.go",
+        "tools/fased-lifecycled/hostsecurity/lock_test.go"
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "darwin-principals-services-and-peer-auth",
+      "boundary": "managed",
+      "profiles": ["darwin-protected-local"],
+      "owner": "go-darwin-launchd-adapter",
+      "implementation": [
+        "tools/fased-lifecycled/platform/principal_darwin.go",
+        "tools/fased-lifecycled/platform/home_acl_darwin.go",
+        "tools/fased-lifecycled/platform/launchd.go",
+        "tools/fased-lifecycled/platform/launchd_plist.go",
+        "tools/fased-lifecycled/daemon/peer_darwin.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/platform/launchd_test.go",
+        "tools/fased-lifecycled/platform/acl_darwin_format_test.go",
+        "tools/fased-lifecycled/platform/config_test.go"
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "retained-platform-native-assets",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "release-build",
+      "implementation": [
+        ".github/workflows/hosted-runtime-release.yml",
+        "scripts/build-hosted-runtime-artifact.ts",
+        "scripts/build-hosted-release-manifest.mjs",
+        "scripts/build-lifecycle-release-index.mjs",
+        "install.sh"
+      ],
+      "evidence": [
+        "scripts/install-platform-preflight.test.ts",
+        "scripts/hosted-installer-artifact-layout.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "retained-platform-command-acceptance",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "platform-adapters-and-acceptance",
+      "implementation": [
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/test-lifecycle-hosting-acceptance.sh",
+        "scripts/run-lifecycle-local0.sh"
+      ],
+      "evidence": [
+        "scripts/lifecycle-acceptance-contract.test.ts",
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/test-lifecycle-local-t2-systemd.sh",
+        "tools/fased-lifecycled/platform/t2_systemd_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "deferred-platform-pre-mutation-enforcement",
+      "boundary": "managed",
+      "profiles": [
+        "linux-arm64-protected-local",
+        "linux-arm64-hosting",
+        "wsl2-protected-local",
+        "darwin-protected-local"
+      ],
+      "owner": "public-installer-and-release-build",
+      "implementation": [
+        ".github/workflows/hosted-runtime-release.yml",
+        "scripts/release-fased-signerd.sh",
+        "scripts/release-fased-lifecycled.sh",
+        "scripts/stamp-release-installer.mjs",
+        "install.sh"
+      ],
+      "evidence": [
+        "scripts/install-platform-preflight.test.ts",
+        "scripts/hosted-installer-artifact-layout.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "wsl2-preflight-and-systemd-convergence",
+      "boundary": "managed",
+      "profiles": ["wsl2-protected-local"],
+      "owner": "go-linux-systemd-adapter",
+      "implementation": ["tools/fased-lifecycled/platform/linux_host_preflight.go"],
+      "evidence": ["tools/fased-lifecycled/platform/linux_host_preflight_test.go"],
+      "status": "partial"
+    },
+    {
+      "id": "managed-repair",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle",
+      "implementation": [
+        "tools/fased-lifecycled/platform/repair_current.go",
+        "tools/fased-lifecycled/cmd/fased-bootstrap/route.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/platform/repair_current_test.go",
+        "tools/fased-lifecycled/daemon/service_test.go",
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "managed-uninstall",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle",
+      "implementation": [
+        "tools/fased-lifecycled/platform/managed_uninstall.go",
+        "tools/fased-lifecycled/hostsecurity/uninstall.go",
+        "tools/fased-lifecycled/cmd/fased-bootstrap/route.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/platform/managed_uninstall_test.go",
+        "tools/fased-lifecycled/hostsecurity/participant_test.go",
+        "tools/fased-lifecycled/cmd/fased-bootstrap/main_test.go",
+        "scripts/test-lifecycle-local-acceptance.sh",
+        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "authorized-rollback-and-pruning",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle",
+      "implementation": [
+        "tools/fased-lifecycled/protocol/protocol.go",
+        "tools/fased-lifecycled/daemon/service.go",
+        "tools/fased-lifecycled/cmd/fased-bootstrap/route.go",
+        "tools/fased-lifecycled/trust/rollback.go",
+        "tools/fased-lifecycled/planner/planner.go",
+        "tools/fased-lifecycled/platform/target_adapter.go",
+        "tools/fased-lifecycled/store/generation_prune.go",
+        "tools/fased-lifecycled/store/dependency_prune.go",
+        "tools/fased-lifecycled/acquire/inbox.go"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/protocol/protocol_test.go",
+        "tools/fased-lifecycled/daemon/service_test.go",
+        "tools/fased-lifecycled/cmd/fased-bootstrap/main_test.go",
+        "tools/fased-lifecycled/trust/trust_test.go",
+        "tools/fased-lifecycled/planner/planner_test.go",
+        "tools/fased-lifecycled/platform/target_adapter_test.go",
+        "tools/fased-lifecycled/store/generation_prune_test.go",
+        "tools/fased-lifecycled/store/dependency_prune_test.go",
+        "tools/fased-lifecycled/acquire/inbox_test.go",
+        "scripts/test-lifecycle-local-t2-systemd.sh",
+        "tools/fased-lifecycled/platform/t2_systemd_test.go"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "managed-application-mutation-fence",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle",
+      "implementation": [
+        "config/lifecycle-managed-mutation-inventory.v1.json",
+        "src/daemon/service.ts",
+        "src/infra/tailscale.ts",
+        "src/infra/restart.ts",
+        "src/wizard/onboarding.finalize.ts",
+        "src/wizard/onboarding.ts",
+        "src/commands/uninstall.ts",
+        "scripts/fased-signer-owner-hosting.sh"
+      ],
+      "evidence": [
+        "scripts/lifecycle-managed-mutation-inventory.test.ts",
+        "src/daemon/service.managed-boundary.test.ts",
+        "src/infra/tailscale.test.ts",
+        "src/infra/restart.managed-boundary.test.ts",
+        "src/wizard/onboarding.finalize.test.ts",
+        "src/commands/uninstall.managed-boundary.test.ts",
+        "scripts/npm-free-managed-lifecycle-contract.test.ts",
+        "scripts/signer-owner-maintenance.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "root-owned-managed-runtime-detection",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "go-lifecycle-and-application-projection",
+      "implementation": [
+        "tools/fased-lifecycled/platform/cli_projection.go",
+        "tools/fased-lifecycled/platform/discovery.go",
+        "src/infra/managed-runtime-authority.ts",
+        "src/version.ts",
+        "src/daemon/service.ts",
+        "src/infra/tailscale.ts",
+        "src/commands/uninstall.ts"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/platform/cli_projection_test.go",
+        "tools/fased-lifecycled/platform/discovery_test.go",
+        "src/infra/managed-runtime-authority.test.ts",
+        "src/version.test.ts",
+        "src/daemon/service.managed-boundary.test.ts",
+        "src/infra/tailscale.test.ts",
+        "src/commands/uninstall.managed-boundary.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "managed-third-party-plugin-mutation-fence",
+      "boundary": "managed",
+      "profiles": ["*"],
+      "owner": "application-managed-runtime-fence",
+      "implementation": [
+        "src/infra/managed-runtime-authority.ts",
+        "src/plugins/install.ts",
+        "src/plugins/update.ts",
+        "src/commands/onboarding/plugin-install.ts",
+        "src/gateway/server-methods/plugins-marketplace.ts"
+      ],
+      "evidence": [
+        "src/infra/managed-runtime-authority.test.ts",
+        "src/plugins/install.test.ts",
+        "src/plugins/update.test.ts",
+        "src/commands/onboarding/plugin-install.test.ts",
+        "src/gateway/server-methods/plugins-marketplace.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "developer-source-install-and-update",
+      "boundary": "separate-unprivileged",
+      "profiles": ["developer-source"],
+      "owner": "pnpm-source-workflow",
+      "implementation": ["scripts/install-development.sh", "src/cli/update-cli/update-command.ts"],
+      "evidence": ["scripts/npm-free-managed-lifecycle-contract.test.ts"],
+      "status": "separate"
+    },
+    {
+      "id": "third-party-plugin-transaction",
+      "boundary": "separate-unprivileged",
+      "profiles": ["developer-source"],
+      "owner": "application-plugin-manager",
+      "implementation": ["src/plugins/install.ts", "src/plugins/uninstall.ts"],
+      "evidence": ["src/plugins/install.test.ts", "src/plugins/uninstall.test.ts"],
+      "status": "separate"
+    },
+    {
+      "id": "application-business-logic",
+      "boundary": "application",
+      "profiles": ["*"],
+      "owner": "unprivileged-application",
+      "implementation": [
+        "src/gateway",
+        "src/agents",
+        "src/tasks",
+        "src/mining",
+        "src/commands/wallet.ts"
+      ],
+      "evidence": [],
+      "status": "separate"
+    }
+  ]
+}

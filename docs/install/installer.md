@@ -13,6 +13,28 @@ This page is for exact release selection, repair, automation, and failure
 recovery. Normal users should start at [Install](/install) or
 [VPS Hosting](/install/vps).
 
+## First-execution trust boundary
+
+The normal one-command installer is a convenience route. It downloads
+`install.sh` over HTTPS from GitHub Releases and executes it before the machine
+has a Fased lifecycle root. Therefore that first shell execution trusts WebPKI,
+GitHub Releases, and the Fased GitHub release publisher. The digest stamped in
+the shell binds the Go bootstrap downloaded afterward; it cannot authenticate
+the shell itself after Bash has already started it.
+
+The shell is intentionally small: it validates selectors and the retained
+Linux x86_64 platform, downloads one stamped static Go bootstrap, checks that
+digest, installs the bootstrap, and transfers control. It does not install or
+build the TypeScript application, run npm/pnpm, configure services, mutate
+wallet/signer state, or configure Tailscale, firewall, SSH, or fail2ban. Those
+managed mutations begin only after the installed bootstrap verifies the signed
+lifecycle channel and exact release descriptors.
+
+Use the exact-tag procedure below when provenance must be verified before Bash
+executes the installer. A future signed OS package or independently installed
+seed verifier may provide Fased-root trust before first execution; the
+convenience `curl | bash` route must never be described as providing that.
+
 ## Exact-tag pre-execution verification
 
 This procedure authenticates a tagged `install.sh` before Bash executes it.
@@ -71,39 +93,32 @@ The streamed bootstrap reports which recovery path applies:
 
 ## Public modes
 
-| Mode                 | Intended use                                         | Trusted entry contract              |
-| -------------------- | ---------------------------------------------------- | ----------------------------------- |
-| `--local`            | Fresh Local install on macOS, Linux, or WSL2 Ubuntu  | Release asset only                  |
-| `--hosting`          | Fresh or recovering Hosting on a supported VPS       | Release asset only                  |
-| `--repair-local`     | Explicit support repair for a damaged Local boundary | May require bounded authorization   |
-| `--repair-hosting`   | Preserve state and repair Hosting runtime/services   | No; exact tagged file only          |
-| `--release <vX.Y.Z>` | Select an immutable release                          | Exact release asset and channel     |
-| `--source-install`   | Developer Local source build                         | Refused for privileged Hosting      |
-| `--no-onboard`       | Install runtime without onboarding                   | Local or exact tagged flows only    |
-| `--verbose`          | Print command output in addition to log paths        | Yes where the selected mode permits |
+| Mode                         | Intended use                                         | Entry contract                        |
+| ---------------------------- | ---------------------------------------------------- | ------------------------------------- |
+| `--local`                    | Fresh Linux x86_64 Local install                     | Stamped release asset                 |
+| `--hosting`                  | Fresh/recovering x86_64 Hosting install              | Stamped release asset                 |
+| `--release <vX.Y.Z>`         | Require the same immutable release as this installer | Exact release identity                |
+| `--update-channel <channel>` | Select `stable` or `beta`                            | Must match release kind               |
+| `--ts-authkey-file <path>`   | Unattended Hosting Tailscale authentication          | Root-readable file; never argv secret |
+| `--tailnet-access-confirmed` | Record the separate operator access ceremony         | Hosting only                          |
+| `--no-onboard`               | Install runtime without onboarding                   | Supported managed profiles only       |
+| `--verbose`                  | Print detailed command output                        | Explicit opt-in                       |
 
 Run `./install.sh --help` from a trusted checkout for the current complete
 surface.
 
-## Streamed Hosting restrictions
+## Streamed installer restrictions
 
-The immutable release-asset Hosting command accepts either `--hosting` by
-itself or the exact selector `--hosting --release
-vX.Y.Z[-prerelease] --update-channel stable|beta`. A prerelease requires
-`beta`. An unstamped branch script exits before installation. Before tagged
-payload verification the release entrypoint rejects:
+The immutable release installer accepts one profile and its exact stamped
+release. A prerelease requires the `beta` channel. Unstamped streamed source,
+unknown flags, mismatched release selectors, non-Linux systems, and every
+architecture except x86_64 fail before bootstrap acquisition or privileged
+mutation. Contributor checkouts enter the explicit
+`scripts/install-development.sh` source workflow instead.
 
-- repair, source, invalid release/channel, and host-profile selectors;
-- caller-supplied `--verified-hosting-bundle` markers;
-- exported `FASED_*` values;
-- proxy, custom CA, GitHub CLI config, dynamic-loader, shell-startup, and temp
-  directory overrides.
-
-It uses a fixed command path and locale. Before persistent Fased mutation it
-verifies the offline-attested release manifest, workflow, exact tag, commit,
-architecture, app/dependency/signer digests, archive paths, links, ownership,
-writable modes, package version, and build identity. Existing completed or
-interrupted state selects the internal repair path and skips onboarding.
+After transfer, the bootstrap verifies signed channel/root metadata, exact tag,
+commit, architecture, app/dependency/signer digests, archive paths, ownership,
+writable modes, package version, and build identity before activation.
 
 ## Runtime and account layout
 
@@ -122,8 +137,8 @@ enrollment, and mutating rotation are intentionally unavailable on the
 operator socket; use the installed bounded signer-owner helper after normal OS
 administrator authorization.
 
-macOS and explicitly unprotected same-user Local installs do not provide the
-same operating-system isolation.
+macOS, WSL2, Linux arm64, and native Windows are deferred from this managed
+support matrix; source or companion-app code does not imply managed support.
 
 ## Wallet setup contract
 

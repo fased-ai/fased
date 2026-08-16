@@ -35,7 +35,64 @@ lock="$CACHE_ROOT/$VERSION/$PROFILE/$INSTALLATION_CLASS/.${BUILDER_COMMIT}-${BUI
 mkdir -p "$(dirname "$target")"
 exec {lock_fd}>"$lock"
 flock "$lock_fd"
+
+reuse_cached_capsule() {
+  local descriptor proof archive source_root source_descriptor source_proof source_archive
+  local descriptor_digest archive_digest compatibility_digest acceptance_digest
+  compatibility_digest="sha256:$(sha256sum "$ROOT_DIR/config/lifecycle-compatibility.v1.json" | awk '{print $1}')"
+  acceptance_digest="sha256:$(sha256sum "$ROOT_DIR/config/lifecycle-acceptance.v2.json" | awk '{print $1}')"
+  while IFS= read -r -d '' source_descriptor; do
+    source_root="$(dirname "$source_descriptor")"
+    [[ "$source_root" != "$target" && -f "$source_descriptor" && ! -L "$source_descriptor" ]] || continue
+    source_proof="$source_root/fased-predecessor-branch-proof.json"
+    [[ -f "$source_proof" && ! -L "$source_proof" ]] || continue
+    archive="$(jq -er .archive.name "$source_descriptor" 2>/dev/null)" || continue
+    source_archive="$source_root/$archive"
+    [[ -f "$source_archive" && ! -L "$source_archive" ]] || continue
+    node "$ROOT_DIR/scripts/lifecycle-installed-state-capsule.mjs" verify \
+      --descriptor "$source_descriptor" >/dev/null 2>&1 || continue
+    descriptor_digest="sha256:$(sha256sum "$source_descriptor" | awk '{print $1}')"
+    archive_digest="sha256:$(sha256sum "$source_archive" | awk '{print $1}')"
+    jq -e --arg profile "$PROFILE" --arg version "$VERSION" \
+      --arg installationClass "$INSTALLATION_CLASS" \
+      --arg compatibility "$compatibility_digest" --arg acceptance "$acceptance_digest" \
+      '.profile == $profile and .release.version == $version and
+       .installationClass.kind == $installationClass and
+       .compatibilityDigest == $compatibility and .expectedReceiptDigest == $acceptance' \
+      "$source_descriptor" >/dev/null || continue
+    if [[ "$PROFILE" == "hosting" && "$INSTALLATION_CLASS" == "public-stable" ]]; then
+      jq -e '
+        ([.entries[].path] | index("etc/fased/hosting-prerequisites")) != null and
+        ([.entries[].path] | index("etc/fased/signerd-webauthn.env")) != null and
+        ([.entries[].path] | index("etc/ssh/sshd_config.d/01-fased-hardening.conf")) != null and
+        ([.entries[].path] | index("etc/fail2ban/jail.d/fased-sshd.local")) != null
+      ' "$source_descriptor" >/dev/null || continue
+    fi
+    [[ "$(jq -er .archive.sha256 "$source_descriptor")" == "$archive_digest" ]] || continue
+    jq -e --arg profile "$PROFILE" --arg descriptor "$descriptor_digest" --arg archive "$archive_digest" \
+      '.role == "fased-predecessor-capsule-branch-proof" and .publishable == false and
+       .profile == $profile and .descriptor.sha256 == $descriptor and .archive.sha256 == $archive' \
+      "$source_proof" >/dev/null || continue
+
+    output_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-predecessor-output.XXXXXX")"
+    cp -- "$source_descriptor" "$source_archive" "$output_dir/"
+    jq --arg commit "$BUILDER_COMMIT" --arg tree "$BUILDER_TREE" \
+      '.builder = {commit:$commit,tree:$tree}' "$source_proof" \
+      >"$output_dir/fased-predecessor-branch-proof.json"
+    chmod 0600 "$output_dir/fased-predecessor-branch-proof.json"
+    mv "$output_dir" "$target"
+    output_dir=""
+    printf 'Reused verified immutable predecessor capsule: %s\n' "$source_root" >&2
+    return 0
+  done < <(find "$CACHE_ROOT/$VERSION/$PROFILE/$INSTALLATION_CLASS" -mindepth 3 -maxdepth 3 \
+    -type f -name fased-predecessor-capsule.json -print0 2>/dev/null | sort -z)
+  return 1
+}
+
 if [[ ! -f "$target/fased-predecessor-capsule.json" ]]; then
+  if reuse_cached_capsule; then
+    :
+  else
   source_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-predecessor-source.XXXXXX")"
   output_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-predecessor-output.XXXXXX")"
   cleanup() {
@@ -105,6 +162,7 @@ if [[ ! -f "$target/fased-predecessor-capsule.json" ]]; then
   fi
   mv "$output_dir" "$target"
   output_dir=""
+  fi
 fi
 
 descriptor="$target/fased-predecessor-capsule.json"

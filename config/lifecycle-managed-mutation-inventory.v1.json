@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "role": "fased-managed-application-mutation-inventory",
+  "releaseRule": "every-reachable-managed-mutation-must-have-one-explicit-owner",
+  "entries": [
+    {
+      "id": "stage-zero-bootstrap-install",
+      "path": "install.sh",
+      "language": "shell",
+      "mutationClasses": ["bootstrap-install"],
+      "evidenceTokens": ["bootstrap_dir=", "install -m 0555", "bootstrap_args=("],
+      "boundary": "managed-bootstrap",
+      "disposition": "bounded-stage-zero-bootstrap-only",
+      "releaseBlocking": false,
+      "status": "implemented"
+    },
+    {
+      "id": "application-service-selector",
+      "path": "src/daemon/service.ts",
+      "language": "typescript",
+      "mutationClasses": ["service-install", "service-restart", "service-uninstall"],
+      "evidenceTokens": [
+        "installSystemdService",
+        "restartLaunchAgent",
+        "uninstallScheduledTask",
+        "isManagedLifecycleRuntime"
+      ],
+      "boundary": "mixed-application",
+      "disposition": "source-only-mutation-with-managed-runtime-fence",
+      "releaseBlocking": false,
+      "status": "implemented"
+    },
+    {
+      "id": "application-onboarding-finalizer",
+      "path": "src/wizard/onboarding.finalize.ts",
+      "language": "typescript",
+      "mutationClasses": ["service-restart", "signer-enrollment", "tailscale-serve"],
+      "evidenceTokens": [
+        "restartGatewayServiceOnce",
+        "installRootServiceMaintenanceAccess",
+        "enableTailscaleServe",
+        "isManagedLifecycleRuntime"
+      ],
+      "boundary": "mixed-application",
+      "disposition": "source-only-mutation-with-managed-runtime-fences",
+      "releaseBlocking": false,
+      "status": "implemented"
+    },
+    {
+      "id": "application-tailscale-owner",
+      "path": "src/infra/tailscale.ts",
+      "language": "typescript",
+      "mutationClasses": ["package-manager", "tailscale-funnel", "tailscale-serve"],
+      "evidenceTokens": ["brew", "enableTailscaleServe", "enableTailscaleFunnel"],
+      "boundary": "mixed-application",
+      "disposition": "source-only-mutation-with-managed-runtime-fence",
+      "releaseBlocking": false,
+      "status": "implemented"
+    },
+    {
+      "id": "application-uninstall-owner",
+      "path": "src/commands/uninstall.ts",
+      "language": "typescript",
+      "mutationClasses": ["service-uninstall", "state-delete"],
+      "evidenceTokens": [
+        "stopAndUninstallService",
+        "removeStateAndLinkedPaths",
+        "uninstallCommand"
+      ],
+      "boundary": "mixed-application",
+      "disposition": "source-only-mutation-with-managed-runtime-fence",
+      "releaseBlocking": false,
+      "status": "implemented"
+    },
+    {
+      "id": "application-restart-owner",
+      "path": "src/infra/restart.ts",
+      "language": "typescript",
+      "mutationClasses": ["process-signal", "service-restart"],
+      "evidenceTokens": ["SIGUSR1", "systemctl", "isManagedLifecycleRuntime"],
+      "boundary": "mixed-application",
+      "disposition": "retain-in-process-reload-and-fence-managed-host-service-restart",
+      "releaseBlocking": false,
+      "status": "implemented"
+    },
+    {
+      "id": "signer-owner-ceremony",
+      "path": "scripts/fased-signer-owner-hosting.sh",
+      "language": "shell",
+      "mutationClasses": ["signer-owner-admin", "signer-enrollment", "tailscale-serve"],
+      "evidenceTokens": [
+        "HOSTING_MUTATION_LOCK",
+        "run_hosting_enrollment",
+        "serve get-config --all"
+      ],
+      "boundary": "mixed-application",
+      "disposition": "retain-signed-root-only-signer-owner-ceremony-installed-by-lifecycle",
+      "releaseBlocking": false,
+      "status": "implemented"
+    },
+    {
+      "id": "third-party-plugin-install",
+      "path": "src/plugins/install.ts",
+      "language": "typescript",
+      "mutationClasses": ["plugin-code-install", "package-manager"],
+      "evidenceTokens": [
+        "installPluginFromArchive",
+        "installPluginFromNpmSpec",
+        "rejectManagedPluginMutation"
+      ],
+      "boundary": "developer-source",
+      "disposition": "retain-source-only-with-managed-runtime-fence",
+      "releaseBlocking": false,
+      "status": "separate"
+    },
+    {
+      "id": "third-party-plugin-update",
+      "path": "src/plugins/update.ts",
+      "language": "typescript",
+      "mutationClasses": ["plugin-code-update", "package-manager"],
+      "evidenceTokens": ["updatePinnedNpmPlugins", "installPluginFromNpmSpec"],
+      "boundary": "developer-source",
+      "disposition": "retain-source-only-behind-central-managed-runtime-fence",
+      "releaseBlocking": false,
+      "status": "separate"
+    },
+    {
+      "id": "onboarding-plugin-install",
+      "path": "src/commands/onboarding/plugin-install.ts",
+      "language": "typescript",
+      "mutationClasses": ["plugin-code-install", "package-manager"],
+      "evidenceTokens": [
+        "ensureOnboardingPluginInstalled",
+        "installPluginFromNpmSpec",
+        "isManagedLifecycleRuntime"
+      ],
+      "boundary": "developer-source",
+      "disposition": "retain-source-only-with-managed-runtime-fence",
+      "releaseBlocking": false,
+      "status": "separate"
+    },
+    {
+      "id": "plugin-package-directory-installer",
+      "path": "src/infra/install-package-dir.ts",
+      "language": "typescript",
+      "mutationClasses": ["package-manager", "plugin-code-install"],
+      "evidenceTokens": ["npm install failed", "installPackageDir"],
+      "boundary": "developer-source",
+      "disposition": "retain-separate-unprivileged-extension-content-installer",
+      "releaseBlocking": false,
+      "status": "separate"
+    },
+    {
+      "id": "macos-launch-agent-manager",
+      "path": "apps/macos/Sources/FasedAgent/LaunchAgentManager.swift",
+      "language": "swift",
+      "mutationClasses": ["service-install", "service-restart", "service-uninstall"],
+      "evidenceTokens": ["launchctl", "Process"],
+      "boundary": "deferred-platform",
+      "disposition": "defer-until-native-darwin-lifecycle",
+      "releaseBlocking": false,
+      "status": "deferred"
+    },
+    {
+      "id": "macos-launchd-manager",
+      "path": "apps/macos/Sources/FasedAgent/LaunchdManager.swift",
+      "language": "swift",
+      "mutationClasses": ["service-install", "service-restart", "service-uninstall"],
+      "evidenceTokens": ["launchctl", "Process"],
+      "boundary": "deferred-platform",
+      "disposition": "defer-until-native-darwin-lifecycle",
+      "releaseBlocking": false,
+      "status": "deferred"
+    },
+    {
+      "id": "developer-source-installer",
+      "path": "scripts/install-development.sh",
+      "language": "shell",
+      "mutationClasses": ["package-manager", "source-build"],
+      "evidenceTokens": ["pnpm", "install"],
+      "boundary": "developer-source",
+      "disposition": "retain-explicit-source-only",
+      "releaseBlocking": false,
+      "status": "separate"
+    },
+    {
+      "id": "developer-source-updater",
+      "path": "src/cli/update-cli/source-update-command.ts",
+      "language": "typescript",
+      "mutationClasses": ["git-update", "package-manager", "source-build"],
+      "evidenceTokens": ["runDeveloperSourceUpdate", "MANAGED_RUNTIME_SOURCES"],
+      "boundary": "developer-source",
+      "disposition": "retain-explicit-source-only",
+      "releaseBlocking": false,
+      "status": "separate"
+    }
+  ]
+}

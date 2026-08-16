@@ -89,6 +89,11 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(hostingFixture).toContain("FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR");
     expect(hostingFixture).toContain("${distro}-${scenario}.partial.json");
     expect(hostingFixture).toContain('wait -n -p completed_pid "${scenario_pids[@]}"');
+    expect(hostingFixture).toContain("FASED_LIFECYCLE_FIXTURE_START_LOCK");
+    expect(hostingFixture).toContain('flock "$start_lock_fd"');
+    expect(hostingFixture).toContain('exec {image_cache_lock_fd}>"${image_archive}.lock"');
+    expect(hostingFixture).toContain("Preserved failed Hosting fixture support directory:");
+    expect(hostingFixture).toContain("trap 'exit 143' TERM");
     expect(hostingFixture).toContain("Serial Hosting proof stopped on the first failed scenario.");
     expect(hostingFixture).toContain('lifecycle-acceptance.sh "$fixture_phase" || return 1');
     expect(hostingFixture).toContain('lifecycle-receipt-verifier.mjs" \\');
@@ -115,8 +120,8 @@ describe("attested Go lifecycle artifact layout", () => {
 
   it("does not nest dependency mounts below a read-only fixture mount", () => {
     for (const fixture of [localFixture, hostingFixture]) {
-      expect(fixture).toContain("ln -s /fixture-node-modules");
-      expect(fixture).toContain(":/fixture-node-modules:ro,");
+      expect(fixture).toContain('ln -s "$ROOT_DIR/node_modules"');
+      expect(fixture).toContain(":$ROOT_DIR/node_modules:ro,");
       expect(fixture).not.toContain(":/fixture-tools/node_modules:ro,");
     }
     expect(hostingFixture).toContain(":/fixture-node:ro,");
@@ -151,13 +156,14 @@ describe("attested Go lifecycle artifact layout", () => {
     );
   });
 
-  it("keeps branch proof assets truthful and production lanes platform-real", () => {
+  it("keeps branch proof assets truthful and publishes only the retained x64 lane", () => {
     expect(localFixture).not.toContain("copy_branch_x64_fixture_aliases");
     expect(localFixture).not.toContain('cp --reflink=auto "$signer_source"');
     expect(localFixture).not.toContain('cp --reflink=auto "$ARTIFACT_DIR/$x64_app"');
     expect(localFixture).toContain("--profile branch-x64");
     expect(releaseWorkflow).toContain("matrix.arch");
-    expect(releaseWorkflow).toContain("ubuntu-24.04-arm");
+    expect(releaseWorkflow).not.toContain("ubuntu-24.04-arm");
+    expect(releaseWorkflow).not.toContain("- arch: arm64");
   });
 
   it("builds independent native release families with bounded concurrency", () => {

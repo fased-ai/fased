@@ -19,10 +19,18 @@ import (
 )
 
 const (
-	LocalInstanceRegistryPath = "/var/lib/fased-local-registry/instances.json"
-	localRegistrySchema       = uint32(1)
-	maxLocalRegistrySize      = 1 << 20
+	LocalInstanceRegistryPath       = "/var/lib/fased-local-registry/instances.json"
+	DarwinLocalInstanceRegistryPath = "/Library/FasedLifecycle/instances.json"
+	localRegistrySchema             = uint32(1)
+	maxLocalRegistrySize            = 1 << 20
 )
+
+func LocalInstanceRegistryPathForOS(operatingSystem string) string {
+	if operatingSystem == "darwin" {
+		return DarwinLocalInstanceRegistryPath
+	}
+	return LocalInstanceRegistryPath
+}
 
 type LocalInstanceEntry struct {
 	InstanceID   string `json:"instanceId"`

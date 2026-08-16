@@ -48,7 +48,6 @@ const requiredPathGroups = [
   "scripts/lifecycle-trust-root.mjs",
   "scripts/lifecycle-trust-runtime.mjs",
   "scripts/fased-signer-network-hosting.sh",
-  "scripts/fased-signer-enroll-hosting.sh",
   "scripts/fased-signer-owner-hosting.sh",
   "scripts/fased-signer-owner-policy.mjs",
   "scripts/fased-signer-policy-hosting.sh",

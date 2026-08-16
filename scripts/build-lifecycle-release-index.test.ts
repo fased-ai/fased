@@ -20,10 +20,7 @@ afterEach(async () => {
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-release-index-test-"));
   roots.push(root);
-  for (const [architecture, go] of [
-    ["x64", "amd64"],
-    ["arm64", "arm64"],
-  ]) {
+  for (const [architecture, go] of [["x64", "amd64"]]) {
     const dependencyName = `fased-hosted-deps-linux-${architecture}-fixture.tar.gz`;
     const dependencyBody = `dependency-${architecture}`;
     await fs.writeFile(path.join(root, dependencyName), dependencyBody);
@@ -88,7 +85,7 @@ async function fixture() {
 }
 
 describe("production lifecycle release index", () => {
-  it("binds both architectures and the monotonic authority without a private release key", async () => {
+  it("binds the retained x64 architecture and monotonic authority without a private release key", async () => {
     const assetsDir = await fixture();
     const index = await buildLifecycleReleaseIndex({
       assetsDir,
@@ -109,11 +106,9 @@ describe("production lifecycle release index", () => {
       securityEpoch: 1,
       application: {
         x64: { name: `fased-generation-linux-x64-v${version}.tar.gz` },
-        arm64: { name: `fased-generation-linux-arm64-v${version}.tar.gz` },
       },
       lifecycleHost: {
         x64: { privilegedComponent: "lifecycle-host" },
-        arm64: { privilegedComponent: "lifecycle-host" },
       },
     });
     expect(index.artifactSetDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);

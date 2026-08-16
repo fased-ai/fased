@@ -126,7 +126,7 @@ func (store *DiskUnitStore) workspace(transactionID string) string {
 }
 
 func (store *DiskUnitStore) unitPath(unit string) string {
-	return store.resolve(filepath.Join(store.Config.UnitRoot, unit))
+	return store.resolve(store.Config.ServiceDefinitionPath(unit))
 }
 
 func (store *DiskUnitStore) resolve(path string) string {

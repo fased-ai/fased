@@ -5,7 +5,14 @@ const launcher = fs.readFileSync(
   new URL("./fased-signer-owner-hosting.sh", import.meta.url),
   "utf8",
 );
-const installer = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
+const targetAdapter = fs.readFileSync(
+  new URL("../tools/fased-lifecycled/platform/target_adapter.go", import.meta.url),
+  "utf8",
+);
+const wrapper = fs.readFileSync(
+  new URL("../tools/fased-lifecycled/platform/signer_owner.go", import.meta.url),
+  "utf8",
+);
 
 describe("Hosting signer-owner maintenance launcher", () => {
   it("ships as an executable generation entrypoint", () => {
@@ -30,13 +37,26 @@ describe("Hosting signer-owner maintenance launcher", () => {
     expect(launcher).not.toMatch(/sudoers/u);
   });
 
-  it("is installed only from the verified root Hosting bundle", () => {
-    expect(installer).toContain(
-      "scripts/fased-signer-owner-hosting.sh \\\n    scripts/fased-signer-policy-hosting.sh",
+  it("keeps Hosting enrollment private, rollback-safe, and serialized with lifecycle mutation", () => {
+    expect(launcher).toContain(
+      'HOSTING_MUTATION_LOCK="${FASED_HOSTING_MUTATION_LOCK:-/run/lock/fased-bootstrap-hosting.lock}"',
     );
-    expect(installer).toContain(
-      '"$FASED_DIR/scripts/fased-signer-owner-hosting.sh" /usr/local/sbin/fased-signer-owner',
+    expect(launcher).toContain('"$TAILSCALE_BIN" serve get-config --all');
+    expect(launcher).toContain(
+      'hosting_work_dir="$(mktemp -d /run/fased-signer-enrollment.XXXXXX)"',
     );
-    expect(installer).toContain("sync -f /usr/local/sbin/fased-signer-owner");
+    expect(launcher).toContain('serve_snapshot="$hosting_work_dir/tailscale-serve.json"');
+    expect(launcher).not.toContain('serve_snapshot="$work_dir/tailscale-serve.json"');
+    expect(launcher).toContain("select(.AllowFunnel == true)");
+    expect(launcher).toContain('"$TAILSCALE_BIN" serve set-config "$serve_snapshot" --all');
+    expect(launcher).toContain('"$TAILSCALE_BIN" serve reset');
+    expect(launcher).toContain("run_hosting_enrollment");
+  });
+
+  it("is activated only by the verified Go lifecycle transaction", () => {
+    expect(targetAdapter).toContain("runtime/scripts/fased-signer-owner-hosting.sh");
+    expect(targetAdapter).toContain("CanonicalSignerOwnerFiles(adapter.Config)");
+    expect(wrapper).toContain("export FASED_SIGNER_OWNER_LOCAL=%q");
+    expect(wrapper).toContain('exec %q "$@"');
   });
 });

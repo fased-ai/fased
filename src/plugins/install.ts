@@ -17,6 +17,7 @@ import {
   type NpmSpecResolution,
   resolveArchiveSourcePath,
 } from "../infra/install-source-utils.js";
+import { isManagedLifecycleRuntime } from "../infra/managed-runtime-authority.js";
 import {
   finalizeNpmSpecArchiveInstall,
   installFromNpmSpecArchiveWithInstaller,
@@ -154,6 +155,13 @@ export type PluginNpmIntegrityDriftParams = {
   actualIntegrity: string;
   resolution: NpmSpecResolution;
 };
+
+const managedPluginMutationError =
+  "Managed installations do not install or replace third-party plugin code from the application. Bundled Fased plugins update with the signed core artifact; use a developer source runtime until the separate digest-bound plugin transaction is available.";
+
+function rejectManagedPluginMutation(): InstallPluginResult | null {
+  return isManagedLifecycleRuntime() ? { ok: false, error: managedPluginMutationError } : null;
+}
 
 const defaultLogger: PluginInstallLogger = {};
 function safeFileName(input: string): string {
@@ -502,6 +510,10 @@ export async function installPluginFromArchive(params: {
   expectedPluginId?: string;
   expectedPluginIds?: string[];
 }): Promise<InstallPluginResult> {
+  const managedRejection = rejectManagedPluginMutation();
+  if (managedRejection) {
+    return managedRejection;
+  }
   const logger = params.logger ?? defaultLogger;
   const timeoutMs = params.timeoutMs ?? 120_000;
   const mode = params.mode ?? "install";
@@ -540,6 +552,10 @@ export async function installPluginFromDir(params: {
   expectedPluginId?: string;
   expectedPluginIds?: string[];
 }): Promise<InstallPluginResult> {
+  const managedRejection = rejectManagedPluginMutation();
+  if (managedRejection) {
+    return managedRejection;
+  }
   const dirPath = resolveUserPath(params.dirPath);
   if (!(await fileExists(dirPath))) {
     return { ok: false, error: `directory not found: ${dirPath}` };
@@ -568,6 +584,10 @@ export async function installPluginFromFile(params: {
   mode?: "install" | "update";
   dryRun?: boolean;
 }): Promise<InstallPluginResult> {
+  const managedRejection = rejectManagedPluginMutation();
+  if (managedRejection) {
+    return managedRejection;
+  }
   const { logger, mode, dryRun } = resolveInstallModeOptions(params, defaultLogger);
 
   const filePath = resolveUserPath(params.filePath);
@@ -614,6 +634,10 @@ export async function installPluginFromNpmSpec(params: {
   expectedIntegrity?: string;
   onIntegrityDrift?: (params: PluginNpmIntegrityDriftParams) => boolean | Promise<boolean>;
 }): Promise<InstallPluginResult> {
+  const managedRejection = rejectManagedPluginMutation();
+  if (managedRejection) {
+    return managedRejection;
+  }
   const { logger, timeoutMs, mode, dryRun } = resolveTimedInstallModeOptions(params, defaultLogger);
   const expectedPluginId = params.expectedPluginId;
   const expectedPluginIds = params.expectedPluginIds;
@@ -657,6 +681,10 @@ export async function installPluginFromPath(params: {
   expectedPluginId?: string;
   expectedPluginIds?: string[];
 }): Promise<InstallPluginResult> {
+  const managedRejection = rejectManagedPluginMutation();
+  if (managedRejection) {
+    return managedRejection;
+  }
   const pathResult = await resolveExistingInstallPath(params.path);
   if (!pathResult.ok) {
     return pathResult;

@@ -4,6 +4,7 @@ import {
   resolveGatewaySystemdServiceName,
 } from "../daemon/constants.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { isManagedLifecycleRuntime } from "./managed-runtime-authority.js";
 import { cleanStaleGatewayProcessesSync, findGatewayPidsOnPortSync } from "./restart-stale-pids.js";
 
 export type RestartAttempt = {
@@ -324,6 +325,14 @@ function normalizeSystemdUnit(raw?: string, profile?: string): string {
 }
 
 export function triggerFasedAgentRestart(): RestartAttempt {
+  if (isManagedLifecycleRuntime()) {
+    return {
+      ok: false,
+      method: "supervisor",
+      detail:
+        "Managed service restart is owned by the verified Go lifecycle; the application did not invoke systemctl or launchctl.",
+    };
+  }
   if (process.env.VITEST || process.env.NODE_ENV === "test") {
     return { ok: true, method: "supervisor", detail: "test mode" };
   }

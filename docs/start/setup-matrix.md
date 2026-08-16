@@ -35,11 +35,9 @@ flowchart TD
 
 ### Local
 
-Use this when the agent runs on your own computer. On macOS, use Terminal. On
-Windows, use WSL2 with Ubuntu and run Fased inside the Ubuntu shell, not native
-PowerShell or Windows Node.js. On Linux, use your distro terminal. See [Windows
-(WSL2)](/platforms/windows) for the supported Windows versions and exact shell
-boundary.
+Use this when the agent runs on a Linux x86_64 computer with systemd. macOS,
+WSL2, Linux arm64, and native Windows are deferred from the first managed
+stable matrix; their source-development paths are not public managed installs.
 
 It creates local config, workspace, gateway settings, signer/wallet state if
 selected, and local service startup. A verified prebuilt install on supported
@@ -47,17 +45,17 @@ Linux/systemd creates per-profile protected Gateway, signer, and controller
 services after normal OS administrator authorization. macOS and explicit
 source installs remain same-user Local. Tailscale is not part of the Local path.
 
-Risk: Local on a VPS means no SSH/firewall hardening. It can still run, but it
-does not apply the hosting security baseline.
+Risk: Do not select Local on a VPS. It does not apply the Hosting security
+baseline.
 
 ### Hosting
 
 Use this when the agent runs on a VPS or always-on server.
 
-Ubuntu LTS is the recommended first VPS target. Debian is close to the same
-path. Fedora and RHEL-family systems are also hosted targets. Alpine, Arch,
-macOS, and FreeBSD are Local/dev install targets until their hosted hardening
-paths are validated separately.
+Ubuntu-compatible and Rocky-compatible x86_64 systemd hosts are the retained
+first-stable targets. Other distributions and architectures remain deferred
+until their package, security, rollback, and command-backed acceptance lanes
+pass.
 
 It uses the local runtime setup plus hosting hardening: Tailscale-first admin
 access, firewall policy, SSH hardening, fail2ban/unattended-upgrades where
@@ -103,8 +101,10 @@ The current CLI wizard order is:
 9. Apply hosting security only when the Hosting profile is selected. Hosting requires Tailscale.
 10. Run final daemon, health, Control UI, and readiness steps.
 
-`install.sh` installs dependencies, builds the runtime, installs the CLI, and
-then runs the onboarding wizard with daemon setup unless you pass `--no-onboard`.
+The verified `install.sh` transfers the static Go bootstrap. The signed
+lifecycle transaction then acquires the immutable application, bundled Node
+runtime, Go signer v2, services, and profile state. It does not build from
+source or install through npm.
 
 ## What Each Step Is For
 

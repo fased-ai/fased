@@ -9,16 +9,18 @@ contracts, and changed-file formatting. Mixed changes use the union of their
 focused tests. Unknown production paths require a classifier mapping; they do
 not justify an indiscriminate full suite.
 
-| Change                          | Evidence                                                   |
-| ------------------------------- | ---------------------------------------------------------- |
-| docs or skill                   | validator only                                             |
-| workflow or classifier          | static workflow/classifier contracts                       |
-| Node, CLI, UI, plugin           | nearest affected unit/contract test                        |
-| dependency remediation          | frozen install, audit, lock/path integrity, affected tests |
-| Go signer                       | affected Go package; race test only for concurrency        |
-| permission or fixture           | exact regression; reuse existing product bytes             |
-| privileged unit/socket/rollback | focused tests, then one root-capable T2                    |
-| lifecycle product behavior      | focused tests, then affected Linux-x64 public transaction  |
+| Change                          | Evidence                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| docs or skill                   | validator only                                                                                             |
+| workflow or classifier          | static workflow/classifier contracts                                                                       |
+| Node, CLI, UI, plugin           | nearest affected unit/contract test                                                                        |
+| dependency remediation          | frozen install, audit, lock/path integrity, affected tests                                                 |
+| Go signer                       | affected Go package; race test only for concurrency                                                        |
+| permission or fixture           | exact regression; reuse existing product bytes                                                             |
+| privileged unit/socket/rollback | focused tests, then one root-capable T2                                                                    |
+| lifecycle product behavior      | focused tests, then affected Linux-x64 public transaction                                                  |
+| managed repair or uninstall     | exact-current/no-selection test, rollback or resume test, preserved-state proof, then T2                   |
+| Hosting host-security ownership | adopted-control no-mutation, first-install baseline, interrupted restore, then real owner-operated Hosting |
 
 Do not run full Node, full CodeQL, Docker, packaging, broad platforms, or
 release acceptance for an unrelated small fix. Build only when distributable

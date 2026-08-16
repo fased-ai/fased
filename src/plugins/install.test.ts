@@ -791,6 +791,17 @@ describe("installPluginFromNpmSpec", () => {
     await expectUnsupportedNpmSpec((spec) => installPluginFromNpmSpec({ spec }));
   });
 
+  it("does not execute npm or write plugin code in a managed runtime", async () => {
+    vi.stubEnv("FASED_RUNTIME_SOURCE", "go-lifecycle");
+    const result = await installPluginFromNpmSpec({ spec: "@fased/voice-call@0.0.1" });
+
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringContaining("separate digest-bound plugin transaction"),
+    });
+    expect(runCommandWithTimeout).not.toHaveBeenCalled();
+  });
+
   it("aborts when integrity drift callback rejects the fetched artifact", async () => {
     const run = vi.mocked(runCommandWithTimeout);
     mockNpmPackMetadataResult(run, {

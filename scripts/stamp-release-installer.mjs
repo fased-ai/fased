@@ -8,7 +8,6 @@ import { pathToFileURL } from "node:url";
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const RELEASE_MARKER = 'install_entry_release_identity="__FASED_RELEASE_IDENTITY__"';
 const BOOTSTRAP_X64_MARKER = 'bootstrap_sha256_x64="__FASED_BOOTSTRAP_SHA256_X64__"';
-const BOOTSTRAP_ARM64_MARKER = 'bootstrap_sha256_arm64="__FASED_BOOTSTRAP_SHA256_ARM64__"';
 
 async function bootstrapDigest(file) {
   const info = await fsp.lstat(file);
@@ -25,7 +24,6 @@ export async function stampReleaseInstaller({
   output,
   version,
   bootstrapX64,
-  bootstrapArm64,
   architecture,
 }) {
   if (!VERSION_PATTERN.test(version || "")) {
@@ -36,28 +34,21 @@ export async function stampReleaseInstaller({
     throw new Error("release installer source must be one regular single-link file");
   }
   const body = await fsp.readFile(source, "utf8");
-  for (const marker of [RELEASE_MARKER, BOOTSTRAP_X64_MARKER, BOOTSTRAP_ARM64_MARKER]) {
+  for (const marker of [RELEASE_MARKER, BOOTSTRAP_X64_MARKER]) {
     if (body.indexOf(marker) < 0 || body.indexOf(marker) !== body.lastIndexOf(marker)) {
       throw new Error("installer release identity or bootstrap marker is missing or ambiguous");
     }
   }
-  if (architecture !== undefined && architecture !== "x64" && architecture !== "arm64") {
-    throw new Error("branch installer architecture must be x64 or arm64");
+  if (architecture !== undefined && architecture !== "x64") {
+    throw new Error("the first managed release supports only x64 installers");
   }
-  if (
-    (!architecture && (!bootstrapX64 || !bootstrapArm64)) ||
-    (architecture === "x64" && !bootstrapX64) ||
-    (architecture === "arm64" && !bootstrapArm64)
-  ) {
-    throw new Error("required release bootstrap architecture is missing");
+  if (!bootstrapX64) {
+    throw new Error("required x64 release bootstrap is missing");
   }
-  const unsupportedDigest = "0".repeat(64);
-  const x64Digest = bootstrapX64 ? await bootstrapDigest(bootstrapX64) : unsupportedDigest;
-  const arm64Digest = bootstrapArm64 ? await bootstrapDigest(bootstrapArm64) : unsupportedDigest;
+  const x64Digest = await bootstrapDigest(bootstrapX64);
   const stamped = body
     .replace(RELEASE_MARKER, `install_entry_release_identity="${version}"`)
-    .replace(BOOTSTRAP_X64_MARKER, `bootstrap_sha256_x64="${x64Digest}"`)
-    .replace(BOOTSTRAP_ARM64_MARKER, `bootstrap_sha256_arm64="${arm64Digest}"`);
+    .replace(BOOTSTRAP_X64_MARKER, `bootstrap_sha256_x64="${x64Digest}"`);
   await fsp.writeFile(output, stamped, { mode: 0o755 });
   await fsp.chmod(output, 0o755);
 }
@@ -69,7 +60,6 @@ function parseArgs(argv) {
     "--output",
     "--version",
     "--bootstrap-x64",
-    "--bootstrap-arm64",
     "--architecture",
   ]);
   for (let index = 0; index < argv.length; index += 2) {
@@ -77,7 +67,7 @@ function parseArgs(argv) {
     const value = argv[index + 1];
     if (!allowed.has(key) || !value || values.has(key)) {
       throw new Error(
-        "usage: stamp-release-installer --source install.sh --output FILE --version X.Y.Z --bootstrap-x64 FILE --bootstrap-arm64 FILE",
+        "usage: stamp-release-installer --source install.sh --output FILE --version X.Y.Z --bootstrap-x64 FILE [--architecture x64]",
       );
     }
     values.set(key, value);
@@ -88,11 +78,8 @@ function parseArgs(argv) {
     }
   }
   const architecture = values.get("--architecture");
-  if ((!architecture || architecture === "x64") && !values.has("--bootstrap-x64")) {
+  if (!values.has("--bootstrap-x64")) {
     throw new Error("missing --bootstrap-x64");
-  }
-  if ((!architecture || architecture === "arm64") && !values.has("--bootstrap-arm64")) {
-    throw new Error("missing --bootstrap-arm64");
   }
   return {
     source: path.resolve(values.get("--source")),
@@ -100,9 +87,6 @@ function parseArgs(argv) {
     version: values.get("--version"),
     bootstrapX64: values.has("--bootstrap-x64")
       ? path.resolve(values.get("--bootstrap-x64"))
-      : undefined,
-    bootstrapArm64: values.has("--bootstrap-arm64")
-      ? path.resolve(values.get("--bootstrap-arm64"))
       : undefined,
     architecture,
   };
