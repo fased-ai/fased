@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly HEADSCALE_IMAGE="ghcr.io/juanfont/headscale@sha256:0e7f1c6e4ce6c2a2a001103ecd3fa645a045adf30ac8a5234fe037b43000cd72"
 readonly HEADSCALE_CONFIG_URL="https://raw.githubusercontent.com/juanfont/headscale/v0.29.3/config-example.yaml"
-readonly HEADSCALE_CONFIG_SHA256="51f6568cbb51628ef2c8b6999f3fe7ed3f14147b684908b17ed224d901a77b09"
+readonly HEADSCALE_CONFIG_SHA256="51f6568cbb51628ef2c8b6999f3fe7ed3f14147b684908b17ed224d901a77b09" # pragma: allowlist secret
 readonly CONTROL_PORT="${FASED_H0_CONTROL_PORT:-18080}"
 readonly CONTAINER_NAME="fased-tailscale-h0-$$"
 

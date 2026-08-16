@@ -796,7 +796,7 @@ describe("renderWallet", () => {
                 isNative: false,
                 address: "SatAta111111111111111111111111111111111111",
                 program: "SatMint111111111111111111111111111111111",
-                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                tokenProgramId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
               },
             ],
           },
