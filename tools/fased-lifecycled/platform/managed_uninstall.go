@@ -290,20 +290,35 @@ func (uninstaller *ManagedUninstaller) removeProjections() error {
 		{CanonicalInstallProjectionPath(uninstaller.Config), install, 0o640, uninstaller.Config.Operator.UID},
 		{CanonicalSignerOwnerFiles(uninstaller.Config)[1], wrapper, 0o755, uninstaller.ExpectedUID},
 	}
-	if len(uninstaller.PluginLockData) > 0 {
-		checks = append(checks, struct {
-			path string
-			data []byte
-			mode os.FileMode
-			uid  uint32
-		}{CanonicalPluginLockPath(uninstaller.Config), uninstaller.PluginLockData, 0o640, uninstaller.Config.Operator.UID})
-	}
 	for _, check := range checks {
 		if err := uninstaller.removeExactFile(check.path, check.data, check.mode, check.uid); err != nil {
 			return err
 		}
 	}
-	return nil
+	return uninstaller.removePluginLockProjection()
+}
+
+func (uninstaller *ManagedUninstaller) removePluginLockProjection() error {
+	if len(uninstaller.PluginLockData) == 0 {
+		return nil
+	}
+	path := CanonicalPluginLockPath(uninstaller.Config)
+	data, err := readExactRootFile(
+		uninstaller.resolve(path),
+		0o640,
+		uninstaller.Config.Operator.UID,
+		1<<20,
+	)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(data, uninstaller.PluginLockData) {
+		return nil
+	}
+	return os.Remove(uninstaller.resolve(path))
 }
 
 func (uninstaller *ManagedUninstaller) removeManagedRoots() error {

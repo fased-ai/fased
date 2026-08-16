@@ -141,3 +141,51 @@ func TestManagedUninstallRefusesModifiedOwnedUnit(t *testing.T) {
 		t.Fatalf("modified unit did not fail closed: %v", err)
 	}
 }
+
+func TestManagedUninstallPreservesOwnerModifiedPluginLock(t *testing.T) {
+	uninstaller, root, _ := managedUninstallFixture(t)
+	path := filepath.Join(root, filepath.Clean(CanonicalPluginLockPath(uninstaller.Config)))
+	ownerLock := []byte("{\"schemaVersion\":1,\"type\":\"fased-plugin-lock\",\"entries\":[],\"migratedPluginState\":{\"stable-bridge\":7}}\n")
+	if err := writeAtomicRootOwnedFile(path, ownerLock, 0o640, uninstaller.Config.Operator.UID); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := uninstaller.Run(context.Background())
+	if err != nil || !record.Completed || !record.ProjectionsRemoved {
+		t.Fatalf("managed uninstall did not preserve owner plugin lock: record=%+v err=%v", record, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != string(ownerLock) {
+		t.Fatalf("owner plugin lock was not preserved byte-for-byte: %q err=%v", data, err)
+	}
+}
+
+func TestManagedUninstallRemovesExactPluginLockProjection(t *testing.T) {
+	uninstaller, root, _ := managedUninstallFixture(t)
+	path := filepath.Join(root, filepath.Clean(CanonicalPluginLockPath(uninstaller.Config)))
+
+	if _, err := uninstaller.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("exact lifecycle plugin lock survived uninstall: %v", err)
+	}
+}
+
+func TestManagedUninstallRefusesUnsafeOwnerPluginLock(t *testing.T) {
+	uninstaller, root, _ := managedUninstallFixture(t)
+	path := filepath.Join(root, filepath.Clean(CanonicalPluginLockPath(uninstaller.Config)))
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp/owner-plugin-lock", path); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := uninstaller.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("unsafe owner plugin lock did not fail closed: %v", err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("unsafe owner plugin lock was deleted: info=%+v err=%v", info, err)
+	}
+}
