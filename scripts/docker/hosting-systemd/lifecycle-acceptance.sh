@@ -169,8 +169,8 @@ if [[ "$#" -eq 11 && "$1" == "-o" &&
   "$3" == "-o" && "$4" == "Dir::Etc::sourceparts=-" &&
   "$5" == "-o" && "$6" == "Acquire::AllowInsecureRepositories=false" &&
   "$7" == "-o" && "$8" == "Acquire::AllowDowngradeToInsecureRepositories=false" &&
-  "$9" == "-o" && "$10" == "APT::Get::AllowUnauthenticated=false" &&
-  "$11" == "update" ]]; then
+  "$9" == "-o" && "${10}" == "APT::Get::AllowUnauthenticated=false" &&
+  "${11}" == "update" ]]; then
     grep -Fqx 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu noble main' \
       /etc/apt/sources.list.d/tailscale.list
     test -s /usr/share/keyrings/tailscale-archive-keyring.gpg
