@@ -122,7 +122,7 @@ func (host LinuxHost) fail2banReady(ctx context.Context) bool {
 		}
 	}
 	output, err := host.Runner.Output(ctx, command, "status", "sshd")
-	return err == nil && bytes.Contains(bytes.ToLower(output), []byte("jail list"))
+	return err == nil && bytes.Contains(bytes.ToLower(output), []byte("status for the jail: sshd"))
 }
 
 func (host LinuxHost) automaticUpdatesReady(ctx context.Context) bool {

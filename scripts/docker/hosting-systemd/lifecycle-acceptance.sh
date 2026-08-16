@@ -209,7 +209,7 @@ prepare_legacy_host_security_fixture() {
   ufw --force enable >/dev/null
   systemctl restart ssh.service fail2ban.service
   ufw status verbose | grep -Fq 'Status: active'
-  fail2ban-client status sshd | grep -Fqi 'jail list'
+  fail2ban-client status sshd | grep -Fqi 'status for the jail: sshd'
 }
 
 install_release_transport_fixture() {

@@ -99,7 +99,7 @@ func TestHardeningConvergenceWaitsForFail2banControlReadiness(t *testing.T) {
 	runner.outputs["/usr/sbin/sshd -T"] = []byte("passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin no\npubkeyauthentication yes\n")
 	runner.sequences["/usr/bin/fail2ban-client status sshd"] = []fixtureOutput{
 		{err: errors.New("control socket not ready")},
-		{data: []byte("Jail list: sshd\n")},
+		{data: []byte("Status for the jail: sshd\n")},
 	}
 	if err := host.waitForHardening(context.Background()); err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestLinuxHostInspectionBindsPrivateTailscaleAndHardening(t *testing.T) {
 	} {
 		runner.outputs[key] = []byte("active\n")
 	}
-	runner.outputs["/usr/bin/fail2ban-client status sshd"] = []byte("Jail list: sshd\n")
+	runner.outputs["/usr/bin/fail2ban-client status sshd"] = []byte("Status for the jail: sshd\n")
 	runner.outputs["/usr/sbin/sshd -T"] = []byte("passwordauthentication no\npermitrootlogin no\npubkeyauthentication yes\n")
 	runner.outputs["/usr/sbin/nft list table inet fased_hosting"] = []byte(`table inet fased_hosting { chain input { iifname "tailscale0" tcp dport 22 accept; tcp dport 22 drop; } }`)
 	runner.errors["/usr/sbin/runuser -u app -- /usr/bin/sudo -n true"] = errors.New("not authorized")
@@ -224,7 +224,7 @@ func TestLinuxHostRecognizesOnlyIntactLegacyHostingBoundary(t *testing.T) {
 	} {
 		runner.outputs[key] = []byte("ready\n")
 	}
-	runner.outputs["/usr/bin/fail2ban-client status sshd"] = []byte("Jail list: sshd\n")
+	runner.outputs["/usr/bin/fail2ban-client status sshd"] = []byte("Status for the jail: sshd\n")
 	runner.outputs["/usr/sbin/sshd -T"] = []byte("passwordauthentication no\npermitrootlogin no\npubkeyauthentication yes\n")
 	runner.outputs["/usr/sbin/ufw status verbose"] = []byte("Status: active\nDefault: deny (incoming), allow (outgoing)\n22/tcp DENY IN Anywhere\n22/tcp ALLOW IN Anywhere on tailscale0\n443/tcp ALLOW IN Anywhere on tailscale0\n")
 	runner.errors["/usr/sbin/runuser -u app -- /usr/bin/sudo -n true"] = errors.New("not authorized")
