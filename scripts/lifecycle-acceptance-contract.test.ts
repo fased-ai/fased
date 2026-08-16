@@ -276,6 +276,33 @@ describe("lifecycle acceptance contract", () => {
     expect(managedUpdate.match(/run_installed_updater/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("proves repair and uninstall after reboot without escaping fixture trust", () => {
+    const fixture = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const wrapper = readFileSync(
+      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const operations = fixture.slice(
+      fixture.indexOf('if [[ "$phase" == "verify-operations" ]]'),
+      fixture.indexOf(
+        '[[ "$phase" == "fresh-install"',
+        fixture.indexOf('if [[ "$phase" == "verify-operations" ]]'),
+      ),
+    );
+    expect(operations).toContain('grep -Fqx "127.0.0.1 github.com" /etc/hosts');
+    expect(operations).toContain('"$state/bin/fased" repair --timeout 120');
+    expect(operations).toContain('"$state/bin/fased" uninstall --yes --non-interactive --json');
+    expect(operations).toContain('sha256sum --check "$owner_preservation"');
+    expect(operations).toContain('sha256sum --check "$signer_preservation"');
+    expect(wrapper).toContain(
+      "/usr/local/bin/fased-protected-local-systemd-fixture verify-operations",
+    );
+    expect(wrapper).toContain('operations_receipt="$receipt.operations"');
+  });
+
   it("keeps release validation bound to the npm-free managed lifecycle contract", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
