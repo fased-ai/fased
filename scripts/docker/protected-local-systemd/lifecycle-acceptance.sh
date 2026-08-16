@@ -805,9 +805,90 @@ if [[ "$phase" == "verify-reboot" ]]; then
   exit 0
 fi
 
+if [[ "$phase" == "verify-operations" ]]; then
+  [[ -f "$snapshot" ]]
+  instance="$(jq -er .instanceId "$snapshot")"
+  gateway_token="$(jq -er '.gateway.auth.token' "$state/fased.json")"
+  runtime="$(resolve_protected_runtime "$instance")"
+  mapfile -t env_args < <(operator_env "$instance")
+  gateway_unit="fased-gateway-$instance.service"
+  signer_unit="fased-signerd-$instance.service"
+  supervisor_unit="fased-local-controller-$instance.service"
+  unit_path="/etc/systemd/system/$gateway_unit"
+  operations_receipt=/var/lib/fased-protected-local-fixture/lifecycle-operations.json
+  owner_preservation=/tmp/fased-managed-operations-owner.sha256
+  signer_preservation=/tmp/fased-managed-operations-signer.sha256
+
+  wait_for_gateway_version "$version"
+  verify_three_services "$instance"
+  sha256sum \
+    "$state/fased.json" \
+    "$state/identity/device.json" \
+    "$state/wallet/provider-registry.v1.json" \
+    "$state/sat-mining/wallets/agent/mining.sqlite" \
+    "$state/plugin-data/fixture/state.json" \
+    >"$owner_preservation"
+  sha256sum "/var/lib/fased-local/$instance/signer/master.key" \
+    >"$signer_preservation"
+
+  test -f "$unit_path"
+  cp "$unit_path" /tmp/fased-managed-repair-gateway.service
+  rm -f "$unit_path"
+  systemctl daemon-reload
+  test ! -e "$unit_path"
+  runuser -u testop -- env "${env_args[@]}" \
+    "$state/bin/fased" repair --timeout 120 \
+    >/tmp/fased-managed-repair.out 2>/tmp/fased-managed-repair.err
+  grep -F "Repaired successfully: $version" /tmp/fased-managed-repair.out >/dev/null
+  cmp /tmp/fased-managed-repair-gateway.service "$unit_path"
+  verify_three_services "$instance"
+  wait_for_gateway_version "$version"
+  sha256sum --check "$owner_preservation"
+  sha256sum --check "$signer_preservation"
+
+  runuser -u testop -- env "${env_args[@]}" \
+    "$state/bin/fased" uninstall --yes --non-interactive --json \
+    >/tmp/fased-managed-uninstall.json 2>/tmp/fased-managed-uninstall.err
+  jq -e --arg instance "$instance" \
+    '.status == "UNINSTALLED" and .profile == "protected-local" and
+     .instanceId == $instance and .ownerStatePreserved == true and
+     .signerStatePreserved == true' \
+    /tmp/fased-managed-uninstall.json >/dev/null
+  for unit in "$gateway_unit" "$signer_unit" "$supervisor_unit"; do
+    test ! -e "/etc/systemd/system/$unit"
+    ! systemctl is-enabled --quiet "$unit"
+    ! systemctl is-active --quiet "$unit"
+  done
+  test ! -e "/opt/fased/local/$instance"
+  test ! -e "$state/bin/fased"
+  test -f "/var/lib/fased-local/$instance/lifecycle/uninstalled.json"
+  jq -e '.completed == true and .managedRootsRemoved == true and
+    .launcherRemoved == true' \
+    "/var/lib/fased-local/$instance/lifecycle/uninstalled.json" >/dev/null
+  sha256sum --check "$owner_preservation"
+  sha256sum --check "$signer_preservation"
+
+  jq -n \
+    --arg commit "$commit" \
+    --arg instance "$instance" \
+    --arg version "$version" \
+    --arg repairDigest "sha256:$(sha256sum /tmp/fased-managed-repair.out | awk '{print $1}')" \
+    --arg uninstallDigest "sha256:$(sha256sum /tmp/fased-managed-uninstall.json | awk '{print $1}')" \
+    --arg ownerDigest "sha256:$(sha256sum "$owner_preservation" | awk '{print $1}')" \
+    --arg signerDigest "sha256:$(sha256sum "$signer_preservation" | awk '{print $1}')" \
+    '{schemaVersion:1,role:"fased-managed-operations-acceptance",status:"PASS",
+      evidenceClass:"PASS",commit:$commit,instanceId:$instance,version:$version,
+      repair:{status:"PASS",outputDigest:$repairDigest,exactUnitRestored:true},
+      uninstall:{status:"PASS",outputDigest:$uninstallDigest,managedAuthorityRemoved:true},
+      preservation:{ownerStateDigest:$ownerDigest,signerCustodyDigest:$signerDigest}}' \
+    >"$operations_receipt"
+  printf 'managed repair and uninstall fixture passed: %s\n' "$instance"
+  exit 0
+fi
+
 [[ "$phase" == "fresh-install" ||
   "$phase" == "managed-update" ]] || {
-  echo "usage: fased-protected-local-systemd-fixture fresh-install|managed-update|verify-reboot" >&2
+  echo "usage: fased-protected-local-systemd-fixture fresh-install|managed-update|verify-reboot|verify-operations" >&2
   exit 64
 }
 [[ "$public_acquisition" == "1" ]] || {

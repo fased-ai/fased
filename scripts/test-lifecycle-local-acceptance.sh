@@ -812,6 +812,23 @@ run_fixture_scenario() {
     --evidence-class PASS \
     --acquisition-evidence-class SUPPORTING >/dev/null
   printf 'branch lifecycle product receipt verified; acquisition supporting: %s\n' "$receipt"
+  if [[ "$scenario" == "managed-update" ]]; then
+    if ! run_container exec "$name" /bin/bash \
+      /usr/local/bin/fased-protected-local-systemd-fixture verify-operations; then
+      dump_fixture_failure "$name"
+      exit 1
+    fi
+    operations_receipt="$receipt.operations"
+    run_container cp \
+      "$name:/var/lib/fased-protected-local-fixture/lifecycle-operations.json" \
+      "$operations_receipt"
+    jq -e --arg commit "$COMMIT" \
+      '.status == "PASS" and .evidenceClass == "PASS" and .commit == $commit and
+       .repair.status == "PASS" and .repair.exactUnitRestored == true and
+       .uninstall.status == "PASS" and .uninstall.managedAuthorityRemoved == true' \
+      "$operations_receipt" >/dev/null
+    printf 'managed operations receipt verified: %s\n' "$operations_receipt"
+  fi
   run_container rm -f "$name" >/dev/null
 }
 
