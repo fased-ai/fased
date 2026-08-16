@@ -89,6 +89,11 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(hostingFixture).toContain("FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR");
     expect(hostingFixture).toContain("${distro}-${scenario}.partial.json");
     expect(hostingFixture).toContain('wait -n -p completed_pid "${scenario_pids[@]}"');
+    expect(hostingFixture).toContain("FASED_LIFECYCLE_FIXTURE_START_LOCK");
+    expect(hostingFixture).toContain('flock "$start_lock_fd"');
+    expect(hostingFixture).toContain('exec {image_cache_lock_fd}>"${image_archive}.lock"');
+    expect(hostingFixture).toContain("Preserved failed Hosting fixture support directory:");
+    expect(hostingFixture).toContain("trap 'exit 143' TERM");
     expect(hostingFixture).toContain("Serial Hosting proof stopped on the first failed scenario.");
     expect(hostingFixture).toContain('lifecycle-acceptance.sh "$fixture_phase" || return 1');
     expect(hostingFixture).toContain('lifecycle-receipt-verifier.mjs" \\');

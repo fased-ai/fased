@@ -39,9 +39,11 @@ MANAGED_PREDECESSOR_CLASS="${FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS:-pu
 PREDECESSOR_CAPSULE_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR:-}"
 PREDECESSOR_CAPSULE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR-$CACHE_HOME/fased/predecessor-capsules}"
 PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"
+SYSTEMD_START_LOCK="${FASED_LIFECYCLE_FIXTURE_START_LOCK:-${TMPDIR:-/tmp}/fased-lifecycle-systemd-start.lock}"
 FIXTURE_TOOLS_DIR=""
 FIXTURE_PREINSTALLED_TOOLS_DIR=""
 FIXTURE_NODE_MODULES=""
+image_staging=""
 
 if [[ -z "$ARTIFACT_DIR" && "$BUILD_ONLY" == "0" && -n "$ARTIFACT_CACHE_DIR" ]]; then
   [[ "$ARTIFACT_CACHE_DIR" == /* ]] || {
@@ -85,7 +87,10 @@ cleanup_before_fixture() {
     flock -u "$ARTIFACT_CACHE_LOCK_FD" >/dev/null 2>&1 || true
   fi
 }
-trap cleanup_before_fixture EXIT INT TERM HUP
+trap cleanup_before_fixture EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 if [[ -n "$ARTIFACT_DIR" ]]; then
   descriptor="$ARTIFACT_DIR/fased-hosting-candidate.json"
@@ -192,6 +197,15 @@ run_container() {
   echo "FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS must be 0 or 1." >&2
   exit 1
 }
+[[ "$SYSTEMD_START_LOCK" == /* ]] || {
+  echo "FASED_LIFECYCLE_FIXTURE_START_LOCK must be absolute." >&2
+  exit 1
+}
+command -v flock >/dev/null 2>&1 || {
+  echo "flock is required for serialized systemd fixture startup." >&2
+  exit 1
+}
+mkdir -p "$(dirname "$SYSTEMD_START_LOCK")"
 [[ "$PUBLIC_ACQUISITION" == "0" || "$PUBLIC_ACQUISITION" == "1" ]] || {
   echo "FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION must be 0 or 1." >&2
   exit 1
@@ -538,10 +552,13 @@ preserve_partial_receipt() {
 
 cleanup() {
   local name
+  local preserved_fixture=0
+  [[ -z "$image_staging" ]] || rm -f -- "$image_staging"
   for name in "${cleanup_names[@]}"; do
     if [[ "${FASED_SYSTEMD_FIXTURE_PRESERVE_FAILURE:-0}" == "1" ]] &&
       run_container container exists "$name" >/dev/null 2>&1; then
       printf 'preserved failed fixture: %s\n' "$name" >&2
+      preserved_fixture=1
       continue
     fi
     run_container rm -f "$name" >/dev/null 2>&1 || true
@@ -549,14 +566,16 @@ cleanup() {
   if [[ "$OWN_ARTIFACT_DIR" -eq 1 ]]; then
     rm -rf -- "$ARTIFACT_DIR"
   fi
-  if [[ -n "$FIXTURE_TOOLS_DIR" ]]; then
+  if [[ -n "$FIXTURE_TOOLS_DIR" && "$preserved_fixture" -eq 0 ]]; then
     rm -rf -- "$FIXTURE_TOOLS_DIR"
+  elif [[ -n "$FIXTURE_TOOLS_DIR" ]]; then
+    printf 'preserved failed fixture support directory: %s\n' "$FIXTURE_TOOLS_DIR" >&2
   fi
-  if [[ "$OWN_RECEIPT_DIR" -eq 1 ]]; then
+  if [[ "$OWN_RECEIPT_DIR" -eq 1 && "$preserved_fixture" -eq 0 ]]; then
     rm -rf -- "$RECEIPT_DIR"
   fi
 }
-trap cleanup EXIT INT TERM HUP
+trap cleanup EXIT
 
 if [[ -z "$RECEIPT_DIR" ]]; then
   RECEIPT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-lifecycle-acceptance-receipts.XXXXXX")"
@@ -649,6 +668,7 @@ run_fixture_scenario() {
   local fixture_memory=""
   local ready=0
   local state=""
+  local start_lock_fd=""
   local predecessor_capsule_dir="$ARTIFACT_DIR"
   local predecessor_version=""
   if [[ "$scenario" == "managed-update" ]]; then
@@ -656,7 +676,9 @@ run_fixture_scenario() {
     predecessor_version="$MANAGED_PREDECESSOR_VERSION"
   fi
 
-  run_container run -d \
+  exec {start_lock_fd}>"$SYSTEMD_START_LOCK"
+  flock "$start_lock_fd"
+  if ! run_container run -d \
     --name "$name" \
     --privileged \
     --systemd=always \
@@ -674,18 +696,31 @@ run_fixture_scenario() {
     -v "$FIXTURE_TOOLS_DIR/scripts/docker/protected-local-systemd/lifecycle-acceptance.sh:/usr/local/bin/fased-protected-local-systemd-fixture:ro,z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,z" \
     -v "$predecessor_capsule_dir:/predecessor-capsule:ro,z" \
-    "$image" >/dev/null
+    "$image" >/dev/null; then
+    flock -u "$start_lock_fd"
+    exec {start_lock_fd}>&-
+    echo "$distro systemd fixture container failed to start: $name" >&2
+    return 1
+  fi
   for _ in {1..200}; do
     state="$(run_container exec "$name" systemctl is-system-running 2>/dev/null || true)"
     if [[ "$state" == "running" || "$state" == "degraded" ]]; then
       ready=1
       break
     fi
+    if [[ "$(run_container inspect "$name" --format '{{.State.Running}}' 2>/dev/null || true)" == "false" ]]; then
+      break
+    fi
     sleep 0.1
   done
+  flock -u "$start_lock_fd"
+  exec {start_lock_fd}>&-
   [[ "$ready" -eq 1 ]] || {
-    echo "$distro systemd fixture did not become ready." >&2
-    exit 1
+    echo "$distro systemd fixture did not become ready: $name" >&2
+    run_container inspect "$name" --format \
+      'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' >&2 2>/dev/null || true
+    run_container logs "$name" >&2 2>/dev/null || true
+    return 1
   }
   fixture_command_started="$SECONDS"
   run_container exec "$name" /bin/bash \
@@ -789,9 +824,12 @@ for distro in "${distro_list[@]}"; do
   image="fased-protected-local-systemd-${distro}:local"
   image_started="$SECONDS"
   archive=""
+  image_cache_lock_fd=""
   if [[ -n "$IMAGE_CACHE_DIR" ]]; then
     mkdir -p "$IMAGE_CACHE_DIR"
     archive="$IMAGE_CACHE_DIR/${distro}.oci.tar"
+    exec {image_cache_lock_fd}>"${archive}.lock"
+    flock "$image_cache_lock_fd"
   fi
   if [[ -n "$archive" && -s "$archive" ]]; then
     run_container load --input "$archive" >/dev/null
@@ -801,10 +839,17 @@ for distro in "${distro_list[@]}"; do
   else
     run_container build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
     if [[ -n "$archive" ]]; then
-      run_container save --format oci-archive --output "$archive" "$image"
+      image_staging="${archive}.building.$$"
+      run_container save --format oci-archive --output "$image_staging" "$image"
+      mv "$image_staging" "$archive"
+      image_staging=""
     fi
     printf 'fixture timing: distro=%s stage=image-build elapsed=%ss\n' \
       "$distro" "$((SECONDS - image_started))"
+  fi
+  if [[ -n "$image_cache_lock_fd" ]]; then
+    flock -u "$image_cache_lock_fd"
+    exec {image_cache_lock_fd}>&-
   fi
 done
 
@@ -852,6 +897,18 @@ for distro in "${distro_list[@]}"; do
     else
       fixture_status="$?"
     fi
+    if [[ -z "$completed_pid" ]]; then
+      for fixture_pid in "${fixture_pids[@]}"; do
+        if ! kill -0 "$fixture_pid" 2>/dev/null; then
+          completed_pid="$fixture_pid"
+          break
+        fi
+      done
+    fi
+    [[ -n "$completed_pid" ]] || {
+      echo "Parallel protected Local proof could not identify the completed scenario." >&2
+      exit 1
+    }
     remaining_pids=()
     for fixture_pid in "${fixture_pids[@]}"; do
       [[ "$fixture_pid" == "$completed_pid" ]] || remaining_pids+=("$fixture_pid")

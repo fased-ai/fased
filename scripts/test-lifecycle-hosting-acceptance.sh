@@ -16,6 +16,7 @@ CACHE_HOME="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}"
 PREDECESSOR_CAPSULE_CACHE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR-$CACHE_HOME/fased/predecessor-capsules}"
 PARALLEL_SCENARIOS="${FASED_HOSTING_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"
 PRESERVE_FAILED_CONTAINER="${FASED_HOSTING_SYSTEMD_FIXTURE_PRESERVE_FAILURE:-1}"
+SYSTEMD_START_LOCK="${FASED_LIFECYCLE_FIXTURE_START_LOCK:-${TMPDIR:-/tmp}/fased-lifecycle-systemd-start.lock}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/hosting-systemd"
 
 [[ -n "$ARTIFACT_DIR" && -d "$ARTIFACT_DIR" ]] || {
@@ -38,6 +39,15 @@ command -v "$RUNTIME" >/dev/null 2>&1 || {
   echo "FASED_HOSTING_SYSTEMD_FIXTURE_PRESERVE_FAILURE must be 0 or 1." >&2
   exit 1
 }
+[[ "$SYSTEMD_START_LOCK" == /* ]] || {
+  echo "FASED_LIFECYCLE_FIXTURE_START_LOCK must be absolute." >&2
+  exit 1
+}
+command -v flock >/dev/null 2>&1 || {
+  echo "flock is required for serialized systemd fixture startup." >&2
+  exit 1
+}
+mkdir -p "$(dirname "$SYSTEMD_START_LOCK")"
 
 descriptor="$ARTIFACT_DIR/fased-hosting-candidate.json"
 identity="$ARTIFACT_DIR/fased-lifecycled-release.json"
@@ -148,19 +158,28 @@ mkdir -p "$failure_registry"
 cleanup() {
   local status=$?
   local name
+  local preserved_fixture=0
   [[ -z "$image_staging" ]] || rm -f -- "$image_staging"
   for name in "${cleanup_names[@]}"; do
     if [[ "$status" -ne 0 && "$PRESERVE_FAILED_CONTAINER" == "1" &&
       -f "$failure_registry/$name" ]] &&
       "$RUNTIME" container exists "$name" >/dev/null 2>&1; then
       printf 'Preserved failed Go Hosting fixture container: %s\n' "$name" >&2
+      preserved_fixture=1
       continue
     fi
     "$RUNTIME" rm -f "$name" >/dev/null 2>&1 || true
   done
-  rm -rf -- "$fixture_tools_dir"
+  if [[ "$preserved_fixture" -eq 0 ]]; then
+    rm -rf -- "$fixture_tools_dir"
+  else
+    printf 'Preserved failed Hosting fixture support directory: %s\n' "$fixture_tools_dir" >&2
+  fi
 }
-trap cleanup EXIT INT TERM HUP
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 fixture_source_commit="$commit"
 if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]]; then
@@ -208,6 +227,7 @@ for distro in "${distro_list[@]}"; do
   }
   image="fased-hosting-systemd-${distro}:local"
   image_archive=""
+  image_cache_lock_fd=""
   if [[ -n "$IMAGE_CACHE_DIR" ]]; then
     [[ "$IMAGE_CACHE_DIR" == /* ]] || {
       echo "FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR must be absolute." >&2
@@ -215,6 +235,8 @@ for distro in "${distro_list[@]}"; do
     }
     mkdir -p "$IMAGE_CACHE_DIR"
     image_archive="$IMAGE_CACHE_DIR/${distro}.oci.tar"
+    exec {image_cache_lock_fd}>"${image_archive}.lock"
+    flock "$image_cache_lock_fd"
   fi
   if [[ -n "$image_archive" && -s "$image_archive" ]]; then
     "$RUNTIME" load --input "$image_archive" >/dev/null
@@ -225,10 +247,14 @@ for distro in "${distro_list[@]}"; do
     if [[ -n "$image_archive" ]]; then
       image_staging="${image_archive}.building.$$"
       "$RUNTIME" save --format oci-archive --output "$image_staging" "$image"
-      mv -n "$image_staging" "$image_archive"
+      mv "$image_staging" "$image_archive"
       rm -f -- "$image_staging"
       image_staging=""
     fi
+  fi
+  if [[ -n "$image_cache_lock_fd" ]]; then
+    flock -u "$image_cache_lock_fd"
+    exec {image_cache_lock_fd}>&-
   fi
 done
 
@@ -261,11 +287,14 @@ run_scenario_body() {
   local image="fased-hosting-systemd-${distro}:local"
   local predecessor_dir="$ARTIFACT_DIR"
   local predecessor=""
+  local start_lock_fd=""
   [[ "$scenario" != "managed-update" ]] || {
     predecessor_dir="$PREDECESSOR_CAPSULE_DIR"
     predecessor="$PREDECESSOR_VERSION"
   }
-  "$RUNTIME" run -d \
+  exec {start_lock_fd}>"$SYSTEMD_START_LOCK"
+  flock "$start_lock_fd"
+  if ! "$RUNTIME" run -d \
     --name "$name" \
     --privileged \
     --systemd=always \
@@ -281,7 +310,12 @@ run_scenario_body() {
     -v "$fixture_node:/fixture-node:ro,Z" \
     -v "$ARTIFACT_DIR:/artifacts:ro,Z" \
     -v "$predecessor_dir:/predecessor-capsule:ro,Z" \
-    "$image" >/dev/null || return 1
+    "$image" >/dev/null; then
+    flock -u "$start_lock_fd"
+    exec {start_lock_fd}>&-
+    echo "$distro $scenario Go Hosting fixture container failed to start: $name" >&2
+    return 1
+  fi
   ready=0
   for _ in {1..200}; do
     state="$("$RUNTIME" exec "$name" systemctl is-system-running 2>/dev/null || true)"
@@ -289,11 +323,19 @@ run_scenario_body() {
       ready=1
       break
     fi
+    if [[ "$("$RUNTIME" inspect "$name" --format '{{.State.Running}}' 2>/dev/null || true)" == "false" ]]; then
+      break
+    fi
     sleep 0.1
   done
+  flock -u "$start_lock_fd"
+  exec {start_lock_fd}>&-
   [[ "$ready" -eq 1 ]] || {
     echo "$distro $scenario Go Hosting fixture did not become ready: $name" >&2
-    exit 1
+    "$RUNTIME" inspect "$name" --format \
+      'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' >&2 2>/dev/null || true
+    "$RUNTIME" logs "$name" >&2 2>/dev/null || true
+    return 1
   }
   fixture_phase="$([[ "$scenario" == "fresh-install" ]] && printf install || printf managed-update)"
   "$RUNTIME" exec "$name" bash /fixture-tools/docker/hosting-systemd/lifecycle-acceptance.sh "$fixture_phase" || return 1
@@ -390,6 +432,18 @@ else
     wait -n -p completed_pid "${scenario_pids[@]}"
     status=$?
     set -e
+    if [[ -z "$completed_pid" ]]; then
+      for remaining in "${scenario_pids[@]}"; do
+        if ! kill -0 "$remaining" 2>/dev/null; then
+          completed_pid="$remaining"
+          break
+        fi
+      done
+    fi
+    [[ -n "$completed_pid" ]] || {
+      echo "Parallel Hosting proof could not identify the completed scenario." >&2
+      exit 1
+    }
     label="${scenario_labels[$completed_pid]:-unknown|unknown|unknown}"
     IFS='|' read -r failed_distro failed_scenario failed_name <<<"$label"
     if [[ "$status" -ne 0 ]]; then

@@ -191,6 +191,11 @@ describe("version-neutral lifecycle acceptance", () => {
       'PARALLEL_SCENARIOS="${FASED_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"',
     );
     expect(wrapper).toContain('wait -n -p completed_pid "${fixture_pids[@]}"');
+    expect(wrapper).toContain("FASED_LIFECYCLE_FIXTURE_START_LOCK");
+    expect(wrapper).toContain('flock "$start_lock_fd"');
+    expect(wrapper).toContain('exec {image_cache_lock_fd}>"${archive}.lock"');
+    expect(wrapper).toContain("preserved failed fixture support directory:");
+    expect(wrapper).toContain("trap 'exit 143' TERM");
     expect(wrapper).toContain(
       "Parallel protected Local proof stopped on the first failed scenario.",
     );

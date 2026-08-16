@@ -491,6 +491,21 @@ run_concurrent() {
     wait -n -p completed_pid "${pids[@]}"
     status=$?
     set -e
+    if [[ -z "$completed_pid" ]]; then
+      for remaining in "${pids[@]}"; do
+        if ! kill -0 "$remaining" 2>/dev/null; then
+          completed_pid="$remaining"
+          break
+        fi
+      done
+    fi
+    [[ -n "$completed_pid" ]] || {
+      for remaining in "${pids[@]}"; do
+        kill "$remaining" 2>/dev/null || true
+      done
+      wait || true
+      fail_local0 "Concurrent LOCAL0 could not identify the completed lane."
+    }
     label="${labels[$completed_pid]:-unknown}"
     if [[ "$status" -ne 0 ]]; then
       current_lane="$label"
