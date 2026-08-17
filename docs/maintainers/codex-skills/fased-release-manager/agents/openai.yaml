@@ -1,4 +1,4 @@
 interface:
   display_name: "Fased Release Manager"
-  short_description: "Close Fased fixes locally before release"
-  default_prompt: "Use $fased-release-manager to close affected Fased predicates through one tag-free LOCAL0 proof before any RC allocation and preserve explicit irreversible boundaries."
+  short_description: "Route all Fased work efficiently and safely"
+  default_prompt: "Use $fased-release-manager for this Fased task with automatic Sol Advisor routing. If a literal failure is reported, fix and focused-test its exact predicate before docs, broad checks, CI, or release work; otherwise select the appropriate report, lifecycle, or release mode and preserve explicit irreversible boundaries."
