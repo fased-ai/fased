@@ -232,6 +232,40 @@ describe("local signer env file helpers", () => {
     expect(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBeUndefined();
   });
 
+  it("keeps verified Protected Local signer values live while QuickStart disables Wallet", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-onboarding-wallet-protected-local-"));
+    tempDirs.push(root);
+    const instanceId = "0123456789abcdef";
+    const installRoot = `/opt/fased/local/${instanceId}`;
+    const socketPath = `/run/fased-local/${instanceId}/application/app.sock`;
+    const binPath = `${installRoot}/current/payload/bin/fased-signerd`;
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("FASED_PROTECTED_LOCAL", "1");
+    vi.stubEnv("FASED_PROTECTED_LOCAL_INSTANCE", instanceId);
+    vi.stubEnv("FASED_LIFECYCLE_INSTALL_ROOT", installRoot);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_SOCKET", socketPath);
+    vi.stubEnv("FASED_WALLET_LOCAL_SIGNER_BIN", binPath);
+
+    const next = await configureWalletForOnboarding({
+      flow: "quickstart",
+      nextConfig: {
+        env: {
+          vars: {
+            FASED_WALLET_LOCAL_SIGNER_SOCKET: socketPath,
+            FASED_WALLET_LOCAL_SIGNER_BIN: binPath,
+          },
+        },
+      },
+      prompter: createPrompterStub(),
+    });
+
+    expect(next.wallet?.runtime?.enabled).toBe(false);
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBeUndefined();
+    expect(next.env?.vars?.FASED_WALLET_LOCAL_SIGNER_BIN).toBeUndefined();
+    expect(process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET).toBe(socketPath);
+    expect(process.env.FASED_WALLET_LOCAL_SIGNER_BIN).toBe(binPath);
+  });
+
   it.runIf(process.platform === "linux" || process.platform === "darwin")(
     "installs a checksum-verified signer asset without Go from an arbitrary cwd",
     () => {

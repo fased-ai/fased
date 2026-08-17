@@ -629,6 +629,8 @@ func TestOnboardingCommandBindsCanonicalProfileEnvironment(t *testing.T) {
 		"HOME=/home/owner", "FASED_STATE_DIR=/home/owner/.fased", "FASED_CONFIG_PATH=/home/owner/.fased/fased.json",
 		"FASED_INSTALLER_ONBOARD=1", "FASED_INSTALL_LIFECYCLE_COMMITTED=1", "FASED_PROTECTED_LOCAL=1",
 		"FASED_PROTECTED_LOCAL_INSTANCE=0123456789abcdef", // pragma: allowlist secret
+		"FASED_LIFECYCLE_INSTALL_ROOT=" + local.InstallRoot,
+		"FASED_WALLET_LOCAL_SIGNER_BIN=" + filepath.Join(local.InstallRoot, "current", "payload", "bin", "fased-signerd"),
 		"FASED_WALLET_LOCAL_SIGNER_SOCKET=" + local.ApplicationSocket(),
 		"FASED_HOST_UPDATER_SOCKET=" + local.SupervisorSocket(),
 	} {
@@ -651,6 +653,101 @@ func TestOnboardingCommandBindsCanonicalProfileEnvironment(t *testing.T) {
 	}
 	if strings.Contains(hostArgs, "FASED_PROTECTED_LOCAL=") {
 		t.Fatalf("Hosting onboarding inherited Local authority: %s", hostArgs)
+	}
+}
+
+func TestLifecyclePhaseProgressIsBoundedAndKeepsJSONSilent(t *testing.T) {
+	var nonTerminal bytes.Buffer
+	nonTerminalProgress := beginLifecyclePhase(&nonTerminal, false, "acquiring the verified lifecycle release")
+	nonTerminalProgress.Stop()
+	if got, want := nonTerminal.String(), "Phase: acquiring the verified lifecycle release\n"; got != want {
+		t.Fatalf("non-terminal progress = %q, want %q", got, want)
+	}
+
+	var jsonOutput bytes.Buffer
+	if progress := beginLifecyclePhase(&jsonOutput, true, "applying the lifecycle generation"); progress != nil {
+		t.Fatal("JSON lifecycle output started progress rendering")
+	}
+	if jsonOutput.Len() != 0 {
+		t.Fatalf("JSON lifecycle output was corrupted: %q", jsonOutput.String())
+	}
+
+	var terminal bytes.Buffer
+	terminalProgress := newLifecyclePhaseProgress(&terminal, "applying the lifecycle generation", true, time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
+	terminalProgress.Stop()
+	stopped := terminal.String()
+	time.Sleep(3 * time.Millisecond)
+	if terminal.String() != stopped {
+		t.Fatal("terminal lifecycle heartbeat survived Stop")
+	}
+	if !strings.Contains(stopped, "Phase: applying the lifecycle generation") || !strings.HasSuffix(stopped, "\r\033[2K") {
+		t.Fatalf("terminal progress did not render and clear its phase: %q", stopped)
+	}
+}
+
+func TestLifecycleApplyStopsTerminalProgressBeforeVerboseOutput(t *testing.T) {
+	var output bytes.Buffer
+	applyProgress := newLifecyclePhaseProgress(&output, "applying the lifecycle generation", true, time.Hour)
+	verbosePayload := []byte("lifecycle diagnostic payload\n")
+	buffered := lifecycleHostVerboseOutput(publicLifecycleRequest{Verbose: true}, verbosePayload)
+	if !bytes.Equal(buffered, verbosePayload) {
+		t.Fatalf("verbose lifecycle payload was lost while buffering: %q", buffered)
+	}
+	applyProgress.Stop()
+	emitLifecycleHostVerbose(&output, buffered)
+
+	got := output.String()
+	clearAt := strings.LastIndex(got, "\r\033[2K")
+	payloadAt := strings.Index(got, string(verbosePayload))
+	if clearAt == -1 || payloadAt == -1 || clearAt >= payloadAt {
+		t.Fatalf("terminal progress was not cleared before verbose payload: %q", got)
+	}
+	if !strings.HasSuffix(got, string(verbosePayload)) {
+		t.Fatalf("verbose lifecycle payload was interleaved or changed: %q", got)
+	}
+	jsonRequest := publicLifecycleRequest{Verbose: true, JSON: true}
+	jsonVerbose := lifecycleHostVerboseOutput(jsonRequest, verbosePayload)
+	if !bytes.Equal(jsonVerbose, verbosePayload) {
+		t.Fatalf("JSON verbose lifecycle payload was lost: %q", jsonVerbose)
+	}
+	var jsonMachineOutput, jsonDiagnostics bytes.Buffer
+	emitLifecycleHostVerbose(lifecycleHostVerboseOutputWriter(jsonRequest, &jsonMachineOutput, &jsonDiagnostics), jsonVerbose)
+	if jsonMachineOutput.Len() != 0 {
+		t.Fatalf("JSON lifecycle verbose bytes corrupted machine output: %q", jsonMachineOutput.String())
+	}
+	if !bytes.Equal(jsonDiagnostics.Bytes(), verbosePayload) {
+		t.Fatalf("JSON lifecycle diagnostics changed or lost verbose bytes: %q", jsonDiagnostics.Bytes())
+	}
+}
+
+func TestJSONOnboardingRoutesDiagnosticsAwayFromMachineOutput(t *testing.T) {
+	for _, request := range []publicLifecycleRequest{
+		{Operation: "install", JSON: true},
+		{Operation: "install", JSON: true, Verbose: true},
+	} {
+		var machineOutput, diagnostics bytes.Buffer
+		childStdout, childStderr := onboardingProcessOutputWriters(request, &machineOutput, &diagnostics)
+		if _, err := childStdout.Write([]byte("onboarding stdout\n")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := childStderr.Write([]byte("onboarding stderr\n")); err != nil {
+			t.Fatal(err)
+		}
+		if request.Verbose {
+			if _, err := onboardingVerboseOutputWriter(request, &machineOutput, &diagnostics).Write([]byte("onboarding completion\n")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if machineOutput.Len() != 0 {
+			t.Fatalf("JSON onboarding wrote diagnostics to machine output: %q", machineOutput.String())
+		}
+		if !strings.Contains(diagnostics.String(), "onboarding stdout\n") || !strings.Contains(diagnostics.String(), "onboarding stderr\n") {
+			t.Fatalf("JSON onboarding diagnostics were not retained: %q", diagnostics.String())
+		}
+		if request.Verbose && !strings.Contains(diagnostics.String(), "onboarding completion\n") {
+			t.Fatalf("JSON verbose onboarding diagnostic was not retained: %q", diagnostics.String())
+		}
 	}
 }
 
