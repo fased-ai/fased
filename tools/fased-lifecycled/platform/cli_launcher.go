@@ -1,12 +1,18 @@
 package platform
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 
 	"fased-lifecycled/model"
 )
+
+const ManagedCLIProjectionPath = "/usr/local/bin/fased"
 
 // RenderCLILauncher creates the stable owner-facing command. Runtime and
 // dependency identities remain selected by root-owned current/inventory data.
@@ -42,14 +48,18 @@ export FASED_WALLET_LOCAL_SIGNER_BIN=%q
 export FASED_WALLET_LOCAL_SIGNER_SOCKET=%q
 %s
 managed_operation=""
+managed_status_from_update=0
 if [[ "${1:-}" == "--update" ]]; then
   managed_operation="update"
 elif [[ "${1:-}" == "update" ]]; then
   if [[ "${2:-}" == "status" ]]; then
     managed_operation="status"
+    managed_status_from_update=1
   elif [[ "${2:-}" != "wizard" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; then
     managed_operation="update"
   fi
+elif [[ "${1:-}" == "status" ]]; then
+  managed_operation="status"
 elif [[ "${1:-}" == "repair" ]]; then
   managed_operation="${1}"
 elif [[ "${1:-}" == "uninstall" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; then
@@ -69,7 +79,7 @@ if [[ -n "$managed_operation" ]]; then
     exit 1
   }
   shift
-  if [[ "$managed_operation" == "status" ]]; then
+  if [[ "$managed_status_from_update" == "1" ]]; then
     shift
   fi
   if [[ "$(id -u)" == "0" ]]; then
@@ -131,6 +141,86 @@ exec "$node_bin" "$runtime" "$@"
 		projection.Environment["FASED_WALLET_LOCAL_SIGNER_BIN"], projection.Environment["FASED_WALLET_LOCAL_SIGNER_SOCKET"],
 		localLauncherEnvironment(projection), config.BootstrapHostPath(), bootstrapStat)
 	return []byte(script), nil
+}
+
+// RenderManagedCLIProjection creates the root-owned conventional command that
+// dispatches only to this installation's canonical owner launcher.
+func RenderManagedCLIProjection(config Config) ([]byte, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	launcher := filepath.Join(config.OwnerStateRoot, "bin", "fased")
+	if !filepath.IsAbs(launcher) || filepath.Clean(launcher) != launcher {
+		return nil, errors.New("managed CLI projection launcher is invalid")
+	}
+	return []byte(fmt.Sprintf("#!/usr/bin/env bash\nset -euo pipefail\nexec %q \"$@\"\n", launcher)), nil
+}
+
+// InstallManagedCLIProjectionTransactional installs the conventional public
+// command only into a root-owned, non-writable system ancestry. An existing
+// projection is accepted solely when its bytes and metadata already match this
+// exact configured installation, so another program's command is never
+// adopted or overwritten.
+func InstallManagedCLIProjectionTransactional(config Config) (*FileReplacement, error) {
+	data, err := RenderManagedCLIProjection(config)
+	if err != nil {
+		return nil, err
+	}
+	return installManagedCLIProjectionTransactional(ManagedCLIProjectionPath, "/", data, 0, 0)
+}
+
+func installManagedCLIProjectionTransactional(path, ancestryRoot string, data []byte, uid, gid uint32) (*FileReplacement, error) {
+	if err := validateManagedCLIProjectionAncestry(path, ancestryRoot, uid); err != nil {
+		return nil, err
+	}
+	if info, err := os.Lstat(path); err == nil {
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o755 ||
+			stat.Uid != uid || stat.Gid != gid || stat.Nlink != 1 {
+			return nil, errors.New("existing managed CLI projection is unsafe")
+		}
+		if info.Size() != int64(len(data)) {
+			return nil, errors.New("existing managed CLI projection is unrelated")
+		}
+		existing, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(existing, data) {
+			return nil, errors.New("existing managed CLI projection is unrelated")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return InstallFileTransactional(path, data, 0o755, uid, gid)
+}
+
+func validateManagedCLIProjectionAncestry(path, ancestryRoot string, expectedUID uint32) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || !filepath.IsAbs(ancestryRoot) ||
+		filepath.Clean(ancestryRoot) != ancestryRoot {
+		return errors.New("managed CLI projection path is invalid")
+	}
+	relative, err := filepath.Rel(ancestryRoot, filepath.Dir(path))
+	if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("managed CLI projection ancestry is invalid")
+	}
+	directories := []string{ancestryRoot}
+	directory := ancestryRoot
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		directory = filepath.Join(directory, component)
+		directories = append(directories, directory)
+	}
+	for _, directory := range directories {
+		info, err := os.Lstat(directory)
+		if err != nil {
+			return errors.Join(err, errors.New("managed CLI projection ancestry is unsafe"))
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 || stat.Uid != expectedUID {
+			return errors.New("managed CLI projection ancestry is unsafe")
+		}
+	}
+	return nil
 }
 
 func localLauncherEnvironment(projection CLIProjection) string {

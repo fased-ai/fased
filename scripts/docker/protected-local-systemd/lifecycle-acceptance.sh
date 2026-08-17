@@ -864,7 +864,8 @@ if [[ "$phase" == "verify-operations" ]]; then
   systemctl daemon-reload
   test ! -e "$unit_path"
   runuser -u testop -- env "${env_args[@]}" \
-    "$state/bin/fased" repair --timeout 120 \
+    /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && exec fased repair "$@"' \
+    fased --timeout 120 \
     >/tmp/fased-managed-repair.out 2>/tmp/fased-managed-repair.err
   grep -F "Repaired successfully: $version" /tmp/fased-managed-repair.out >/dev/null
   cmp /tmp/fased-managed-repair-gateway.service "$unit_path"
@@ -874,7 +875,8 @@ if [[ "$phase" == "verify-operations" ]]; then
   sha256sum --check "$signer_preservation"
 
   runuser -u testop -- env "${env_args[@]}" \
-    "$state/bin/fased" uninstall --yes --non-interactive --json \
+    /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && exec fased uninstall "$@"' \
+    fased --yes --non-interactive --json \
     >/tmp/fased-managed-uninstall.json 2>/tmp/fased-managed-uninstall.err
   jq -e --arg instance "$instance" \
     '.status == "UNINSTALLED" and .profile == "protected-local" and
@@ -1508,7 +1510,8 @@ if [[ "$phase" == "fresh-install" ]]; then
     >/tmp/fresh-noop-installer.out 2>/tmp/fresh-noop-installer.err
   grep -F "Already current: $version" /tmp/fresh-noop-installer.out >/dev/null
   runuser -u testop -- env "${fresh_env[@]}" \
-    "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
+    /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status >/dev/null && exec fased update "$@"' \
+    fased "${target_update_args[@]}" --timeout 120 \
     >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
   grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
   if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
@@ -1813,7 +1816,8 @@ EOF_STABLE_BRIDGE_DROPIN
     if ! runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-      "$state/bin/fased" update "${target_update_args[@]}" --timeout 120 \
+      /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status >/dev/null && exec fased update "$@"' \
+      fased "${target_update_args[@]}" --timeout 120 \
       >/tmp/stable-bridge-noop.out 2>/tmp/stable-bridge-noop.err; then
       cat /tmp/stable-bridge-noop.err >&2
       exit 1
@@ -1975,7 +1979,8 @@ EOF_MANAGED_MINING_LEDGER
     runuser -u testop -- env "${managed_operator_env[@]}" \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-      "$state/bin/fased" update "${target_update_args[@]}" --timeout 120
+      /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status >/dev/null && exec fased update "$@"' \
+      fased "${target_update_args[@]}" --timeout 120
   }
 
   acceptance_start

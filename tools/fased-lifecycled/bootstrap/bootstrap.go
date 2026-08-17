@@ -219,20 +219,24 @@ func BeginPlatformBootstrap(ctx context.Context, request PlatformBootstrapReques
 		if err != nil {
 			return nil, err
 		}
-		authorityData, err := platform.RenderUpdateAuthority(config, request.OperatorUser)
+		projection, err := platform.InstallManagedCLIProjectionTransactional(config)
 		if err != nil {
 			return nil, errors.Join(err, launcher.Rollback())
+		}
+		authorityData, err := platform.RenderUpdateAuthority(config, request.OperatorUser)
+		if err != nil {
+			return nil, errors.Join(err, projection.Rollback(), launcher.Rollback())
 		}
 		authority, err := platform.InstallFileTransactional(config.UpdateAuthorityPath(), authorityData, 0o440, 0, 0)
 		if err != nil {
-			return nil, errors.Join(err, launcher.Rollback())
+			return nil, errors.Join(err, projection.Rollback(), launcher.Rollback())
 		}
 		if request.BridgePublicStable && config.Profile == model.ProfileProtectedLocal {
 			if err := (platform.DiskLocalPredecessorFence{}).Ensure(config); err != nil {
-				return nil, errors.Join(err, authority.Rollback(), launcher.Rollback())
+				return nil, errors.Join(err, authority.Rollback(), projection.Rollback(), launcher.Rollback())
 			}
 		}
-		return func() error { return errors.Join(authority.Rollback(), launcher.Rollback()) }, nil
+		return func() error { return errors.Join(authority.Rollback(), projection.Rollback(), launcher.Rollback()) }, nil
 	}})
 	steps = append(steps, platform.BootstrapStep{Phase: platform.BootstrapPhaseUnits, Apply: func() (platform.BootstrapUndo, error) {
 		identity, err := config.Identity()

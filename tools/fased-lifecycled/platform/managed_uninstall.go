@@ -269,6 +269,9 @@ func (uninstaller *ManagedUninstaller) expectedUnits(identity model.PlatformIden
 }
 
 func (uninstaller *ManagedUninstaller) removeProjections() error {
+	if err := uninstaller.removeManagedCLIProjection(); err != nil {
+		return err
+	}
 	cli, err := CanonicalCLIProjectionJSON(uninstaller.Config)
 	if err != nil {
 		return err
@@ -297,6 +300,22 @@ func (uninstaller *ManagedUninstaller) removeProjections() error {
 		}
 	}
 	return uninstaller.removePluginLockProjection()
+}
+
+func (uninstaller *ManagedUninstaller) removeManagedCLIProjection() error {
+	data, err := RenderManagedCLIProjection(uninstaller.Config)
+	if err != nil {
+		return err
+	}
+	ancestryRoot := "/"
+	if uninstaller.RootPrefix != "" {
+		ancestryRoot = uninstaller.RootPrefix
+	}
+	path := uninstaller.resolve(ManagedCLIProjectionPath)
+	if err := validateManagedCLIProjectionAncestry(path, ancestryRoot, uninstaller.ExpectedUID); err != nil {
+		return err
+	}
+	return uninstaller.removeExactFile(ManagedCLIProjectionPath, data, 0o755, uninstaller.ExpectedUID)
 }
 
 func (uninstaller *ManagedUninstaller) removePluginLockProjection() error {

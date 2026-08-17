@@ -162,6 +162,21 @@ if [[ ${#onboard_args[@]} -gt 0 ]]; then bootstrap_args+=(-- "${onboard_args[@]}
 
 echo "Fased: applying ${profile} release ${release}..."
 "${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"
+echo "Fased: verifying public command..."
+verify_public_command() {
+  local command_probe='cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && fased update --tag "$1"'
+  local update_output
+  if [[ "$profile" == "hosting" ]]; then
+    update_output="$(/usr/sbin/runuser -u "$operator_user" -- /usr/bin/env "HOME=/home/${operator_user}" \
+      PATH=/usr/local/bin:/usr/bin:/bin /bin/bash -c "$command_probe" fased "$release")"
+  else
+    update_output="$(/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin \
+      /bin/bash -c "$command_probe" fased "$release")"
+  fi
+  printf '%s\n' "$update_output"
+  grep -Fqx "Already current: $release" <<<"$update_output"
+}
+verify_public_command
 echo "Fased: installation complete."
 }
 

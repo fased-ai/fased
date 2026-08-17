@@ -272,8 +272,26 @@ describe("lifecycle acceptance contract", () => {
     );
     const managedUpdate = fixture.slice(fixture.indexOf('if [[ "$phase" == "managed-update" ]]'));
     expect(managedUpdate).toContain("run_installed_updater()");
-    expect(managedUpdate).toContain('"$state/bin/fased" update "${target_update_args[@]}"');
+    expect(managedUpdate).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
+    expect(managedUpdate).toContain('fased status >/dev/null && exec fased update "$@"');
     expect(managedUpdate.match(/run_installed_updater/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("requires Local and Hosting fixtures to resolve the public command outside the owner state", () => {
+    const local = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    for (const fixture of [local, hosting]) {
+      expect(fixture).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
+      expect(fixture).toContain('fased status >/dev/null && exec fased update "$@"');
+    }
+    expect(local).not.toContain('"$state/bin/fased" update');
+    expect(hosting).not.toContain("/home/app/.fased/bin/fased update");
   });
 
   it("proves repair and uninstall after reboot without escaping fixture trust", () => {
@@ -297,8 +315,9 @@ describe("lifecycle acceptance contract", () => {
       fixture.indexOf('if [[ "$phase" == "verify-operations" ]]'),
     );
     expect(operations).toContain('grep -Fqx "127.0.0.1 github.com" /etc/hosts');
-    expect(operations).toContain('"$state/bin/fased" repair --timeout 120');
-    expect(operations).toContain('"$state/bin/fased" uninstall --yes --non-interactive --json');
+    expect(operations).toContain('exec fased repair "$@"');
+    expect(operations).toContain('exec fased uninstall "$@"');
+    expect(operations).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
     expect(operations).toContain('predecessor_class="$(jq -er .predecessorClass "$snapshot")"');
     expect(verifyReboot).not.toContain(".predecessorClass");
     expect(fixture.match(/predecessorClass: \$predecessorClass/g)?.length).toBe(2);
