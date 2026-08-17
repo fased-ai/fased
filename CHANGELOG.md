@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.100
+
+- Make public lifecycle compatibility discovery reliable with direct exact
+  predecessor lookup and bounded, fail-closed release enumeration.
+
 ## 0.1.76-rc.99
 
 - Expose one exact-managed global `fased` command for Local and Hosting
