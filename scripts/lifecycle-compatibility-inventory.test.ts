@@ -85,6 +85,60 @@ describe("lifecycle compatibility inventory", () => {
     );
   });
 
+  it("uses one exact direct lookup for a non-source P1 predecessor and fails closed", () => {
+    const inventory = loadLifecycleCompatibilityInventory();
+    const calls = [];
+    const release = __testing.readDirectPublicGitHubRelease(
+      inventory.repository,
+      "v0.1.76-rc.71",
+      (command, args, options) => {
+        calls.push({ command, args, options });
+        expect(command).toBe("gh");
+        expect(args).toEqual([
+          "release",
+          "view",
+          "v0.1.76-rc.71",
+          "--repo",
+          inventory.repository,
+          "--json",
+          "tagName,isDraft,publishedAt",
+        ]);
+        expect(options).toEqual({ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        expect(args).not.toContain("--paginate");
+        return JSON.stringify({
+          tagName: "v0.1.76-rc.71",
+          isDraft: false,
+          publishedAt: "2026-08-17T00:00:00Z",
+        });
+      },
+    );
+    expect(calls).toHaveLength(1);
+    expect(release).toEqual({
+      tag_name: "v0.1.76-rc.71",
+      draft: false,
+      published_at: "2026-08-17T00:00:00Z",
+    });
+
+    for (const metadata of [
+      { tagName: "v0.1.76-rc.70", isDraft: false, publishedAt: "2026-08-17T00:00:00Z" },
+      { tagName: "v0.1.76-rc.71", isDraft: true, publishedAt: "2026-08-17T00:00:00Z" },
+      { tagName: "v0.1.76-rc.71", isDraft: false, publishedAt: null },
+    ]) {
+      expect(() =>
+        __testing.readDirectPublicGitHubRelease(inventory.repository, "v0.1.76-rc.71", () =>
+          JSON.stringify(metadata),
+        ),
+      ).toThrow();
+    }
+    expect(() =>
+      __testing.readDirectPublicGitHubRelease(
+        inventory.repository,
+        "v0.1.76-rc.71",
+        () => "not-json",
+      ),
+    ).toThrow();
+  });
+
   it("keeps release names out of runtime compatibility selection", () => {
     const inventory = loadLifecycleCompatibilityInventory();
     expect(inventory.selectionContract.runtimeConsumesReleaseAssignments).toBe(false);

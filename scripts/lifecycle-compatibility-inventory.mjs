@@ -673,6 +673,42 @@ function readPublicGitHubReleases(repository) {
     });
 }
 
+export function readDirectPublicGitHubRelease(repository, tag, commandRunner = execFileSync) {
+  if (!TAG_PATTERN.test(tag || "")) {
+    fail("cannot load compatibility evidence for an invalid public tag");
+  }
+  const response = commandRunner(
+    "gh",
+    ["release", "view", tag, "--repo", repository, "--json", "tagName,isDraft,publishedAt"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let metadata;
+  try {
+    metadata = JSON.parse(response);
+  } catch {
+    fail(`public GitHub release ${tag} response is invalid`);
+  }
+  exactKeys(metadata, ["tagName", "isDraft", "publishedAt"], `public GitHub release ${tag}`);
+  if (metadata.tagName !== tag) {
+    fail(`public GitHub release lookup returned ${String(metadata.tagName)}, expected ${tag}`);
+  }
+  if (metadata.isDraft !== false) {
+    fail(`public GitHub release ${tag} is not a published release`);
+  }
+  if (
+    typeof metadata.publishedAt !== "string" ||
+    metadata.publishedAt.length === 0 ||
+    !Number.isFinite(Date.parse(metadata.publishedAt))
+  ) {
+    fail(`public GitHub release ${tag} has invalid publication metadata`);
+  }
+  return Object.freeze({
+    tag_name: metadata.tagName,
+    draft: metadata.isDraft,
+    published_at: metadata.publishedAt,
+  });
+}
+
 function sha256File(file) {
   return `sha256:${createHash("sha256").update(readFileSync(file)).digest("hex")}`;
 }
@@ -833,10 +869,9 @@ function main() {
     );
     let manifestedReleases = [];
     if (!sourceAssigned) {
-      const releases = readPublicGitHubReleases(inventory.repository).filter(
-        (release) => release.tag_name === tag,
-      );
-      manifestedReleases = readManifestedPublicReleases(inventory, releases);
+      manifestedReleases = readManifestedPublicReleases(inventory, [
+        readDirectPublicGitHubRelease(inventory.repository, tag),
+      ]);
     }
     process.stdout.write(
       `${candidateP1Scenarios(inventory, args[1], manifestedReleases).join(",")}\n`,
@@ -857,4 +892,5 @@ export const __testing = Object.freeze({
   RELEASE_EVIDENCE_FIELDS,
   REQUIRED_TOPOLOGY_CLASSES,
   RUNTIME_SELECTION_FIELDS,
+  readDirectPublicGitHubRelease,
 });
