@@ -4,6 +4,14 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.98
+
+- Preserve the validated protected-Local signer socket and binary through
+  disabled-Wallet onboarding so final identity validation remains bound to the
+  Go lifecycle instance.
+- Add visible joined lifecycle progress while keeping JSON output
+  machine-readable and routing diagnostics separately.
+
 ## 0.1.76-rc.97
 
 - Converge managed Local and Hosting installation, update, repair, uninstall,
