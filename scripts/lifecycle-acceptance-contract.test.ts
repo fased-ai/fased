@@ -269,6 +269,37 @@ describe("lifecycle acceptance contract", () => {
     expect(driver).toContain('current_phase="pre-tag-predecessor-capsule-contract"');
   });
 
+  it("keeps fixture-image preparation outside normal aggregate LOCAL0", () => {
+    const localWrapper = readFileSync(
+      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const hostingWrapper = readFileSync(
+      new URL("./test-lifecycle-hosting-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const driver = readFileSync(new URL("./run-lifecycle-local0.sh", import.meta.url), "utf8");
+    const prepare = readFileSync(
+      new URL("./prepare-lifecycle-systemd-fixture-images.sh", import.meta.url),
+      "utf8",
+    );
+    for (const wrapper of [localWrapper, hostingWrapper]) {
+      expect(wrapper).not.toContain("run_container build");
+      expect(wrapper).not.toContain('$RUNTIME" build');
+      expect(wrapper).toContain("fased_fixture_image_ref");
+      expect(wrapper).toContain("Fixture image is unavailable; prepare it explicitly");
+    }
+    expect(driver.match(/FASED_SYSTEMD_FIXTURE_PREPARE_IMAGES=0/gu)?.length).toBe(2);
+    expect(driver).toContain("$CACHE_ROOT/images/local");
+    expect(driver).toContain("$CACHE_ROOT/images/hosting");
+    expect(driver).not.toContain("$CACHE_ROOT/images/$tree/local");
+    expect(driver).not.toContain("$CACHE_ROOT/images/$tree/hosting");
+    expect(prepare).toContain("run_container build");
+    expect(prepare).toContain("io.fased.fixture.input-digest");
+    expect(prepare).toContain("protected-local-systemd");
+    expect(prepare).toContain("hosting-systemd");
+  });
+
   it("requires managed update to execute the predecessor-installed updater", () => {
     const fixture = readFileSync(
       new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
