@@ -1510,6 +1510,9 @@ if [[ "$phase" == "fresh-install" ]]; then
       --no-onboard \
     >/tmp/fresh-noop-installer.out 2>/tmp/fresh-noop-installer.err
   grep -F "Already current: $version" /tmp/fresh-noop-installer.out >/dev/null
+  test -f /usr/local/bin/fased
+  test ! -L /usr/local/bin/fased
+  test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"
   runuser -u testop -- env -i \
     HOME=/home/testop USER=testop LOGNAME=testop SHELL=/bin/bash \
     PATH=/usr/local/bin:/usr/bin:/bin \

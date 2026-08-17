@@ -297,6 +297,9 @@ describe("lifecycle acceptance contract", () => {
       expect(fixture).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
       expect(fixture).toContain('fased status && exec fased update "$@"');
     }
+    expect(local).toContain("test -f /usr/local/bin/fased");
+    expect(local).toContain("test ! -L /usr/local/bin/fased");
+    expect(local).toContain(`test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"`);
     expect(local).not.toContain('"$state/bin/fased" update');
     expect(hosting).not.toContain("/home/app/.fased/bin/fased update");
   });
