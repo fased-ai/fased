@@ -110,6 +110,8 @@ node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
   --architecture x64
 rm -f -- "$source_installer"
 source_installer=""
+printf '{"fixtureOfflineAttestation":true}\n' \
+  >"$OUTPUT_DIR/fased-hosted-release-v2.json.attestation.json"
 
 jq -n \
   --arg candidateDescriptorSha256 "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \

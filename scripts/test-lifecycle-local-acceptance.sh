@@ -44,6 +44,7 @@ FIXTURE_TOOLS_DIR=""
 FIXTURE_PREINSTALLED_TOOLS_DIR=""
 FIXTURE_NODE_MODULES=""
 image_staging=""
+FIXTURE_ARTIFACT_COMPAT_DIR=""
 
 if [[ -z "$ARTIFACT_DIR" && "$BUILD_ONLY" == "0" && -n "$ARTIFACT_CACHE_DIR" ]]; then
   [[ "$ARTIFACT_CACHE_DIR" == /* ]] || {
@@ -80,6 +81,9 @@ fi
 }
 
 cleanup_before_fixture() {
+  if [[ -n "$FIXTURE_ARTIFACT_COMPAT_DIR" ]]; then
+    rm -rf -- "$FIXTURE_ARTIFACT_COMPAT_DIR"
+  fi
   if [[ "$OWN_ARTIFACT_DIR" -eq 1 && -n "$ARTIFACT_DIR" ]]; then
     rm -rf -- "$ARTIFACT_DIR"
   fi
@@ -91,6 +95,17 @@ trap cleanup_before_fixture EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+if [[ -n "$ARTIFACT_DIR" &&
+  -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" &&
+  ! -e "$ARTIFACT_DIR/fased-hosted-release-v2.json.attestation.json" &&
+  ! -L "$ARTIFACT_DIR/fased-hosted-release-v2.json.attestation.json" ]]; then
+  FIXTURE_ARTIFACT_COMPAT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-fixture-artifact-compat.XXXXXX")"
+  cp -a --reflink=auto "$ARTIFACT_DIR/." "$FIXTURE_ARTIFACT_COMPAT_DIR/"
+  printf '{"fixtureOfflineAttestation":true}\n' \
+    >"$FIXTURE_ARTIFACT_COMPAT_DIR/fased-hosted-release-v2.json.attestation.json"
+  ARTIFACT_DIR="$FIXTURE_ARTIFACT_COMPAT_DIR"
+fi
 
 if [[ -n "$ARTIFACT_DIR" ]]; then
   descriptor="$ARTIFACT_DIR/fased-hosting-candidate.json"
@@ -437,7 +452,7 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
     fased-hosting-candidate.json \
     fased-hosting-candidate.json.attestation.json \
     "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
-    [[ -f "$ARTIFACT_DIR/$required_asset" ]] || {
+    [[ -f "$ARTIFACT_DIR/$required_asset" && ! -L "$ARTIFACT_DIR/$required_asset" ]] || {
       echo "The public-acquisition fixture is missing $required_asset." >&2
       exit 1
     }

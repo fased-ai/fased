@@ -203,6 +203,11 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(candidateTrustOverlay).toContain(
       'metadata_base="https://github.com/fased-ai/fased/releases/download/v${version}"',
     );
+    expect(candidateTrustOverlay).toContain("fased-hosted-release-v2.json.attestation.json");
+    expect(candidateTrustOverlay).toContain('"fixtureOfflineAttestation":true');
+    expect(localFixture).toContain("fixture-artifact-compat");
+    expect(localFixture).toContain('cp -a --reflink=auto "$ARTIFACT_DIR/."');
+    expect(localFixture).toContain("fased-hosted-release-v2.json.attestation.json");
     expect(candidateTrustOverlay).not.toContain(
       'metadata_base="https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1"',
     );
