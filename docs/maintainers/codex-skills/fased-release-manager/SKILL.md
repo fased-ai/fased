@@ -1,6 +1,6 @@
 ---
 name: fased-release-manager
-description: Manage persistent approved Fased plans, focused fixes, protected delivery, and explicitly requested releases without losing the active checkpoint or expanding its scope.
+description: Use for every task involving Fased, including status, issue diagnosis, focused fixes, lifecycle work, persistent approved plans, protected delivery, and explicitly requested releases. Automatically route the task through Sol Advisor orchestration without requiring the owner to name it.
 ---
 
 # Fased Release Manager
@@ -79,6 +79,41 @@ Do not allocate a version to diagnose a source or fixture failure.
 If a newer request replaces active work, stop the obsolete command safely and
 switch scope. In a dirty worktree, preserve unrelated changes and isolate the
 requested patch before editing or committing.
+
+## Sol Advisor integration
+
+For every task that triggers this skill, invoke `sol-advisor:orchestration`
+before task tools even when the owner does not name it. Sol Advisor is the sole
+authority for the primary Sol / High prerequisite, route, role, model, effort,
+delegation, and fresh-review selection. Do not duplicate or override its
+routing rules:
+
+- default to solo delivery;
+- use Luna / Max only for small, fully specified routine work;
+- use Terra / High for judgment-heavy, privileged, context-heavy, or
+  wide-blast-radius work;
+- use a fresh Sol / High reviewer only when the selected audit or full route
+  requires one.
+
+Do not spawn an auxiliary merely because Sol Advisor is available. Its selected
+worker substitutes for root implementation rather than duplicating it. Run its
+task-scoped preflight once, and never create parallel agents that inspect or
+implement the same predicate.
+
+## Issue-first execution
+
+When the owner reports a literal Local install, update, repair, uninstall,
+onboarding, or runtime failure, enter `FIX` immediately. Preserve and inspect
+that exact failed environment and command first. Identify the first divergent
+predicate, add the nearest exact regression, make one bounded code correction,
+and run only its focused proof.
+
+Until that source predicate passes, do not divert into status-document editing,
+broad worktree reconciliation, full suites, whole-repository security scans,
+CI, candidate allocation, publication, or release planning. Record evidence
+and update the controlling plan only after the code/test result is known. Treat
+expected privilege prompts, slow-but-live progress, and product failure as
+separate observations; never diagnose one from another.
 
 ## FIX
 
