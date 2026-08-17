@@ -946,8 +946,19 @@ const LOCAL_SIGNER_ENV_KEYS = [
 ] as const;
 
 function clearLocalSignerEnv(base: FasedAgentConfig): FasedAgentConfig {
+  // Protected Local finalization revalidates the root-managed signer against the
+  // live process environment. Keep only its already-verified socket and binary
+  // available for that finalization; they are still removed from persisted config.
+  const protectedLocalSigner = resolveNativeSignerOperatorLifecycle(process.env);
+  const preservedProcessKeys = new Set<(typeof LOCAL_SIGNER_ENV_KEYS)[number]>(
+    protectedLocalSigner?.profile === "protected-local"
+      ? ["FASED_WALLET_LOCAL_SIGNER_SOCKET", "FASED_WALLET_LOCAL_SIGNER_BIN"]
+      : [],
+  );
   for (const key of LOCAL_SIGNER_ENV_KEYS) {
-    delete process.env[key];
+    if (!preservedProcessKeys.has(key)) {
+      delete process.env[key];
+    }
   }
   const vars = { ...base.env?.vars };
   for (const key of LOCAL_SIGNER_ENV_KEYS) {

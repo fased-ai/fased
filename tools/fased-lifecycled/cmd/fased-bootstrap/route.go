@@ -19,8 +19,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 
 	"fased-lifecycled/acquire"
 	"fased-lifecycled/daemon"
@@ -81,6 +84,75 @@ type signedChannelSelection struct {
 	ReleaseAuthorityDigest string
 	RootVersion            uint64
 	RootSHA256             string
+}
+
+type lifecyclePhaseProgress struct {
+	output   io.Writer
+	terminal bool
+	done     chan struct{}
+	wait     sync.WaitGroup
+	stop     sync.Once
+}
+
+func beginLifecyclePhase(output io.Writer, jsonOutput bool, phase string) *lifecyclePhaseProgress {
+	if jsonOutput {
+		return nil
+	}
+	terminal := outputIsTerminal(output)
+	progress := newLifecyclePhaseProgress(output, phase, terminal, 500*time.Millisecond)
+	return progress
+}
+
+func newLifecyclePhaseProgress(output io.Writer, phase string, terminal bool, heartbeat time.Duration) *lifecyclePhaseProgress {
+	progress := &lifecyclePhaseProgress{output: output, terminal: terminal}
+	if !terminal {
+		_, _ = fmt.Fprintf(output, "Phase: %s\n", phase)
+		return progress
+	}
+	progress.done = make(chan struct{})
+	frames := []string{"|", "/", "-", "\\"}
+	write := func(frame string) {
+		_, _ = fmt.Fprintf(output, "\r\033[2KPhase: %s %s", phase, frame)
+	}
+	write(frames[0])
+	progress.wait.Add(1)
+	go func() {
+		defer progress.wait.Done()
+		ticker := time.NewTicker(heartbeat)
+		defer ticker.Stop()
+		frame := 1
+		for {
+			select {
+			case <-progress.done:
+				return
+			case <-ticker.C:
+				write(frames[frame%len(frames)])
+				frame++
+			}
+		}
+	}()
+	return progress
+}
+
+func (progress *lifecyclePhaseProgress) Stop() {
+	if progress == nil {
+		return
+	}
+	progress.stop.Do(func() {
+		if progress.done != nil {
+			close(progress.done)
+			progress.wait.Wait()
+		}
+		if progress.terminal {
+			_, _ = fmt.Fprint(progress.output, "\r\033[2K")
+		}
+	})
+}
+
+func outputIsTerminal(output io.Writer) bool {
+	type fileDescriptor interface{ Fd() uintptr }
+	writer, ok := output.(fileDescriptor)
+	return ok && term.IsTerminal(int(writer.Fd()))
 }
 
 type rootHeadVerifier func([]byte, []byte, time.Time) (trust.RootHead, error)
@@ -615,12 +687,14 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	now := time.Now().UTC()
 	var channelSelection *signedChannelSelection
 	if request.Version == "" {
+		resolutionProgress := beginLifecyclePhase(output, request.JSON, "resolving the trusted release")
 		discoveryClient := &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect}
 		selection, selectionErr := discoverSignedChannelRelease(
 			ctx, request.Channel, discoveryClient,
 			productionChannelReleasePrefix+request.Channel+"-v1", productionPinnedRootSHA256,
 			platform.BootstrapCacheRootForOS(runtime.GOOS), 0, installedStatus.ReleaseSequence, installedStatus.SecurityEpoch, now, nil, nil,
 		)
+		resolutionProgress.Stop()
 		if selectionErr != nil {
 			return selectionErr
 		}
@@ -652,7 +726,9 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		VerifyIndex: releaseRoute.VerifyIndex, ExpectedRootVersion: expectedRootVersion,
 		ExpectedRootSHA256: expectedRootSHA256,
 	}
+	acquisitionProgress := beginLifecyclePhase(output, request.JSON, "acquiring the verified lifecycle release")
 	result, err := execute(ctx, bootstrap)
+	acquisitionProgress.Stop()
 	if err != nil {
 		return err
 	}
@@ -697,7 +773,10 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		}
 		hostingTransactionID = prepared.TransactionID
 	}
-	convergence, err := invokeLifecycleHost(ctx, request, operator, result, output)
+	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
+	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result)
+	applyProgress.Stop()
+	emitLifecycleHostVerbose(lifecycleHostVerboseOutputWriter(request, output, os.Stderr), verboseOutput)
 	if err != nil {
 		if hostingParticipant != nil {
 			err = errors.Join(err, hostingParticipant.Abort(ctx, hostingTransactionID))
@@ -711,7 +790,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	}
 	outcome := convergence.Outcome
 	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
-		convergence, err = runOnboarding(ctx, request, operator, result)
+		convergence, err = runOnboarding(ctx, request, operator, result, output, os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -1256,7 +1335,7 @@ func resolveOperator(name string, profile model.Profile) (publicOperator, error)
 	return publicOperator{Name: name, Home: record.HomeDir, UID: uint32(uid), GID: uint32(gid)}, nil
 }
 
-func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, output io.Writer) (protocol.Response, error) {
+func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult) (protocol.Response, []byte, error) {
 	args := []string{"initialize", "--profile", string(request.Profile), "--operator-user", operator.Name,
 		"--owner-state", filepath.Join(operator.Home, ".fased"), "--gateway-port", strconv.Itoa(int(request.GatewayPort)),
 		"--update-channel", request.Channel,
@@ -1272,20 +1351,38 @@ func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, op
 	data, err := command.Output()
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
-			return protocol.Response{}, fmt.Errorf("lifecycle transaction failed: %s", tail(exit.Stderr, 4096))
+			return protocol.Response{}, nil, fmt.Errorf("lifecycle transaction failed: %s", tail(exit.Stderr, 4096))
 		}
-		return protocol.Response{}, err
+		return protocol.Response{}, nil, err
 	}
 	if len(data) > 64*1024 {
-		return protocol.Response{}, errors.New("lifecycle transaction response exceeded its bound")
+		return protocol.Response{}, nil, errors.New("lifecycle transaction response exceeded its bound")
 	}
-	if request.Verbose {
-		_, _ = output.Write(data)
-	}
-	return decodeTerminalLifecycleResponse(data)
+	response, decodeErr := decodeTerminalLifecycleResponse(data)
+	return response, lifecycleHostVerboseOutput(request, data), decodeErr
 }
 
-func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult) (protocol.Response, error) {
+func lifecycleHostVerboseOutput(request publicLifecycleRequest, data []byte) []byte {
+	if !request.Verbose {
+		return nil
+	}
+	return data
+}
+
+func lifecycleHostVerboseOutputWriter(request publicLifecycleRequest, output, diagnostics io.Writer) io.Writer {
+	if request.JSON {
+		return diagnostics
+	}
+	return output
+}
+
+func emitLifecycleHostVerbose(output io.Writer, data []byte) {
+	if len(data) > 0 {
+		_, _ = output.Write(data)
+	}
+}
+
+func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, output, diagnostics io.Writer) (protocol.Response, error) {
 	configPath, err := installedConfigPath(request.Profile, operator)
 	if err != nil {
 		return protocol.Response{}, err
@@ -1303,7 +1400,7 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 	args = append(args, request.OnboardArgs...)
 	command := exec.CommandContext(ctx, "/usr/sbin/runuser", args...)
 	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
-	command.Stdout, command.Stderr = os.Stdout, os.Stderr
+	command.Stdout, command.Stderr = onboardingProcessOutputWriters(request, output, diagnostics)
 	nonInteractive := false
 	for _, argument := range request.OnboardArgs {
 		if argument == "--non-interactive" {
@@ -1328,12 +1425,26 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 	complete := exec.CommandContext(ctx, result.HostPath, "request", "--socket", config.SupervisorSocket(), "--operation", "COMPLETE_ONBOARDING", "--request-id", requestID)
 	data, err := complete.CombinedOutput()
 	if request.Verbose && len(data) > 0 {
-		_, _ = os.Stdout.Write([]byte(tail(data, 64*1024) + "\n"))
+		_, _ = onboardingVerboseOutputWriter(request, output, diagnostics).Write([]byte(tail(data, 64*1024) + "\n"))
 	}
 	if err != nil {
 		return protocol.Response{}, fmt.Errorf("onboarding commit failed: %s", tail(data, 4096))
 	}
 	return decodeTerminalLifecycleResponse(data)
+}
+
+func onboardingProcessOutputWriters(request publicLifecycleRequest, output, diagnostics io.Writer) (io.Writer, io.Writer) {
+	if request.JSON {
+		return diagnostics, diagnostics
+	}
+	return os.Stdout, os.Stderr
+}
+
+func onboardingVerboseOutputWriter(request publicLifecycleRequest, output, diagnostics io.Writer) io.Writer {
+	if request.JSON {
+		return diagnostics
+	}
+	return os.Stdout
 }
 
 func decodeTerminalLifecycleResponse(data []byte) (protocol.Response, error) {
@@ -1373,6 +1484,8 @@ func onboardingCommandArgs(request publicLifecycleRequest, operator publicOperat
 		"FASED_INSTALLER_ONBOARD=1",
 		"FASED_INSTALL_LIFECYCLE_COMMITTED=1",
 		"FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external",
+		"FASED_LIFECYCLE_INSTALL_ROOT=" + config.InstallRoot,
+		"FASED_WALLET_LOCAL_SIGNER_BIN=" + filepath.Join(config.InstallRoot, "current", "payload", "bin", "fased-signerd"),
 		"FASED_WALLET_LOCAL_SIGNER_SOCKET=" + config.ApplicationSocket(),
 		"FASED_HOST_UPDATER_SOCKET=" + config.SupervisorSocket(),
 	}
