@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeHost struct {
@@ -296,6 +297,126 @@ func TestHostingSecurityOwnershipPreservesFirstInstallBaselineAcrossUpdates(t *t
 	}
 	if current != first || current.TransactionID != "01234567-89ab-4cde-8fab-0123456789ab" {
 		t.Fatalf("later update replaced the first-install baseline: first=%+v current=%+v", first, current)
+	}
+}
+
+type durableFileSnapshot struct {
+	data    []byte
+	modTime time.Time
+}
+
+func snapshotDurableFile(t *testing.T, path string) durableFileSnapshot {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return durableFileSnapshot{data: data, modTime: info.ModTime()}
+}
+
+func requireDurableFileUnchanged(t *testing.T, path string, before durableFileSnapshot) {
+	t.Helper()
+	after := snapshotDurableFile(t, path)
+	if string(after.data) != string(before.data) || !after.modTime.Equal(before.modTime) {
+		t.Fatalf("durable Hosting security file changed: path=%s before=%q/%s after=%q/%s", path, before.data, before.modTime, after.data, after.modTime)
+	}
+}
+
+func commitFixtureHostingSecurity(t *testing.T) (Participant, *fakeHost, Request, State) {
+	t.Helper()
+	participant, host, request := fixture(t)
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.inspection.SignerReady = true
+	if _, err := participant.MarkRuntimeReady(context.Background(), state.TransactionID); err != nil {
+		t.Fatal(err)
+	}
+	state, err = participant.Commit(context.Background(), state.TransactionID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return participant, host, request, state
+}
+
+func TestHostingSecurityExactCommittedPrepareReusesWithoutMutation(t *testing.T) {
+	participant, host, request, committed := commitFixtureHostingSecurity(t)
+	paths := []string{participant.Store.StatePath, participant.Store.ReceiptPath, participant.Store.ownershipPath()}
+	fixedTime := time.Unix(1, 0).UTC()
+	for _, path := range paths {
+		if err := os.Chtimes(path, fixedTime, fixedTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := make(map[string]durableFileSnapshot, len(paths))
+	for _, path := range paths {
+		before[path] = snapshotDurableFile(t, path)
+	}
+
+	host.calls = nil
+	request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	request.RequireExistingHardening = true
+	reused, err := participant.Prepare(context.Background(), request)
+	if err != nil || reused != committed {
+		t.Fatalf("exact committed transaction was not reused: state=%+v err=%v", reused, err)
+	}
+	if got := strings.Join(host.calls, ","); got != "inspect" {
+		t.Fatalf("exact committed reuse made a host mutation: %s", got)
+	}
+	for _, path := range paths {
+		requireDurableFileUnchanged(t, path, before[path])
+	}
+}
+
+func TestHostingSecurityExactCommittedPrepareFailsClosedWithoutMutation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*fakeHost)
+	}{
+		{name: "DNS", mutate: func(host *fakeHost) { host.inspection.TailscaleDNS = "other.tailnet.ts.net" }},
+		{name: "IPv4", mutate: func(host *fakeHost) { host.inspection.TailscaleIPv4 = "100.100.1.10" }},
+		{name: "version", mutate: func(host *fakeHost) { host.inspection.TailscaleVersion = "1.89.1" }},
+		{name: "signer", mutate: func(host *fakeHost) { host.inspection.SignerReady = false }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			participant, host, request, _ := commitFixtureHostingSecurity(t)
+			paths := []string{participant.Store.StatePath, participant.Store.ReceiptPath, participant.Store.ownershipPath()}
+			before := make(map[string]durableFileSnapshot, len(paths))
+			for _, path := range paths {
+				before[path] = snapshotDurableFile(t, path)
+			}
+
+			host.calls = nil
+			test.mutate(host)
+			request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+			request.RequireExistingHardening = true
+			if _, err := participant.Prepare(context.Background(), request); err == nil || !strings.Contains(err.Error(), "committed Hosting security boundary") {
+				t.Fatalf("unsafe committed transaction was accepted: %v", err)
+			}
+			if got := strings.Join(host.calls, ","); got != "inspect" {
+				t.Fatalf("unsafe committed reuse made a host mutation: %s", got)
+			}
+			for _, path := range paths {
+				requireDurableFileUnchanged(t, path, before[path])
+			}
+		})
+	}
+}
+
+func TestHostingSecurityCommittedTransactionCommitRemainsRecoverable(t *testing.T) {
+	participant, host, _, committed := commitFixtureHostingSecurity(t)
+	host.calls = nil
+	recovered, err := participant.Commit(context.Background(), committed.TransactionID, false)
+	if err != nil || recovered != committed {
+		t.Fatalf("committed Hosting security transaction was not recoverable: state=%+v err=%v", recovered, err)
+	}
+	if len(host.calls) != 0 {
+		t.Fatalf("committed Hosting security recovery touched the host: %v", host.calls)
 	}
 }
 
