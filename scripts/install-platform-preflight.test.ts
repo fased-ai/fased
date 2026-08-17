@@ -47,11 +47,12 @@ describe("installer platform preflight", () => {
     expect(verification).toBeLessThan(completion);
     expect(installer).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
     expect(installer).toContain("fased status");
-    expect(installer).toContain('fased update --tag "$1"');
+    expect(installer).toContain('fased update --channel "$2" --tag "$1"');
     expect(installer).toContain('/usr/sbin/runuser -u "$operator_user"');
     expect(installer).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
     expect(installer).toContain("printf '%s\\n' \"$update_output\"");
     expect(installer).toContain('grep -Fqx "Already current: $release" <<<"$update_output"');
+    expect(installer).toContain('/bin/bash -c "$command_probe" fased "$release" "$channel"');
   });
   it("keeps the public lifecycle installer Linux-only and rejects native Windows runtime", () => {
     expect(installer).toContain('case "$(uname -s)"');

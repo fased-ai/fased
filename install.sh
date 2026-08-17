@@ -164,14 +164,14 @@ echo "Fased: applying ${profile} release ${release}..."
 "${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"
 echo "Fased: verifying public command..."
 verify_public_command() {
-  local command_probe='cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && fased update --tag "$1"'
+  local command_probe='cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && fased update --channel "$2" --tag "$1"'
   local update_output
   if [[ "$profile" == "hosting" ]]; then
     update_output="$(/usr/sbin/runuser -u "$operator_user" -- /usr/bin/env "HOME=/home/${operator_user}" \
-      PATH=/usr/local/bin:/usr/bin:/bin /bin/bash -c "$command_probe" fased "$release")"
+      PATH=/usr/local/bin:/usr/bin:/bin /bin/bash -c "$command_probe" fased "$release" "$channel")"
   else
     update_output="$(/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin \
-      /bin/bash -c "$command_probe" fased "$release")"
+      /bin/bash -c "$command_probe" fased "$release" "$channel")"
   fi
   printf '%s\n' "$update_output"
   grep -Fqx "Already current: $release" <<<"$update_output"
