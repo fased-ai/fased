@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,12 @@ import (
 
 func signerUint64PointerV2(value uint64) *uint64 {
 	return &value
+}
+
+type signerRPCRoundTripFuncV2 func(*http.Request) (*http.Response, error)
+
+func (fn signerRPCRoundTripFuncV2) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
 }
 
 func TestSignerApplicationNetworkBrokerIsOneRPCRoleBoundAndGenesisPinned(t *testing.T) {
@@ -274,7 +281,7 @@ func TestSignerNetworkPutRejectsCrossGenesisExecutionFallbackBeforeReady(t *test
 	if err == nil || !strings.Contains(err.Error(), "disagree on genesis hash") {
 		t.Fatalf("cross-genesis execution fallback was not rejected: %v", err)
 	}
-	for _, secret := range []string{primary, fallback, "primary-secret", "fallback-secret"} {
+	for _, secret := range []string{primary, fallback, "primary-secret", "fallback-secret"} { // pragma: allowlist secret
 		if strings.Contains(err.Error(), secret) {
 			t.Fatalf("cross-genesis error leaked RPC material %q: %v", secret, err)
 		}
@@ -485,7 +492,7 @@ func TestSignerNetworkConfigurationIsEncryptedAndMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{primary, fallback, "primary-secret-token", "fallback-secret-token"} {
+	for _, secret := range []string{primary, fallback, "primary-secret-token", "fallback-secret-token"} { // pragma: allowlist secret
 		if bytes.Contains(encodedSummary, []byte(secret)) {
 			t.Fatalf("network summary exposed RPC material %q: %s", secret, encodedSummary)
 		}
@@ -501,7 +508,7 @@ func TestSignerNetworkConfigurationIsEncryptedAndMetadataOnly(t *testing.T) {
 	if len(stored) == 0 {
 		t.Fatal("encrypted signer network record was not stored")
 	}
-	for _, secret := range []string{primary, fallback, "primary-secret-token", "fallback-secret-token"} {
+	for _, secret := range []string{primary, fallback, "primary-secret-token", "fallback-secret-token"} { // pragma: allowlist secret
 		if bytes.Contains(stored, []byte(secret)) {
 			t.Fatalf("bbolt signer network record contains plaintext RPC material %q", secret)
 		}
@@ -510,7 +517,7 @@ func TestSignerNetworkConfigurationIsEncryptedAndMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{primary, fallback, "primary-secret-token", "fallback-secret-token"} {
+	for _, secret := range []string{primary, fallback, "primary-secret-token", "fallback-secret-token"} { // pragma: allowlist secret
 		if bytes.Contains(databaseBytes, []byte(secret)) {
 			t.Fatalf("bbolt signer state file contains plaintext RPC material %q", secret)
 		}
@@ -549,7 +556,7 @@ func TestSignerNetworkConfigurationIsEncryptedAndMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{primary, fallback, "primary-secret-token", "fallback-secret-token"} {
+	for _, secret := range []string{primary, fallback, "primary-secret-token", "fallback-secret-token"} { // pragma: allowlist secret
 		if bytes.Contains(encodedHealth, []byte(secret)) {
 			t.Fatalf("health exposed RPC material %q: %s", secret, encodedHealth)
 		}
@@ -759,7 +766,7 @@ func TestSignerRPCURLValidationRejectsUnsafeTargets(t *testing.T) {
 	invalid := []string{
 		"http://rpc.example.com",
 		"ftp://rpc.example.com",
-		"https://user:password@rpc.example.com",
+		"https://user:password@rpc.example.com", // pragma: allowlist secret
 		"https://rpc.example.com/#secret-fragment",
 		"https://rpc.example.com#",
 		"https://169.254.169.254/latest/meta-data",
@@ -815,9 +822,11 @@ func TestSignerOwnedRPCTransportIgnoresProxyAndRedirects(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	httpClient := newSignerOwnedHTTPClientV2()
-	transport, ok := httpClient.Transport.(*http.Transport)
-	if !ok || transport.Proxy != nil {
-		t.Fatalf("signer-owned RPC transport inherited an environment proxy: %#v", httpClient.Transport)
+	budget, ok := httpClient.Transport.(signerRPCResponseBudgetRoundTripperV2)
+	transport, transportOK := budget.base.(*http.Transport)
+	if !ok || !transportOK || transport.Proxy != nil || transport.ResponseHeaderTimeout == 0 ||
+		transport.MaxResponseHeaderBytes != maxSignerRPCResponseHeaderV2 || !transport.DisableCompression {
+		t.Fatalf("signer-owned RPC transport omitted its fixed transport boundaries: %#v", httpClient.Transport)
 	}
 	var redirectedRequests atomic.Int64
 	destination := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -845,12 +854,49 @@ func TestSignerOwnedRPCTransportIgnoresProxyAndRedirects(t *testing.T) {
 	}
 }
 
+func TestSignerOwnedRPCTransportBoundsBodyAndJSONDepth(t *testing.T) {
+	request, err := http.NewRequest(http.MethodPost, "https://rpc.example.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseFor := func(payload []byte, contentLength int64) signerRPCResponseBudgetRoundTripperV2 {
+		return signerRPCResponseBudgetRoundTripperV2{base: signerRPCRoundTripFuncV2(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        make(http.Header),
+				Body:          io.NopCloser(bytes.NewReader(payload)),
+				ContentLength: contentLength,
+			}, nil
+		})}
+	}
+	oversized := bytes.Repeat([]byte("x"), maxSignerRPCResponseBytesV2+1)
+	if _, err := responseFor(oversized, -1).RoundTrip(request); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("streamed oversized RPC response was accepted: %v", err)
+	}
+	if _, err := responseFor([]byte(`{}`), maxSignerRPCResponseBytesV2+1).RoundTrip(request); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("declared oversized RPC response was accepted: %v", err)
+	}
+	deep := []byte(strings.Repeat("[", maxSignerRPCJSONDepthV2+1) + "0" + strings.Repeat("]", maxSignerRPCJSONDepthV2+1))
+	if _, err := responseFor(deep, int64(len(deep))).RoundTrip(request); err == nil || !strings.Contains(err.Error(), "nesting depth") {
+		t.Fatalf("deep RPC response was accepted: %v", err)
+	}
+	valid := []byte(`{"jsonrpc":"2.0","id":1,"result":{"value":1}}`)
+	response, err := responseFor(valid, int64(len(valid))).RoundTrip(request)
+	if err != nil {
+		t.Fatalf("bounded RPC response was rejected: %v", err)
+	}
+	readBack, err := io.ReadAll(response.Body)
+	if err != nil || !bytes.Equal(readBack, valid) {
+		t.Fatalf("bounded RPC response changed: %q err=%v", readBack, err)
+	}
+}
+
 func TestSignerNetworkProtocolKeepsSecretsControlOnlyAndNeverReturnsURLs(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	destination := solana.NewWallet().PublicKey().String()
 	createTestSignerWalletV2(t, store, keys, "agent", destination, 100, 1000)
 	service := &signerServiceV2{store: store, keys: keys}
-	secret := "protocol-secret-token"
+	secret := "protocol-secret-token" // pragma: allowlist secret
 	body, err := json.Marshal(signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(0),
 		PrimaryRPCURL:   "https://rpc.example.com?token=" + secret,
@@ -938,7 +984,7 @@ func TestSignerV2ExecutionUsesOnlySignerOwnedNetwork(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"intentional"}}`))
 	}))
 	defer signerRPC.Close()
-	secret := "signer-rpc-secret-token"
+	secret := "signer-rpc-secret-token" // pragma: allowlist secret
 	if _, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(0),
 		PrimaryRPCURL:   signerRPC.URL + "?api-key=" + secret,
@@ -1035,7 +1081,7 @@ func TestSignerV2ReconcileUsesOnlySignerOwnedNetwork(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"intentional"}}`))
 	}))
 	defer signerRPC.Close()
-	secret := "reconcile-rpc-secret-token"
+	secret := "reconcile-rpc-secret-token" // pragma: allowlist secret
 	if _, err := keys.PutNetworkV2("agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(0), PrimaryRPCURL: signerRPC.URL + "?token=" + secret,
 	}); err != nil {

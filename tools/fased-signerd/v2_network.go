@@ -35,6 +35,9 @@ const (
 	maxSignerRPCURLBytesV2        = 2048
 	maxSignerNetworkInputBytesV2  = 8192
 	maxSignerNetworkRecordBytesV2 = 64 * 1024
+	maxSignerRPCResponseBytesV2   = 4 * 1024 * 1024
+	maxSignerRPCResponseHeaderV2  = 64 * 1024
+	maxSignerRPCJSONDepthV2       = 64
 )
 
 var (
@@ -456,22 +459,101 @@ func newSignerOwnedSolanaRPCClientV2(endpoint string) *rpc.Client {
 }
 
 func newSignerOwnedHTTPClientV2() *http.Client {
+	base := &http.Transport{
+		Proxy:                  nil,
+		DialContext:            dialSignerOwnedRPCV2,
+		ForceAttemptHTTP2:      true,
+		MaxIdleConns:           16,
+		MaxIdleConnsPerHost:    4,
+		IdleConnTimeout:        90 * time.Second,
+		TLSHandshakeTimeout:    10 * time.Second,
+		ResponseHeaderTimeout:  10 * time.Second,
+		ExpectContinueTimeout:  time.Second,
+		MaxResponseHeaderBytes: maxSignerRPCResponseHeaderV2,
+		DisableCompression:     true,
+		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
+	}
 	return &http.Client{
-		Transport: &http.Transport{
-			Proxy:                 nil,
-			DialContext:           dialSignerOwnedRPCV2,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          16,
-			MaxIdleConnsPerHost:   4,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: time.Second,
-			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
-		},
+		Transport: signerRPCResponseBudgetRoundTripperV2{base: base},
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 		Timeout: solanaWriteRPCRequestTimeout(),
+	}
+}
+
+type signerRPCResponseBudgetRoundTripperV2 struct {
+	base http.RoundTripper
+}
+
+func (t signerRPCResponseBudgetRoundTripperV2) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.base == nil {
+		return nil, errors.New("signer-owned Solana RPC transport is unavailable")
+	}
+	response, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if response == nil || response.Body == nil {
+		return nil, errors.New("signer-owned Solana RPC returned an empty response")
+	}
+	if response.ContentLength > maxSignerRPCResponseBytesV2 {
+		_ = response.Body.Close()
+		return nil, errors.New("signer-owned Solana RPC response exceeds the allowed size")
+	}
+	payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxSignerRPCResponseBytesV2+1))
+	closeErr := response.Body.Close()
+	if readErr != nil {
+		return nil, errors.New("read signer-owned Solana RPC response")
+	}
+	if len(payload) > maxSignerRPCResponseBytesV2 {
+		return nil, errors.New("signer-owned Solana RPC response exceeds the allowed size")
+	}
+	if closeErr != nil {
+		return nil, errors.New("close signer-owned Solana RPC response")
+	}
+	if err := validateSignerRPCJSONDepthV2(payload); err != nil {
+		return nil, err
+	}
+	response.Body = io.NopCloser(bytes.NewReader(payload))
+	response.ContentLength = int64(len(payload))
+	return response, nil
+}
+
+func validateSignerRPCJSONDepthV2(payload []byte) error {
+	trimmed := bytes.TrimSpace(payload)
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	depth := 0
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			if depth != 0 {
+				return errors.New("signer-owned Solana RPC returned invalid JSON")
+			}
+			return nil
+		}
+		if err != nil {
+			return errors.New("signer-owned Solana RPC returned invalid JSON")
+		}
+		delimiter, ok := token.(json.Delim)
+		if !ok {
+			continue
+		}
+		switch delimiter {
+		case '{', '[':
+			depth++
+			if depth > maxSignerRPCJSONDepthV2 {
+				return errors.New("signer-owned Solana RPC JSON exceeds the allowed nesting depth")
+			}
+		case '}', ']':
+			depth--
+			if depth < 0 {
+				return errors.New("signer-owned Solana RPC returned invalid JSON")
+			}
+		}
 	}
 }
 

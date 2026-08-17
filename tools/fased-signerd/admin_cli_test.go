@@ -501,6 +501,23 @@ func TestSignerAdminOperatorCreateAndPrimaryRPCUseFixedSchemas(t *testing.T) {
 		}
 	}
 
+	policyServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t,
+		`{"walletId":"agent","role":"agent","version":2,"baselineVersion":1,"operations":["solana.nativeTransfer"],"programs":["11111111111111111111111111111111"],"assets":[{"asset":"solana:native"}],"hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+	))
+	if err := runSignerAdminCLI([]string{
+		"policy", "activate-baseline", "--operator-socket", policyServer.path,
+		"--wallet-id", "agent", "--expected-version", "1", "--baseline-role", "agent",
+	}, strings.NewReader(""), io.Discard, nil); err != nil {
+		t.Fatalf("operator role-baseline activation failed: %v", err)
+	}
+	policyReq := waitSignerAdminTestServer(t, policyServer)
+	var policyBody signerOperatorPolicyActivateBaselineRequestV1
+	decodeSignerAdminTestBody(t, policyReq, &policyBody)
+	if policyReq.Operator == nil || policyReq.Op != "v2.policy.activateBaseline" ||
+		policyBody.ExpectedVersion != 1 || policyBody.Baseline.Role != "agent" || policyBody.Baseline.Version != 1 {
+		t.Fatalf("operator policy activation escaped its fixed schema: req=%#v body=%#v", policyReq, policyBody)
+	}
+
 	rejectServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{}`))
 	if err := runSignerAdminCLI([]string{
 		"network", "set-primary", "--operator-socket", rejectServer.path, "--wallet-id", "vault", "--expected-version", "1",

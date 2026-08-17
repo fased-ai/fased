@@ -203,8 +203,15 @@ func TestSignerApplicationCreatesAndExplicitlyActivatesRoleBaselineV1(t *testing
 		request{Op: "v2.policy.activateBaseline", WalletID: locked.WalletID, Request: activationBody},
 		signerConfig{},
 		false,
+	); err == nil || !strings.Contains(err.Error(), "control socket") {
+		t.Fatalf("application socket activated a role baseline: %v", err)
+	}
+	if _, err := service.handle(
+		request{Op: "v2.policy.activateBaseline", WalletID: locked.WalletID, Request: activationBody},
+		signerConfig{},
+		true,
 	); err != nil {
-		t.Fatalf("explicit deny-all migration: %v", err)
+		t.Fatalf("control-socket deny-all migration: %v", err)
 	}
 	activated, err := store.getPolicy(locked.WalletID)
 	if err != nil || activated.Version != 2 || activated.BaselineVersion != 1 || activated.Role != "vault" {
@@ -213,7 +220,7 @@ func TestSignerApplicationCreatesAndExplicitlyActivatesRoleBaselineV1(t *testing
 	if _, err := service.handle(
 		request{Op: "v2.policy.activateBaseline", WalletID: locked.WalletID, Request: activationBody},
 		signerConfig{},
-		false,
+		true,
 	); err == nil {
 		t.Fatal("role baseline activation silently expanded an already activated wallet")
 	}

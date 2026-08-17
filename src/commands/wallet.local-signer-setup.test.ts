@@ -276,6 +276,36 @@ const signerMocks = vi.hoisted(() => ({
         output: [],
       };
     }
+    if (args.includes("policy") && args.includes("activate-baseline")) {
+      const role = args[args.indexOf("--baseline-role") + 1] || "agent";
+      signerMocks.roles.set(walletId, role);
+      signerMocks.policyHashes.set(walletId, `sha256:${"f".repeat(64)}`);
+      return {
+        status: 0,
+        signal: null,
+        stdout: JSON.stringify({
+          walletId,
+          role,
+          version: 2,
+          baselineVersion: 1,
+          operations: ["solana.nativeTransfer"],
+          programs: ["11111111111111111111111111111111"],
+          assets: [
+            {
+              asset: "solana:native",
+              destinations: ["11111111111111111111111111111111"],
+              maxPerTx: "1000000000",
+              maxDaily: "5000000000",
+              reviewedDestinations: true,
+            },
+          ],
+          hash: `sha256:${"f".repeat(64)}`,
+        }),
+        stderr: "",
+        pid: 1,
+        output: [],
+      };
+    }
     if (args.includes("wallet") && args.includes("readiness")) {
       return {
         status: 0,
@@ -621,12 +651,20 @@ describe("walletSetupCommand native signer boundary", () => {
         confirm: true,
       });
 
-      expect(signerMocks.activate).toHaveBeenCalledWith({
-        socketPath: "/tmp/fased-signerd-app-test.sock",
-        walletId: "legacy_agent",
-        role: "agent",
-        expectedPolicyVersion: 1,
-      });
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "policy",
+          "activate-baseline",
+          "--control-socket",
+          "--wallet-id",
+          "legacy_agent",
+          "--baseline-role",
+          "agent",
+        ]),
+        expect.any(Object),
+      );
+      expect(signerMocks.activate).not.toHaveBeenCalled();
       expect(
         readWalletProviderRegistry(process.env).wallets.find(
           (wallet) => wallet.id === "legacy-agent",
@@ -798,7 +836,7 @@ describe("walletSetupCommand native signer boundary", () => {
       });
       expect(signerMocks.networkPut).not.toHaveBeenCalled();
       expect(signerMocks.importProcess).toHaveBeenCalledWith(
-        "/opt/fased/signer/fased-signerd",
+        "/opt/fased/current/payload/bin/fased-signerd",
         expect.arrayContaining([
           "admin",
           "wallet",
@@ -1042,7 +1080,7 @@ describe("walletSetupCommand native signer boundary", () => {
         noDoctor: true,
       });
       expect(signerMocks.importProcess).toHaveBeenCalledWith(
-        "/opt/fased/signer/fased-signerd",
+        "/opt/fased/current/payload/bin/fased-signerd",
         expect.arrayContaining([
           "admin",
           "wallet",

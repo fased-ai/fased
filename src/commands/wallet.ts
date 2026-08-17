@@ -11,10 +11,10 @@ import {
   throwLegacyEmbeddedKeystoreMigrationRequired,
 } from "../wallet/legacy-embedded-keystore.js";
 import {
-  activateSignerOwnedRoleBaseline,
   createRoleReadySignerOwnedWallet,
   readSignerOwnedWallet,
   readSignerOwnedWalletReadiness,
+  type LocalSignerPolicyRecord,
   type LocalSignerWalletPolicyRecord,
 } from "../wallet/local-socket-signer-lifecycle.js";
 import {
@@ -1249,6 +1249,75 @@ function invokeNativeSignerNetworkSetPrimary(params: {
     version: Number(record.version),
     hash: String(record.hash),
   };
+}
+
+function invokeNativeSignerPolicyActivateBaseline(params: {
+  signerBinPath: string;
+  socketFlag: "--control-socket" | "--operator-socket";
+  socketPath: string;
+  walletId: string;
+  role: "agent" | "mining" | "vault";
+  expectedVersion: number;
+  env: NodeJS.ProcessEnv;
+}): LocalSignerPolicyRecord {
+  const child = spawnSync(
+    params.signerBinPath,
+    [
+      "admin",
+      "policy",
+      "activate-baseline",
+      params.socketFlag,
+      params.socketPath,
+      "--wallet-id",
+      params.walletId,
+      "--baseline-role",
+      params.role,
+      "--expected-version",
+      String(params.expectedVersion),
+    ],
+    {
+      env: nativeSignerLifecycleEnv(params.env),
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 256 * 1024,
+      timeout: 30_000,
+    },
+  );
+  if (child.error) {
+    throw child.error;
+  }
+  if (child.status !== 0) {
+    throw new Error(
+      redactWalletDiagnosticText(
+        String(child.stderr || "native signer role-baseline activation failed").trim(),
+      ),
+    );
+  }
+  let result: unknown;
+  try {
+    result = JSON.parse(String(child.stdout ?? ""));
+  } catch {
+    throw new Error("native signer role-baseline activation returned invalid JSON");
+  }
+  const policy = result as Partial<LocalSignerPolicyRecord>;
+  if (
+    !policy ||
+    policy.walletId !== params.walletId ||
+    policy.role !== params.role ||
+    policy.version !== params.expectedVersion + 1 ||
+    policy.baselineVersion !== 1 ||
+    !Array.isArray(policy.operations) ||
+    policy.operations.length === 0 ||
+    !Array.isArray(policy.programs) ||
+    policy.programs.length === 0 ||
+    !Array.isArray(policy.assets) ||
+    policy.assets.length === 0 ||
+    typeof policy.hash !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/.test(policy.hash)
+  ) {
+    throw new Error("native signer role-baseline activation returned an invalid policy");
+  }
+  return policy as LocalSignerPolicyRecord;
 }
 
 function invokeNativeSignerWalletReadiness(params: {
@@ -2973,7 +3042,9 @@ export async function walletPolicyActivateRoleBaselineCommand(
   if (!role) {
     throw new Error("role must be one of: agent, mining, vault");
   }
-  const registry = readWalletProviderRegistry(process.env);
+  const cfg = loadConfig();
+  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const registry = readWalletProviderRegistry(effectiveEnv);
   const wallet = registry.wallets.find((entry) => entry.id === options.walletId.trim());
   if (!wallet || wallet.providerId !== "local-socket-signer") {
     throw new Error(`registered signer-owned wallet was not found: ${options.walletId}`);
@@ -2988,35 +3059,68 @@ export async function walletPolicyActivateRoleBaselineCommand(
     typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
       ? wallet.metadata.signerWalletId.trim()
       : normalizeNativeSignerWalletId(wallet.id);
-  const socketPath = requireLocalSocketSignerPath(process.env);
-  const current = await readSignerOwnedWallet({ socketPath, walletId: signerWalletId });
-  if (current.wallet.publicKey !== wallet.addresses?.solana) {
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
+  const signerBinPath = operatorLifecycle?.signerBinPath ?? resolveSignerdBinaryPath(effectiveEnv);
+  const socketFlag = operatorLifecycle ? "--operator-socket" : "--control-socket";
+  const lifecycleSocketPath =
+    operatorLifecycle?.operatorSocketPath ?? resolveLocalSignerControlSocketPath(effectiveEnv);
+  const appSocketPath = requireLocalSocketSignerPath(effectiveEnv);
+  const currentRecord = operatorLifecycle
+    ? undefined
+    : await readSignerOwnedWallet({ socketPath: appSocketPath, walletId: signerWalletId });
+  const currentReadiness = operatorLifecycle
+    ? invokeNativeSignerWalletReadiness({
+        signerBinPath,
+        socketFlag,
+        socketPath: lifecycleSocketPath,
+        walletId: signerWalletId,
+        env: effectiveEnv,
+      })
+    : undefined;
+  const currentPublicKey = currentRecord?.wallet.publicKey ?? currentReadiness?.publicKey;
+  const currentRole = currentRecord?.policy.role ?? currentReadiness?.role;
+  if (currentPublicKey !== wallet.addresses?.solana) {
     throw new Error("registered wallet address does not match the signer-owned wallet");
   }
-  if (current.policy.role !== role) {
+  if (currentRole !== role) {
     throw new Error(
-      `signer-owned wallet ${signerWalletId} has immutable role=${current.policy.role}, not ${role}`,
+      `signer-owned wallet ${signerWalletId} has immutable role=${currentRole}, not ${role}`,
     );
   }
-  let policy = current.policy;
-  if (policy.baselineVersion === undefined || policy.baselineVersion === 0) {
-    policy = await activateSignerOwnedRoleBaseline({
-      socketPath,
+  let policy = currentRecord?.policy;
+  const currentBaselineVersion = policy?.baselineVersion ?? currentReadiness?.baselineVersion;
+  if (currentBaselineVersion === undefined || currentBaselineVersion === 0) {
+    policy = invokeNativeSignerPolicyActivateBaseline({
+      signerBinPath,
+      socketFlag,
+      socketPath: lifecycleSocketPath,
       walletId: signerWalletId,
       role,
-      expectedPolicyVersion: policy.version,
+      expectedVersion: policy?.version ?? currentReadiness?.policyVersion ?? 0,
+      env: effectiveEnv,
     });
-  } else if (policy.baselineVersion !== 1) {
+  } else if (currentBaselineVersion !== 1) {
     throw new Error(
-      `signer-owned wallet ${signerWalletId} uses unsupported baseline version ${policy.baselineVersion}`,
+      `signer-owned wallet ${signerWalletId} uses unsupported baseline version ${currentBaselineVersion}`,
     );
   }
-  const readiness = await readSignerOwnedWalletReadiness({ socketPath, walletId: signerWalletId });
+  const readiness = operatorLifecycle
+    ? invokeNativeSignerWalletReadiness({
+        signerBinPath,
+        socketFlag,
+        socketPath: lifecycleSocketPath,
+        walletId: signerWalletId,
+        env: effectiveEnv,
+      })
+    : await readSignerOwnedWalletReadiness({
+        socketPath: appSocketPath,
+        walletId: signerWalletId,
+      });
   if (
-    readiness.publicKey !== current.wallet.publicKey ||
+    readiness.publicKey !== currentPublicKey ||
     readiness.role !== role ||
-    readiness.policyHash !== policy.hash ||
-    readiness.policyVersion !== policy.version ||
+    (policy && readiness.policyHash !== policy.hash) ||
+    (policy && readiness.policyVersion !== policy.version) ||
     readiness.baselineVersion !== 1
   ) {
     throw new Error("Setup incomplete: activated role baseline does not match live signer state");
@@ -3041,7 +3145,7 @@ export async function walletPolicyActivateRoleBaselineCommand(
       operationLane: readiness.operationLane,
       roleReady: readiness.ready,
     },
-    env: process.env,
+    env: effectiveEnv,
   });
   const payload = { ok: true, walletId: wallet.id, signerWalletId, role, readiness };
   if (options.json) {

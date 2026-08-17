@@ -38,6 +38,11 @@ type signerOperatorNetworkSetPrimaryRequestV1 struct {
 	PrimaryRPCURL   string `json:"primaryRpcUrl"`
 }
 
+type signerOperatorPolicyActivateBaselineRequestV1 struct {
+	ExpectedVersion uint64                      `json:"expectedVersion"`
+	Baseline        signerRoleBaselineRequestV1 `json:"baseline"`
+}
+
 type signerOperatorRecoveryExportRequestV1 struct {
 	ExpectedPublicKey string `json:"expectedPublicKey"`
 	PasswordBase64    string `json:"passwordBase64"`
@@ -62,16 +67,17 @@ type signerOperatorRawExportResultV1 struct {
 }
 
 var signerOperatorAllowedOperationsV1 = map[string]bool{
-	"health":                    true,
-	"v2.capabilities":           true,
-	"v2.wallet.get":             true,
-	"getBalance":                true,
-	"v2.wallet.readiness":       true,
-	"v2.network.get":            true,
-	"v2.network.setPrimary":     true,
-	"v2.wallet.create":          true,
-	"v2.wallet.import":          true,
-	"v2.wallet.rotation.status": true,
+	"health":                     true,
+	"v2.capabilities":            true,
+	"v2.wallet.get":              true,
+	"getBalance":                 true,
+	"v2.wallet.readiness":        true,
+	"v2.network.get":             true,
+	"v2.network.setPrimary":      true,
+	"v2.policy.activateBaseline": true,
+	"v2.wallet.create":           true,
+	"v2.wallet.import":           true,
+	"v2.wallet.rotation.status":  true,
 }
 
 func newSignerOperatorContextV1(now time.Time) (signerOperatorContextV1, error) {
@@ -341,6 +347,26 @@ func (s *signerServiceV2) handleOperatorLifecycleV1(req request, cfg signerConfi
 			return nil, err
 		}
 		return marshalSignerResultV2(result)
+	case "v2.policy.activateBaseline":
+		var body signerOperatorPolicyActivateBaselineRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		wallet, err := s.keys.PublicRecord(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		policy, err := s.store.activateRoleBaselineV1(
+			req.WalletID,
+			body.ExpectedVersion,
+			body.Baseline,
+			wallet.PublicKey,
+			signerRoleBaselineRuntimeFromEnvV1(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(policy)
 	case "v2.wallet.create":
 		var body signerOperatorWalletCreateRequestV1
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
