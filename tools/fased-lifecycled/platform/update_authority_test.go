@@ -23,13 +23,13 @@ func TestManagedUpdateAuthorityIsScopedToOperatorProfileAndStaticBootstrap(t *te
 			profile: model.ProfileProtectedLocal, instance: "0123456789abcdef", owner: "/home/owner/.fased", user: "owner",
 			operator: Principal{UID: 1000, GID: 1000}, gateway: Principal{UID: 1001, GID: 1001}, signer: Principal{UID: 1002, GID: 1002},
 			path: "/etc/sudoers.d/fased-local-0123456789abcdef-update",
-			line: "owner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile protected-local *\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap repair --profile protected-local *\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap rollback --profile protected-local *\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap uninstall --profile protected-local *\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap status --profile protected-local *\n",
+			line: "owner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile protected-local\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile protected-local *\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap repair --profile protected-local\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap repair --profile protected-local *\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap rollback --profile protected-local\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap rollback --profile protected-local *\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap uninstall --profile protected-local\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap uninstall --profile protected-local *\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap status --profile protected-local\nowner ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap status --profile protected-local *\n",
 		},
 		"Hosting": {
 			profile: model.ProfileHosting, instance: "hosting", owner: "/home/app/.fased", user: "app",
 			operator: Principal{UID: 1000, GID: 1000}, gateway: Principal{UID: 1001, GID: 1001}, signer: Principal{UID: 1002, GID: 1002},
 			path: "/etc/sudoers.d/fased-hosting-update",
-			line: "app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting *\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap repair --profile hosting *\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap rollback --profile hosting *\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap uninstall --profile hosting *\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap status --profile hosting *\n",
+			line: "app ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap update --profile hosting *\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap repair --profile hosting\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap repair --profile hosting *\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap rollback --profile hosting\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap rollback --profile hosting *\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap uninstall --profile hosting\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap uninstall --profile hosting *\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap status --profile hosting\napp ALL=(root) NOPASSWD: /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap status --profile hosting *\n",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -78,7 +78,7 @@ func TestDarwinManagedUpdateAuthorityUsesFixedLibraryBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(policy)
-	if strings.Count(text, "/Library/FasedLifecycle/bootstrap-v1/fased-bootstrap") != 5 || strings.Contains(text, FixedBootstrapPath) {
+	if strings.Count(text, "/Library/FasedLifecycle/bootstrap-v1/fased-bootstrap") != 10 || strings.Contains(text, FixedBootstrapPath) {
 		t.Fatalf("Darwin update authority used the wrong bootstrap path:\n%s", text)
 	}
 }

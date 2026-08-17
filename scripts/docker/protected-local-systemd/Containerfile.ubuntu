@@ -25,7 +25,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && curl -fsSL https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.xz \
     | tar -xJ --strip-components=1 -C /usr/local \
-  && chown root:root /usr/local/bin/node \
+  && chown root:root /usr/local/bin /usr/local/bin/node \
+  && chmod 0755 /usr/local/bin \
   && systemctl mask \
     dev-hugepages.mount \
     sys-fs-fuse-connections.mount \

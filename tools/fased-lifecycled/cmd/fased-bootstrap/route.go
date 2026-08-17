@@ -739,6 +739,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	}
 	var hostingParticipant *hostsecurity.Participant
 	hostingTransactionID := ""
+	hostingSecurityReused := false
 	if request.Profile == model.ProfileHosting {
 		securityLock, lockErr := hostsecurity.AcquireMutationLock("/run/lock/fased-host-security.lock", 0)
 		if lockErr != nil {
@@ -772,18 +773,19 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			return prepareErr
 		}
 		hostingTransactionID = prepared.TransactionID
+		hostingSecurityReused = !hostingSecurityTransactionNeedsFinalization(prepared)
 	}
 	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
 	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result)
 	applyProgress.Stop()
 	emitLifecycleHostVerbose(lifecycleHostVerboseOutputWriter(request, output, os.Stderr), verboseOutput)
 	if err != nil {
-		if hostingParticipant != nil {
+		if hostingParticipant != nil && !hostingSecurityReused {
 			err = errors.Join(err, hostingParticipant.Abort(ctx, hostingTransactionID))
 		}
 		return err
 	}
-	if hostingParticipant != nil {
+	if hostingParticipant != nil && !hostingSecurityReused {
 		if _, err := hostingParticipant.MarkRuntimeReady(ctx, hostingTransactionID); err != nil {
 			return fmt.Errorf("Hosting runtime installed but host-security handoff remains pending: %w", err)
 		}
@@ -796,7 +798,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		}
 		outcome = convergence.Outcome
 	}
-	if hostingParticipant != nil {
+	if hostingParticipant != nil && !hostingSecurityReused {
 		accessConfirmed := request.TailnetAccessConfirmed
 		if !accessConfirmed {
 			if _, commitErr := hostingParticipant.Commit(ctx, hostingTransactionID, false); commitErr == nil {
@@ -832,6 +834,10 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		_, err = fmt.Fprintf(output, "Updated successfully: %s\n", result.Version)
 	}
 	return err
+}
+
+func hostingSecurityTransactionNeedsFinalization(state hostsecurity.State) bool {
+	return state.Phase != hostsecurity.PhaseCommitted
 }
 
 func pruneAcquisitionInbox(stateRoot string) error {

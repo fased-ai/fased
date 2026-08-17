@@ -80,11 +80,13 @@ func managedUninstallFixture(t *testing.T) (*ManagedUninstaller, string, *[]stri
 	install, _ := CanonicalInstallProjectionForManifestJSON(config, manifest)
 	wrapper, _ := RenderSignerOwnerWrapper(config)
 	launcher, _ := RenderCLILauncher(config)
+	projection, _ := RenderManagedCLIProjection(config)
 	write(CanonicalCLIProjectionPath(config), cli, 0o640, operator.UID)
 	write(CanonicalInstallProjectionPath(config), install, 0o640, operator.UID)
 	write(CanonicalPluginLockPath(config), pluginLock, 0o640, operator.UID)
 	write(CanonicalSignerOwnerFiles(config)[1], wrapper, 0o755, uint32(os.Getuid()))
 	write(filepath.Join(config.OwnerStateRoot, "bin", "fased"), launcher, 0o755, uint32(os.Getuid()))
+	write(ManagedCLIProjectionPath, projection, 0o755, uint32(os.Getuid()))
 	return uninstaller, root, &calls
 }
 
@@ -109,6 +111,7 @@ func TestManagedUninstallRemovesCodeAndServicesButPreservesOwnerAndSignerState(t
 		uninstaller.Config.InstallRoot,
 		filepath.Join(uninstaller.Config.ProductStateRoot, "controller"),
 		filepath.Join(uninstaller.Config.OwnerStateRoot, "bin", "fased"),
+		ManagedCLIProjectionPath,
 		filepath.Join(uninstaller.Config.LifecycleRoot, "installation-manifest.json"),
 		filepath.Join(uninstaller.Config.LifecycleRoot, "transactions"),
 	} {
@@ -125,6 +128,68 @@ func TestManagedUninstallRemovesCodeAndServicesButPreservesOwnerAndSignerState(t
 	before := len(*calls)
 	if replay, err := uninstaller.Run(context.Background()); err != nil || !replay.Completed || len(*calls) != before {
 		t.Fatalf("completed uninstall was not a no-op: record=%+v calls=%v err=%v", replay, *calls, err)
+	}
+}
+
+func TestManagedUninstallRefusesModifiedSystemCLIProjection(t *testing.T) {
+	uninstaller, root, _ := managedUninstallFixture(t)
+	path := filepath.Join(root, filepath.Clean(ManagedCLIProjectionPath))
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nmodified\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uninstaller.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "refused modified file") {
+		t.Fatalf("modified system CLI projection was removed: %v", err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "#!/bin/sh\nmodified\n" {
+		t.Fatalf("modified system CLI projection did not fail closed: %q err=%v", data, err)
+	}
+}
+
+func TestManagedUninstallRefusesUnsafeSystemCLIProjection(t *testing.T) {
+	uninstaller, root, _ := managedUninstallFixture(t)
+	path := filepath.Join(root, filepath.Clean(ManagedCLIProjectionPath))
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp/unrelated-fased", path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uninstaller.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("unsafe system CLI projection was removed: %v", err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("unsafe system CLI projection was deleted: info=%+v err=%v", info, err)
+	}
+}
+
+func TestManagedUninstallRemovesExactSystemCLIProjectionForLocalAndHosting(t *testing.T) {
+	for _, profile := range []model.Profile{model.ProfileProtectedLocal, model.ProfileHosting} {
+		t.Run(string(profile), func(t *testing.T) {
+			root := t.TempDir()
+			operator, gateway, signer := filesystemPrincipals()
+			config, err := NewConfigWithGatewayPort(profile, "projection", "/home/owner/.fased", 18789, operator, gateway, signer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			projection, err := RenderManagedCLIProjection(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, filepath.Clean(ManagedCLIProjectionPath))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeAtomicRootOwnedFile(path, projection, 0o755, uint32(os.Getuid())); err != nil {
+				t.Fatal(err)
+			}
+			uninstaller := ManagedUninstaller{Config: config, RootPrefix: root, ExpectedUID: uint32(os.Getuid())}
+			if err := uninstaller.removeManagedCLIProjection(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Fatalf("exact %s system CLI projection survived uninstall: %v", profile, err)
+			}
+		})
 	}
 }
 

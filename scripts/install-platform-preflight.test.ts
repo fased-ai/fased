@@ -40,6 +40,20 @@ const lifecycleRelease = fs.readFileSync(
 );
 
 describe("installer platform preflight", () => {
+  it("fails closed before completion unless the public command works from another directory", () => {
+    const verification = installer.indexOf('echo "Fased: verifying public command..."');
+    const completion = installer.indexOf('echo "Fased: installation complete."');
+    expect(verification).toBeGreaterThan(0);
+    expect(verification).toBeLessThan(completion);
+    expect(installer).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
+    expect(installer).toContain("fased status");
+    expect(installer).toContain('fased update --channel "$2" --tag "$1"');
+    expect(installer).toContain('/usr/sbin/runuser -u "$operator_user"');
+    expect(installer).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
+    expect(installer).toContain("printf '%s\\n' \"$update_output\"");
+    expect(installer).toContain('grep -Fqx "Already current: $release" <<<"$update_output"');
+    expect(installer).toContain('/bin/bash -c "$command_probe" fased "$release" "$channel"');
+  });
   it("keeps the public lifecycle installer Linux-only and rejects native Windows runtime", () => {
     expect(installer).toContain('case "$(uname -s)"');
     expect(installer).toContain("public lifecycle installation supports Linux only");

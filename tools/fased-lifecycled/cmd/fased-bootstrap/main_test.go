@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fased-lifecycled/host"
+	"fased-lifecycled/hostsecurity"
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/trust"
@@ -762,6 +763,15 @@ func TestHostingBrowserAuthenticationIsIndependentFromApplicationOnboarding(t *t
 	}
 	if publicRequestAllowsBrowserAuthentication(publicLifecycleRequest{Operation: "install", JSON: true}) {
 		t.Fatal("JSON Hosting request selected an interactive auth flow")
+	}
+}
+
+func TestCommittedHostingSecurityTransactionSkipsFinalization(t *testing.T) {
+	if hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: hostsecurity.PhaseCommitted}) {
+		t.Fatal("reused committed Hosting security transaction selected completion mutations")
+	}
+	if !hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: hostsecurity.PhaseRuntimeReady}) {
+		t.Fatal("pending Hosting security transaction skipped required completion")
 	}
 }
 

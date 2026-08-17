@@ -61,6 +61,12 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 			}
 			return previous, nil
 		case PhaseCommitted:
+			if previous.matches(request) {
+				if err := participant.validateCommittedBoundary(ctx, previous); err != nil {
+					return State{}, err
+				}
+				return previous, nil
+			}
 			if _, err := participant.Store.EnsureOwnership(previous); err != nil {
 				return State{}, fmt.Errorf("preserve Hosting uninstall baseline: %w", err)
 			}
@@ -349,4 +355,22 @@ func (participant Participant) user() io.Writer {
 
 func (state State) matches(request Request) bool {
 	return state.Release == request.Release && state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser
+}
+
+func (participant Participant) validateCommittedBoundary(ctx context.Context, state State) error {
+	ownership, err := participant.Store.ReadOwnership()
+	if err != nil {
+		return fmt.Errorf("read committed Hosting security ownership: %w", err)
+	}
+	if ownership.GatewayPort != state.GatewayPort || ownership.OperatorUser != state.OperatorUser {
+		return errors.New("committed Hosting security ownership differs from the active platform")
+	}
+	inspection, err := participant.Host.Inspect(ctx, state.GatewayPort, state.OperatorUser)
+	if err != nil || !inspection.TailscaleInstalled || !inspection.TailscaleRunning || !inspection.Authenticated ||
+		!validDNS(inspection.TailscaleDNS) || !ipv4Pattern.MatchString(inspection.TailscaleIPv4) || !versionPattern.MatchString(inspection.TailscaleVersion) ||
+		inspection.TailscaleDNS != state.TailscaleDNS || inspection.TailscaleIPv4 != state.TailscaleIPv4 || inspection.TailscaleVersion != state.TailscaleVersion ||
+		!inspection.PrivateServeReady || !inspection.SignerWebAuthnReady || !inspection.HardeningReady || !inspection.SignerReady || inspection.AppCanElevate {
+		return errors.Join(err, errors.New("committed Hosting security boundary is not intact"))
+	}
+	return nil
 }
