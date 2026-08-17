@@ -294,6 +294,21 @@ describe("lifecycle acceptance contract", () => {
     expect(hosting).not.toContain("/home/app/.fased/bin/fased update");
   });
 
+  it("restores the protected Local system command ancestry after Node extraction", () => {
+    for (const containerfile of [
+      "./docker/protected-local-systemd/Containerfile.ubuntu",
+      "./docker/protected-local-systemd/Containerfile.rocky",
+    ]) {
+      const source = readFileSync(new URL(containerfile, import.meta.url), "utf8");
+      const extraction = source.indexOf("tar -xJ --strip-components=1 -C /usr/local");
+      const ownership = source.indexOf("chown root:root /usr/local/bin /usr/local/bin/node");
+      const mode = source.indexOf("chmod 0755 /usr/local/bin");
+      expect(extraction).toBeGreaterThanOrEqual(0);
+      expect(ownership).toBeGreaterThan(extraction);
+      expect(mode).toBeGreaterThan(ownership);
+    }
+  });
+
   it("proves repair and uninstall after reboot without escaping fixture trust", () => {
     const fixture = readFileSync(
       new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
