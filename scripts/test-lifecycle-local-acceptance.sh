@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"
+source "$ROOT_DIR/scripts/prepare-lifecycle-systemd-fixture-images.sh"
 GO_BIN="${FASED_GO_BIN:-$(command -v go || true)}"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 OCI_RUNTIME="${FASED_CONTAINER_OCI_RUNTIME:-}"
@@ -23,7 +24,8 @@ OWN_ARTIFACT_DIR=0
 ARTIFACT_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_ARTIFACT_CACHE_DIR-$CACHE_HOME/fased/protected-local-artifacts}"
 ARTIFACT_CACHE_TARGET=""
 ARTIFACT_CACHE_LOCK_FD=""
-IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
+IMAGE_CACHE_DIR="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-$CACHE_HOME/fased-dev/lifecycle-fixture-images/local}"
+PREPARE_IMAGES="${FASED_SYSTEMD_FIXTURE_PREPARE_IMAGES:-}"
 PREINSTALLED_TOOLS="${FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS:-0}"
 EXACT_CANDIDATE_REPLAY="${FASED_SYSTEMD_FIXTURE_EXACT_CANDIDATE_REPLAY:-0}"
 PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
@@ -43,8 +45,19 @@ SYSTEMD_START_LOCK="${FASED_LIFECYCLE_FIXTURE_START_LOCK:-${TMPDIR:-/tmp}/fased-
 FIXTURE_TOOLS_DIR=""
 FIXTURE_PREINSTALLED_TOOLS_DIR=""
 FIXTURE_NODE_MODULES=""
-image_staging=""
 FIXTURE_ARTIFACT_COMPAT_DIR=""
+
+if [[ -z "$PREPARE_IMAGES" ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    PREPARE_IMAGES=1
+  else
+    PREPARE_IMAGES=0
+  fi
+fi
+[[ "$PREPARE_IMAGES" == "0" || "$PREPARE_IMAGES" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_PREPARE_IMAGES must be 0 or 1." >&2
+  exit 1
+}
 
 if [[ -z "$ARTIFACT_DIR" && "$BUILD_ONLY" == "0" && -n "$ARTIFACT_CACHE_DIR" ]]; then
   [[ "$ARTIFACT_CACHE_DIR" == /* ]] || {
@@ -574,7 +587,6 @@ preserve_partial_receipt() {
 cleanup() {
   local name
   local preserved_fixture=0
-  [[ -z "$image_staging" ]] || rm -f -- "$image_staging"
   for name in "${cleanup_names[@]}"; do
     if [[ "${FASED_SYSTEMD_FIXTURE_PRESERVE_FAILURE:-0}" == "1" ]] &&
       run_container container exists "$name" >/dev/null 2>&1; then
@@ -854,38 +866,38 @@ run_fixture_scenario() {
   run_container rm -f "$name" >/dev/null
 }
 
+if [[ "$PREPARE_IMAGES" == "1" ]]; then
+  FASED_CONTAINER_RUNTIME="$RUNTIME" \
+  FASED_CONTAINER_OCI_RUNTIME="$OCI_RUNTIME" \
+  FASED_SYSTEMD_FIXTURE_PROFILE=local \
+  FASED_SYSTEMD_FIXTURE_DISTROS="$DISTROS" \
+  FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR="$IMAGE_CACHE_DIR" \
+    bash "$ROOT_DIR/scripts/prepare-lifecycle-systemd-fixture-images.sh"
+fi
+
 for distro in "${distro_list[@]}"; do
-  containerfile="$FIXTURE_DIR/Containerfile.$distro"
-  [[ -f "$containerfile" ]] || {
-    echo "Unsupported protected Local fixture distro: $distro" >&2
-    exit 1
-  }
-  image="fased-protected-local-systemd-${distro}:local"
+  image_digest="$(fased_fixture_image_digest local "$distro")"
+  image="$(fased_fixture_image_ref local "$distro" "$image_digest")"
   image_started="$SECONDS"
   archive=""
   image_cache_lock_fd=""
   if [[ -n "$IMAGE_CACHE_DIR" ]]; then
     mkdir -p "$IMAGE_CACHE_DIR"
-    archive="$IMAGE_CACHE_DIR/${distro}.oci.tar"
+    archive="$(fased_fixture_image_archive "$IMAGE_CACHE_DIR" local "$distro" "$image_digest")"
     exec {image_cache_lock_fd}>"${archive}.lock"
     flock "$image_cache_lock_fd"
   fi
-  if [[ -n "$archive" && -s "$archive" ]]; then
+  if ! run_container image exists "$image" && [[ -n "$archive" && -s "$archive" ]]; then
     run_container load --input "$archive" >/dev/null
-    run_container image exists "$image"
-    printf 'fixture timing: distro=%s stage=image-cache-load elapsed=%ss\n' \
-      "$distro" "$((SECONDS - image_started))"
-  else
-    run_container build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
-    if [[ -n "$archive" ]]; then
-      image_staging="${archive}.building.$$"
-      run_container save --format oci-archive --output "$image_staging" "$image"
-      mv "$image_staging" "$archive"
-      image_staging=""
-    fi
-    printf 'fixture timing: distro=%s stage=image-build elapsed=%ss\n' \
-      "$distro" "$((SECONDS - image_started))"
   fi
+  run_container image exists "$image" || {
+    echo "Fixture image is unavailable; prepare it explicitly:" >&2
+    echo "  FASED_SYSTEMD_FIXTURE_PROFILE=local FASED_SYSTEMD_FIXTURE_DISTROS=$distro FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR=$IMAGE_CACHE_DIR bash scripts/prepare-lifecycle-systemd-fixture-images.sh" >&2
+    exit 1
+  }
+  fased_fixture_verify_image "$image" "$image_digest"
+  printf 'fixture timing: distro=%s stage=image-reuse elapsed=%ss image=%s\n' \
+    "$distro" "$((SECONDS - image_started))" "$image"
   if [[ -n "$image_cache_lock_fd" ]]; then
     flock -u "$image_cache_lock_fd"
     exec {image_cache_lock_fd}>&-
@@ -903,7 +915,8 @@ for scenario in "${scenario_list[@]}"; do
 done
 
 for distro in "${distro_list[@]}"; do
-  image="fased-protected-local-systemd-${distro}:local"
+  image_digest="$(fased_fixture_image_digest local "$distro")"
+  image="$(fased_fixture_image_ref local "$distro" "$image_digest")"
   if [[ "$PARALLEL_SCENARIOS" == "0" || "${#scenario_list[@]}" -eq 1 ]]; then
     for scenario in "${scenario_list[@]}"; do
       name="fased-protected-local-${distro}-${scenario}-$$"

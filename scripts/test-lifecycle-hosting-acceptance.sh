@@ -3,21 +3,35 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"
+source "$ROOT_DIR/scripts/prepare-lifecycle-systemd-fixture-images.sh"
 RUNTIME="${FASED_CONTAINER_RUNTIME:-podman}"
 DISTROS="${FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS:-ubuntu}"
 SCENARIOS="${FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS:-fresh-install,managed-update}"
 ARTIFACT_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR:-}"
 RECEIPT_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
-IMAGE_CACHE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-}"
+CACHE_HOME="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}"
+IMAGE_CACHE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-$CACHE_HOME/fased-dev/lifecycle-fixture-images/hosting}"
+PREPARE_IMAGES="${FASED_SYSTEMD_FIXTURE_PREPARE_IMAGES:-}"
 PREDECESSOR_VERSION="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_VERSION:-0.1.75}"
 PREDECESSOR_CLASS="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CLASS:-public-stable}"
 PREDECESSOR_CAPSULE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR:-}"
-CACHE_HOME="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}"
 PREDECESSOR_CAPSULE_CACHE_DIR="${FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_CACHE_DIR-$CACHE_HOME/fased/predecessor-capsules}"
 PARALLEL_SCENARIOS="${FASED_HOSTING_SYSTEMD_FIXTURE_PARALLEL_SCENARIOS:-1}"
 PRESERVE_FAILED_CONTAINER="${FASED_HOSTING_SYSTEMD_FIXTURE_PRESERVE_FAILURE:-1}"
 SYSTEMD_START_LOCK="${FASED_LIFECYCLE_FIXTURE_START_LOCK:-${TMPDIR:-/tmp}/fased-lifecycle-systemd-start.lock}"
 FIXTURE_DIR="$ROOT_DIR/scripts/docker/hosting-systemd"
+
+if [[ -z "$PREPARE_IMAGES" ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    PREPARE_IMAGES=1
+  else
+    PREPARE_IMAGES=0
+  fi
+fi
+[[ "$PREPARE_IMAGES" == "0" || "$PREPARE_IMAGES" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_PREPARE_IMAGES must be 0 or 1." >&2
+  exit 1
+}
 
 [[ -n "$ARTIFACT_DIR" && -d "$ARTIFACT_DIR" ]] || {
   echo "FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR must name an existing candidate artifact directory." >&2
@@ -151,7 +165,6 @@ if [[ ",$SCENARIOS," == *,managed-update,* ]]; then
 fi
 
 cleanup_names=()
-image_staging=""
 fixture_tools_dir="$(mktemp -d "${TMPDIR:-/tmp}/fased-hosting-fixture-tools.XXXXXX")"
 failure_registry="$fixture_tools_dir/failed-containers"
 mkdir -p "$failure_registry"
@@ -159,7 +172,6 @@ cleanup() {
   local status=$?
   local name
   local preserved_fixture=0
-  [[ -z "$image_staging" ]] || rm -f -- "$image_staging"
   for name in "${cleanup_names[@]}"; do
     if [[ "$status" -ne 0 && "$PRESERVE_FAILED_CONTAINER" == "1" &&
       -f "$failure_registry/$name" ]] &&
@@ -219,13 +231,17 @@ for scenario in "${scenario_list[@]}"; do
   }
 done
 
+if [[ "$PREPARE_IMAGES" == "1" ]]; then
+  FASED_CONTAINER_RUNTIME="$RUNTIME" \
+  FASED_SYSTEMD_FIXTURE_PROFILE=hosting \
+  FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS="$DISTROS" \
+  FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR="$IMAGE_CACHE_DIR" \
+    bash "$ROOT_DIR/scripts/prepare-lifecycle-systemd-fixture-images.sh"
+fi
+
 for distro in "${distro_list[@]}"; do
-  containerfile="$FIXTURE_DIR/Containerfile.$distro"
-  [[ -f "$containerfile" ]] || {
-    echo "Unsupported Hosting fixture distro: $distro" >&2
-    exit 1
-  }
-  image="fased-hosting-systemd-${distro}:local"
+  image_digest="$(fased_fixture_image_digest hosting "$distro")"
+  image="$(fased_fixture_image_ref hosting "$distro" "$image_digest")"
   image_archive=""
   image_cache_lock_fd=""
   if [[ -n "$IMAGE_CACHE_DIR" ]]; then
@@ -234,24 +250,22 @@ for distro in "${distro_list[@]}"; do
       exit 1
     }
     mkdir -p "$IMAGE_CACHE_DIR"
-    image_archive="$IMAGE_CACHE_DIR/${distro}.oci.tar"
+    image_archive="$(fased_fixture_image_archive "$IMAGE_CACHE_DIR" hosting "$distro" "$image_digest")"
     exec {image_cache_lock_fd}>"${image_archive}.lock"
     flock "$image_cache_lock_fd"
   fi
-  if [[ -n "$image_archive" && -s "$image_archive" ]]; then
+  if ! "$RUNTIME" image exists "$image" && [[ -n "$image_archive" && -s "$image_archive" ]]; then
     "$RUNTIME" load --input "$image_archive" >/dev/null
-    "$RUNTIME" image exists "$image"
-    printf 'Hosting fixture image cache hit: distro=%s\n' "$distro"
-  else
-    "$RUNTIME" build -f "$containerfile" -t "$image" "$FIXTURE_DIR"
-    if [[ -n "$image_archive" ]]; then
-      image_staging="${image_archive}.building.$$"
-      "$RUNTIME" save --format oci-archive --output "$image_staging" "$image"
-      mv "$image_staging" "$image_archive"
-      rm -f -- "$image_staging"
-      image_staging=""
-    fi
   fi
+  "$RUNTIME" image exists "$image" || {
+    echo "Fixture image is unavailable; prepare it explicitly:" >&2
+    echo "  FASED_SYSTEMD_FIXTURE_PROFILE=hosting FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS=$distro FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR=$IMAGE_CACHE_DIR bash scripts/prepare-lifecycle-systemd-fixture-images.sh" >&2
+    exit 1
+  }
+  run_container() { "$RUNTIME" "$@"; }
+  fased_fixture_verify_image "$image" "$image_digest"
+  unset -f run_container
+  printf 'Hosting fixture image reused: distro=%s image=%s\n' "$distro" "$image"
   if [[ -n "$image_cache_lock_fd" ]]; then
     flock -u "$image_cache_lock_fd"
     exec {image_cache_lock_fd}>&-
@@ -284,10 +298,13 @@ run_scenario_body() {
   local distro="$1"
   local scenario="$2"
   local name="$3"
-  local image="fased-hosting-systemd-${distro}:local"
+  local image_digest=""
+  local image=""
   local predecessor_dir="$ARTIFACT_DIR"
   local predecessor=""
   local start_lock_fd=""
+  image_digest="$(fased_fixture_image_digest hosting "$distro")"
+  image="$(fased_fixture_image_ref hosting "$distro" "$image_digest")"
   [[ "$scenario" != "managed-update" ]] || {
     predecessor_dir="$PREDECESSOR_CAPSULE_DIR"
     predecessor="$PREDECESSOR_VERSION"
