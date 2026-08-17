@@ -139,6 +139,76 @@ describe("lifecycle compatibility inventory", () => {
     ).toThrow();
   });
 
+  it("uses one bounded release list for full public coverage and fails closed", () => {
+    const repository = "fased-ai/fased";
+    const calls = [];
+    const releases = __testing.readPublicGitHubReleases(repository, (command, args, options) => {
+      calls.push({ command, args, options });
+      expect(command).toBe("gh");
+      expect(args).toEqual([
+        "release",
+        "list",
+        "--repo",
+        repository,
+        "--limit",
+        "1000",
+        "--json",
+        "tagName,isDraft,publishedAt",
+      ]);
+      expect(args).not.toContain("api");
+      expect(args).not.toContain("--paginate");
+      expect(options).toEqual({ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      return JSON.stringify([
+        {
+          tagName: "v0.1.75",
+          isDraft: false,
+          publishedAt: "2026-08-15T00:00:00Z",
+        },
+        { tagName: "draft", isDraft: true, publishedAt: null },
+      ]);
+    });
+    expect(calls).toHaveLength(1);
+    expect(releases).toEqual([
+      {
+        tag_name: "v0.1.75",
+        draft: false,
+        published_at: "2026-08-15T00:00:00Z",
+      },
+      { tag_name: "draft", draft: true, published_at: null },
+    ]);
+
+    for (const [response, message] of [
+      ["not-json", "public GitHub release list response is invalid"],
+      [JSON.stringify({}), "public GitHub release list response is invalid"],
+      [
+        JSON.stringify([{ tagName: "v0.1.75", isDraft: false }]),
+        "public GitHub release fields are invalid",
+      ],
+      [
+        JSON.stringify([
+          { tagName: "v0.1.75", isDraft: "false", publishedAt: "2026-08-15T00:00:00Z" },
+        ]),
+        "public GitHub release metadata is invalid",
+      ],
+      [
+        JSON.stringify([{ tagName: "v0.1.75", isDraft: false, publishedAt: null }]),
+        "public GitHub release metadata is invalid",
+      ],
+      [
+        JSON.stringify(
+          Array.from({ length: 1000 }, (_, index) => ({
+            tagName: `v0.1.${index}`,
+            isDraft: false,
+            publishedAt: "2026-08-15T00:00:00Z",
+          })),
+        ),
+        "public GitHub release list reached 1000-result bound",
+      ],
+    ]) {
+      expect(() => __testing.readPublicGitHubReleases(repository, () => response)).toThrow(message);
+    }
+  });
+
   it("keeps release names out of runtime compatibility selection", () => {
     const inventory = loadLifecycleCompatibilityInventory();
     expect(inventory.selectionContract.runtimeConsumesReleaseAssignments).toBe(false);
