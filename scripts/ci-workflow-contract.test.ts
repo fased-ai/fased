@@ -556,263 +556,95 @@ describe("CI workflow routing", () => {
     expect(dockerWorkflow).not.toContain("gh release upload");
   });
 
-  it("builds once from the immutable owner tag authorized by the lifecycle root", async () => {
+  it("publishes only exact pre-tag P1 product bytes without rebuilding or replaying P1", async () => {
     const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
     const jobs = workflow.jobs ?? {};
-    const candidate = jobs["candidate"];
-    const p1Fresh = jobs["p1-local-fresh"];
-    const p1Update = jobs["p1-local-update"];
-    const p1Hosting = jobs["p1-hosting"];
-    const predecessorCapsules = jobs["predecessor-capsules"];
-    const tagReady = jobs["tag-ready"];
-    const publish = jobs["publish"];
-    const preflightText = jobs["preflight"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const buildText = jobs["build"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const linuxText = jobs["linux"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const signerText = jobs["signer"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const preflight = jobs.preflight;
+    const finalizeCandidate = jobs["finalize-candidate"];
+    const publish = jobs.publish;
+    const refreshRootHead = jobs["refresh-root-head"];
+    const preflightText = preflight?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const finalizeText = finalizeCandidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const refreshRootHeadText =
+      refreshRootHead?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
 
     expect(workflow.on).not.toHaveProperty("push");
     expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.pre_tag_p1_run_id.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.managed_predecessor_version.required).toBe(true);
-    expect(jobs["release-gate"]).toBeUndefined();
-    expect(jobs["build"]?.needs).toBe("preflight");
-    expect(jobs["signer"]?.needs).toBe("preflight");
-    expect(jobs["linux"]?.needs).toEqual(["build", "signer"]);
-    expect(candidate?.needs).toEqual(["preflight", "build", "linux", "signer"]);
-    expect(jobs["p1"]).toBeUndefined();
-    expect(p1Fresh?.needs).toEqual(["preflight", "candidate"]);
-    expect(p1Update?.needs).toEqual(["preflight", "candidate", "predecessor-capsules"]);
-    expect(p1Hosting?.needs).toEqual(["preflight", "candidate", "predecessor-capsules"]);
-    expect(predecessorCapsules?.needs).toEqual(["preflight"]);
-    expect(predecessorCapsules?.permissions).toMatchObject({
-      attestations: "write",
-      "id-token": "write",
-    });
-    expect(tagReady).toBeUndefined();
-    expect(publish?.needs).toEqual([
+    expect(Object.keys(jobs).toSorted()).toEqual([
+      "finalize-candidate",
+      "preflight",
+      "publish",
+      "refresh-root-head",
+    ]);
+    for (const removed of [
+      "build",
+      "linux",
+      "signer",
       "candidate",
       "p1-local-fresh",
+      "predecessor-capsules",
       "p1-local-update",
       "p1-hosting",
-    ]);
-    expect(publish?.environment).toBe("candidate-release");
-    expect(workflow.concurrency?.group).toContain("github.event_name == 'schedule'");
-    expect(workflow.concurrency?.group).toContain("fased-root-head-refresh-{0}");
-    expect(workflow.concurrency?.group).toContain("fased-lifecycle-channel-{0}");
-
-    const candidateText = candidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const candidateStepNames = candidate?.steps?.map((step) => step.name) ?? [];
-    const p1FreshText = p1Fresh?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const p1UpdateText = p1Update?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const p1HostingText = p1Hosting?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const predecessorCapsulesText =
-      predecessorCapsules?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const refreshRootHead = workflow.jobs?.["refresh-root-head"];
-    const refreshRootHeadText =
-      refreshRootHead?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const candidateDownloads = candidate?.steps?.filter((step) =>
-      usesAction(step, "actions/download-artifact"),
-    );
-    expect(candidateDownloads?.map((step) => step.with?.pattern ?? step.with?.name)).toEqual([
-      "fased-hosted-runtime-*",
-      "fased-signerd-release",
-    ]);
-    expect(candidateStepNames).toContain("Setup Node.js");
-    expect(candidateStepNames).toContain("Setup Go");
-    expect(candidateStepNames).toContain("Setup pnpm + cache store");
-    expect(candidateStepNames).toContain("Install exact frozen dependencies");
-    expect(candidateStepNames.indexOf("Install exact frozen dependencies")).toBeLessThan(
-      candidateStepNames.indexOf("Assemble candidate release manifest"),
-    );
-    expect(candidateText).toContain("pnpm install --frozen-lockfile");
-    expect(candidateText).toContain("release-artifact-set.mjs build");
-    expect(candidateText).toContain("build-lifecycle-release-index.mjs");
-    expect(candidateText).toContain("fased-lifecycle-root-v*.json");
-    expect(candidateText).toContain("verify-lifecycle-root-chain.mjs");
-    expect(candidateText).toContain("fased-release-index-v1.json");
-    expect(candidateText).toContain("fased-release-index-v1.json.attestation.json");
-    expect(candidateText).toContain("build-lifecycle-root-head.mjs");
-    expect(candidateText).toContain("fased-lifecycle-root-head-v1.json");
-    expect(candidateText.indexOf("build-lifecycle-release-index.mjs")).toBeLessThan(
-      candidateText.indexOf("release-artifact-set.mjs build"),
-    );
-    expect(
-      candidate?.steps?.find((step) => step.name === "Attest production lifecycle release index")
-        ?.with?.["subject-path"],
-    ).toBe(".artifacts/hosted-runtime/fased-release-index-v1.json");
-    expect(
-      candidate?.steps?.find((step) => step.name === "Attest current lifecycle root head")?.with?.[
-        "subject-path"
-      ],
-    ).toBe(".artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json");
-    expect(workflow.on?.schedule).toEqual([{ cron: "17 */6 * * *" }]);
-    expect(refreshRootHead?.if).toBe("github.event_name == 'schedule'");
-    expect(refreshRootHead?.concurrency).toEqual({
-      group: "fased-lifecycle-channel-${{ matrix.channel }}",
-      "cancel-in-progress": false,
-    });
-    expect(refreshRootHead?.permissions?.contents).toBe("write");
-    expect(refreshRootHead?.permissions?.["id-token"]).toBe("write");
-    expect(refreshRootHeadText).toContain('cmp -s "$source_root" "$directory/$root_name"');
-    expect(refreshRootHeadText).toContain("--witness-ref refs/heads/main");
-    expect(refreshRootHeadText).toContain("publish-lifecycle-root-head.sh");
-    expect(preflightText).not.toContain("pnpm build");
-    expect(buildText).toContain("pnpm build");
-    expect(preflightText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
-    expect(preflightText).toContain(
-      'git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION"',
-    );
-    expect(preflightText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
-    expect(preflightText).not.toContain("Candidate tag already exists before packaged P1");
-    expect(preflightText).toContain("node scripts/ci-version-identity.mjs --allow-exact-tag");
-    expect(buildText).toContain("pnpm check:plugin-sdk:types");
-    expect(buildText).toContain("node --import tsx scripts/release-check.ts");
-    expect(buildText).toContain("pnpm release:validate-dist:packed");
-    expect(buildText).not.toContain("pnpm release:check");
-    expect(buildText).not.toContain("pnpm signer:protocol:check");
-    expect(buildText).not.toContain("pnpm sat:signer-codecs:check");
-    expect(buildText).not.toContain("pnpm test:signer:compat");
-    expect(buildText).not.toContain("pnpm test:local-source-update-compat");
-    expect(buildText).not.toContain("pnpm test:managed-updater");
-    expect(preflightText).toContain(".mainRunId");
-    expect(preflightText).toContain(".mainChecksJobId");
-    expect(preflightText).toContain("actions/jobs/$main_checks_job_id");
-    expect(preflightText).toContain('.path == ".github/workflows/main.yml"');
-    expect(
-      jobs["preflight"]?.steps?.some((step) => step.name === "Verify immutable pre-candidate pass"),
-    ).toBe(true);
-    expect(
-      jobs["preflight"]?.steps?.some(
-        (step) => step.name === "Verify immutable protected pre-tag P1 pass",
-      ),
-    ).toBe(true);
-    expect(preflightText).toContain('.path == ".github/workflows/pre-tag-p1.yml"');
-    expect(preflightText).toContain("fased-pre-tag-p1-evidence");
-    expect(preflightText).toContain("pnpm audit --prod --audit-level high");
-    expect(
-      jobs["build"]?.steps?.some((step) => step.name === "Install exact frozen dependencies"),
-    ).toBe(true);
-    expect(linuxText).toContain("hosted:artifact:from-dist");
-    const linuxStepNames = jobs["linux"]?.steps?.map((step) => step.name) ?? [];
-    expect(linuxStepNames.indexOf("Download exact native lifecycle assets")).toBeLessThan(
-      linuxStepNames.indexOf("Restore executable modes on exact native lifecycle assets"),
-    );
-    expect(linuxText).toContain('test ! -L "$executable"');
-    expect(linuxText).toContain('chmod 0755 "$executable"');
-    expect(
-      jobs["linux"]?.steps?.some((step) => step.name === "Assemble exact lifecycle generation"),
-    ).toBe(false);
-    expect(candidateText).toContain("assemble-lifecycle-generation.mjs");
-    expect(candidateText).toContain('--inventory-tool "$inventory_tool"');
-    expect(candidateText).toContain(
-      'inventory_tool=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"',
-    );
-    expect(candidateText).toContain("--runtime-archive");
-    expect(candidateText).toContain("fased-hosted-app-v2-linux-");
-    expect(candidateText).toContain("--dependency-archive");
-    expect(candidateText).toContain("fased-hosted-deps-linux-");
-    expect(candidateText).toContain("--release-manifest");
-    expect(predecessorCapsulesText).toContain("--pattern fased-lifecycled-linux-amd64");
-    expect(predecessorCapsulesText).toContain(
-      '--lifecycle-binary "$source_dir/fased-lifecycled-linux-amd64"',
-    );
-    expect(predecessorCapsulesText).toContain(
-      "node scripts/build-canonical-managed-predecessor-capsule.mjs",
-    );
-    expect(predecessorCapsulesText).not.toContain("owner-local-predecessor-schema1");
-    expect(predecessorCapsulesText).not.toContain("--previous-generation");
-    expect(candidateText.indexOf("build-hosted-release-manifest.mjs")).toBeLessThan(
-      candidateText.indexOf("assemble-lifecycle-generation.mjs"),
-    );
-    expect(signerText).toContain("build-native-release-assets.sh");
-    expect(signerText).toContain("fased-lifecycled-checksums.txt");
-    expect(linuxText).not.toContain("hosted:artifact:build");
-    expect(candidateText).toContain('--source-ref "$GITHUB_REF"');
-    expect(candidateText).not.toContain("refs/heads/main");
-    expect(candidateText).toContain("--tree");
-    expect(candidateText).toContain("--lockfile-digest");
-    expect(candidateText).toContain("--workflow-run-attempt");
-    expect(publishText).not.toContain("--workflow-run-attempt");
-    expect(candidateText).not.toContain("gh release create");
-    expect(
-      candidate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
-    ).toBe("fased-hosting-candidate");
-
-    for (const p1 of [p1Fresh, p1Update, p1Hosting]) {
-      expect(
-        p1?.steps?.find((step) => usesAction(step, "actions/download-artifact"))?.with,
-      ).toMatchObject({ name: "fased-hosting-candidate" });
+      "release-gate",
+      "tag-ready",
+    ]) {
+      expect(jobs[removed]).toBeUndefined();
     }
-    expect(p1FreshText).toContain("test-lifecycle-local-acceptance.sh");
-    expect(p1FreshText).not.toContain("test-lifecycle-hosting-acceptance.sh");
-    expect(p1UpdateText).toContain("test-lifecycle-local-acceptance.sh");
-    expect(p1UpdateText).not.toContain("test-lifecycle-hosting-acceptance.sh");
-    expect(p1HostingText).toContain("test-lifecycle-hosting-acceptance.sh");
-    expect(p1HostingText).not.toContain("test-lifecycle-local-acceptance.sh");
+
+    expect(finalizeCandidate?.needs).toEqual(["preflight"]);
     expect(
-      p1Fresh?.steps?.find((step) => step.name === "Run packaged fresh Local P1")?.env,
+      finalizeCandidate?.steps?.find((step) => usesAction(step, "actions/download-artifact"))?.with,
     ).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install",
-      FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
+      name: "fased-pre-tag-candidate",
+      "run-id": "${{ inputs.pre_tag_p1_run_id }}",
     });
-    expect(
-      p1Update?.steps?.find((step) => step.name === "Run packaged supported-stable update P1")?.env,
-    ).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ steps.p1-scenario.outputs.scenarios }}",
-      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor.version }}",
-      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS:
-        "${{ matrix.predecessor.installationClass }}",
-      FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1",
-    });
-    expect(p1Update?.strategy).toMatchObject({
-      "fail-fast": false,
-      matrix: {
-        predecessor: "${{ fromJSON(needs.preflight.outputs.p1_local_predecessors) }}",
-      },
-    });
-    expect(
-      p1Update?.steps?.find((step) => step.name === "Derive exact predecessor topology")?.env,
-    ).toMatchObject({ GH_TOKEN: "${{ github.token }}" });
-    expect(preflightText).toContain("managedPredecessorVersion");
-    expect(preflightText).toContain('installationClass:"canonical-managed"');
-    expect(preflightText).toContain('.managedTransitionStage == "pretag-installer-takeover"');
-    expect(p1Update?.steps?.some((step) => usesAction(step, "actions/cache"))).toBe(true);
+    expect(finalizeText).toContain("scripts/finalize-pretag-candidate.sh");
+    expect(finalizeText).toContain("release-artifact-set.mjs build");
+    expect(finalizeText).not.toContain("pnpm build");
+    expect(finalizeText).not.toContain("go build");
+    expect(finalizeText).not.toContain("hosted:artifact:from-dist");
+    expect(finalizeText).not.toContain("test-lifecycle-local-acceptance.sh");
+    expect(finalizeText).not.toContain("test-lifecycle-hosting-acceptance.sh");
+
+    expect(publish?.needs).toEqual(["finalize-candidate"]);
+    expect(publish?.environment).toBe("candidate-release");
+    expect(publishText).not.toContain("pnpm build");
+    expect(publishText).not.toContain("go build");
+    expect(publishText).not.toContain("--workflow-run-attempt");
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
     expect(publishText).toContain("git ls-remote --exit-code --tags origin");
-    expect(publishText).toContain('--source-ref "$GITHUB_REF"');
-    expect(publishText).not.toContain("refs/heads/main");
-    expect(publishText.indexOf("git ls-remote --exit-code --tags origin")).toBeLessThan(
-      publishText.indexOf('gh release create "$RELEASE_TAG"'),
-    );
     expect(publishText).toContain("release-artifact-set.mjs verify-assets");
     expect(publishText).toContain('gh release create "$RELEASE_TAG"');
-    expect(publishText).toContain('.artifacts/hosted-runtime/* "${release_args[@]}"');
     expect(publishText).toContain("--verify-tag");
     expect(publishText).toContain("--draft");
-    expect(publishText).toContain("release_args+=(--prerelease)");
-    expect(publishText).not.toContain("gh release upload");
     expect(publishText).toContain("cleanup_draft");
     expect(publishText).toContain("--method DELETE");
     expect(publishText).toContain("--method PATCH");
-    expect(publishText.indexOf("release-artifact-set.mjs verify-assets")).toBeLessThan(
-      publishText.indexOf("--method PATCH"),
-    );
-    expect(publishText).toContain("existing_release_id");
-    expect(publishText).toContain("existing-release.json");
-    expect(publishText).toContain(".draft == false");
-    expect(publishText).not.toContain("gh release view");
-    expect(publishText).toContain("releases/$release_id");
     expect(
       publish?.steps?.find(
         (step) => step.name === "Advance signed managed channel to the exact public candidate",
       )?.run,
     ).toContain("scripts/publish-lifecycle-channel.sh");
-    expect(publish?.steps?.some((step) => usesAction(step, "actions/attest"))).toBe(false);
-    expect(publishText).not.toContain("hosted:artifact:build");
-    expect(publishText).not.toContain("release-fased-signerd.sh");
+
+    expect(workflow.concurrency?.group).toContain("github.event_name == 'schedule'");
+    expect(workflow.concurrency?.group).toContain("fased-root-head-refresh-{0}");
+    expect(workflow.concurrency?.group).toContain("fased-lifecycle-channel-{0}");
+    expect(workflow.on?.schedule).toEqual([{ cron: "17 */6 * * *" }]);
+    expect(refreshRootHead?.if).toBe("github.event_name == 'schedule'");
+    expect(refreshRootHeadText).toContain("publish-lifecycle-root-head.sh");
+
+    expect(preflightText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
+    expect(preflightText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
+    expect(preflightText).toContain(".mainRunId");
+    expect(preflightText).toContain(".mainChecksJobId");
+    expect(preflightText).toContain('.path == ".github/workflows/pre-tag-p1.yml"');
+    expect(preflightText).toContain("fased-pre-tag-p1-evidence");
+    expect(preflightText).not.toContain("pnpm build");
+    expect(preflightText).not.toContain("pnpm audit --prod --audit-level high");
   });
 
   it("binds pre-candidate evidence before a version is allocated", async () => {
@@ -826,6 +658,7 @@ describe("CI workflow routing", () => {
     expect(workflow.on.workflow_dispatch.inputs.managed_predecessor_version.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.release_sequence.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.security_epoch.required).toBe(true);
+    expect(workflow.on.workflow_dispatch.inputs.local0_receipt_sha256.required).toBe(true);
     expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(5);
     expect(commands).toContain("pnpm install --frozen-lockfile");
     expect(commands).toContain("actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT");
@@ -843,10 +676,13 @@ describe("CI workflow routing", () => {
     expect(commands).not.toContain("pnpm check:plugin-sdk:types");
     expect(commands).not.toContain("scripts/release-check.ts");
     expect(commands).not.toContain("pnpm release:validate-dist:packed");
-    expect(commands).toContain("--verify-public-github");
+    expect(commands).not.toContain("--verify-public-github");
+    expect(commands).toContain("--verify-git");
+    expect(commands.match(/--verify-release/g)).toHaveLength(2);
     expect(commands).toContain("lockfileDigest");
     expect(commands).toContain("managedPredecessorVersion");
-    expect(commands).toContain("schemaVersion:3");
+    expect(commands).toContain("schemaVersion:4");
+    expect(commands).toContain("local0ReceiptSha256");
     expect(commands).toContain("releaseSequence");
     expect(commands).toContain("securityEpoch");
     expect(commands).toContain("node scripts/verify-lifecycle-root-pin.mjs");

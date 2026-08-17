@@ -868,6 +868,27 @@ function readManifestedPublicReleases(inventory, releases) {
     .map((release) => readManifestedPublicRelease(inventory, release));
 }
 
+export function verifyExactPublicRelease(
+  inventory,
+  version,
+  directReleaseReader = readDirectPublicGitHubRelease,
+) {
+  validateLifecycleCompatibilityInventory(inventory);
+  const normalized = String(version || "").replace(/^v/u, "");
+  const tag = `v${normalized}`;
+  const release = directReleaseReader(inventory.repository, tag);
+  const sourceAssigned = publishedReleaseAssignments(inventory).some(
+    (assignment) => assignment.tag === tag,
+  );
+  const manifestedReleases = sourceAssigned
+    ? []
+    : readManifestedPublicReleases(inventory, [release]);
+  return Object.freeze({
+    tag,
+    scenarios: candidateP1Scenarios(inventory, normalized, manifestedReleases),
+  });
+}
+
 function main() {
   const args = process.argv.slice(2);
   const inventory = loadLifecycleCompatibilityInventory();
@@ -888,6 +909,8 @@ function main() {
       releases,
       readManifestedPublicReleases(inventory, releases),
     );
+  } else if (args.length === 2 && args[0] === "--verify-release") {
+    evidence = verifyExactPublicRelease(inventory, args[1]);
   } else if (args.length === 2 && args[0] === "--p1-scenarios") {
     const tag = `v${String(args[1]).replace(/^v/u, "")}`;
     const sourceAssigned = publishedReleaseAssignments(inventory).some(

@@ -254,15 +254,19 @@ describe("lifecycle acceptance contract", () => {
       new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
       "utf8",
     );
+    const driver = readFileSync(new URL("./run-lifecycle-local0.sh", import.meta.url), "utf8");
     const workflow = readFileSync(
-      new URL("../.github/workflows/hosted-runtime-release.yml", import.meta.url),
+      new URL("../.github/workflows/pre-tag-p1.yml", import.meta.url),
       "utf8",
     );
     expect(wrapper).toContain("fased-lifecycle-acceptance-v2.json");
     expect(wrapper).toContain("capsule_descriptor_attestation");
     expect(wrapper).toContain("capsule_archive_attestation");
     expect(wrapper).toContain("gh attestation verify");
-    expect(workflow).toContain("fased-lifecycle-acceptance-v2.json");
+    expect(workflow).toContain("test-lifecycle-local-acceptance.sh");
+    expect(driver).toContain('local workflow="$ROOT_DIR/.github/workflows/pre-tag-p1.yml"');
+    expect(driver).toContain("prepare-branch-predecessor-capsule.sh");
+    expect(driver).toContain('current_phase="pre-tag-predecessor-capsule-contract"');
   });
 
   it("requires managed update to execute the predecessor-installed updater", () => {
@@ -273,7 +277,8 @@ describe("lifecycle acceptance contract", () => {
     const managedUpdate = fixture.slice(fixture.indexOf('if [[ "$phase" == "managed-update" ]]'));
     expect(managedUpdate).toContain("run_installed_updater()");
     expect(managedUpdate).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
-    expect(managedUpdate).toContain('fased status >/dev/null && exec fased update "$@"');
+    expect(managedUpdate).toContain("/bin/bash --login -c");
+    expect(managedUpdate).toContain('fased status && exec fased update "$@"');
     expect(managedUpdate.match(/run_installed_updater/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -288,8 +293,19 @@ describe("lifecycle acceptance contract", () => {
     );
     for (const fixture of [local, hosting]) {
       expect(fixture).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
-      expect(fixture).toContain('fased status >/dev/null && exec fased update "$@"');
+      expect(fixture).toContain("/bin/bash --login -c");
+      expect(fixture).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
+      expect(fixture).toContain('fased status && exec fased update "$@"');
+      expect(fixture).toContain("test -f /usr/local/bin/fased");
+      expect(fixture).toContain("test ! -L /usr/local/bin/fased");
+      expect(fixture).toContain(
+        `test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"`,
+      );
     }
+    expect(local).toContain("run_installed_updater() {\n    assert_public_command_projection");
+    expect(local.match(/assert_public_command_projection/gu)?.length).toBe(3);
+    expect(hosting).toContain("run_public_updater() {\n  assert_public_command_projection");
+    expect(hosting.match(/assert_public_command_projection/gu)?.length).toBe(2);
     expect(local).not.toContain('"$state/bin/fased" update');
     expect(hosting).not.toContain("/home/app/.fased/bin/fased update");
   });

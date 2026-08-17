@@ -51,6 +51,7 @@ jobs:
       p1_hosting_predecessors: ${{ steps.p1-plan.outputs.hosting_predecessors }}
       release_sequence: ${{ steps.pre-candidate.outputs.release_sequence }}
       security_epoch: ${{ steps.pre-candidate.outputs.security_epoch }}
+      pretag_descriptor_sha256: ${{ steps.pretag.outputs.descriptor_sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -64,15 +65,6 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.x
-
-      - name: Setup pnpm + cache store
-        uses: ./.github/actions/setup-pnpm-store-cache
-        with:
-          pnpm-version: "10.34.5"
-          cache-key-suffix: "hosted-runtime-node24"
-
-      - name: Install build dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Verify exact immutable tagged candidate identity
         env:
@@ -138,7 +130,7 @@ jobs:
             --arg managedPredecessorVersion "$MANAGED_PREDECESSOR_VERSION" \
             --arg predecessorVersion "$PREDECESSOR_VERSION" \
             --arg workflowRunId "$PRE_CANDIDATE_RUN_ID" \
-            '.schemaVersion == 3 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and .predecessorVersion == $predecessorVersion and .managedPredecessorVersion == $managedPredecessorVersion and (.releaseSequence | type == "number" and . >= 1) and (.securityEpoch | type == "number" and . >= 1) and .workflowRunId == $workflowRunId' \
+            '.schemaVersion == 4 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and .predecessorVersion == $predecessorVersion and .managedPredecessorVersion == $managedPredecessorVersion and (.releaseSequence | type == "number" and . >= 1) and (.securityEpoch | type == "number" and . >= 1) and (.local0ReceiptSha256 | test("^sha256:[a-f0-9]{64}$")) and .workflowRunId == $workflowRunId' \
             "$evidence" >/dev/null
           printf 'release_sequence=%s\n' "$(jq -er .releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
           printf 'security_epoch=%s\n' "$(jq -er .securityEpoch "$evidence")" >>"$GITHUB_OUTPUT"
@@ -158,6 +150,7 @@ jobs:
               >/dev/null
 
       - name: Verify immutable protected pre-tag P1 pass
+        id: pretag
         env:
           MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
           PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
@@ -194,7 +187,7 @@ jobs:
             --arg workflowRunId "$PRE_TAG_P1_RUN_ID" \
             --arg releaseSequence "$RELEASE_SEQUENCE" \
             --arg securityEpoch "$SECURITY_EPOCH" \
-            '.schemaVersion == 3 and .sourceCommit == $sourceCommit and
+            '.schemaVersion == 4 and .sourceCommit == $sourceCommit and
              .sourceTree == $sourceTree and .releaseVersion == $releaseVersion and
              .predecessorVersion == $predecessorVersion and
              .managedPredecessorVersion == $managedPredecessorVersion and
@@ -204,8 +197,11 @@ jobs:
              .securityEpoch == ($securityEpoch | tonumber) and
              .preCandidateRunId == $preCandidateRunId and
              .workflowRunId == $workflowRunId and
+             (.local0ReceiptSha256 | test("^sha256:[a-f0-9]{64}$")) and
              (.candidateDescriptorSha256 | test("^sha256:[a-f0-9]{64}$"))' \
             "$evidence" >/dev/null
+          printf 'descriptor_sha256=%s\n' \
+            "$(jq -er .candidateDescriptorSha256 "$evidence")" >>"$GITHUB_OUTPUT"
 
       - name: Verify public compatibility coverage and derive P1 topology
         id: p1-plan
@@ -216,7 +212,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/lifecycle-compatibility-inventory.mjs --verify-public-github
+          node scripts/lifecycle-compatibility-inventory.mjs --verify-release "$PREDECESSOR_VERSION"
+          node scripts/lifecycle-compatibility-inventory.mjs --verify-release "$MANAGED_PREDECESSOR_VERSION"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$MANAGED_PREDECESSOR_VERSION")"
           gh release view "v$MANAGED_PREDECESSOR_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
@@ -227,129 +224,9 @@ jobs:
           printf 'local_predecessors=%s\n' "$local_predecessors" >>"$GITHUB_OUTPUT"
           printf 'hosting_predecessors=%s\n' "$hosting_predecessors" >>"$GITHUB_OUTPUT"
 
-      - name: Enforce production vulnerability threshold
-        run: pnpm audit --prod --audit-level high
-
-  build:
-    name: Build and validate shared distribution
-    needs: preflight
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout exact candidate source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-
-      - name: Setup pnpm + cache store
-        uses: ./.github/actions/setup-pnpm-store-cache
-        with:
-          pnpm-version: "10.34.5"
-          cache-key-suffix: "hosted-runtime-node24"
-
-      - name: Install exact frozen dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build exact candidate once
-        run: pnpm build
-
-      - name: Validate exact candidate distribution
-        run: |
-          pnpm check:plugin-sdk:types
-          node --import tsx scripts/release-check.ts
-          pnpm release:validate-dist:packed
-
-      - name: Upload exact shared build
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-candidate-dist
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
-
-  linux:
-    name: Linux ${{ matrix.arch }}
-    needs: [build, signer]
-    permissions:
-      actions: read
-      artifact-metadata: write
-      attestations: write
-      contents: read
-      id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: ubuntu-24.04
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-
-      - name: Setup pnpm + cache store
-        uses: ./.github/actions/setup-pnpm-store-cache
-        with:
-          pnpm-version: "10.34.5"
-          cache-key-suffix: "hosted-runtime-node24"
-
-      - name: Install build dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Download exact shared build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-candidate-dist
-          path: dist
-
-      - name: Download exact native lifecycle assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-signerd-release
-          path: dist-native/release
-
-      - name: Restore executable modes on exact native lifecycle assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          go_arch=amd64
-          for executable in \
-            "dist-native/release/fased-signerd-linux-${go_arch}" \
-            "dist-native/release/fased-lifecycled-linux-${go_arch}"; do
-            test -f "$executable"
-            test ! -L "$executable"
-            chmod 0755 "$executable"
-          done
-
-      - name: Package hosted runtime artifact from exact shared build
-        run: pnpm hosted:artifact:from-dist --output .artifacts/hosted-runtime
-
-      - name: Attest hosted runtime release assets
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: .artifacts/hosted-runtime/*
-
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-hosted-runtime-linux-${{ matrix.arch }}
-          path: .artifacts/hosted-runtime/*
-          if-no-files-found: error
-
-  signer:
-    name: Native wallet signer
-    needs: preflight
+  finalize-candidate:
+    name: Attest the exact pre-tag P1 product bytes
+    needs: [preflight]
     permissions:
       actions: read
       artifact-metadata: write
@@ -358,121 +235,11 @@ jobs:
       id-token: write
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
+      - name: Checkout exact tagged source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.source_commit }}
-
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: tools/fased-signerd/go.mod
-          cache-dependency-path: tools/fased-signerd/go.sum
-
-      - name: Test native signer
-        working-directory: tools/fased-signerd
-        run: go test ./...
-
-      - name: Enforce signer vulnerability threshold
-        working-directory: tools/fased-signerd
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
-
-      - name: Build native signer release assets
-        run: bash scripts/build-native-release-assets.sh
-
-      - name: Stage root Hosting bootstrap release asset
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_version="$(node -p "require('./package.json').version")"
-          bash -n install.sh
-          node scripts/stamp-release-installer.mjs \
-            --source install.sh \
-            --output dist-native/release/install.sh \
-            --version "$package_version" \
-            --bootstrap-x64 dist-native/release/fased-bootstrap-linux-x64
-          bash -n dist-native/release/install.sh
-          grep -Fxq "install_entry_release_identity=\"${package_version}\"" \
-            dist-native/release/install.sh
-          ! grep -q '__FASED_BOOTSTRAP_SHA256_' dist-native/release/install.sh
-          install -m 0755 scripts/privileged-release-evidence.mjs \
-            dist-native/release/fased-privileged-release-evidence.mjs
-
-      - name: Verify native signer checksums
-        working-directory: dist-native/release
-        run: sha256sum --check fased-signerd-checksums.txt
-
-      - name: Verify lifecycle daemon checksums
-        working-directory: dist-native/release
-        run: sha256sum --check fased-lifecycled-checksums.txt
-
-      - name: Attest native signer release assets
-        id: attest-native-signer
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: dist-native/release/fased-signerd-*
-
-      - name: Stage native signer attestation bundle
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-native-signer.outputs.bundle-path }}" \
-            dist-native/release/fased-signerd-release.attestation.json
-
-      - name: Attest native lifecycle daemon release assets
-        id: attest-native-lifecycle
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: dist-native/release/fased-lifecycled-*
-
-      - name: Stage native lifecycle attestation bundle
-        shell: bash
-        run: |
-          install -m 0644 \
-            "${{ steps.attest-native-lifecycle.outputs.bundle-path }}" \
-            dist-native/release/fased-lifecycled-release.attestation.json
-
-      - name: Attest root Hosting bootstrap
-        id: attest-hosting-bootstrap
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: dist-native/release/install.sh
-
-      - name: Stage root Hosting bootstrap attestation bundle
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-hosting-bootstrap.outputs.bundle-path }}" \
-            dist-native/release/install.sh.attestation.json
-
-      - name: Upload verified signer assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-signerd-release
-          path: dist-native/release/*
-          if-no-files-found: error
-
-  candidate:
-    name: Assemble offline-attested candidate
-    needs: [preflight, build, linux, signer]
-    permissions:
-      actions: read
-      artifact-metadata: write
-      attestations: write
-      contents: read
-      id-token: write
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout exact candidate source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -485,139 +252,68 @@ jobs:
           go-version-file: tools/fased-lifecycled/go.mod
           cache-dependency-path: tools/fased-lifecycled/go.sum
 
-      - name: Setup pnpm + cache store
-        uses: ./.github/actions/setup-pnpm-store-cache
-        with:
-          pnpm-version: "10.34.5"
-          cache-key-suffix: "hosted-runtime-node24"
-
-      - name: Install exact frozen dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Download candidate architecture artifacts
+      - name: Download the exact pre-tag P1 artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: fased-hosted-runtime-*
-          path: .artifacts/hosted-runtime
-          merge-multiple: true
+          name: fased-pre-tag-candidate
+          path: ${{ runner.temp }}/fased-pre-tag-candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.pre_tag_p1_run_id }}
 
-      - name: Download candidate signer artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-signerd-release
-          path: .artifacts/hosted-runtime
-
-      - name: Assemble candidate release manifest
+      - name: Verify and stage only the pre-tag product bytes
+        env:
+          EXPECTED_DESCRIPTOR_SHA256: ${{ needs.preflight.outputs.pretag_descriptor_sha256 }}
+          RELEASE_SEQUENCE: ${{ needs.preflight.outputs.release_sequence }}
+          SECURITY_EPOCH: ${{ needs.preflight.outputs.security_epoch }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
           set -euo pipefail
-          package_version="$(node -p "require('./package.json').version")"
-          node scripts/build-hosted-release-manifest.mjs \
-            --assets .artifacts/hosted-runtime \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --output .artifacts/hosted-runtime/fased-hosted-release-v2.json
-          for architecture in x64; do
-            bash scripts/fetch-node-runtime.sh "$architecture" ".artifacts/node-runtime/$architecture"
-          done
-          for architecture in x64; do
-            go_arch=amd64
-            signer=".artifacts/hosted-runtime/fased-signerd-linux-${go_arch}"
-            inventory_tool=".artifacts/hosted-runtime/fased-lifecycled-linux-amd64"
-            chmod 0755 "$signer" "$inventory_tool"
-            dependency_hash="$(jq -er ".application.linux.${architecture}.dependencies.dependencyHash" .artifacts/hosted-runtime/fased-hosted-release-v2.json)"
-            node scripts/assemble-lifecycle-generation.mjs \
-              --runtime-archive ".artifacts/hosted-runtime/fased-hosted-app-v2-linux-${architecture}-v${package_version}.tar.gz" \
-              --dependency-archive ".artifacts/hosted-runtime/fased-hosted-deps-linux-${architecture}-${dependency_hash}.tar.gz" \
-              --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
-              --signer "$signer" \
-              --node ".artifacts/node-runtime/${architecture}/node" \
-              --node-license ".artifacts/node-runtime/${architecture}/LICENSE" \
-              --inventory-tool "$inventory_tool" \
-              --output-dir .artifacts/hosted-runtime \
-              --version "$package_version" \
-              --commit "$GITHUB_SHA" \
-              --tree "$(git rev-parse 'HEAD^{tree}')" \
-              --architecture "$architecture"
-          done
-          readarray -t lifecycle_times < <(node -e '
-            const issued = new Date(process.argv[1]);
-            const expires = new Date(issued.getTime() + 365 * 24 * 60 * 60 * 1000);
-            process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
-          ' "$(git show -s --format=%cI "$GITHUB_SHA")")
-          node scripts/privileged-release-evidence.mjs build \
-            --assets .artifacts/hosted-runtime \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --issued-at "${lifecycle_times[0]}" \
-            --vex-decisions release/vulnerability-decisions-v1.json \
-            --output-dir .artifacts/hosted-runtime
+          source_dir="$RUNNER_TEMP/fased-pre-tag-candidate"
+          test "sha256:$(sha256sum "$source_dir/fased-hosting-candidate.json" | awk '{print $1}')" = \
+            "$EXPECTED_DESCRIPTOR_SHA256"
+          bash scripts/finalize-pretag-candidate.sh \
+            "$source_dir" \
+            "$GITHUB_WORKSPACE/.artifacts/hosted-runtime" \
+            "$RELEASE_VERSION" \
+            "$SOURCE_COMMIT" \
+            "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            "$RELEASE_SEQUENCE" \
+            "$SECURITY_EPOCH"
 
-          root_pin=release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256
-          root_stage="$RUNNER_TEMP/fased-lifecycle-roots"
-          mkdir -p "$root_stage"
-          mapfile -t root_policies < <(find release/lifecycle-trust -mindepth 2 -maxdepth 2 \
-            -type f -name 'fased-lifecycle-root-v*.json' | sort -V)
-          test "${#root_policies[@]}" -gt 0
-          for source_root in "${root_policies[@]}"; do
-            root_name="$(basename "$source_root")"
-            test ! -e "$root_stage/$root_name"
-            install -m 0644 "$source_root" "$root_stage/$root_name"
-            install -m 0644 "$source_root" ".artifacts/hosted-runtime/$root_name"
-          done
-          node scripts/verify-lifecycle-root-chain.mjs --directory "$root_stage" --pin "$root_pin"
-          root_policy="${root_policies[${#root_policies[@]}-1]}"
-          node scripts/build-lifecycle-trust-metadata.mjs \
-            --assets .artifacts/hosted-runtime \
-            --root-policy "$root_policy" \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --issued-at "${lifecycle_times[0]}" \
-            --expires-at "${lifecycle_times[1]}" \
-            --output .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json
-          install -m 0644 \
-            config/lifecycle-acceptance.v2.json \
-            .artifacts/hosted-runtime/fased-lifecycle-acceptance-v2.json
-          node scripts/lifecycle-acceptance-contract.mjs validate \
-            --contract .artifacts/hosted-runtime/fased-lifecycle-acceptance-v2.json
-          node scripts/lifecycle-release-compatibility.mjs build \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --tree "$(git rev-parse 'HEAD^{tree}')" \
-            --output .artifacts/hosted-runtime/fased-lifecycle-release-compatibility-v1.json
+      - name: Attest native signer product bytes
+        id: attest-native-signer
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-signerd-*
 
-          channel=stable
-          if [[ "$package_version" == *-* ]]; then channel=beta; fi
-          release_index_raw="$RUNNER_TEMP/fased-release-index-v1.raw.json"
-          node scripts/build-lifecycle-release-index.mjs \
-            --assets .artifacts/hosted-runtime \
-            --channel "$channel" \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --tree "$(git rev-parse 'HEAD^{tree}')" \
-            --release-sequence "${{ needs.preflight.outputs.release_sequence }}" \
-            --security-epoch "${{ needs.preflight.outputs.security_epoch }}" \
-            --issued-at "${lifecycle_times[0]}" \
-            --expires-at "$(jq -er .signed.expiresAt "$root_policy")" \
-            --output "$release_index_raw"
-          go -C tools/fased-lifecycled run ./cmd/fased-release-index \
-            --input "$release_index_raw" \
-            --output "$GITHUB_WORKSPACE/.artifacts/hosted-runtime/fased-release-index-v1.json"
-          rm -f "$release_index_raw"
+      - name: Stage native signer attestation
+        run: >-
+          install -m 0644 "${{ steps.attest-native-signer.outputs.bundle-path }}"
+          .artifacts/hosted-runtime/fased-signerd-release.attestation.json
 
-          readarray -t root_head_times < <(node -e '
-            const issued = new Date();
-            const expires = new Date(issued.getTime() + 36 * 60 * 60 * 1000);
-            process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
-          ')
-          node scripts/build-lifecycle-root-head.mjs \
-            --root "$root_policy" \
-            --index .artifacts/hosted-runtime/fased-release-index-v1.json \
-            --witness-ref "$GITHUB_REF" \
-            --witness-commit "$GITHUB_SHA" \
-            --issued-at "${root_head_times[0]}" \
-            --expires-at "${root_head_times[1]}" \
-            --output .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json
+      - name: Attest native lifecycle product bytes
+        id: attest-native-lifecycle
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-lifecycled-*
+
+      - name: Stage native lifecycle attestation
+        run: >-
+          install -m 0644 "${{ steps.attest-native-lifecycle.outputs.bundle-path }}"
+          .artifacts/hosted-runtime/fased-lifecycled-release.attestation.json
+
+      - name: Attest root Hosting bootstrap
+        id: attest-hosting-bootstrap
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: .artifacts/hosted-runtime/install.sh
+
+      - name: Stage root Hosting bootstrap attestation
+        run: >-
+          install -m 0644 "${{ steps.attest-hosting-bootstrap.outputs.bundle-path }}"
+          .artifacts/hosted-runtime/install.sh.attestation.json
 
       - name: Attest unified candidate manifest
         id: attest-candidate-manifest
@@ -625,19 +321,10 @@ jobs:
         with:
           subject-path: .artifacts/hosted-runtime/fased-hosted-release-v2.json
 
-      - name: Stage candidate manifest attestation bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-candidate-manifest.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-hosted-release-v2.json.attestation.json
-          for required in \
-            fased-signerd-release.attestation.json \
-            install.sh.attestation.json \
-            fased-lifecycled-release.attestation.json; do
-            test -s ".artifacts/hosted-runtime/${required}"
-          done
+      - name: Stage candidate manifest attestation
+        run: >-
+          install -m 0644 "${{ steps.attest-candidate-manifest.outputs.bundle-path }}"
+          .artifacts/hosted-runtime/fased-hosted-release-v2.json.attestation.json
 
       - name: Attest privileged release provenance
         id: attest-candidate-provenance
@@ -645,13 +332,10 @@ jobs:
         with:
           subject-path: .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json
 
-      - name: Stage privileged provenance attestation bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-candidate-provenance.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json
+      - name: Stage privileged provenance attestation
+        run: >-
+          install -m 0644 "${{ steps.attest-candidate-provenance.outputs.bundle-path }}"
+          .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json
 
       - name: Attest lifecycle trust metadata
         id: attest-candidate-lifecycle-trust
@@ -659,13 +343,10 @@ jobs:
         with:
           subject-path: .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json
 
-      - name: Stage lifecycle trust attestation bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-candidate-lifecycle-trust.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json.attestation.json
+      - name: Stage lifecycle trust attestation
+        run: >-
+          install -m 0644 "${{ steps.attest-candidate-lifecycle-trust.outputs.bundle-path }}"
+          .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json.attestation.json
 
       - name: Attest production lifecycle release index
         id: attest-lifecycle-release-index
@@ -673,13 +354,10 @@ jobs:
         with:
           subject-path: .artifacts/hosted-runtime/fased-release-index-v1.json
 
-      - name: Stage production lifecycle release index attestation
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-lifecycle-release-index.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
+      - name: Stage lifecycle release index attestation
+        run: >-
+          install -m 0644 "${{ steps.attest-lifecycle-release-index.outputs.bundle-path }}"
+          .artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
 
       - name: Attest current lifecycle root head
         id: attest-lifecycle-root-head
@@ -688,97 +366,83 @@ jobs:
           subject-path: .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json
 
       - name: Stage lifecycle root-head attestation
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-lifecycle-root-head.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json.attestation.json
+        run: >-
+          install -m 0644 "${{ steps.attest-lifecycle-root-head.outputs.bundle-path }}"
+          .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json.attestation.json
 
-      - name: Verify every staged candidate attestation offline
-        shell: bash
+      - name: Bind and verify the final candidate artifact set
         env:
           GH_PROMPT_DISABLED: "1"
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
         run: |
           set -euo pipefail
-          cd .artifacts/hosted-runtime
+          directory=.artifacts/hosted-runtime
+          source_ref="refs/tags/v$RELEASE_VERSION"
           verify() {
-            gh attestation verify "$1" \
+            gh attestation verify "$directory/$1" \
               --repo "$GITHUB_REPOSITORY" \
-              --bundle "$2" \
+              --bundle "$directory/$2" \
               --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-              --source-ref "$GITHUB_REF" \
+              --source-ref "$source_ref" \
+              --source-digest "$SOURCE_COMMIT" \
               --deny-self-hosted-runners >/dev/null
           }
           verify fased-hosted-release-v2.json fased-hosted-release-v2.json.attestation.json
           verify fased-lifecycle-trust-v1.json fased-lifecycle-trust-v1.json.attestation.json
           verify fased-release-index-v1.json fased-release-index-v1.json.attestation.json
-          verify fased-lifecycle-root-head-v1.json \
-            fased-lifecycle-root-head-v1.json.attestation.json
+          verify fased-lifecycle-root-head-v1.json fased-lifecycle-root-head-v1.json.attestation.json
           verify fased-privileged-provenance-v1.intoto.json \
             fased-privileged-provenance-v1.intoto.json.attestation.json
-          node ../../scripts/verify-lifecycle-root-chain.mjs \
-            --directory . \
-            --pin ../../release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256
           verify fased-signerd-linux-amd64 fased-signerd-release.attestation.json
-          verify install.sh install.sh.attestation.json
           verify fased-lifecycled-linux-amd64 fased-lifecycled-release.attestation.json
-          node ../../scripts/privileged-release-evidence.mjs verify \
-            --release-manifest fased-hosted-release-v2.json \
-            --lifecycle-metadata fased-lifecycle-trust-v1.json \
-            --provenance fased-privileged-provenance-v1.intoto.json \
-            --sbom fased-privileged-sbom-v1.spdx.json \
-            --vex fased-privileged-vex-v1.openvex.json \
-            --version "$(node -p "require('../../package.json').version")" \
-            --commit "$GITHUB_SHA"
-
-      - name: Bind the complete candidate artifact set
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_version="$(node -p "require('./package.json').version")"
+          verify install.sh install.sh.attestation.json
           node scripts/release-artifact-set.mjs build \
-            --directory .artifacts/hosted-runtime \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --directory "$directory" \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT" \
+            --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "$GITHUB_REF" \
+            --source-ref "$source_ref" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
-      - name: Attest the complete candidate descriptor
+      - name: Attest the final candidate descriptor
         id: attest-candidate-descriptor
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/fased-hosting-candidate.json
 
-      - name: Stage and verify the exact promotion descriptor
+      - name: Stage and verify the final candidate descriptor
+        env:
+          GH_PROMPT_DISABLED: "1"
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
           set -euo pipefail
           install -m 0644 \
             "${{ steps.attest-candidate-descriptor.outputs.bundle-path }}" \
             .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json
-          gh attestation verify \
-            .artifacts/hosted-runtime/fased-hosting-candidate.json \
+          gh attestation verify .artifacts/hosted-runtime/fased-hosting-candidate.json \
             --repo "$GITHUB_REPOSITORY" \
             --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$GITHUB_REF" \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --source-digest "$SOURCE_COMMIT" \
             --deny-self-hosted-runners >/dev/null
-          package_version="$(node -p "require('./package.json').version")"
           node scripts/release-artifact-set.mjs verify \
             --directory .artifacts/hosted-runtime \
-            --version "$package_version" \
-            --commit "$GITHUB_SHA" \
-            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT" \
+            --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "$GITHUB_REF" \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
-      - name: Upload complete non-publishing candidate
+      - name: Upload the exact finalized candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fased-hosting-candidate
@@ -786,336 +450,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  p1-local-fresh:
-    name: Packaged fresh Local P1
-    needs: [preflight, candidate]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout exact candidate source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-          fetch-depth: 0
-
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-
-      - name: Download exact candidate bytes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-hosting-candidate
-          path: ${{ runner.temp }}/fased-hosting-candidate
-
-      - name: Restore cached systemd fixture base image
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/protected-local-image-cache/
-          key: >-
-            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
-            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
-            'scripts/docker/protected-local-systemd/*.conf') }}
-
-      - name: Run packaged fresh Local P1
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
-          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
-          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
-          FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
-          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-          FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-fresh
-        run: bash scripts/test-lifecycle-local-acceptance.sh
-
-      - name: Upload fresh Local acceptance receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-lifecycle-acceptance-fresh
-          path: ${{ runner.temp }}/lifecycle-acceptance-fresh/*.json
-          if-no-files-found: error
-          retention-days: 30
-
-  predecessor-capsules:
-    name: Attested predecessor ${{ matrix.predecessor.version }} (${{ matrix.predecessor.installationClass }}) capsules
-    needs: [preflight]
-    permissions:
-      artifact-metadata: write
-      attestations: write
-      contents: read
-      id-token: write
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        predecessor: ${{ fromJSON(needs.preflight.outputs.p1_local_predecessors) }}
-    steps:
-      - name: Checkout exact candidate source and stable identity
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-          fetch-depth: 0
-
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-
-      - name: Verify predecessor release and build sanitized capsules
-        env:
-          GH_TOKEN: ${{ github.token }}
-          INSTALLATION_CLASS: ${{ matrix.predecessor.installationClass }}
-          PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          source_dir="$RUNNER_TEMP/predecessor-source"
-          output_dir="$RUNNER_TEMP/predecessor-capsules"
-          mkdir -p "$source_dir" "$output_dir/protected-local" "$output_dir/hosting"
-          gh release download "v$PREDECESSOR_VERSION" \
-            --repo "$GITHUB_REPOSITORY" \
-            --dir "$source_dir" \
-            --pattern fased-hosted-release-v2.json \
-            --pattern fased-hosted-release-v2.json.attestation.json
-          gh attestation verify "$source_dir/fased-hosted-release-v2.json" \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle "$source_dir/fased-hosted-release-v2.json.attestation.json" \
-            --deny-self-hosted-runners >/dev/null
-          predecessor_commit="$(jq -er .release.commit "$source_dir/fased-hosted-release-v2.json")"
-          test "$predecessor_commit" = "$(git rev-parse "v$PREDECESSOR_VERSION^{commit}")"
-          predecessor_tree="$(git rev-parse "${predecessor_commit}^{tree}")"
-          if [[ "$INSTALLATION_CLASS" == "canonical-managed" ]]; then
-            gh release download "v$PREDECESSOR_VERSION" \
-              --repo "$GITHUB_REPOSITORY" \
-              --dir "$source_dir" \
-              --pattern fased-hosting-candidate.json \
-              --pattern fased-hosting-candidate.json.attestation.json \
-              --pattern fased-lifecycled-linux-amd64 \
-              --pattern "fased-generation-linux-x64-v$PREDECESSOR_VERSION.tar.gz" \
-              --pattern 'fased-hosted-deps-linux-x64-*.tar.gz'
-            gh attestation verify "$source_dir/fased-hosting-candidate.json" \
-              --repo "$GITHUB_REPOSITORY" \
-              --bundle "$source_dir/fased-hosting-candidate.json.attestation.json" \
-              --deny-self-hosted-runners >/dev/null
-            dependency_archive="$(find "$source_dir" -maxdepth 1 -type f -name 'fased-hosted-deps-linux-x64-*.tar.gz' -print -quit)"
-            test -n "$dependency_archive"
-            node scripts/build-canonical-managed-predecessor-capsule.mjs \
-              --release-manifest "$source_dir/fased-hosted-release-v2.json" \
-              --release-manifest-attestation "$source_dir/fased-hosted-release-v2.json.attestation.json" \
-              --release-tree "$predecessor_tree" \
-              --candidate-descriptor "$source_dir/fased-hosting-candidate.json" \
-              --generation-archive "$source_dir/fased-generation-linux-x64-v$PREDECESSOR_VERSION.tar.gz" \
-              --dependency-archive "$dependency_archive" \
-              --lifecycle-binary "$source_dir/fased-lifecycled-linux-amd64" \
-              --compatibility-index config/lifecycle-compatibility.v1.json \
-              --acceptance-contract config/lifecycle-acceptance.v2.json \
-              --output "$output_dir/protected-local" >/dev/null
-          else
-            test "$INSTALLATION_CLASS" = "public-stable"
-            for profile in protected-local hosting; do
-              node scripts/build-public-predecessor-capsule.mjs \
-                --profile "$profile" \
-                --release-manifest "$source_dir/fased-hosted-release-v2.json" \
-                --release-manifest-attestation "$source_dir/fased-hosted-release-v2.json.attestation.json" \
-                --release-tree "$predecessor_tree" \
-                --compatibility-index config/lifecycle-compatibility.v1.json \
-                --acceptance-contract config/lifecycle-acceptance.v2.json \
-                --output "$output_dir/$profile" >/dev/null
-            done
-          fi
-
-      - name: Attest Local predecessor descriptor
-        id: attest-local-descriptor
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: ${{ runner.temp }}/predecessor-capsules/protected-local/fased-predecessor-capsule.json
-
-      - name: Attest Local predecessor archive
-        id: attest-local-archive
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: ${{ runner.temp }}/predecessor-capsules/protected-local/fased-predecessor-protected-local-${{ matrix.predecessor.version }}.tar.gz
-
-      - name: Attest Hosting predecessor descriptor
-        if: matrix.predecessor.installationClass == 'public-stable'
-        id: attest-hosting-descriptor
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: ${{ runner.temp }}/predecessor-capsules/hosting/fased-predecessor-capsule.json
-
-      - name: Attest Hosting predecessor archive
-        if: matrix.predecessor.installationClass == 'public-stable'
-        id: attest-hosting-archive
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: ${{ runner.temp }}/predecessor-capsules/hosting/fased-predecessor-hosting-${{ matrix.predecessor.version }}.tar.gz
-
-      - name: Bind offline attestation bundles to capsule bytes
-        env:
-          PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="$RUNNER_TEMP/predecessor-capsules"
-          install -m 0644 "${{ steps.attest-local-descriptor.outputs.bundle-path }}" \
-            "$root/protected-local/fased-predecessor-capsule.json.attestation.json"
-          install -m 0644 "${{ steps.attest-local-archive.outputs.bundle-path }}" \
-            "$root/protected-local/fased-predecessor-protected-local-$PREDECESSOR_VERSION.tar.gz.attestation.json"
-
-      - name: Bind Hosting offline attestation bundles to capsule bytes
-        if: matrix.predecessor.installationClass == 'public-stable'
-        env:
-          PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="$RUNNER_TEMP/predecessor-capsules"
-          install -m 0644 "${{ steps.attest-hosting-descriptor.outputs.bundle-path }}" \
-            "$root/hosting/fased-predecessor-capsule.json.attestation.json"
-          install -m 0644 "${{ steps.attest-hosting-archive.outputs.bundle-path }}" \
-            "$root/hosting/fased-predecessor-hosting-$PREDECESSOR_VERSION.tar.gz.attestation.json"
-
-      - name: Upload exact attested predecessor capsules
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-predecessor-capsules-${{ matrix.predecessor.version }}-${{ matrix.predecessor.installationClass }}
-          path: ${{ runner.temp }}/predecessor-capsules/
-          if-no-files-found: error
-          retention-days: 30
-
-  p1-local-update:
-    name: Packaged predecessor ${{ matrix.predecessor.version }} (${{ matrix.predecessor.installationClass }}) update P1
-    needs: [preflight, candidate, predecessor-capsules]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        predecessor: ${{ fromJSON(needs.preflight.outputs.p1_local_predecessors) }}
-    steps:
-      - name: Checkout exact candidate source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-          fetch-depth: 0
-
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-
-      - name: Download exact candidate bytes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-hosting-candidate
-          path: ${{ runner.temp }}/fased-hosting-candidate
-
-      - name: Restore cached systemd fixture base image
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/protected-local-image-cache/
-          key: >-
-            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
-            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
-            'scripts/docker/protected-local-systemd/*.conf') }}
-
-      - name: Download exact attested predecessor capsule
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-predecessor-capsules-${{ matrix.predecessor.version }}-${{ matrix.predecessor.installationClass }}
-          path: ${{ runner.temp }}/fased-supported-predecessor
-
-      - name: Derive exact predecessor topology
-        id: p1-scenario
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          scenarios="$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
-          test -n "$scenarios"
-          printf 'scenarios=%s\n' "$scenarios" >>"$GITHUB_OUTPUT"
-
-      - name: Run packaged supported-stable update P1
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
-          FASED_SYSTEMD_FIXTURE_SCENARIOS: ${{ steps.p1-scenario.outputs.scenarios }}
-          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: ${{ matrix.predecessor.version }}
-          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS: ${{ matrix.predecessor.installationClass }}
-          FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR: ${{ runner.temp }}/fased-supported-predecessor/protected-local
-          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
-          FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION: "1"
-          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-          FASED_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-update
-        run: bash scripts/test-lifecycle-local-acceptance.sh
-
-      - name: Upload stable-update acceptance receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-lifecycle-acceptance-update-${{ matrix.predecessor.version }}-${{ matrix.predecessor.installationClass }}
-          path: ${{ runner.temp }}/lifecycle-acceptance-update/*.json
-          if-no-files-found: error
-          retention-days: 30
-
-  p1-hosting:
-    name: Packaged Hosting adapter P1
-    needs: [preflight, candidate, predecessor-capsules]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        predecessor: ${{ fromJSON(needs.preflight.outputs.p1_hosting_predecessors) }}
-    steps:
-      - name: Checkout exact candidate source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-          fetch-depth: 0
-
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-
-      - name: Download exact candidate bytes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-hosting-candidate
-          path: ${{ runner.temp }}/fased-hosting-candidate
-
-      - name: Download exact attested predecessor capsule
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-predecessor-capsules-${{ matrix.predecessor }}-public-stable
-          path: ${{ runner.temp }}/fased-supported-predecessor
-
-      - name: Run packaged Hosting adapter P1
-        env:
-          FASED_HOSTING_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/fased-hosting-candidate
-          FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS: ubuntu
-          FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS: fresh-install,managed-update
-          FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_VERSION: ${{ matrix.predecessor }}
-          FASED_HOSTING_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR: ${{ runner.temp }}/fased-supported-predecessor/hosting
-          FASED_HOSTING_SYSTEMD_FIXTURE_RECEIPT_DIR: ${{ runner.temp }}/lifecycle-acceptance-hosting
-        run: bash scripts/test-lifecycle-hosting-acceptance.sh
-
-      - name: Upload fresh Hosting acceptance receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-lifecycle-acceptance-hosting-${{ matrix.predecessor }}
-          path: ${{ runner.temp }}/lifecycle-acceptance-hosting/*.json
-          if-no-files-found: error
-          retention-days: 30
-
   publish:
     name: Promote exact verified candidate bytes
-    needs: [candidate, p1-local-fresh, p1-local-update, p1-hosting]
+    needs: [finalize-candidate]
     environment: candidate-release
     permissions:
       actions: read

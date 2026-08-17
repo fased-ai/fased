@@ -12,6 +12,9 @@ describe("version-neutral lifecycle acceptance", () => {
 
     expect(local0).toContain('MODE="all"');
     expect(local0).toContain('identity_key="${commit}-${tree}-${lockfile_digest#sha256:}"');
+    expect(local0).toContain('failure_marker="$CACHE_ROOT/failures/$identity_key.json"');
+    expect(local0).toContain('install -m 0600 "$aggregate_receipt" "$failure_marker"');
+    expect(local0).toContain('rm -f -- "$failure_marker"');
     expect(local0).toContain("scripts/prepare-candidate-fixture-trust.sh");
     expect(local0).toContain("scripts/test-lifecycle-local-acceptance.sh");
     expect(local0).toContain("scripts/test-lifecycle-hosting-acceptance.sh");
@@ -107,10 +110,7 @@ describe("version-neutral lifecycle acceptance", () => {
   });
 
   it("binds candidate P1 to an explicit supported public predecessor", async () => {
-    const source = await readFile(
-      resolve(repoRoot, ".github/workflows/hosted-runtime-release.yml"),
-      "utf8",
-    );
+    const source = await readFile(resolve(repoRoot, ".github/workflows/pre-tag-p1.yml"), "utf8");
     const workflow = parse(source) as {
       on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } };
       jobs?: Record<
@@ -125,20 +125,20 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(workflow.on?.workflow_dispatch?.inputs).toHaveProperty("managed_predecessor_version");
     expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("owner_predecessor_version");
     expect(workflow.on?.workflow_dispatch?.inputs).not.toHaveProperty("predecessor_scenario");
-    const update = workflow.jobs?.["p1-local-update"]?.steps?.find((candidate) =>
-      candidate.name?.includes("supported-stable update P1"),
+    const update = workflow.jobs?.["local-update"]?.steps?.find((candidate) =>
+      candidate.name?.includes("Local update entrypoint"),
     );
-    const fresh = workflow.jobs?.["p1-local-fresh"]?.steps?.find((candidate) =>
-      candidate.name?.includes("fresh Local P1"),
+    const fresh = workflow.jobs?.["local-fresh"]?.steps?.find((candidate) =>
+      candidate.name?.includes("fresh Local entrypoint"),
     );
     expect(update?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ steps.p1-scenario.outputs.scenarios }}",
+      FASED_SYSTEMD_FIXTURE_SCENARIOS: "${{ steps.scenario.outputs.scenarios }}",
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "${{ matrix.predecessor.version }}",
       FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_CLASS:
         "${{ matrix.predecessor.installationClass }}",
     });
-    expect(workflow.jobs?.["p1-local-update"]?.strategy?.matrix?.predecessor).toBe(
-      "${{ fromJSON(needs.preflight.outputs.p1_local_predecessors) }}",
+    expect(workflow.jobs?.["local-update"]?.strategy?.matrix?.predecessor).toBe(
+      "${{ fromJSON(needs.preflight.outputs.local_predecessors) }}",
     );
     expect(fresh?.env).toMatchObject({
       FASED_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install",
@@ -160,7 +160,8 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(wrapper).not.toContain("fased-signerd-darwin-amd64");
     expect(wrapper).not.toContain("fased-signerd-linux-arm64");
     expect(wrapper).toContain("build-native-release-assets.sh");
-    expect(wrapper).toContain("--profile branch-x64");
+    expect(wrapper).not.toContain("--profile branch-x64");
+    expect(wrapper).toContain('"$PUBLIC_ACQUISITION" == "1" && "$BUILD_ONLY" == "0"');
     expect(wrapper).toContain("branch-x64 artifacts are fixture-only and cannot be published");
     expect(wrapper).not.toContain(
       "FASED_SIGNER_TARGETS=linux/amd64,linux/arm64,darwin/amd64,darwin/arm64",

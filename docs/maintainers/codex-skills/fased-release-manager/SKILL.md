@@ -100,6 +100,12 @@ worker substitutes for root implementation rather than duplicating it. Run its
 task-scoped preflight once, and never create parallel agents that inspect or
 implement the same predicate.
 
+Do not select `audit` or `full` merely because a change touches lifecycle or
+release code. Stay `solo` for the issue and its focused proof. If the final
+accumulated diff has a concrete high-risk reason for independent review, obtain
+exactly one fresh Sol / High verdict only after literal behavior and local
+verification are green.
+
 ## Issue-first execution
 
 When the owner reports a literal Local install, update, repair, uninstall,
@@ -209,6 +215,11 @@ bash scripts/run-lifecycle-local0.sh --mode all
 ```
 
 Only `status: "PASS"` together with `completeLocal0: true` closes this gate.
+Run `scripts/pre-candidate-readiness.mjs` against that receipt before dispatch;
+it must also prove a fresh login shell resolves `/usr/local/bin/fased` from
+`/tmp`, returns status, reaches `Already current`, verifies both exact
+predecessor releases directly, and finds no unresolved exact-source failure
+marker.
 
 On a local failure, freeze PRE-CANDIDATE and version allocation. Preserve the
 first failed fixture, bounded log, and partial receipt; report the exact failed

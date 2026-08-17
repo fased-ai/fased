@@ -8,11 +8,13 @@ const manifest = JSON.parse(read("package.json")) as { files?: string[] };
 const files = new Set(manifest.files ?? []);
 const installer = read("install.sh");
 const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
+const preTagWorkflow = read(".github/workflows/pre-tag-p1.yml");
 const ciWorkflow = read(".github/workflows/ci.yml");
 const localFixture = read("scripts/test-lifecycle-local-acceptance.sh");
 const hostingFixture = read("scripts/test-lifecycle-hosting-acceptance.sh");
 const hostingRunner = read("scripts/docker/hosting-systemd/lifecycle-acceptance.sh");
 const candidateTrustOverlay = read("scripts/prepare-candidate-fixture-trust.sh");
+const candidateFinalizer = read("scripts/finalize-pretag-candidate.sh");
 const localRunner = read("scripts/docker/protected-local-systemd/lifecycle-acceptance.sh");
 const hostingUbuntu = read("scripts/docker/hosting-systemd/Containerfile.ubuntu");
 const hostingRocky = read("scripts/docker/hosting-systemd/Containerfile.rocky");
@@ -54,33 +56,35 @@ describe("attested Go lifecycle artifact layout", () => {
   });
 
   it("binds the immutable candidate to Go lifecycle, signer, generation, and evidence assets", () => {
-    expect(releaseWorkflow).toContain("fased-lifecycled-linux-${go_arch}");
+    expect(releaseWorkflow).toContain("scripts/finalize-pretag-candidate.sh");
     expect(releaseWorkflow).toContain("fased-signerd-release.attestation.json");
     expect(releaseWorkflow).toContain("fased-hosting-candidate.json.attestation.json");
-    expect(releaseWorkflow).toContain("node scripts/assemble-lifecycle-generation.mjs");
+    expect(candidateFinalizer).toContain("fased-lifecycled-linux-amd64");
     expect(releaseWorkflow).toContain("gh attestation verify");
   });
 
   it("builds once, runs packaged proof before the protected publication boundary, and publishes exact bytes", () => {
     const p1Jobs = [
-      releaseWorkflow.indexOf("  p1-local-fresh:"),
-      releaseWorkflow.indexOf("  p1-local-update:"),
-      releaseWorkflow.indexOf("  p1-hosting:"),
+      preTagWorkflow.indexOf("  local-fresh:"),
+      preTagWorkflow.indexOf("  local-update:"),
+      preTagWorkflow.indexOf("  hosting:"),
     ];
+    const finalize = releaseWorkflow.indexOf("  finalize-candidate:");
     const publish = releaseWorkflow.indexOf("  publish:");
     const releaseCreate = releaseWorkflow.indexOf('gh release create "$RELEASE_TAG"');
     for (const p1 of p1Jobs) {
       expect(p1).toBeGreaterThan(0);
-      expect(publish).toBeGreaterThan(p1);
     }
+    expect(finalize).toBeGreaterThan(0);
+    expect(publish).toBeGreaterThan(finalize);
     expect(releaseCreate).toBeGreaterThan(publish);
     expect(releaseWorkflow.slice(publish)).not.toContain("pnpm build");
     expect(releaseWorkflow.slice(publish)).not.toContain("go build");
   });
 
   it("keeps the public Hosting proof on the Go-only systemd fixture", () => {
-    expect(releaseWorkflow).toContain("scripts/test-lifecycle-hosting-acceptance.sh");
-    expect(releaseWorkflow).not.toContain("scripts/test-hosting-systemd-container.sh");
+    expect(preTagWorkflow).toContain("scripts/test-lifecycle-hosting-acceptance.sh");
+    expect(preTagWorkflow).not.toContain("scripts/test-hosting-systemd-container.sh");
   });
 
   it("preserves the first failed Hosting fixture and supports serial diagnosis", () => {
@@ -160,14 +164,28 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(localFixture).not.toContain("copy_branch_x64_fixture_aliases");
     expect(localFixture).not.toContain('cp --reflink=auto "$signer_source"');
     expect(localFixture).not.toContain('cp --reflink=auto "$ARTIFACT_DIR/$x64_app"');
-    expect(localFixture).toContain("--profile branch-x64");
-    expect(releaseWorkflow).toContain("matrix.arch");
+    expect(localFixture).not.toContain("--profile branch-x64");
+    expect(localFixture).toContain('"$PUBLIC_ACQUISITION" == "1" && "$BUILD_ONLY" == "0"');
+    expect(releaseWorkflow).not.toContain("matrix.arch");
     expect(releaseWorkflow).not.toContain("ubuntu-24.04-arm");
     expect(releaseWorkflow).not.toContain("- arch: arm64");
   });
 
+  it("finalizes only the exact pre-tag product bytes without rebuilding or replaying P1", () => {
+    expect(candidateFinalizer).toContain("fased-candidate-original");
+    expect(candidateFinalizer).toContain(".candidate.descriptorSha256 == $digest");
+    expect(candidateFinalizer).toContain(".artifacts[]");
+    expect(candidateFinalizer).toContain("fased-branch-*");
+    expect(candidateFinalizer).toContain("privileged-release-evidence.mjs");
+    expect(candidateFinalizer).toContain("build-lifecycle-release-index.mjs");
+    expect(candidateFinalizer).not.toContain("pnpm build");
+    expect(candidateFinalizer).not.toContain("hosted:artifact:from-dist");
+    expect(candidateFinalizer).not.toContain("test-lifecycle-local-acceptance.sh");
+    expect(candidateFinalizer).not.toContain("test-lifecycle-hosting-acceptance.sh");
+  });
+
   it("builds independent native release families with bounded concurrency", () => {
-    expect(releaseWorkflow).toContain("bash scripts/build-native-release-assets.sh");
+    expect(releaseWorkflow).not.toContain("bash scripts/build-native-release-assets.sh");
     expect(releaseWorkflow).not.toContain(
       "bash scripts/release-fased-signerd.sh\n          bash scripts/release-fased-lifecycled.sh",
     );
@@ -185,6 +203,11 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(candidateTrustOverlay).toContain(
       'metadata_base="https://github.com/fased-ai/fased/releases/download/v${version}"',
     );
+    expect(candidateTrustOverlay).toContain("fased-hosted-release-v2.json.attestation.json");
+    expect(candidateTrustOverlay).toContain('"fixtureOfflineAttestation":true');
+    expect(localFixture).toContain("fixture-artifact-compat");
+    expect(localFixture).toContain('cp -a --reflink=auto "$ARTIFACT_DIR/."');
+    expect(localFixture).toContain("fased-hosted-release-v2.json.attestation.json");
     expect(candidateTrustOverlay).not.toContain(
       'metadata_base="https://github.com/fased-ai/fased/releases/download/v${version}/lifecycle/v1"',
     );

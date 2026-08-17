@@ -44,6 +44,7 @@ FIXTURE_TOOLS_DIR=""
 FIXTURE_PREINSTALLED_TOOLS_DIR=""
 FIXTURE_NODE_MODULES=""
 image_staging=""
+FIXTURE_ARTIFACT_COMPAT_DIR=""
 
 if [[ -z "$ARTIFACT_DIR" && "$BUILD_ONLY" == "0" && -n "$ARTIFACT_CACHE_DIR" ]]; then
   [[ "$ARTIFACT_CACHE_DIR" == /* ]] || {
@@ -80,6 +81,9 @@ fi
 }
 
 cleanup_before_fixture() {
+  if [[ -n "$FIXTURE_ARTIFACT_COMPAT_DIR" ]]; then
+    rm -rf -- "$FIXTURE_ARTIFACT_COMPAT_DIR"
+  fi
   if [[ "$OWN_ARTIFACT_DIR" -eq 1 && -n "$ARTIFACT_DIR" ]]; then
     rm -rf -- "$ARTIFACT_DIR"
   fi
@@ -91,6 +95,17 @@ trap cleanup_before_fixture EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+if [[ -n "$ARTIFACT_DIR" &&
+  -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" &&
+  ! -e "$ARTIFACT_DIR/fased-hosted-release-v2.json.attestation.json" &&
+  ! -L "$ARTIFACT_DIR/fased-hosted-release-v2.json.attestation.json" ]]; then
+  FIXTURE_ARTIFACT_COMPAT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-fixture-artifact-compat.XXXXXX")"
+  cp -a --reflink=auto "$ARTIFACT_DIR/." "$FIXTURE_ARTIFACT_COMPAT_DIR/"
+  printf '{"fixtureOfflineAttestation":true}\n' \
+    >"$FIXTURE_ARTIFACT_COMPAT_DIR/fased-hosted-release-v2.json.attestation.json"
+  ARTIFACT_DIR="$FIXTURE_ARTIFACT_COMPAT_DIR"
+fi
 
 if [[ -n "$ARTIFACT_DIR" ]]; then
   descriptor="$ARTIFACT_DIR/fased-hosting-candidate.json"
@@ -277,6 +292,12 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   fi
   pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
   cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
+  node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
+    --source "$ROOT_DIR/install.sh" \
+    --output "$ARTIFACT_DIR/install.sh" \
+    --version "$VERSION" \
+    --bootstrap-x64 "$ARTIFACT_DIR/fased-bootstrap-linux-x64" \
+    --architecture x64
   x64_identity="$ARTIFACT_DIR/fased-hosted-app-v2-linux-x64-v${VERSION}.tar.gz.release.json"
   x64_app="$(jq -er .app.asset "$x64_identity")"
   x64_dependency="$(jq -er .dependencies.asset "$x64_identity")"
@@ -284,8 +305,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --assets "$ARTIFACT_DIR" \
     --version "$VERSION" \
     --commit "$COMMIT" \
-    --output "$ARTIFACT_DIR/fased-hosted-release-v2.json" \
-    --profile branch-x64
+    --output "$ARTIFACT_DIR/fased-hosted-release-v2.json"
   node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
     --runtime-archive "$ARTIFACT_DIR/$x64_app" \
     --dependency-archive "$ARTIFACT_DIR/$x64_dependency" \
@@ -299,7 +319,10 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --commit "$COMMIT" \
     --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
     --architecture x64
-  if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
+  # Build-only mode emits the production product bytes. LOCAL0 and pre-tag P1
+  # derive a separate branch-trust overlay in a new directory, preserving the
+  # production installer/bootstrap for exact post-tag attestation and release.
+  if [[ "$PUBLIC_ACQUISITION" == "1" && "$BUILD_ONLY" == "0" ]]; then
     issued_at="$(node -e '
       process.stdout.write(new Date(process.argv[1]).toISOString());
     ' "$(git -C "$ROOT_DIR" show -s --format=%cI "$COMMIT")")"
@@ -394,15 +417,13 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
 fi
 if [[ "$BUILD_ONLY" == "1" ]]; then
   for required_asset in \
+    install.sh \
+    fased-bootstrap-linux-x64 \
     fased-hosted-release-v2.json \
     fased-lifecycle-acceptance-v2.json \
     fased-lifecycle-release-compatibility-v1.json \
     fased-hosting-candidate.json \
     fased-hosting-candidate.json.attestation.json \
-    fased-branch-root.json \
-    fased-branch-delegation.json \
-    fased-branch-release-index.json \
-    fased-branch-root.sha256 \
     "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
     [[ -s "$ARTIFACT_DIR/$required_asset" ]] || {
       echo "The protected Local fixture artifact is missing $required_asset." >&2
@@ -431,7 +452,7 @@ if [[ "$PUBLIC_ACQUISITION" == "1" ]]; then
     fased-hosting-candidate.json \
     fased-hosting-candidate.json.attestation.json \
     "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
-    [[ -f "$ARTIFACT_DIR/$required_asset" ]] || {
+    [[ -f "$ARTIFACT_DIR/$required_asset" && ! -L "$ARTIFACT_DIR/$required_asset" ]] || {
       echo "The public-acquisition fixture is missing $required_asset." >&2
       exit 1
     }
