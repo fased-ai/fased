@@ -54,6 +54,12 @@ set_run_execution_policy() {
   run_mount_has_option "$policy"
 }
 
+assert_public_command_projection() {
+  test -f /usr/local/bin/fased
+  test ! -L /usr/local/bin/fased
+  test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"
+}
+
 acceptance_mark() {
   local predicate="$1"
   local evidence_file="${2:?acceptance evidence file is required}"
@@ -1510,9 +1516,7 @@ if [[ "$phase" == "fresh-install" ]]; then
       --no-onboard \
     >/tmp/fresh-noop-installer.out 2>/tmp/fresh-noop-installer.err
   grep -F "Already current: $version" /tmp/fresh-noop-installer.out >/dev/null
-  test -f /usr/local/bin/fased
-  test ! -L /usr/local/bin/fased
-  test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"
+  assert_public_command_projection
   runuser -u testop -- env -i \
     HOME=/home/testop USER=testop LOGNAME=testop SHELL=/bin/bash \
     PATH=/usr/local/bin:/usr/bin:/bin \
@@ -1983,6 +1987,7 @@ EOF_MANAGED_MINING_LEDGER
   }
 
   run_installed_updater() {
+    assert_public_command_projection
     runuser -u testop -- env -i "${managed_operator_env[@]}" \
       USER=testop LOGNAME=testop SHELL=/bin/bash PATH=/usr/local/bin:/usr/bin:/bin \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
