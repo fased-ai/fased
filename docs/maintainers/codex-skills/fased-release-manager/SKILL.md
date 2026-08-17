@@ -49,6 +49,11 @@ do not ask again while the exact plan and artifact identity remain unchanged.
 Never duplicate a running command, rerun an unchanged failure, restart quiet CI,
 or rebuild unchanged bytes.
 
+Treat every created branch and worktree as owned plan state. At start and
+handoff, classify it as active, exact-merged, or preserved with its origin,
+blocker, and next action. Never silently abandon it. Preservation is not
+completion: resume, split, or obtain owner authority to discard it.
+
 ## Fix the user-visible predicate first
 
 For a reported install, update, repair, uninstall, onboarding, command, or
@@ -120,6 +125,9 @@ protected PR policy.
 
 - Prefer one owner workspace and one current-main development worktree. Create
   temporary worktrees only for conflicting preserved work or exact evidence.
+- Reuse the active issue branch across its checkpoints. After exact merged-tree
+  proof, return the owner workspace to `main` and remove the task worktree and
+  local issue branch. Never create one branch or worktree per agent or test.
 - Cache immutable artifacts, dependencies, toolchains, fixture images, and one
   predecessor set; never cache installations, journals, Wallets, or signer state.
 - Use `${XDG_CACHE_HOME:-$HOME/.cache}/fased-dev`; never create cache, artifact,
