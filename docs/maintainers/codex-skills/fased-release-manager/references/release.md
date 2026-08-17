@@ -19,10 +19,10 @@ exact branch head
 -> protected source PR with byte-identical squash tree
 -> PRE-CANDIDATE on exact merged main
 -> version-only protected PR
--> exact merged-main pre-tag candidate-shaped P1 for supported topology classes
+-> build production product bytes once on exact merged main
+-> pre-tag fixture overlay and P1 for supported topology classes
 -> owner immutable proof-enabling tag at exact main
--> trusted build and authentic target attestations once
--> parallel P1 against the exact artifact set
+-> discard the fixture overlay and attest the preserved product bytes
 -> protected publication approval
 ```
 
@@ -60,6 +60,13 @@ product source and exact new fixture source. On failure, preserve the first
 fixture and bounded diagnostics, correct locally, and rerun there; never
 allocate another RC to discover whether the correction works.
 
+Before PRE-CANDIDATE, run `scripts/pre-candidate-readiness.mjs` locally against
+the exact complete LOCAL0 receipt. It rejects a dirty or mismatched source,
+missing fresh-login `fased` command evidence, missing `Already current`, an
+unresolved exact-source failure marker, or an unavailable exact predecessor
+release. Its receipt digest is a required PRE-CANDIDATE input and evidence
+field.
+
 PRE-CANDIDATE verifies frozen dependencies, production audit, release/package
 identity, compatibility inventory, and public acquisition inputs. It must not
 discover a new product command or product predicate. It accepts an exact merged
@@ -79,8 +86,12 @@ updater lane.
 
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names/sizes/digests, provenance, SBOM/VEX, signer/controller identity,
-and acceptance-contract identity. Build each supported target once. Publication
-downloads and verifies those bytes; it never rebuilds.
+and acceptance-contract identity. Build each supported target once before the
+tag. Pre-tag P1 uses a separate non-publishable trust overlay while preserving
+the production product bytes. After the proof-enabling tag, finalization removes
+the overlay, verifies the original product digests, adds only tag-scoped
+attestations and signed release metadata, and publishes. It never rebuilds or
+repeats packaged P1.
 
 P1 covers fresh protected Local, every materially distinct supported public
 topology, rollback/retry, restart, declared-state preservation,

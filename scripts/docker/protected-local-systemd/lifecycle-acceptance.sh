@@ -1510,8 +1510,10 @@ if [[ "$phase" == "fresh-install" ]]; then
       --no-onboard \
     >/tmp/fresh-noop-installer.out 2>/tmp/fresh-noop-installer.err
   grep -F "Already current: $version" /tmp/fresh-noop-installer.out >/dev/null
-  runuser -u testop -- env "${fresh_env[@]}" \
-    /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status >/dev/null && exec fased update "$@"' \
+  runuser -u testop -- env -i \
+    HOME=/home/testop USER=testop LOGNAME=testop SHELL=/bin/bash \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    /bin/bash --login -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && exec fased update "$@"' \
     fased "${target_update_args[@]}" --timeout 120 \
     >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
   grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
@@ -1814,10 +1816,11 @@ EOF_STABLE_BRIDGE_DROPIN
         <(jq -S . "/tmp/stable-${wallet_id}-restart.json")
     done
     acceptance_mark state-preservation "$stable_bridge_restart_manifest"
-    if ! runuser -u testop -- env "${managed_operator_env[@]}" \
+    if ! runuser -u testop -- env -i "${managed_operator_env[@]}" \
+      USER=testop LOGNAME=testop SHELL=/bin/bash PATH=/usr/local/bin:/usr/bin:/bin \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-      /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status >/dev/null && exec fased update "$@"' \
+      /bin/bash --login -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && exec fased update "$@"' \
       fased "${target_update_args[@]}" --timeout 120 \
       >/tmp/stable-bridge-noop.out 2>/tmp/stable-bridge-noop.err; then
       cat /tmp/stable-bridge-noop.err >&2
@@ -1977,10 +1980,11 @@ EOF_MANAGED_MINING_LEDGER
   }
 
   run_installed_updater() {
-    runuser -u testop -- env "${managed_operator_env[@]}" \
+    runuser -u testop -- env -i "${managed_operator_env[@]}" \
+      USER=testop LOGNAME=testop SHELL=/bin/bash PATH=/usr/local/bin:/usr/bin:/bin \
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
-      /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status >/dev/null && exec fased update "$@"' \
+      /bin/bash --login -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && exec fased update "$@"' \
       fased "${target_update_args[@]}" --timeout 120
   }
 

@@ -625,8 +625,10 @@ run_public_updater() {
   test -x /opt/fased/lifecycle/bootstrap-v1/fased-bootstrap
   test "$(stat -Lc '%U:%G:%a' /etc/sudoers.d/fased-hosting-update)" = "root:root:440"
   visudo -cf /etc/sudoers.d/fased-hosting-update >/dev/null
-  runuser -u app -- env HOME=/home/app \
-    /bin/bash -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status >/dev/null && exec fased update "$@"' \
+  runuser -u app -- env -i \
+    HOME=/home/app USER=app LOGNAME=app SHELL=/bin/bash \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    /bin/bash --login -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && exec fased update "$@"' \
     fased --channel "$target_channel" --tag "$version" --timeout 120
 }
 

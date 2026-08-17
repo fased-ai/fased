@@ -27,6 +27,10 @@ on:
         description: Current lifecycle security epoch
         required: true
         type: string
+      local0_receipt_sha256:
+        description: Digest emitted by the exact local pre-candidate readiness check
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -72,6 +76,7 @@ jobs:
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
           SECURITY_EPOCH: ${{ inputs.security_epoch }}
+          LOCAL0_RECEIPT_SHA256: ${{ inputs.local0_receipt_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -82,6 +87,7 @@ jobs:
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]]
           [[ "$SECURITY_EPOCH" =~ ^[1-9][0-9]*$ ]]
+          [[ "$LOCAL0_RECEIPT_SHA256" =~ ^sha256:[a-f0-9]{64}$ ]]
           test "$NEXT_RELEASE_VERSION" != "$PREDECESSOR_VERSION"
           test "$NEXT_RELEASE_VERSION" != "$MANAGED_PREDECESSOR_VERSION"
           test "$(node -p "require('./package.json').version")" != "$NEXT_RELEASE_VERSION"
@@ -132,7 +138,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/lifecycle-compatibility-inventory.mjs --verify-public-github
+          node scripts/lifecycle-compatibility-inventory.mjs --verify-git
+          node scripts/lifecycle-compatibility-inventory.mjs --verify-release "$PREDECESSOR_VERSION"
+          node scripts/lifecycle-compatibility-inventory.mjs --verify-release "$MANAGED_PREDECESSOR_VERSION"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$MANAGED_PREDECESSOR_VERSION")"
           gh release view "v$MANAGED_PREDECESSOR_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
@@ -147,6 +155,7 @@ jobs:
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
           SECURITY_EPOCH: ${{ inputs.security_epoch }}
+          LOCAL0_RECEIPT_SHA256: ${{ inputs.local0_receipt_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -161,9 +170,10 @@ jobs:
             --arg mainRunId "$MAIN_RUN_ID" \
             --arg mainChecksJobId "$MAIN_CHECKS_JOB_ID" \
             --arg workflowRunId "$GITHUB_RUN_ID" \
+            --arg local0ReceiptSha256 "$LOCAL0_RECEIPT_SHA256" \
             --argjson releaseSequence "$RELEASE_SEQUENCE" \
             --argjson securityEpoch "$SECURITY_EPOCH" \
-            '{schemaVersion:3,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,managedPredecessorVersion:$managedPredecessorVersion,releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,mainRunId:$mainRunId,mainChecksJobId:$mainChecksJobId,workflowRunId:$workflowRunId}' \
+            '{schemaVersion:4,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,managedPredecessorVersion:$managedPredecessorVersion,releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,mainRunId:$mainRunId,mainChecksJobId:$mainChecksJobId,workflowRunId:$workflowRunId,local0ReceiptSha256:$local0ReceiptSha256}' \
             >.artifacts/pre-candidate/evidence.json
 
       - name: Upload pre-candidate evidence

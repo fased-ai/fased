@@ -90,6 +90,7 @@ commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 tree="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
 lockfile_digest="sha256:$(sha256sum "$ROOT_DIR/pnpm-lock.yaml" | awk '{print $1}')"
 identity_key="${commit}-${tree}-${lockfile_digest#sha256:}"
+failure_marker="$CACHE_ROOT/failures/$identity_key.json"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_id="${commit:0:12}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 if [[ -n "$SUPPLIED_RECEIPT_DIR" ]]; then
@@ -241,14 +242,19 @@ write_receipt() {
 fail_local0() {
   local message="$1"
   write_receipt FAIL "$current_phase" "$current_lane" || true
+  mkdir -p "$(dirname "$failure_marker")"
+  install -m 0600 "$aggregate_receipt" "$failure_marker"
   echo "$message" >&2
   echo "LOCAL0 receipt: $aggregate_receipt" >&2
   exit 1
 }
 
-verify_release_predecessor_capsule_contract() {
-  local workflow="$ROOT_DIR/.github/workflows/hosted-runtime-release.yml"
-  grep -Fq -- "node scripts/build-canonical-managed-predecessor-capsule.mjs" "$workflow" ||
+verify_pre_tag_predecessor_capsule_contract() {
+  local workflow="$ROOT_DIR/.github/workflows/pre-tag-p1.yml"
+  local fixture="$ROOT_DIR/scripts/test-lifecycle-local-acceptance.sh"
+  grep -Fq -- "bash scripts/test-lifecycle-local-acceptance.sh" "$workflow" ||
+    return 1
+  grep -Fq -- "prepare-branch-predecessor-capsule.sh" "$fixture" ||
     return 1
   if grep -Fq -- "owner-local-predecessor-schema1" "$workflow"; then
     return 1
@@ -525,9 +531,9 @@ run_concurrent() {
   current_lane=""
 }
 
-current_phase="release-workflow-predecessor-capsule-contract"
-verify_release_predecessor_capsule_contract ||
-  fail_local0 "The trusted release workflow retains a version-specific or obsolete predecessor capsule input."
+current_phase="pre-tag-predecessor-capsule-contract"
+verify_pre_tag_predecessor_capsule_contract ||
+  fail_local0 "The pre-tag proof no longer owns version-neutral predecessor capsule materialization."
 current_phase="artifact-resolution"
 resolve_or_build_artifact
 case "$MODE" in
@@ -539,5 +545,6 @@ esac
 current_phase="complete"
 validate_receipt_set || fail_local0 "LOCAL0 refused a false PASS without every exact verified child receipt."
 write_receipt PASS complete
+rm -f -- "$failure_marker"
 echo "LOCAL0 PASS: artifact=$artifact_dir"
 echo "LOCAL0 receipt: $aggregate_receipt"
