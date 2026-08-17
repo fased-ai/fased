@@ -26,6 +26,7 @@ const DEFAULT_INVENTORY_PATH = path.join(
 const TAG_PATTERN = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const ACCEPTANCE_ASSET_PATTERN = /^fased-lifecycle-acceptance-v\d+\.json$/u;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/u;
+const PUBLIC_RELEASE_LIST_LIMIT = 1000;
 const RUNTIME_SELECTION_FIELDS = Object.freeze([
   "profile",
   "platformAdapter",
@@ -651,26 +652,51 @@ export function verifyGitReleaseEvidence(inventory, repoRoot = DEFAULT_REPO_ROOT
   });
 }
 
-function readPublicGitHubReleases(repository) {
-  const rows = execFileSync(
+function readPublicGitHubReleases(repository, commandRunner = execFileSync) {
+  const response = commandRunner(
     "gh",
     [
-      "api",
-      "--paginate",
-      "--jq",
-      ".[] | [.tag_name, .draft, .published_at] | @tsv",
-      `repos/${repository}/releases?per_page=100`,
+      "release",
+      "list",
+      "--repo",
+      repository,
+      "--limit",
+      String(PUBLIC_RELEASE_LIST_LIMIT),
+      "--json",
+      "tagName,isDraft,publishedAt",
     ],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
-  return rows
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((row) => {
-      const [tag_name, draft, published_at] = row.split("\t");
-      return { tag_name, draft: draft === "true", published_at };
-    });
+  let releases;
+  try {
+    releases = JSON.parse(response);
+  } catch {
+    fail("public GitHub release list response is invalid");
+  }
+  if (!Array.isArray(releases)) {
+    fail("public GitHub release list response is invalid");
+  }
+  if (releases.length >= PUBLIC_RELEASE_LIST_LIMIT) {
+    fail(`public GitHub release list reached ${PUBLIC_RELEASE_LIST_LIMIT}-result bound`);
+  }
+  return releases.map((release) => {
+    exactKeys(release, ["tagName", "isDraft", "publishedAt"], "public GitHub release");
+    if (
+      typeof release.tagName !== "string" ||
+      typeof release.isDraft !== "boolean" ||
+      (release.publishedAt !== null &&
+        (typeof release.publishedAt !== "string" ||
+          !Number.isFinite(Date.parse(release.publishedAt)))) ||
+      (!release.isDraft && release.publishedAt === null)
+    ) {
+      fail("public GitHub release metadata is invalid");
+    }
+    return {
+      tag_name: release.tagName,
+      draft: release.isDraft,
+      published_at: release.publishedAt,
+    };
+  });
 }
 
 export function readDirectPublicGitHubRelease(repository, tag, commandRunner = execFileSync) {
@@ -893,4 +919,5 @@ export const __testing = Object.freeze({
   REQUIRED_TOPOLOGY_CLASSES,
   RUNTIME_SELECTION_FIELDS,
   readDirectPublicGitHubRelease,
+  readPublicGitHubReleases,
 });
