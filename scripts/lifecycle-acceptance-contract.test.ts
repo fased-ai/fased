@@ -333,6 +333,7 @@ describe("lifecycle acceptance contract", () => {
     expect(operations).toContain('exec fased repair "$@"');
     expect(operations).toContain('exec fased uninstall "$@"');
     expect(operations).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
+    expect(operations).toContain("test ! -e /usr/local/bin/fased");
     expect(operations).toContain('predecessor_class="$(jq -er .predecessorClass "$snapshot")"');
     expect(verifyReboot).not.toContain(".predecessorClass");
     expect(fixture.match(/predecessorClass: \$predecessorClass/g)?.length).toBe(2);

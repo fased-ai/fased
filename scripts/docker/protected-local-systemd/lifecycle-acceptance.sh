@@ -890,6 +890,7 @@ if [[ "$phase" == "verify-operations" ]]; then
   done
   test ! -e "/opt/fased/local/$instance"
   test ! -e "$state/bin/fased"
+  test ! -e /usr/local/bin/fased
   test -f "/var/lib/fased-local/$instance/lifecycle/uninstalled.json"
   jq -e '.completed == true and .managedRootsRemoved == true and
     .launcherRemoved == true' \
