@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.99
+
+- Expose one exact-managed global `fased` command for Local and Hosting
+  operators from any directory without revealing the protected internal layout.
+- Fail installer completion closed unless bare `fased status` and exact-release
+  `Already current` verification succeed through the public command.
+- Preserve exact same-release Hosting security state after read-only identity
+  and hardening validation.
+
 ## 0.1.76-rc.98
 
 - Preserve the validated protected-Local signer socket and binary through
