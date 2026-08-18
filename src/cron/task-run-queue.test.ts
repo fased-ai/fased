@@ -12,6 +12,8 @@ import {
   finishCronTaskRunQueueItem,
   leaseCronTaskRunQueueExecuteSteps,
   readCronTaskRunQueue,
+  resolveCronTaskRunQueueLedgerPath,
+  resolveCronTaskRunQueuePath,
   recoverExpiredCronTaskRunQueueLeases,
   retryCronTaskRunQueueExecuteStep,
   retryCronTaskRunQueueItem,
@@ -56,6 +58,124 @@ function makeJob(id = "job-1"): CronJob {
 }
 
 describe("cron task run queue", () => {
+  it("imports legacy queue JSON once without changing bytes or dual-reading it", async () => {
+    const storePath = await makeStorePath();
+    const legacyPath = resolveCronTaskRunQueuePath({ storePath });
+    const legacyBytes = Buffer.from(
+      '{\n  "version": 1,\n  "runs": [{"runId":"legacy-run","jobId":"job-1","jobName":"legacy","trigger":"manual","status":"queued","createdAtMs":1,"updatedAtMs":1,"queuedAtMs":1,"steps":[]}]\n}\n',
+    );
+    await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+    await fs.writeFile(legacyPath, legacyBytes);
+
+    expect((await readCronTaskRunQueue({ storePath })).runs.map((run) => run.runId)).toEqual([
+      "legacy-run",
+    ]);
+    expect(await fs.readFile(legacyPath)).toEqual(legacyBytes);
+    expect(resolveCronTaskRunQueueLedgerPath({ storePath })).toBe(
+      path.join(path.dirname(path.dirname(storePath)), "tasks", "task-ledger.sqlite"),
+    );
+
+    await fs.writeFile(legacyPath, '{"version":1,"runs":[]}\n');
+    expect((await readCronTaskRunQueue({ storePath })).runs.map((run) => run.runId)).toEqual([
+      "legacy-run",
+    ]);
+  });
+
+  it("fails closed on malformed legacy queue JSON without committing an import marker", async () => {
+    const storePath = await makeStorePath();
+    const legacyPath = resolveCronTaskRunQueuePath({ storePath });
+    const malformed = Buffer.from('{"runs":');
+    await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+    await fs.writeFile(legacyPath, malformed);
+
+    await expect(readCronTaskRunQueue({ storePath })).rejects.toThrow("legacy import failed");
+    expect(await fs.readFile(legacyPath)).toEqual(malformed);
+
+    await fs.writeFile(
+      legacyPath,
+      '{"version":1,"runs":[{"runId":"repaired","jobId":"job-1","jobName":"repaired","trigger":"manual","status":"queued","createdAtMs":1,"updatedAtMs":1,"queuedAtMs":1,"steps":[]}]}',
+    );
+    expect((await readCronTaskRunQueue({ storePath })).runs.map((run) => run.runId)).toEqual([
+      "repaired",
+    ]);
+  });
+
+  it("keeps exact runId enqueue idempotent only for the same job and trigger", async () => {
+    const storePath = await makeStorePath();
+    await enqueueCronTaskRunQueueItem({
+      storePath,
+      job: makeJob("job-a"),
+      runId: "same-run",
+      trigger: "manual",
+      nowMs: 1,
+    });
+    await enqueueCronTaskRunQueueItem({
+      storePath,
+      job: makeJob("job-a"),
+      runId: "same-run",
+      trigger: "manual",
+      nowMs: 2,
+    });
+    await expect(
+      enqueueCronTaskRunQueueItem({
+        storePath,
+        job: makeJob("job-b"),
+        runId: "same-run",
+        trigger: "manual",
+        nowMs: 3,
+      }),
+    ).rejects.toThrow("conflicts");
+    await expect(
+      enqueueCronTaskRunQueueItem({
+        storePath,
+        job: makeJob("job-a"),
+        runId: "same-run",
+        trigger: "schedule",
+        nowMs: 4,
+      }),
+    ).rejects.toThrow("conflicts");
+    expect((await readCronTaskRunQueue({ storePath })).runs).toEqual([
+      expect.objectContaining({
+        runId: "same-run",
+        jobId: "job-a",
+        trigger: "manual",
+        updatedAtMs: 2,
+      }),
+    ]);
+  });
+
+  it("retains active runs and only the newest 500 terminal runs", async () => {
+    const storePath = await makeStorePath();
+    const job = makeJob();
+    for (let index = 0; index < 502; index += 1) {
+      await enqueueCronTaskRunQueueItem({
+        storePath,
+        job,
+        runId: `terminal-${index}`,
+        trigger: "manual",
+        nowMs: index,
+      });
+      await finishCronTaskRunQueueItem({
+        storePath,
+        runId: `terminal-${index}`,
+        nowMs: index,
+        status: "ok",
+      });
+    }
+    await enqueueCronTaskRunQueueItem({
+      storePath,
+      job,
+      runId: "active-run",
+      trigger: "manual",
+      nowMs: 1_000,
+    });
+    const queue = await readCronTaskRunQueue({ storePath });
+    expect(queue.runs.filter((run) => run.status === "ok")).toHaveLength(500);
+    expect(queue.runs.some((run) => run.runId === "terminal-0")).toBe(false);
+    expect(queue.runs.some((run) => run.runId === "terminal-1")).toBe(false);
+    expect(queue.runs.some((run) => run.runId === "active-run")).toBe(true);
+  });
+
   it("tracks resumable steps, checkpoints, and completion", async () => {
     const storePath = await makeStorePath();
     const job = makeJob();
@@ -708,6 +828,7 @@ describe("cron task run queue", () => {
 
     const summary = await summarizeCronTaskRunQueue({ storePath, nowMs: 7_000 });
 
+    expect(summary.path).toBe(resolveCronTaskRunQueueLedgerPath({ storePath }));
     expect(summary.total).toBe(3);
     expect(summary.queued).toBe(1);
     expect(summary.running).toBe(2);

@@ -1,6 +1,11 @@
-import fs from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
-import { withFileLock } from "../infra/file-lock.js";
+import {
+  initializeTaskLedger,
+  openTaskLedgerStore,
+  type TaskLedgerCronQueueRun,
+} from "../tasks/task-ledger-store.js";
+import { sanitizeTaskRegistryStore } from "../tasks/task-registry.js";
 import type {
   CronJob,
   CronRunStatus,
@@ -178,6 +183,8 @@ export type CronTaskRunQueueControlResult =
 
 const QUEUE_DIR = "task-runs";
 const QUEUE_FILE = "queue.json";
+const TASKS_DIR = "tasks";
+const TASK_LEDGER_FILE = "task-ledger.sqlite";
 const DEFAULT_STEP_MAX_ATTEMPTS = 1;
 const DEFAULT_EXECUTE_STEP_MAX_ATTEMPTS = 3;
 const DEFAULT_EXECUTE_STEP_RETRY_DELAY_MS = 1_000;
@@ -219,22 +226,15 @@ const QUEUE_STATUSES: CronTaskRunQueueStatus[] = [
   "canceled",
   "recovered",
 ];
-const QUEUE_FILE_LOCK_OPTIONS = {
-  retries: {
-    retries: 80,
-    factor: 1.15,
-    minTimeout: 10,
-    maxTimeout: 100,
-    randomize: true,
-  },
-  stale: 60_000,
-};
-
-const queueLocks = new Map<string, Promise<unknown>>();
-
 export function resolveCronTaskRunQueuePath(params: { storePath: string }) {
   const storePath = path.resolve(params.storePath);
   return path.join(path.dirname(storePath), QUEUE_DIR, QUEUE_FILE);
+}
+
+/** The legacy resolver remains public for migration support and tests. */
+export function resolveCronTaskRunQueueLedgerPath(params: { storePath: string }) {
+  const storePath = path.resolve(params.storePath);
+  return path.join(path.dirname(path.dirname(storePath)), TASKS_DIR, TASK_LEDGER_FILE);
 }
 
 function defaultRetryPolicyForStepId(stepId: string): CronTaskRunQueueStepRetryPolicy {
@@ -623,51 +623,69 @@ function normalizeQueueStore(raw: unknown): CronTaskRunQueueStore {
   };
 }
 
-async function loadQueueStore(filePath: string): Promise<CronTaskRunQueueStore> {
+function resolveCronTaskRunQueueLedgerPathFromLegacyPath(filePath: string) {
+  return path.join(path.dirname(path.dirname(path.dirname(filePath))), TASKS_DIR, TASK_LEDGER_FILE);
+}
+
+function legacyTaskRegistryPath(databasePath: string) {
+  return path.join(path.dirname(databasePath), "tasks.json");
+}
+
+function loadLegacyQueueStore(filePath: string): CronTaskRunQueueStore {
   try {
-    const raw = await fs.readFile(filePath, "utf-8");
-    return normalizeQueueStore(JSON.parse(raw));
+    return normalizeQueueStore(JSON.parse(fs.readFileSync(filePath, "utf8")));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return { version: 1, runs: [] };
     }
-    throw err;
+    throw new Error("Cron task run queue legacy import failed: queue.json is malformed", {
+      cause: err,
+    });
   }
 }
 
-async function saveQueueStore(filePath: string, store: CronTaskRunQueueStore) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(store, null, 2), "utf-8");
-  await fs.rename(tmp, filePath);
+function withQueueLedger<T>(
+  filePath: string,
+  operation: (ledger: ReturnType<typeof openTaskLedgerStore>) => T,
+): T {
+  const databasePath = resolveCronTaskRunQueueLedgerPathFromLegacyPath(filePath);
+  initializeTaskLedger({
+    databasePath,
+    legacyPath: legacyTaskRegistryPath(databasePath),
+    sanitizeLegacy: (raw) => sanitizeTaskRegistryStore(raw).tasks,
+  });
+  const ledger = openTaskLedgerStore(databasePath);
+  try {
+    ledger.ensureCronTaskRunQueueImported<CronTaskRunQueueItem & TaskLedgerCronQueueRun>(
+      () => loadLegacyQueueStore(filePath).runs,
+    );
+    return operation(ledger);
+  } finally {
+    ledger.close();
+  }
+}
+
+async function loadQueueStore(filePath: string): Promise<CronTaskRunQueueStore> {
+  return withQueueLedger(filePath, (ledger) => ({
+    version: 1,
+    runs: ledger.listCronTaskRuns<CronTaskRunQueueItem & TaskLedgerCronQueueRun>(),
+  }));
 }
 
 async function updateQueueStore<T>(
   filePath: string,
-  update: (store: CronTaskRunQueueStore) => T | Promise<T>,
+  update: (store: CronTaskRunQueueStore) => T,
 ): Promise<T> {
-  const resolved = path.resolve(filePath);
-  const prev = queueLocks.get(resolved) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const next = prev.catch(() => undefined).then(() => current);
-  queueLocks.set(resolved, next);
-  await prev.catch(() => undefined);
-  try {
-    return await withFileLock(resolved, QUEUE_FILE_LOCK_OPTIONS, async () => {
-      const store = await loadQueueStore(resolved);
-      const result = await update(store);
-      await saveQueueStore(resolved, store);
+  return withQueueLedger(filePath, (ledger) =>
+    ledger.updateCronTaskRunQueue<CronTaskRunQueueItem & TaskLedgerCronQueueRun, T>((runs) => {
+      const store: CronTaskRunQueueStore = { version: 1, runs };
+      const result = update(store);
+      if (store.runs !== runs) {
+        runs.splice(0, runs.length, ...store.runs);
+      }
       return result;
-    });
-  } finally {
-    release();
-    if (queueLocks.get(resolved) === next) {
-      queueLocks.delete(resolved);
-    }
-  }
+    }),
+  );
 }
 
 function findRun(store: CronTaskRunQueueStore, runId: string) {
@@ -856,6 +874,9 @@ export async function enqueueCronTaskRunQueueItem(params: {
   await updateQueueStore(filePath, (store) => {
     const existing = findRun(store, params.runId);
     if (existing) {
+      if (existing.jobId !== params.job.id || existing.trigger !== params.trigger) {
+        throw new Error("Cron task run queue runId conflicts with a different job or trigger");
+      }
       existing.updatedAtMs = params.nowMs;
       existing.status = existing.status === "queued" ? "queued" : existing.status;
       existing.skipReason = params.skipReason;
@@ -1421,6 +1442,7 @@ export async function summarizeCronTaskRunQueue(params: {
   nowMs: number;
 }): Promise<CronTaskRunQueueSummary> {
   const filePath = resolveCronTaskRunQueuePath({ storePath: params.storePath });
+  const ledgerPath = resolveCronTaskRunQueueLedgerPath({ storePath: params.storePath });
   const store = await loadQueueStore(filePath);
   const byStatus = Object.fromEntries(QUEUE_STATUSES.map((status) => [status, 0])) as Record<
     CronTaskRunQueueStatus,
@@ -1522,7 +1544,7 @@ export async function summarizeCronTaskRunQueue(params: {
   );
 
   return {
-    path: filePath,
+    path: ledgerPath,
     total: store.runs.length,
     queued,
     running,

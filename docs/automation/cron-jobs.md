@@ -248,7 +248,7 @@ the scheduled work is part of the ongoing conversation.
 The gateway manages scheduled tasks under `~/.fased/cron/` internally.
 
 - task definitions: `~/.fased/cron/jobs.json`
-- queued task-run state: `~/.fased/cron/task-runs/queue.json`
+- queued task-run state: `~/.fased/tasks/task-ledger.sqlite` (legacy import: `~/.fased/cron/task-runs/queue.json`)
 - run logs: `~/.fased/cron/runs/<jobId>.jsonl`
 
 Use the UI, CLI, or RPC for changes while the gateway is running.
