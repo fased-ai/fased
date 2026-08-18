@@ -57,7 +57,7 @@ import { runTui } from "../tui/tui.js";
 import { resolveUserPath } from "../utils.js";
 import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
-import { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
+import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
 import {
   noteBullet,
   noteCommand,
@@ -2905,9 +2905,10 @@ export async function finalizeOnboardingWizard(
   let persistedFederationToken = federation.enabled
     ? await loadPersistedFederationToken(onboardingEnv).catch(() => null)
     : null;
-  let walletStatusForReadiness: Awaited<ReturnType<typeof readWalletStatusSnapshot>> | null = null;
+  let walletStatusForReadiness: Awaited<ReturnType<typeof walletReadinessFacade.read>> | null =
+    null;
   try {
-    walletStatusForReadiness = await readWalletStatusSnapshot({
+    walletStatusForReadiness = await walletReadinessFacade.read({
       config: nextConfig,
       env: onboardingEnv,
     });
