@@ -13,7 +13,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
+
+	"fased-signerd/internal/execution"
 
 	solana "github.com/gagliardetto/solana-go"
 	rpc "github.com/gagliardetto/solana-go/rpc"
@@ -1020,31 +1021,7 @@ func newSignedTypedTransactionV2(
 	privateKey solana.PrivateKey,
 	addressTables map[solana.PublicKey]solana.PublicKeySlice,
 ) (*solana.Transaction, error) {
-	from := privateKey.PublicKey()
-	options := []solana.TransactionOption{solana.TransactionPayer(from)}
-	if len(addressTables) > 0 {
-		options = append(options, solana.TransactionAddressTables(addressTables))
-	}
-	tx, err := solana.NewTransaction(instructions, blockhash, options...)
-	if err != nil {
-		return nil, err
-	}
-	if len(addressTables) > 0 {
-		if tx.Message.GetVersion() != solana.MessageVersionV0 || len(tx.Message.GetAddressTableLookups()) != 1 || tx.Message.NumLookups() == 0 {
-			return nil, errors.New("typed SAT distribution did not compile to the required single-table v0 transaction")
-		}
-	}
-	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
-		if key.Equals(from) {
-			copy := privateKey
-			return &copy
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return tx, nil
+	return execution.NewSignedTypedTransaction(instructions, blockhash, privateKey, addressTables)
 }
 
 func buildTypedInstructionsV2(
@@ -1395,73 +1372,15 @@ func validateSignerNativeSpendV2(
 }
 
 func broadcastSignedOnceV2(rpcURLs []string, signedRaw []byte, expectedSignature solana.Signature) error {
-	active, err := activeSolanaWriteRPCURLs(rpcURLs)
-	if err != nil {
-		return err
-	}
-	rpcURL := active[0]
-	client := newSignerOwnedSolanaRPCClientV2(rpcURL)
-	ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
-	defer cancel()
-	signature, err := client.SendRawTransactionWithOpts(ctx, signedRaw, rpc.TransactionOpts{
-		SkipPreflight:       false,
-		PreflightCommitment: rpc.CommitmentConfirmed,
-	})
-	if err != nil {
-		markSolanaWriteRPCFailure(rpcURL, err)
-		return fmt.Errorf("Solana transaction broadcast result is ambiguous: %w", err)
-	}
-	markSolanaWriteRPCSuccess(rpcURL)
-	if signature != expectedSignature {
-		return errors.New("Solana RPC returned a different signature for the signed transaction")
-	}
-	return nil
+	return solanaWriteRPCPool.BroadcastSignedOnce(rpcURLs, signedRaw, expectedSignature, solanaWriteRPCRequestTimeout())
 }
 
 func lookupSignatureStatusV2(rpcURLs []string, signature solana.Signature) (string, error) {
-	active, err := activeSolanaWriteRPCURLs(rpcURLs)
-	if err != nil {
-		return "unknown", err
-	}
-	for _, rpcURL := range active {
-		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
-		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
-		status, requestErr := client.GetSignatureStatuses(ctx, true, signature)
-		cancel()
-		if requestErr != nil {
-			markSolanaWriteRPCFailure(rpcURL, requestErr)
-			continue
-		}
-		markSolanaWriteRPCSuccess(rpcURL)
-		if status == nil || status.Value == nil || len(status.Value) == 0 || status.Value[0] == nil {
-			continue
-		}
-		if status.Value[0].Err != nil {
-			return "failed", nil
-		}
-		if status.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-			status.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-			return "confirmed", nil
-		}
-		return "pending", nil
-	}
-	return "unknown", nil
+	return solanaWriteRPCPool.LookupSignatureStatus(rpcURLs, signature, solanaWriteRPCRequestTimeout())
 }
 
 func decodeStoredSignedOperationV2(operation signerOperationV2) ([]byte, *solana.Transaction, error) {
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(operation.SignedTxBase64))
-	if err != nil || len(raw) == 0 || len(raw) > 1644 {
-		return nil, nil, errors.New("stored signed transaction artifact is invalid")
-	}
-	digest := sha256.Sum256(raw)
-	if operation.TransactionDigest != "sha256:"+hex.EncodeToString(digest[:]) {
-		return nil, nil, errors.New("stored signed transaction artifact digest mismatch")
-	}
-	tx, err := solana.TransactionFromBytes(raw)
-	if err != nil || len(tx.Signatures) == 0 || tx.Signatures[0].String() != operation.Signature {
-		return nil, nil, errors.New("stored signed transaction artifact signature mismatch")
-	}
-	return raw, tx, nil
+	return execution.DecodeStoredSignedOperation(operation.SignedTxBase64, operation.TransactionDigest, operation.Signature)
 }
 
 func verifySignedBlockhashAcrossSATWitnessesV2(rpcURLs []string, blockhash solana.Hash) (string, error) {
@@ -1622,60 +1541,11 @@ func reconcileSATLookupMutationEffectV2(
 }
 
 func signerLatestBlockhashWithFallbackV2(rpcURLs []string) (solana.Hash, error) {
-	active, err := activeSolanaWriteRPCURLs(rpcURLs)
-	if err != nil {
-		return solana.Hash{}, err
-	}
-	for _, rpcURL := range active {
-		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
-		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
-		result, requestErr := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
-		cancel()
-		if requestErr == nil {
-			markSolanaWriteRPCSuccess(rpcURL)
-			return result.Value.Blockhash, nil
-		}
-		markSolanaWriteRPCFailure(rpcURL, requestErr)
-	}
-	return solana.Hash{}, errors.New("signer-owned Solana RPC latest-blockhash lookup failed")
+	return solanaWriteRPCPool.LatestBlockhashWithFallback(rpcURLs, solanaWriteRPCRequestTimeout())
 }
 
 func confirmSignerSolanaSignatureAcrossRPCsV2(rpcURLs []string, signature solana.Signature) error {
-	confirmCtx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCConfirmTimeout())
-	defer cancel()
-	tick := time.NewTicker(750 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		active, activeErr := activeSolanaWriteRPCURLs(rpcURLs)
-		if activeErr == nil {
-			for _, rpcURL := range active {
-				client := newSignerOwnedSolanaRPCClientV2(rpcURL)
-				requestCtx, requestCancel := context.WithTimeout(confirmCtx, solanaWriteRPCRequestTimeout())
-				status, err := client.GetSignatureStatuses(requestCtx, true, signature)
-				requestCancel()
-				if err != nil {
-					markSolanaWriteRPCFailure(rpcURL, err)
-					continue
-				}
-				markSolanaWriteRPCSuccess(rpcURL)
-				if status == nil || status.Value == nil || len(status.Value) == 0 || status.Value[0] == nil {
-					continue
-				}
-				if status.Value[0].Err != nil {
-					return errors.New("Solana transaction failed on chain")
-				}
-				if status.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-					status.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-					return nil
-				}
-			}
-		}
-		select {
-		case <-confirmCtx.Done():
-			return errors.New("signer-owned Solana RPC confirmation timed out")
-		case <-tick.C:
-		}
-	}
+	return solanaWriteRPCPool.ConfirmSignatureAcrossRPCs(rpcURLs, signature, solanaWriteRPCRequestTimeout(), solanaWriteRPCConfirmTimeout())
 }
 
 func (s *signerServiceV2) reconcile(requestID, walletID string) (signerOperationV2, error) {

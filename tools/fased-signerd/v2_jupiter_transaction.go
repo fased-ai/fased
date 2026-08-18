@@ -6,10 +6,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"sort"
 	"strings"
+
+	"fased-signerd/internal/execution"
 
 	solana "github.com/gagliardetto/solana-go"
 	rpc "github.com/gagliardetto/solana-go/rpc"
@@ -968,35 +969,5 @@ func validateJupiterBalanceSemanticsV2(wallet solana.PublicKey, intent normalize
 }
 
 func signValidatedJupiterTransactionV2(validated jupiterValidatedTransactionV2, privateKey solana.PrivateKey) ([]byte, solana.Signature, error) {
-	if validated.Transaction == nil {
-		return nil, solana.Signature{}, errors.New("validated transaction is missing")
-	}
-	wallet := privateKey.PublicKey()
-	_, err := validated.Transaction.Sign(func(key solana.PublicKey) *solana.PrivateKey {
-		if key.Equals(wallet) {
-			copy := privateKey
-			return &copy
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, solana.Signature{}, fmt.Errorf("sign typed Jupiter transaction: %w", err)
-	}
-	if validated.WalletSignerIndex < 0 || validated.WalletSignerIndex >= len(validated.Transaction.Signatures) ||
-		validated.Transaction.Signatures[validated.WalletSignerIndex].IsZero() {
-		return nil, solana.Signature{}, errors.New("typed Jupiter transaction signature is missing")
-	}
-	for index, signature := range validated.Transaction.Signatures {
-		if index != validated.WalletSignerIndex && !signature.IsZero() {
-			return nil, solana.Signature{}, errors.New("signer modified an additional Trigger signer slot")
-		}
-	}
-	raw, err := validated.Transaction.MarshalBinary()
-	if err != nil {
-		return nil, solana.Signature{}, err
-	}
-	if len(raw) > 1232 || len(raw) > math.MaxUint16 {
-		return nil, solana.Signature{}, errors.New("signed transaction is too large")
-	}
-	return raw, validated.Transaction.Signatures[validated.WalletSignerIndex], nil
+	return execution.SignValidatedJupiterTransaction(validated.Transaction, validated.WalletSignerIndex, privateKey)
 }
