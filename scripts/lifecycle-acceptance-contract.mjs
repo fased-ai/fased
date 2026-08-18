@@ -14,6 +14,8 @@ const LEGACY_V1_DIGEST = "sha256:b9ac4c751e0ad3e7455b177cd80538aedcbd8365aeac9eb
 const LEGACY_V2_DIGEST = "sha256:a1a15e2b080c25921339ed2aa38d05a9745213728866b9f19b48cedc79854197";
 const LEGACY_V2_EVIDENCE_POLICY_DIGEST =
   "sha256:327eb515f2ef9980ed17cab1751caa2d792b6f40a849fa9428ab8b3560d83369";
+const LEGACY_V2_RC80_EVIDENCE_POLICY_DIGEST =
+  "sha256:8cf857831936399150ce4fef5339dc4371ba64bffc54509a768c5f45cc022a14";
 const commonPredicates = Object.freeze([
   "artifact-identity",
   "public-installer-acquisition",
@@ -138,7 +140,11 @@ export function validatePublishedAcceptanceContract(contract) {
       validateProfiles(contract.profiles, LEGACY_V2_REQUIRED_PREDICATES);
       return contract;
     }
-    if (digestStableContract(contract) === LEGACY_V2_EVIDENCE_POLICY_DIGEST) {
+    const contractDigest = digestStableContract(contract);
+    if (
+      contractDigest === LEGACY_V2_EVIDENCE_POLICY_DIGEST ||
+      contractDigest === LEGACY_V2_RC80_EVIDENCE_POLICY_DIGEST
+    ) {
       return contract;
     }
     return validateAcceptanceContract(contract);
