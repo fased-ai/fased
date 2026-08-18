@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"fased-signerd/internal/admintransport"
 	"fased-signerd/internal/audit"
 	"fased-signerd/internal/custody"
 	"fased-signerd/internal/execution"
@@ -553,7 +554,6 @@ func run(cfg signerConfig) error {
 		return err
 	}
 	defer applicationListener.Close()
-	defer os.Remove(cfg.socketPath)
 	if filepath.Clean(cfg.controlSocketPath) == filepath.Clean(cfg.socketPath) {
 		return errors.New("control socket must be separate from the application socket")
 	}
@@ -567,7 +567,6 @@ func run(cfg signerConfig) error {
 		return err
 	}
 	defer controlListener.Close()
-	defer os.Remove(cfg.controlSocketPath)
 	var operatorListener net.Listener
 	if cfg.operatorSocketPath != "" {
 		operatorListener, err = listenUnixSocketV2(
@@ -579,7 +578,6 @@ func run(cfg signerConfig) error {
 			return err
 		}
 		defer operatorListener.Close()
-		defer os.Remove(cfg.operatorSocketPath)
 	}
 
 	limiter := newRateLimiter(cfg.rateWindow, cfg.rateLimit)
@@ -591,11 +589,6 @@ func run(cfg signerConfig) error {
 		_ = controlListener.Close()
 		if operatorListener != nil {
 			_ = operatorListener.Close()
-		}
-		_ = os.Remove(cfg.socketPath)
-		_ = os.Remove(cfg.controlSocketPath)
-		if cfg.operatorSocketPath != "" {
-			_ = os.Remove(cfg.operatorSocketPath)
 		}
 	}()
 
@@ -623,7 +616,7 @@ func run(cfg signerConfig) error {
 					"ts": time.Now().UTC().Format(time.RFC3339Nano), "ok": false,
 					"authority": authority, "error": "peer_identity",
 				})
-				_, _ = connection.Write([]byte(`{"ok":false,"error":"signer socket peer is not authorized"}` + "\n"))
+				_ = writeSignerAdminAll(connection, []byte(`{"ok":false,"error":"signer socket peer is not authorized"}`+"\n"))
 				_ = connection.Close()
 				continue
 			}
@@ -683,26 +676,26 @@ func handleAuthorizedConn(
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(socketReadTimeout))
+		_ = admintransport.SetReadDeadline(conn, socketReadTimeout)
 		line, err := readRequestLine(reader, maxSignerRequestBytes)
 		if err != nil {
 			switch {
 			case errors.Is(err, errRequestTooLarge):
-				_, _ = conn.Write([]byte(`{"ok":false,"error":"signer request too large"}` + "\n"))
+				_ = writeSignerAdminAll(conn, []byte(`{"ok":false,"error":"signer request too large"}`+"\n"))
 				audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "ok": false, "error": "request_too_large"})
 			case isTimeout(err):
-				_, _ = conn.Write([]byte(`{"ok":false,"error":"read timeout"}` + "\n"))
+				_ = writeSignerAdminAll(conn, []byte(`{"ok":false,"error":"read timeout"}`+"\n"))
 				audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "ok": false, "error": "read_timeout"})
 			case !errors.Is(err, io.EOF):
-				_, _ = conn.Write([]byte(`{"ok":false,"error":"read error"}` + "\n"))
+				_ = writeSignerAdminAll(conn, []byte(`{"ok":false,"error":"read error"}`+"\n"))
 			}
 			return
 		}
-		_ = conn.SetReadDeadline(time.Time{})
+		_ = admintransport.ClearReadDeadline(conn)
 		line = bytesTrimNewline(line)
 		req, raw, err := decodeSignerEnvelopeV2(line)
 		if err != nil {
-			_, _ = conn.Write([]byte(`{"ok":false,"error":"invalid signer request"}` + "\n"))
+			_ = writeSignerAdminAll(conn, []byte(`{"ok":false,"error":"invalid signer request"}`+"\n"))
 			audit.write(map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "ok": false, "error": "invalid_json"})
 			continue
 		}
@@ -717,7 +710,7 @@ func handleAuthorizedConn(
 			"peerPid":   credential.PID,
 		}
 		if err := mustValidate(req, cfg); err != nil {
-			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
+			_ = writeSignerAdminAll(conn, []byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
 			requestAudit["ok"] = false
 			requestAudit["error"] = err.Error()
 			audit.write(requestAudit)
@@ -725,7 +718,7 @@ func handleAuthorizedConn(
 		}
 		if operator {
 			if err := validateSignerOperatorContextV1(req, service.store, time.Now()); err != nil {
-				_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
+				_ = writeSignerAdminAll(conn, []byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
 				requestAudit["ok"] = false
 				requestAudit["error"] = "operator_context"
 				audit.write(requestAudit)
@@ -733,7 +726,7 @@ func handleAuthorizedConn(
 			}
 			req.operatorSocket = true
 		} else if req.Operator != nil {
-			_, _ = conn.Write([]byte(`{"ok":false,"error":"operator context is accepted only on the operator socket"}` + "\n"))
+			_ = writeSignerAdminAll(conn, []byte(`{"ok":false,"error":"operator context is accepted only on the operator socket"}`+"\n"))
 			requestAudit["ok"] = false
 			requestAudit["error"] = "operator_context_wrong_socket"
 			audit.write(requestAudit)
@@ -744,14 +737,14 @@ func handleAuthorizedConn(
 			gateControl = control && !operator
 		}
 		if err := enforceApplicationUpdateGate(cfg.updateGatePath, req.Op, gateControl, 0, os.Getegid()); err != nil {
-			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
+			_ = writeSignerAdminAll(conn, []byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
 			requestAudit["ok"] = false
 			requestAudit["error"] = "update_gate"
 			audit.write(requestAudit)
 			continue
 		}
 		if !limiter.allow(req.Op) {
-			_, _ = conn.Write([]byte(`{"ok":false,"error":"rate limit exceeded"}` + "\n"))
+			_ = writeSignerAdminAll(conn, []byte(`{"ok":false,"error":"rate limit exceeded"}`+"\n"))
 			requestAudit["ok"] = false
 			requestAudit["error"] = "rate_limit"
 			audit.write(requestAudit)
@@ -762,13 +755,13 @@ func handleAuthorizedConn(
 			requestAudit["phase"] = "accepted"
 			requestAudit["ok"] = true
 			if err := audit.writeRequired(requestAudit); err != nil {
-				_, _ = conn.Write([]byte(`{"ok":false,"error":"signer audit is unavailable; mutation refused"}` + "\n"))
+				_ = writeSignerAdminAll(conn, []byte(`{"ok":false,"error":"signer audit is unavailable; mutation refused"}`+"\n"))
 				continue
 			}
 		}
 		response, err := service.handle(req, cfg, control)
 		if err != nil {
-			_, _ = conn.Write([]byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
+			_ = writeSignerAdminAll(conn, []byte(fmt.Sprintf(`{"ok":false,"error":%q}`+"\n", err.Error())))
 			requestAudit["phase"] = "completed"
 			requestAudit["ok"] = false
 			requestAudit["error"] = "signer"
@@ -785,13 +778,13 @@ func handleAuthorizedConn(
 		requestAudit["unknown"] = unknown
 		if mutation {
 			if err := audit.writeRequired(requestAudit); err != nil {
-				_, _ = conn.Write([]byte(`{"ok":false,"error":"signer mutation completed but durable audit finalization failed; query authoritative state before retrying"}` + "\n"))
+				_ = writeSignerAdminAll(conn, []byte(`{"ok":false,"error":"signer mutation completed but durable audit finalization failed; query authoritative state before retrying"}`+"\n"))
 				continue
 			}
 		} else {
 			audit.write(requestAudit)
 		}
-		_, _ = conn.Write(append(response, '\n'))
+		_ = writeSignerAdminAll(conn, append(response, '\n'))
 	}
 }
 
@@ -801,20 +794,11 @@ func isTimeout(err error) bool {
 }
 
 func readRequestLine(reader *bufio.Reader, maxBytes int) ([]byte, error) {
-	var result []byte
-	for {
-		fragment, prefix, err := reader.ReadLine()
-		if err != nil {
-			return nil, err
-		}
-		if len(result)+len(fragment) > maxBytes {
-			return nil, errRequestTooLarge
-		}
-		result = append(result, fragment...)
-		if !prefix {
-			return result, nil
-		}
+	line, err := admintransport.ReadLine(reader, maxBytes)
+	if errors.Is(err, admintransport.ErrFrameTooLarge) {
+		return nil, errRequestTooLarge
 	}
+	return line, err
 }
 
 type solanaEnvelopeV1 struct {

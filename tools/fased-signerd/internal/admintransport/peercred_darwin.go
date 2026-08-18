@@ -1,6 +1,6 @@
 //go:build darwin
 
-package main
+package admintransport
 
 import (
 	"errors"
@@ -9,16 +9,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func readSignerPeerCredentialV2(conn net.Conn) (signerPeerCredentialV2, error) {
+// ReadPeerCredential reads Darwin LOCAL_PEERCRED from a Unix-domain connection.
+func ReadPeerCredential(conn net.Conn) (PeerCredential, error) {
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
-		return signerPeerCredentialV2{}, errors.New("signer peer credentials require a Unix socket")
+		return PeerCredential{}, errors.New("signer peer credentials require a Unix socket")
 	}
 	raw, err := unixConn.SyscallConn()
 	if err != nil {
-		return signerPeerCredentialV2{}, err
+		return PeerCredential{}, err
 	}
-	credential := signerPeerCredentialV2{GID: -1, PID: -1}
+	credential := PeerCredential{GID: -1, PID: -1}
 	var credentialErr error
 	if err := raw.Control(func(fd uintptr) {
 		peer, err := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
@@ -36,10 +37,10 @@ func readSignerPeerCredentialV2(conn net.Conn) (signerPeerCredentialV2, error) {
 		}
 		credential.PID, credentialErr = unix.GetsockoptInt(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERPID)
 	}); err != nil {
-		return signerPeerCredentialV2{}, err
+		return PeerCredential{}, err
 	}
 	if credentialErr != nil {
-		return signerPeerCredentialV2{}, credentialErr
+		return PeerCredential{}, credentialErr
 	}
 	credential.Proven = true
 	return credential, nil
