@@ -1,10 +1,12 @@
 import type { FederationPublishedOffer } from "../federation/offers.js";
 import { isValidSolanaAddress } from "../wallet/solana-address.js";
 import { fetchSolanaRpc } from "../wallet/solana-assets.js";
-import { resolveScopedRpcUrlForWallet } from "../wallet/wallet-provider-resolver.js";
+import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import type { DurableA2aPaymentChallenge } from "./a2a-task-store.js";
 
-const A2A_PAYMENT_MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+const { resolveRpcUrl: resolveScopedRpcUrlForWallet } = walletProviderFacade;
+
+const A2A_PAYMENT_MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"; // pragma: allowlist secret
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);

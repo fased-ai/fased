@@ -33,10 +33,7 @@ import {
   validateWalletTxPolicy,
   type WalletRecurringTransferPolicyPatch,
 } from "../../wallet/wallet-policy.js";
-import {
-  createWalletProviderAdapter,
-  resolveScopedRpcUrlForWallet,
-} from "../../wallet/wallet-provider-resolver.js";
+import { walletProviderFacade } from "../../wallet/wallet-provider-facade.js";
 import { resolveWalletRuntimeConfig } from "../../wallet/wallet-runtime-config.js";
 import {
   bindSignerReviewToWalletApprovalPayload,
@@ -51,6 +48,9 @@ import {
   enforceWalletSkillPolicy,
   readSkillWalletActionPermissions,
 } from "./wallet-skill-policy.js";
+
+const { createAdapter: createWalletProviderAdapter, resolveRpcUrl: resolveScopedRpcUrlForWallet } =
+  walletProviderFacade;
 
 const WALLET_ACTION_TOOL_ACTIONS = [
   "plan",

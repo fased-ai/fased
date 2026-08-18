@@ -38,6 +38,7 @@ const EXTERNAL_SOLANA_ADDRESS = "SysvarC1ock11111111111111111111111111111111";
 vi.mock("../../wallet/wallet-provider-resolver.js", () => ({
   createWalletProviderAdapter: mocks.createWalletProviderAdapter,
   resolveScopedRpcUrlForWallet: () => process.env.FASED_WALLET_SOLANA_RPC_URL,
+  resolveWalletProviderId: () => "local-socket-signer",
 }));
 
 function walletEnabledConfig(): FasedAgentConfig {

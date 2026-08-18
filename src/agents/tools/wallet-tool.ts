@@ -21,16 +21,13 @@ import {
   buildWalletProviderCapabilityMatrix,
   providerSupportsChainOperation,
 } from "../../wallet/wallet-provider-capabilities.js";
+import { walletProviderFacade } from "../../wallet/wallet-provider-facade.js";
 import {
   readWalletProviderRegistry,
   resolveWalletSelection,
   resolveWalletUserRole,
   type WalletNamedWallet,
 } from "../../wallet/wallet-provider-registry.js";
-import {
-  createWalletProviderAdapter,
-  resolveScopedRpcUrlForWallet,
-} from "../../wallet/wallet-provider-resolver.js";
 import { resolveWalletRuntimeConfig } from "../../wallet/wallet-runtime-config.js";
 import type { WalletCreateSendResult } from "../../wallet/wallet-send-approvals.js";
 import * as walletSendApprovals from "../../wallet/wallet-send-approvals.js";
@@ -42,6 +39,9 @@ import {
   enforceWalletSkillPolicy,
   readSkillWalletActionPermissions,
 } from "./wallet-skill-policy.js";
+
+const { createAdapter: createWalletProviderAdapter, resolveRpcUrl: resolveScopedRpcUrlForWallet } =
+  walletProviderFacade;
 
 const WALLET_ACTIONS = [
   "status",

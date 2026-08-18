@@ -133,6 +133,7 @@ import {
   providerSupportsChainOperation,
   type WalletProviderCapabilityMatrix,
 } from "../wallet/wallet-provider-capabilities.js";
+import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import {
   WALLET_PROVIDER_IDS,
   checkNamedWalletDeletionSafety,
@@ -148,11 +149,6 @@ import {
   upsertNamedWallet,
   normalizeWalletUserRole,
 } from "../wallet/wallet-provider-registry.js";
-import {
-  createWalletProviderAdapter,
-  resolveScopedRpcUrlForWallet,
-  resolveWalletProviderId,
-} from "../wallet/wallet-provider-resolver.js";
 import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
 import { walletDiagnosticErrorMessage } from "../wallet/wallet-redaction.js";
 import {
@@ -242,6 +238,12 @@ import type { ReadinessChecker } from "./server/readiness.js";
 import { createGatewayWalletSignerFacade } from "./server/wallet-signer-facade.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
+
+const {
+  createAdapter: createWalletProviderAdapter,
+  resolveId: resolveWalletProviderId,
+  resolveRpcUrl: resolveScopedRpcUrlForWallet,
+} = walletProviderFacade;
 
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 type HookAuthFailure = { count: number; windowStartedAtMs: number };

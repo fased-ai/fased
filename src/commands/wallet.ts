@@ -40,11 +40,8 @@ import {
   type WalletInboundStatus,
 } from "../wallet/wallet-inbound-events.js";
 import { buildWalletProviderCapabilityMatrix } from "../wallet/wallet-provider-capabilities.js";
+import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import type { WalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
-import {
-  createWalletProviderAdapter,
-  resolveWalletProviderId,
-} from "../wallet/wallet-provider-resolver.js";
 import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
 import { redactWalletDiagnosticText } from "../wallet/wallet-redaction.js";
 import { walletRegistryFacade } from "../wallet/wallet-registry-facade.js";
@@ -80,6 +77,8 @@ const {
   upsert: upsertNamedWallet,
   write: writeWalletProviderRegistry,
 } = walletRegistryFacade;
+const { createAdapter: createWalletProviderAdapter, resolveId: resolveWalletProviderId } =
+  walletProviderFacade;
 const { read: readWalletStatusSnapshot, resolveRuntimeConfig: resolveWalletConfigForRuntime } =
   walletReadinessFacade;
 
