@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	signerstore "fased-signerd/internal/store"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -38,29 +39,27 @@ type signerSchemaHealthV2 struct {
 }
 
 func inspectSignerStateBeforeOpenV2(path string) (bool, bool, error) {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, false, nil
-	}
+	inspected, err := signerstore.Inspect(path)
 	if err != nil {
-		return false, false, fmt.Errorf("inspect signer state database: %w", err)
-	}
-	if err := validateSignerStateFileV2(path); err != nil {
 		return false, false, err
 	}
-	return true, info.Size() > 0, nil
+	return inspected.Existed(), inspected.HadState(), nil
 }
 
 func inspectSignerSchemaReadOnlyV2(path string) (uint64, error) {
-	db, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true, Timeout: 2 * time.Second})
+	inspected, err := signerstore.Inspect(path)
 	if err != nil {
-		return 0, fmt.Errorf("inspect signer state schema: %w", err)
+		return 0, err
+	}
+	db, err := signerstore.OpenReadOnly(inspected)
+	if err != nil {
+		return 0, err
 	}
 	defer db.Close()
 	return readSignerSchemaVersionV2(db)
 }
 
-func readSignerSchemaVersionV2(db *bolt.DB) (uint64, error) {
+func readSignerSchemaVersionV2(db *signerstore.DB) (uint64, error) {
 	if db == nil {
 		return 0, errors.New("signer state database is unavailable")
 	}
@@ -92,7 +91,7 @@ func readSignerSchemaVersionFromTxV2(tx *bolt.Tx) (uint64, error) {
 	return version, nil
 }
 
-func migrateSignerStateV2(db *bolt.DB, fromVersion uint64) error {
+func migrateSignerStateV2(db *signerstore.DB, fromVersion uint64) error {
 	if db == nil {
 		return errors.New("signer state database is unavailable")
 	}
@@ -154,7 +153,7 @@ func migrateSignerStateV2(db *bolt.DB, fromVersion uint64) error {
 	return validateSignerSchemaBucketsV2(db)
 }
 
-func validateSignerSchemaBucketsV2(db *bolt.DB) error {
+func validateSignerSchemaBucketsV2(db *signerstore.DB) error {
 	if db == nil {
 		return errors.New("signer state database is unavailable")
 	}
@@ -175,7 +174,7 @@ func validateSignerSchemaBucketsV2(db *bolt.DB) error {
 	})
 }
 
-func backupSignerStateBeforeMigrationV2(db *bolt.DB, statePath string) (string, error) {
+func backupSignerStateBeforeMigrationV2(db *signerstore.DB, statePath string) (string, error) {
 	if db == nil {
 		return "", errors.New("signer state database is unavailable")
 	}

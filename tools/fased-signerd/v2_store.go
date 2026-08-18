@@ -8,13 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	signerstore "fased-signerd/internal/store"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -40,7 +39,7 @@ const signerExecutionLeaseV2 = 5 * time.Minute
 var errSignerOperationNotFoundV2 = errors.New("signer operation not found")
 
 type signerStoreV2 struct {
-	db            *bolt.DB
+	db            *signerstore.DB
 	now           func() time.Time
 	schemaVersion uint64
 	retentionMu   sync.Mutex
@@ -48,14 +47,12 @@ type signerStoreV2 struct {
 }
 
 func openSignerStoreV2(path string) (*signerStoreV2, error) {
-	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("signer state database path is required")
-	}
-	path = filepath.Clean(path)
-	existed, hadState, err := inspectSignerStateBeforeOpenV2(path)
+	inspected, err := signerstore.Inspect(path)
 	if err != nil {
 		return nil, err
 	}
+	path = inspected.Path()
+	existed, hadState := inspected.Existed(), inspected.HadState()
 	if existed && hadState {
 		version, err := inspectSignerSchemaReadOnlyV2(path)
 		if err != nil {
@@ -69,12 +66,9 @@ func openSignerStoreV2(path string) (*signerStoreV2, error) {
 			)
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create signer state directory: %w", err)
-	}
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 2 * time.Second})
+	db, err := signerstore.Open(inspected)
 	if err != nil {
-		return nil, fmt.Errorf("open signer state database: %w", err)
+		return nil, err
 	}
 	store := &signerStoreV2{db: db, now: time.Now}
 	version, err := readSignerSchemaVersionV2(db)
@@ -119,23 +113,8 @@ func openSignerStoreV2(path string) (*signerStoreV2, error) {
 }
 
 func validateSignerStateFileV2(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect signer state database: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return errors.New("signer state database must be a regular non-symlink file")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return errors.New("signer state database must not be group/world accessible")
-	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) != os.Geteuid() {
-		return fmt.Errorf("signer state database must be owned by uid %d", os.Geteuid())
-	}
-	return nil
+	_, err := signerstore.Inspect(path)
+	return err
 }
 
 func (s *signerStoreV2) Close() error {
