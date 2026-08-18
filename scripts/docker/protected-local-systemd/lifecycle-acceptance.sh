@@ -1397,6 +1397,7 @@ if [[ "$phase" == "fresh-install" ]]; then
       --update-channel "$fresh_channel" \
       --gateway-port "$gateway_port" \
       --local \
+	  --verbose \
       -- \
       --non-interactive \
       --accept-risk \
@@ -1419,6 +1420,8 @@ if [[ "$phase" == "fresh-install" ]]; then
 
 	hash -r
   acceptance_start
+	grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/fresh-install.out >/dev/null
+	acceptance_mark lifecycle-performance /tmp/fresh-install.out "install timing, bytes, and cache evidence recorded"
   service_started="$SECONDS"
   test -s "$state/fased.json"
   test -s "$state/install.json"
@@ -1681,6 +1684,7 @@ if [[ "$phase" == "managed-update" ]]; then
         --update-channel beta \
         --gateway-port "$gateway_port" \
         --local \
+		--verbose \
         -- \
         --non-interactive \
         --accept-risk \
@@ -1771,6 +1775,8 @@ EOF_STABLE_BRIDGE_DROPIN
     cat /tmp/stable-bridge-failure.err /tmp/stable-bridge-update.out \
       >/tmp/stable-bridge-rollback-retry.evidence
     acceptance_mark rollback-retry /tmp/stable-bridge-rollback-retry.evidence
+		grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/stable-bridge-update.out >/dev/null
+		acceptance_mark lifecycle-performance /tmp/stable-bridge-update.out "update timing, bytes, and cache evidence recorded"
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
     sha256sum --check "$stable_bridge_manifest"
@@ -1973,6 +1979,7 @@ EOF_MANAGED_MINING_LEDGER
       --update-channel beta \
       --gateway-port "$gateway_port" \
       --local \
+	  --verbose \
       -- \
       --non-interactive \
       --accept-risk \
@@ -2057,6 +2064,8 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   cat /tmp/managed-update-failure.err /tmp/managed-update-success.out \
     >/tmp/managed-rollback-retry.evidence
   acceptance_mark rollback-retry /tmp/managed-rollback-retry.evidence
+	grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/managed-update-success.out >/dev/null
+	acceptance_mark lifecycle-performance /tmp/managed-update-success.out "update timing, bytes, and cache evidence recorded"
   if [[ -n "$managed_recovery_transaction" ]]; then
     managed_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${managed_recovery_transaction}.json"
     test "$(jq -er .operation "$managed_recovery_receipt")" = "recoverRelease"

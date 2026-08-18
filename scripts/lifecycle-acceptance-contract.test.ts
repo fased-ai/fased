@@ -92,7 +92,21 @@ describe("lifecycle acceptance contract", () => {
   });
 
   it("validates the exact historical v2 public contract without accepting mutations", () => {
-    const { evidencePolicy: _evidencePolicy, ...legacyV2 } = contract();
+    const { evidencePolicy: _evidencePolicy, ...currentV2 } = contract();
+    const legacyV2 = {
+      ...currentV2,
+      profiles: Object.fromEntries(
+        Object.entries(currentV2.profiles).map(([profile, scenarios]) => [
+          profile,
+          Object.fromEntries(
+            Object.entries(scenarios).map(([scenario, predicates]) => [
+              scenario,
+              predicates.filter((predicate) => predicate !== "lifecycle-performance"),
+            ]),
+          ),
+        ]),
+      ),
+    };
     expect(validatePublishedAcceptanceContract(legacyV2)).toBe(legacyV2);
     expect(digestPublishedAcceptanceContract(legacyV2)).toBe(
       "sha256:a1a15e2b080c25921339ed2aa38d05a9745213728866b9f19b48cedc79854197",

@@ -26,6 +26,7 @@ import (
 	"fased-lifecycled/hostsecurity"
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
+	"fased-lifecycled/protocol"
 	"fased-lifecycled/trust"
 )
 
@@ -135,6 +136,12 @@ func TestOfflineRootBootstrapStagesAndExecutesVerifiedHost(t *testing.T) {
 		!strings.HasPrefix(result.ReleaseAuthorityDigest, "sha256:") || len(result.ReleaseAuthorityDigest) != 71 {
 		t.Fatalf("bootstrap result lost algorithm-bound trust digests: %+v", result)
 	}
+	wantTransferred := hostAsset.Size + applicationAsset.Size + dependencyAsset.Size + signerAsset.Size
+	if result.Performance.TransferredBytes != wantTransferred || result.Performance.CacheHits != 0 || result.Performance.CacheMisses != 4 ||
+		result.Performance.SignatureVerificationMillis == 0 || result.Performance.DownloadMillis == 0 ||
+		result.Performance.ExtractionMillis == 0 || result.Performance.FsyncMillis == 0 || result.Performance.ActivationMillis == 0 || result.Performance.TotalMillis == 0 {
+		t.Fatalf("bootstrap performance evidence is incomplete: %+v", result.Performance)
+	}
 	if current, err := os.ReadFile(filepath.Join(fixtureRoot, "host", "host-current")); err != nil || string(current) != result.HostDigest+"\n" {
 		t.Fatalf("host pointer was not committed: %q err=%v", current, err)
 	}
@@ -147,6 +154,13 @@ func TestOfflineRootBootstrapStagesAndExecutesVerifiedHost(t *testing.T) {
 		if strings.Contains(strings.ToLower(obsolete), "delegation") {
 			t.Fatalf("bootstrap fetched obsolete delegation metadata: %v", requestedPaths)
 		}
+	}
+	warmResult, err := execute(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warmResult.Performance.TransferredBytes != 0 || warmResult.Performance.CacheHits != 4 || warmResult.Performance.CacheMisses != 0 {
+		t.Fatalf("warm bootstrap did not reuse the verified inbox: %+v", warmResult.Performance)
 	}
 }
 
@@ -181,6 +195,32 @@ func TestPublicBootstrapRequiresTerminalGenerationAndConvergenceDigests(t *testi
 				t.Fatal("non-terminal lifecycle response was accepted")
 			}
 		})
+	}
+}
+
+func TestLifecyclePerformanceOutputBindsTimingBytesAndCacheEvidence(t *testing.T) {
+	formatted := formatLifecyclePerformance(publicLifecyclePerformance{
+		ReleaseResolutionMillis: 2,
+		ApplyMillis:             7,
+		OnboardingMillis:        11,
+		TotalMillis:             31,
+		Transaction: &protocol.PerformanceEvidence{
+			QuiesceMillis: 8, SwitchMillis: 10, ServiceReadinessMillis: 12, TotalMillis: 30,
+		},
+		Acquisition: bootstrapPerformance{
+			SignatureVerificationMillis: 3,
+			DownloadMillis:              5,
+			ExtractionMillis:            4,
+			FsyncMillis:                 9,
+			ActivationMillis:            6,
+			TransferredBytes:            1234,
+			CacheHits:                   3,
+			CacheMisses:                 1,
+		},
+	})
+	want := "Lifecycle performance: resolution=2ms signature=3ms download=5ms extraction=4ms fsync=9ms activation=6ms quiesce=8ms switch=10ms readiness=12ms apply=7ms onboarding=11ms total=31ms transferred=1234B cache-hits=3 cache-misses=1"
+	if formatted != want {
+		t.Fatalf("performance evidence changed: %q", formatted)
 	}
 }
 

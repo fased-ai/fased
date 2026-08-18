@@ -110,7 +110,7 @@ if [[ -z "$operator_user" ]]; then
 fi
 [[ "$operator_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$operator_user" != root ]] || { echo "Fased installer: invalid unprivileged operator." >&2; exit 1; }
 
-for tool in curl sha256sum install mktemp uname; do
+for tool in curl date sha256sum install mktemp stat uname; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Fased installer: missing required system tool: $tool" >&2; exit 1; }
 done
 if [[ "$(id -u)" -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
@@ -118,33 +118,60 @@ if [[ "$(id -u)" -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
   exit 1
 fi
 
-cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/fased/bootstrap"
-mkdir -p "$cache_root"
-chmod 0700 "$cache_root"
-download="$(mktemp "$cache_root/.fased-bootstrap.XXXXXX")"
-trap 'rm -f -- "$download"' EXIT
 bootstrap_asset="fased-bootstrap-linux-${arch}"
 release_base="https://github.com/fased-ai/fased/releases/download/v${release}"
 curl_args=(-fL --proto '=https' --tlsv1.2 --retry 2 --retry-delay 1)
 if [[ "$verbose" -eq 0 ]]; then curl_args+=(-sS); fi
 
-if [[ "$streamed" -eq 1 ]]; then cat >/dev/null || true; fi
-echo "Fased: acquiring verified lifecycle bootstrap..."
-curl "${curl_args[@]}" "${release_base}/${bootstrap_asset}" -o "$download"
-actual_sha256="$(sha256sum "$download")"
-actual_sha256="${actual_sha256%% *}"
-[[ "$actual_sha256" == "$bootstrap_sha256" ]] || { echo "Fased installer: bootstrap digest mismatch." >&2; exit 1; }
-chmod 0500 "$download"
-
+install_started_ms="$(date +%s%3N)"
 bootstrap_dir="/opt/fased/lifecycle/bootstrap-v1"
 bootstrap="${bootstrap_dir}/fased-bootstrap"
+bootstrap_cache_hit="false"
+bootstrap_transferred_bytes=0
+bootstrap_download_seconds=0
+installed_sha256=""
+
+if [[ -e "$bootstrap" || -L "$bootstrap" ]]; then
+  [[ -f "$bootstrap" ]] && test ! -L "$bootstrap" && \
+    [[ "$(stat -c '%U:%G:%a:%h' "$bootstrap")" == "root:root:555:1" ]] || {
+    echo "Fased installer: existing bootstrap projection is unsafe." >&2
+    exit 1
+  }
+  installed_sha256="$(sha256sum "$bootstrap")"
+  installed_sha256="${installed_sha256%% *}"
+  if [[ "$installed_sha256" == "$bootstrap_sha256" ]]; then
+    bootstrap_cache_hit="true"
+  fi
+fi
+
+if [[ "$streamed" -eq 1 ]]; then cat >/dev/null || true; fi
+echo "Fased: acquiring verified lifecycle bootstrap..."
 root_command=()
 if [[ "$(id -u)" -ne 0 ]]; then root_command=(sudo); fi
-"${root_command[@]}" install -d -m 0755 "$bootstrap_dir"
-"${root_command[@]}" install -m 0555 "$download" "$bootstrap"
-installed_sha256="$(sha256sum "$bootstrap")"
-installed_sha256="${installed_sha256%% *}"
-[[ "$installed_sha256" == "$bootstrap_sha256" ]] || { echo "Fased installer: installed bootstrap identity mismatch." >&2; exit 1; }
+if [[ "$bootstrap_cache_hit" != "true" ]]; then
+  cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/fased/bootstrap"
+  mkdir -p "$cache_root"
+  chmod 0700 "$cache_root"
+  download="$(mktemp "$cache_root/.fased-bootstrap.XXXXXX")"
+  trap 'rm -f -- "${download:-}"' EXIT
+  read -r bootstrap_transferred_bytes bootstrap_download_seconds < <(
+    curl "${curl_args[@]}" --write-out '%{size_download} %{time_total}\n' \
+      "${release_base}/${bootstrap_asset}" -o "$download"
+  )
+  [[ "$bootstrap_transferred_bytes" =~ ^[0-9]+$ && "$bootstrap_download_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+    echo "Fased installer: bootstrap transfer evidence is invalid." >&2
+    exit 1
+  }
+  actual_sha256="$(sha256sum "$download")"
+  actual_sha256="${actual_sha256%% *}"
+  [[ "$actual_sha256" == "$bootstrap_sha256" ]] || { echo "Fased installer: bootstrap digest mismatch." >&2; exit 1; }
+  chmod 0500 "$download"
+  "${root_command[@]}" install -d -m 0755 "$bootstrap_dir"
+  "${root_command[@]}" install -m 0555 "$download" "$bootstrap"
+  installed_sha256="$(sha256sum "$bootstrap")"
+  installed_sha256="${installed_sha256%% *}"
+  [[ "$installed_sha256" == "$bootstrap_sha256" ]] || { echo "Fased installer: installed bootstrap identity mismatch." >&2; exit 1; }
+fi
 
 bootstrap_args=(
   install
@@ -177,6 +204,11 @@ verify_public_command() {
   grep -Fqx "Already current: $release" <<<"$update_output"
 }
 verify_public_command
+if [[ "$verbose" -eq 1 ]]; then
+  install_total_ms="$(( $(date +%s%3N) - install_started_ms ))"
+  printf 'Installer performance: total=%sms bootstrap-download=%ss transferred=%sB cache-hit=%s\n' \
+    "$install_total_ms" "$bootstrap_download_seconds" "$bootstrap_transferred_bytes" "$bootstrap_cache_hit"
+fi
 echo "Fased: installation complete."
 }
 

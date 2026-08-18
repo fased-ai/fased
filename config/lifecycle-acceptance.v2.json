@@ -27,6 +27,7 @@
       "fresh-install": [
         "artifact-identity",
         "public-installer-acquisition",
+        "lifecycle-performance",
         "canonical-lifecycle",
         "three-services-active",
         "wallet-status",
@@ -44,6 +45,7 @@
         "public-installer-acquisition",
         "predecessor-capsule-attestation",
         "rollback-retry",
+        "lifecycle-performance",
         "canonical-lifecycle",
         "three-services-active",
         "wallet-status",
@@ -61,6 +63,7 @@
       "fresh-install": [
         "artifact-identity",
         "public-installer-acquisition",
+        "lifecycle-performance",
         "canonical-lifecycle",
         "three-services-active",
         "wallet-status",
@@ -78,6 +81,7 @@
         "public-installer-acquisition",
         "predecessor-capsule-attestation",
         "rollback-retry",
+        "lifecycle-performance",
         "canonical-lifecycle",
         "three-services-active",
         "wallet-status",

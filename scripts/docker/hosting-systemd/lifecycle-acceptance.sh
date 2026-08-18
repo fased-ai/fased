@@ -491,6 +491,7 @@ run_public_installer() {
       --hosting \
       --release "v$version" \
       --update-channel beta \
+	  --verbose \
       --tailnet-access-confirmed \
       -- \
       --non-interactive \
@@ -743,6 +744,9 @@ case "$phase" in
     ! grep -Fq 'Type the Tailscale DNS name' /tmp/fased-hosting-install.out
     ! command -v node >/dev/null 2>&1
     acceptance_start
+	grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/fased-hosting-install.out >/dev/null
+	acceptance_mark lifecycle-performance /tmp/fased-hosting-install.out \
+	  "install timing, bytes, and cache evidence recorded"
     assert_healthy
     acceptance_mark canonical-lifecycle /var/lib/fased-lifecycled/installation-manifest.json \
       "canonical Hosting lifecycle verified"
@@ -830,6 +834,9 @@ EOF_TARGET_DROPIN
 
     run_public_installer >/tmp/fased-hosting-update.out 2>/tmp/fased-hosting-update.err
     acceptance_mark rollback-retry /tmp/fased-hosting-update.out "rollback and identical retry verified"
+	grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/fased-hosting-update.out >/dev/null
+	acceptance_mark lifecycle-performance /tmp/fased-hosting-update.out \
+	  "update timing, bytes, and cache evidence recorded"
     assert_healthy
     acceptance_mark canonical-lifecycle /var/lib/fased-lifecycled/installation-manifest.json \
       "canonical Hosting lifecycle verified"

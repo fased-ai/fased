@@ -38,13 +38,21 @@ type Request struct {
 }
 
 type Response struct {
-	SchemaVersion            uint32 `json:"schemaVersion"`
-	RequestID                string `json:"requestId"`
-	Outcome                  string `json:"outcome"`
-	Detail                   string `json:"detail,omitempty"`
-	TransactionID            string `json:"transactionId,omitempty"`
-	ActiveGenerationID       string `json:"activeGenerationId,omitempty"`
-	ConvergenceReceiptDigest string `json:"convergenceReceiptDigest,omitempty"`
+	SchemaVersion            uint32               `json:"schemaVersion"`
+	RequestID                string               `json:"requestId"`
+	Outcome                  string               `json:"outcome"`
+	Detail                   string               `json:"detail,omitempty"`
+	TransactionID            string               `json:"transactionId,omitempty"`
+	ActiveGenerationID       string               `json:"activeGenerationId,omitempty"`
+	ConvergenceReceiptDigest string               `json:"convergenceReceiptDigest,omitempty"`
+	Performance              *PerformanceEvidence `json:"performance,omitempty"`
+}
+
+type PerformanceEvidence struct {
+	QuiesceMillis          uint64 `json:"quiesceMillis"`
+	SwitchMillis           uint64 `json:"switchMillis"`
+	ServiceReadinessMillis uint64 `json:"serviceReadinessMillis"`
+	TotalMillis            uint64 `json:"totalMillis"`
 }
 
 var (

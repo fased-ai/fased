@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/store"
@@ -23,6 +24,7 @@ type SupervisorEngine struct {
 }
 
 func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (Result, error) {
+	runStarted := time.Now()
 	if err := engine.validate(); err != nil {
 		return Result{}, err
 	}
@@ -44,6 +46,7 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 	targetTx.Phase = model.PhaseIdle
 	targetTx.Revision = 1
 	targetResult, targetErr := engine.Target.Run(ctx, targetTx)
+	performance := targetResult.Performance
 	if targetErr != nil || targetResult.Phase != model.PhaseVerified {
 		if targetErr == nil {
 			targetErr = errors.New("target controller did not verify its product transaction")
@@ -60,6 +63,7 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 		return Result{}, err
 	}
 	targetResult, err = engine.Target.Commit(ctx, tx.ID)
+	performance.ServiceReadinessMillis += targetResult.Performance.ServiceReadinessMillis
 	if err != nil || validateTerminalTargetResult(targetResult, tx) != nil {
 		if err == nil {
 			err = validateTerminalTargetResult(targetResult, tx)
@@ -74,10 +78,12 @@ func (engine *SupervisorEngine) Run(ctx context.Context, tx model.Transaction) (
 	if err != nil {
 		return Result{}, err
 	}
+	performance.TotalMillis = measuredMillis(runStarted)
 	return Result{
 		Outcome: OutcomeUpdated, Phase: tx.Phase,
 		ActiveGenerationID:       targetResult.ActiveGenerationID,
 		ConvergenceReceiptDigest: targetResult.ConvergenceReceiptDigest,
+		Performance:              performance,
 	}, nil
 }
 

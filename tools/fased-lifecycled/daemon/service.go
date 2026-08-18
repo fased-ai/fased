@@ -386,10 +386,23 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 	result, runErr := service.Supervisor.Run(ctx, tx)
 	response := response(request, string(result.Outcome), transactionID, generation.ID)
 	response.ConvergenceReceiptDigest = result.ConvergenceReceiptDigest
+	response.Performance = protocolPerformance(result.Performance)
 	if runErr == nil && result.Outcome == engine.OutcomeUpdated && (!validConvergenceDigest(result.ConvergenceReceiptDigest) || result.ActiveGenerationID != generation.ID) {
 		return protocol.Response{}, errors.New("target controller committed without terminal convergence proof")
 	}
 	return response, runErr
+}
+
+func protocolPerformance(performance engine.PerformanceEvidence) *protocol.PerformanceEvidence {
+	if performance == (engine.PerformanceEvidence{}) {
+		return nil
+	}
+	return &protocol.PerformanceEvidence{
+		QuiesceMillis:          performance.QuiesceMillis,
+		SwitchMillis:           performance.SwitchMillis,
+		ServiceReadinessMillis: performance.ServiceReadinessMillis,
+		TotalMillis:            performance.TotalMillis,
+	}
 }
 
 func (service *Service) recover(ctx context.Context, request protocol.Request) (protocol.Response, error) {

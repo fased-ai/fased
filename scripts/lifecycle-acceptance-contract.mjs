@@ -17,6 +17,7 @@ const LEGACY_V2_EVIDENCE_POLICY_DIGEST =
 const commonPredicates = Object.freeze([
   "artifact-identity",
   "public-installer-acquisition",
+  "lifecycle-performance",
   "canonical-lifecycle",
   "three-services-active",
   "wallet-status",
@@ -29,6 +30,9 @@ const commonPredicates = Object.freeze([
   "installer-already-current",
   "updater-already-current",
 ]);
+const legacyV2CommonPredicates = Object.freeze(
+  commonPredicates.filter((predicate) => predicate !== "lifecycle-performance"),
+);
 
 export const REQUIRED_PREDICATES = Object.freeze(
   Object.fromEntries(
@@ -42,6 +46,23 @@ export const REQUIRED_PREDICATES = Object.freeze(
           "predecessor-capsule-attestation",
           "rollback-retry",
           ...commonPredicates.slice(2),
+        ]),
+      }),
+    ]),
+  ),
+);
+const LEGACY_V2_REQUIRED_PREDICATES = Object.freeze(
+  Object.fromEntries(
+    PROFILES.map((profile) => [
+      profile,
+      Object.freeze({
+        "fresh-install": legacyV2CommonPredicates,
+        "managed-update": Object.freeze([
+          "artifact-identity",
+          "public-installer-acquisition",
+          "predecessor-capsule-attestation",
+          "rollback-retry",
+          ...legacyV2CommonPredicates.slice(2),
         ]),
       }),
     ]),
@@ -107,7 +128,7 @@ export function validatePublishedAcceptanceContract(contract) {
       ) {
         fail("published v2 contract digest is invalid");
       }
-      validateProfiles(contract.profiles);
+      validateProfiles(contract.profiles, LEGACY_V2_REQUIRED_PREDICATES);
       return contract;
     }
     if (digestStableContract(contract) === LEGACY_V2_EVIDENCE_POLICY_DIGEST) {
@@ -129,13 +150,13 @@ export function validatePublishedAcceptanceContract(contract) {
   return contract;
 }
 
-function validateProfiles(profiles) {
+function validateProfiles(profiles, requiredPredicates = REQUIRED_PREDICATES) {
   exactKeys(profiles, PROFILES, "contract profiles");
   for (const profile of PROFILES) {
     exactKeys(profiles[profile], SCENARIOS, `${profile} scenarios`);
     for (const scenario of SCENARIOS) {
       const actual = profiles[profile][scenario];
-      const required = REQUIRED_PREDICATES[profile][scenario];
+      const required = requiredPredicates[profile][scenario];
       if (
         !Array.isArray(actual) ||
         actual.length !== required.length ||
