@@ -708,6 +708,9 @@ describe("CI workflow routing", () => {
     const candidateBuild = candidate?.steps?.find(
       (step) => step.name === "Build exact non-publishable x64 artifact once",
     );
+    const candidateFinalize = candidate?.steps?.find(
+      (step) => step.name === "Prove nonpublishing finalization before immutable tag",
+    );
     const hostingRun = hosting?.steps?.find((step) => step.name === "Run exact Hosting entrypoint");
     const predecessorTopology = localUpdate?.steps?.find(
       (step) => step.name === "Derive exact predecessor topology",
@@ -747,6 +750,21 @@ describe("CI workflow routing", () => {
     });
     expect(allText).toContain("scripts/prepare-candidate-fixture-trust.sh");
     expect(allText).toContain("fased-pre-tag-candidate-raw");
+    expect(candidateFinalize?.env).toMatchObject({
+      RELEASE_SEQUENCE: "${{ needs.preflight.outputs.release_sequence }}",
+      SECURITY_EPOCH: "${{ needs.preflight.outputs.security_epoch }}",
+      RELEASE_VERSION: "${{ inputs.release_version }}",
+      SOURCE_COMMIT: "${{ inputs.source_commit }}",
+    });
+    expect(candidateFinalize?.run).toContain("scripts/finalize-pretag-candidate.sh");
+    expect(candidateFinalize?.run).toContain("fased-pre-tag-finalized");
+    expect(candidateFinalize?.run).not.toContain("gh release");
+    expect(candidateFinalize?.run).not.toContain("gh attestation");
+    expect(candidate?.steps?.indexOf(candidateFinalize!)).toBeLessThan(
+      candidate?.steps?.findIndex(
+        (step) => step.name === "Upload exact pre-tag candidate-shaped artifact",
+      ) ?? -1,
+    );
     expect(predecessorTopology?.env).toMatchObject({
       GH_TOKEN: "${{ github.token }}",
     });

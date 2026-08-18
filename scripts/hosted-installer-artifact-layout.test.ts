@@ -178,6 +178,11 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(candidateFinalizer).toContain("fased-branch-*");
     expect(candidateFinalizer).toContain("privileged-release-evidence.mjs");
     expect(candidateFinalizer).toContain("build-lifecycle-release-index.mjs");
+    expect(candidateFinalizer).toContain('lifecycle-release-compatibility.mjs" verify');
+    expect(candidateFinalizer).toContain(
+      '--manifest "$OUTPUT_DIR/fased-lifecycle-release-compatibility-v1.json"',
+    );
+    expect(candidateFinalizer).not.toContain('lifecycle-release-compatibility.mjs" build');
     expect(candidateFinalizer).not.toContain("pnpm build");
     expect(candidateFinalizer).not.toContain("hosted:artifact:from-dist");
     expect(candidateFinalizer).not.toContain("test-lifecycle-local-acceptance.sh");

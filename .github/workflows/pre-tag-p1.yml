@@ -204,6 +204,28 @@ jobs:
           digest="sha256:$(sha256sum "$descriptor" | awk '{print $1}')"
           printf 'descriptor_sha256=%s\n' "$digest" >>"$GITHUB_OUTPUT"
 
+      - name: Prove nonpublishing finalization before immutable tag
+        env:
+          RELEASE_SEQUENCE: ${{ needs.preflight.outputs.release_sequence }}
+          SECURITY_EPOCH: ${{ needs.preflight.outputs.security_epoch }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/finalize-pretag-candidate.sh \
+            "$RUNNER_TEMP/fased-pre-tag-candidate" \
+            "$RUNNER_TEMP/fased-pre-tag-finalized" \
+            "$RELEASE_VERSION" \
+            "$SOURCE_COMMIT" \
+            "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            "$RELEASE_SEQUENCE" \
+            "$SECURITY_EPOCH"
+          test -s "$RUNNER_TEMP/fased-pre-tag-finalized/fased-hosted-release-v2.json"
+          test -s \
+            "$RUNNER_TEMP/fased-pre-tag-finalized/fased-lifecycle-release-compatibility-v1.json"
+          test ! -e "$RUNNER_TEMP/fased-pre-tag-finalized/fased-candidate-fixture-overlay.json"
+
       - name: Upload exact pre-tag candidate-shaped artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
