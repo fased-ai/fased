@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -12,19 +11,20 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"fased-signerd/internal/admintransport"
 )
 
 const (
 	maxSignerAdminPolicyBytes   = 64 << 10
-	maxSignerAdminResponseBytes = 1 << 20
-	signerAdminSocketTimeout    = 15 * time.Second
+	maxSignerAdminResponseBytes = admintransport.MaxResponseBytes
+	signerAdminSocketTimeout    = admintransport.ClientTimeout
 )
 
 type signerAdminRequiredUint64 struct {
@@ -54,6 +54,7 @@ type signerAdminCommonFlags struct {
 type signerAdminSocketInfo struct {
 	path     string
 	ownerUID int
+	socket   admintransport.InspectedSocket
 }
 
 type signerAdminResponse struct {
@@ -251,71 +252,19 @@ func parseSignerAdminFlags(fs *flag.FlagSet, args []string) error {
 }
 
 func requireSignerAdminControlSocket(raw string) (signerAdminSocketInfo, error) {
-	path := strings.TrimSpace(raw)
-	if path == "" {
-		return signerAdminSocketInfo{}, errors.New("--control-socket is required")
-	}
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return signerAdminSocketInfo{}, errors.New("signer admin control socket path must be absolute and clean")
-	}
-	parent := filepath.Dir(path)
-	parentInfo, err := os.Lstat(parent)
+	socket, err := admintransport.InspectControlSocket(raw)
 	if err != nil {
-		return signerAdminSocketInfo{}, fmt.Errorf("inspect signer control socket directory: %w", err)
+		return signerAdminSocketInfo{}, err
 	}
-	if parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() {
-		return signerAdminSocketInfo{}, errors.New("signer control socket directory must be a non-symlink directory")
-	}
-	if parentInfo.Mode().Perm()&0o022 != 0 {
-		return signerAdminSocketInfo{}, errors.New("signer control socket directory must not be group/world writable")
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return signerAdminSocketInfo{}, fmt.Errorf("inspect signer control socket: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
-		return signerAdminSocketInfo{}, errors.New("signer admin control socket must be a non-symlink Unix socket")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return signerAdminSocketInfo{}, errors.New("signer admin control socket must not be group/world accessible")
-	}
-	ownerUID := -1
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		ownerUID = int(stat.Uid)
-		if os.Geteuid() != 0 && ownerUID != os.Geteuid() {
-			return signerAdminSocketInfo{}, errors.New("signer admin control socket must be owned by the current user")
-		}
-	}
-	return signerAdminSocketInfo{path: path, ownerUID: ownerUID}, nil
+	return signerAdminSocketInfo{path: socket.Path(), ownerUID: socket.OwnerUID(), socket: socket}, nil
 }
 
 func requireSignerAdminOperatorSocket(raw string) (signerAdminSocketInfo, error) {
-	path := strings.TrimSpace(raw)
-	if path == "" {
-		return signerAdminSocketInfo{}, errors.New("--operator-socket is required")
-	}
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return signerAdminSocketInfo{}, errors.New("signer operator socket path must be absolute and clean")
-	}
-	parentInfo, err := os.Lstat(filepath.Dir(path))
-	if err != nil || parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() || parentInfo.Mode().Perm()&0o002 != 0 {
-		return signerAdminSocketInfo{}, errors.New("signer operator socket directory must be a non-symlink directory not writable by others")
-	}
-	info, err := os.Lstat(path)
+	socket, err := admintransport.InspectOperatorSocket(raw)
 	if err != nil {
-		return signerAdminSocketInfo{}, fmt.Errorf("inspect signer operator socket: %w", err)
+		return signerAdminSocketInfo{}, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
-		return signerAdminSocketInfo{}, errors.New("signer operator socket must be a non-symlink Unix socket")
-	}
-	if mode := info.Mode().Perm(); mode != 0o660 && mode != 0o600 {
-		return signerAdminSocketInfo{}, errors.New("signer operator socket must have mode 0660 or 0600")
-	}
-	ownerUID := -1
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		ownerUID = int(stat.Uid)
-	}
-	return signerAdminSocketInfo{path: path, ownerUID: ownerUID}, nil
+	return signerAdminSocketInfo{path: socket.Path(), ownerUID: socket.OwnerUID(), socket: socket}, nil
 }
 
 func requireSignerAdminLifecycleSocket(common *signerAdminCommonFlags) (signerAdminSocketInfo, bool, error) {
@@ -1537,22 +1486,18 @@ func callSignerSocketWithSensitivityV1(
 		defer zeroBytes(encoded)
 	}
 
-	dialer := net.Dialer{Timeout: signerAdminSocketTimeout}
-	conn, err := dialer.Dial("unix", socket.path)
-	if err != nil {
-		return nil, errors.New("connect to signer lifecycle socket")
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(signerAdminSocketTimeout))
 	payload := append(encoded, '\n')
 	if sensitive {
 		defer zeroBytes(payload)
 	}
-	if err := writeSignerAdminAll(conn, payload); err != nil {
-		return nil, errors.New("write signer lifecycle request")
-	}
-	line, err := readRequestLine(bufio.NewReader(conn), maxSignerAdminResponseBytes)
+	line, err := admintransport.Exchange(socket.socket, payload)
 	if err != nil {
+		if stage, ok := admintransport.StageOf(err); ok && stage == admintransport.ExchangeConnect {
+			return nil, errors.New("connect to signer lifecycle socket")
+		}
+		if stage, ok := admintransport.StageOf(err); ok && stage == admintransport.ExchangeWrite {
+			return nil, errors.New("write signer lifecycle request")
+		}
 		return nil, errors.New("read signer lifecycle response; query state before retrying any mutating command")
 	}
 	var response signerAdminResponse
@@ -1573,16 +1518,5 @@ func callSignerSocketWithSensitivityV1(
 }
 
 func writeSignerAdminAll(writer io.Writer, data []byte) error {
-	written := 0
-	for written < len(data) {
-		n, err := writer.Write(data[written:])
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-		written += n
-	}
-	return nil
+	return admintransport.WriteAll(writer, data)
 }
