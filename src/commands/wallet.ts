@@ -39,6 +39,7 @@ import {
   reconcileWalletInboundEvents,
   type WalletInboundStatus,
 } from "../wallet/wallet-inbound-events.js";
+import type { WalletRetireOptions } from "../wallet/wallet-mining-rotation-facade.js";
 import { buildWalletProviderCapabilityMatrix } from "../wallet/wallet-provider-capabilities.js";
 import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import type { WalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
@@ -138,15 +139,7 @@ export type {
   WalletRecoveryImportOptions,
 } from "../wallet/wallet-recovery-facade.js";
 
-export type WalletRetireOptions = {
-  walletId: string;
-  successorWalletId: string;
-  successorWalletName: string;
-  recoveryFile: string;
-  rpcUrl: string;
-  liveMiningStatus: unknown;
-  json?: boolean;
-};
+export type { WalletRetireOptions } from "../wallet/wallet-mining-rotation-facade.js";
 
 export type WalletRpcSetOptions = {
   walletId: string;

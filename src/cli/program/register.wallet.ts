@@ -11,7 +11,6 @@ import {
   walletPolicyActivateRoleBaselineCommand,
   walletProviderConfigureCommand,
   walletRotateKeysCommand,
-  walletRetireCommand,
   walletRpcSetCommand,
   walletRoleSetCommand,
   walletSetupCommand,
@@ -20,6 +19,7 @@ import {
   walletStatusCommand,
 } from "../../commands/wallet.js";
 import { defaultRuntime } from "../../runtime.js";
+import { walletMiningRotationFacade } from "../../wallet/wallet-mining-rotation-facade.js";
 import { walletRecoveryFacade } from "../../wallet/wallet-recovery-facade.js";
 import { runCommandWithRuntime } from "../cli-utils.js";
 import {
@@ -204,7 +204,7 @@ export function registerWalletCommands(program: Command) {
           retirementGatewayError: error instanceof Error ? error.message : String(error),
         };
       }
-      await walletRetireCommand(defaultRuntime, {
+      await walletMiningRotationFacade.retireAndReplace(defaultRuntime, {
         walletId: String(opts.walletId),
         successorWalletId: String(opts.successorWalletId),
         successorWalletName: String(opts.successorWalletName),
