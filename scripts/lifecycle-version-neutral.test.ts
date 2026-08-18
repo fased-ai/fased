@@ -1,10 +1,17 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
+const fixtureOnlyHelper = resolve(repoRoot, "scripts/lifecycle-fixture-only-paths.sh");
+
+function git(repo: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
+}
 
 describe("version-neutral lifecycle acceptance", () => {
   it("uses one cached tag-free LOCAL0 driver before release allocation", async () => {
@@ -24,7 +31,7 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(local0).toContain("fixtureOnlyDescendant");
     expect(local0).toContain("artifact_product_commit");
     expect(local0).toContain("crosses the fixture-only reuse boundary");
-    expect(local0).toContain("merge-base --is-ancestor");
+    expect(local0).not.toContain("merge-base --is-ancestor");
     expect(local0).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
     expect(local0).toContain('.evidenceClass == "PASS" and .commit == $commit');
     expect(local0).toContain(
@@ -34,6 +41,89 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(local0).not.toMatch(/all\)\s+run_serial\s+run_concurrent/);
     expect(local0).toContain("--lane is valid only with --mode serial.");
     expect(local0).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
+  });
+
+  it("accepts content-equivalent squash trees and rejects product differences", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "fased-squash-artifact-reuse-"));
+    try {
+      git(repo, "init", "--quiet");
+      git(repo, "config", "user.name", "Fased Fixture Test");
+      git(repo, "config", "user.email", "fixture@example.invalid");
+      await mkdir(resolve(repo, "src"), { recursive: true });
+      await mkdir(resolve(repo, "scripts"), { recursive: true });
+      await writeFile(resolve(repo, "src/product.txt"), "identical product bytes\n");
+      await writeFile(resolve(repo, "scripts/run-lifecycle-local0.sh"), "fixture v1\n");
+      git(repo, "add", ".");
+      git(repo, "commit", "--quiet", "-m", "product artifact source");
+      const productCommit = git(repo, "rev-parse", "HEAD");
+
+      git(repo, "checkout", "--quiet", "--orphan", "squashed-main");
+      git(repo, "rm", "-r", "-f", "--quiet", ".");
+      await mkdir(resolve(repo, "src"), { recursive: true });
+      await mkdir(resolve(repo, "scripts"), { recursive: true });
+      await writeFile(resolve(repo, "src/product.txt"), "identical product bytes\n");
+      await writeFile(resolve(repo, "scripts/run-lifecycle-local0.sh"), "fixture v2\n");
+      git(repo, "add", ".");
+      git(repo, "commit", "--quiet", "-m", "squashed fixture correction");
+      const squashCommit = git(repo, "rev-parse", "HEAD");
+
+      expect(
+        spawnSync("git", ["-C", repo, "merge-base", "--is-ancestor", productCommit, squashCommit])
+          .status,
+      ).not.toBe(0);
+      const allowed = spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$1"; lifecycle_unexpected_fixture_changes "$2" "$3" "$4"',
+          "bash",
+          fixtureOnlyHelper,
+          repo,
+          productCommit,
+          squashCommit,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(allowed.status).toBe(0);
+      expect(allowed.stdout).toBe("");
+
+      await writeFile(resolve(repo, "src/product.txt"), "changed product bytes\n");
+      git(repo, "add", "src/product.txt");
+      git(repo, "commit", "--quiet", "-m", "product change");
+      const changedCommit = git(repo, "rev-parse", "HEAD");
+      const rejected = spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$1"; lifecycle_unexpected_fixture_changes "$2" "$3" "$4"',
+          "bash",
+          fixtureOnlyHelper,
+          repo,
+          productCommit,
+          changedCommit,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(rejected.status).toBe(0);
+      expect(rejected.stdout.trim()).toBe("src/product.txt");
+
+      const invalidIdentity = spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$1"; lifecycle_unexpected_fixture_changes "$2" "$3" "$4"',
+          "bash",
+          fixtureOnlyHelper,
+          repo,
+          productCommit,
+          "0000000000000000000000000000000000000000",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(invalidIdentity.status).not.toBe(0);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
   });
 
   it("requires explicit public predecessor identities and has no private-RC scenario", async () => {
@@ -201,7 +291,12 @@ describe("version-neutral lifecycle acceptance", () => {
       "Parallel protected Local proof stopped on the first failed scenario.",
     );
     expect(wrapper).toContain('FIXTURE_SOURCE_COMMIT="$COMMIT"');
-    expect(wrapper).toContain('git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD');
+    expect(wrapper).not.toContain("merge-base --is-ancestor");
+    const hostingWrapper = await readFile(
+      resolve(repoRoot, "scripts/test-lifecycle-hosting-acceptance.sh"),
+      "utf8",
+    );
+    expect(hostingWrapper).not.toContain("merge-base --is-ancestor");
     expect(wrapper).toContain('git -C "$ROOT_DIR" archive "$FIXTURE_SOURCE_COMMIT"');
     expect(wrapper).toContain("Branch artifact reuse rejected product changes:");
     const capsuleWrapper = await readFile(
@@ -212,6 +307,7 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(capsuleWrapper).toContain("Predecessor capsule reuse rejected product changes:");
     expect(capsuleWrapper).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
     expect(capsuleWrapper).toContain("lifecycle_unexpected_fixture_changes");
+    expect(capsuleWrapper).not.toContain("merge-base --is-ancestor");
     expect(capsuleWrapper).toContain("$FIXTURE_COMMIT-$FIXTURE_TREE");
     expect(capsuleWrapper).toContain("--pattern fased-lifecycled-linux-amd64");
     expect(capsuleWrapper).toContain(

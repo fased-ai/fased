@@ -643,10 +643,6 @@ if [[ "$EXACT_CANDIDATE_REPLAY" == "1" ]]; then
     echo "Exact candidate replay requires an unmodified candidate artifact directory." >&2
     exit 1
   }
-  git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD || {
-    echo "Exact candidate replay requires a descendant fixture correction." >&2
-    exit 1
-  }
   unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
     "$ROOT_DIR" "$COMMIT" HEAD)"
   [[ -z "$unexpected_fixture_changes" ]] || {
@@ -658,10 +654,6 @@ if [[ "$EXACT_CANDIDATE_REPLAY" == "1" ]]; then
   echo "exact candidate replay: product=$COMMIT fixture=$FIXTURE_SOURCE_COMMIT"
 elif [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]]; then
-  git -C "$ROOT_DIR" merge-base --is-ancestor "$COMMIT" HEAD || {
-    echo "A branch artifact can reuse only descendant fixture corrections." >&2
-    exit 1
-  }
   unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
     "$ROOT_DIR" "$COMMIT" HEAD)"
   [[ -z "$unexpected_fixture_changes" ]] || {
