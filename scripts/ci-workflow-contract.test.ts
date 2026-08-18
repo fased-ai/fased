@@ -601,7 +601,12 @@ describe("CI workflow routing", () => {
       name: "fased-pre-tag-candidate",
       "run-id": "${{ inputs.pre_tag_p1_run_id }}",
     });
-    expect(finalizeText).toContain("scripts/finalize-pretag-candidate.sh");
+    const prepareArtifactParent = finalizeText.indexOf(
+      'mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts"',
+    );
+    const finalizePreTagCandidate = finalizeText.indexOf("scripts/finalize-pretag-candidate.sh");
+    expect(prepareArtifactParent).toBeGreaterThan(-1);
+    expect(finalizePreTagCandidate).toBeGreaterThan(prepareArtifactParent);
     expect(finalizeText).toContain("release-artifact-set.mjs build");
     expect(finalizeText).not.toContain("pnpm build");
     expect(finalizeText).not.toContain("go build");

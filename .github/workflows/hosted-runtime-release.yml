@@ -273,6 +273,7 @@ jobs:
           source_dir="$RUNNER_TEMP/fased-pre-tag-candidate"
           test "sha256:$(sha256sum "$source_dir/fased-hosting-candidate.json" | awk '{print $1}')" = \
             "$EXPECTED_DESCRIPTOR_SHA256"
+          mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts"
           bash scripts/finalize-pretag-candidate.sh \
             "$source_dir" \
             "$GITHUB_WORKSPACE/.artifacts/hosted-runtime" \
