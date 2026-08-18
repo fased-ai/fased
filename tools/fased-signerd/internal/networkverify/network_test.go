@@ -102,23 +102,23 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return fn(request) }
 
 func TestGenesisClusterBinding(t *testing.T) {
-	if _, err := NormalizeGenesisHash(mainnetGenesisHash); err != nil {
+	if _, err := NormalizeGenesisHash(MainnetGenesisHash); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateClusterGenesis("mainnet-beta", mainnetGenesisHash, "https://rpc.example.com"); err != nil {
+	if err := ValidateClusterGenesis("mainnet-beta", MainnetGenesisHash, "https://rpc.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateClusterGenesis("devnet", mainnetGenesisHash, "https://rpc.example.com"); err == nil || !strings.Contains(err.Error(), "not Solana devnet") {
+	if err := ValidateClusterGenesis("devnet", MainnetGenesisHash, "https://rpc.example.com"); err == nil || !strings.Contains(err.Error(), "not Solana devnet") {
 		t.Fatalf("mismatched genesis accepted: %v", err)
 	}
-	if err := ValidateClusterGenesis("local", mainnetGenesisHash, "http://127.0.0.1:8899"); err == nil || !strings.Contains(err.Error(), "invalid cluster genesis") {
+	if err := ValidateClusterGenesis("local", MainnetGenesisHash, "http://127.0.0.1:8899"); err == nil || !strings.Contains(err.Error(), "invalid cluster genesis") {
 		t.Fatalf("public local genesis accepted: %v", err)
 	}
 }
 
 func TestRPCURLsForClusterFiltersLiveEndpointsInOrder(t *testing.T) {
-	first := startGenesisRPC(t, mainnetGenesisHash)
-	second := startGenesisRPC(t, mainnetGenesisHash)
+	first := startGenesisRPC(t, MainnetGenesisHash)
+	second := startGenesisRPC(t, MainnetGenesisHash)
 	urls, err := RPCURLsForCluster([]string{second.URL, "http://127.0.0.1:1", first.URL}, "mainnet-beta", time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestRPCURLsForClusterFiltersLiveEndpointsInOrder(t *testing.T) {
 }
 
 func TestRPCURLsForClusterFailsClosed(t *testing.T) {
-	mismatch := startGenesisRPC(t, devnetGenesisHash)
+	mismatch := startGenesisRPC(t, DevnetGenesisHash)
 	if _, err := RPCURLsForCluster([]string{mismatch.URL}, "mainnet-beta", time.Second); err == nil || !strings.Contains(err.Error(), "typed Vault bond cluster verification failed: signer-owned RPC is not Solana mainnet-beta") {
 		t.Fatalf("mismatched genesis was accepted: %v", err)
 	}

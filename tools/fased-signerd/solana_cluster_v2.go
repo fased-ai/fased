@@ -3,8 +3,8 @@ package main
 import "fased-signerd/internal/networkverify"
 
 const (
-	solanaMainnetGenesisHashV2 = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
-	solanaDevnetGenesisHashV2  = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+	solanaMainnetGenesisHashV2 = networkverify.MainnetGenesisHash
+	solanaDevnetGenesisHashV2  = networkverify.DevnetGenesisHash
 )
 
 func normalizeSolanaClusterV2(raw string) (string, error) {

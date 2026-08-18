@@ -32,8 +32,8 @@ const (
 	maxRPCResponseBytes  = MaxRPCResponseBytes
 	maxRPCResponseHeader = MaxRPCResponseHeader
 	maxRPCJSONDepth      = MaxRPCJSONDepth
-	mainnetGenesisHash   = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
-	devnetGenesisHash    = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+	MainnetGenesisHash   = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" // pragma: allowlist secret
+	DevnetGenesisHash    = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" // pragma: allowlist secret
 )
 
 // NormalizeRPCURL validates and canonicalizes a signer-owned RPC URL.
@@ -313,11 +313,11 @@ func ValidateClusterGenesis(cluster, genesisHash, rpcURL string) error {
 	}
 	switch cluster {
 	case "mainnet-beta":
-		if genesisHash != mainnetGenesisHash {
+		if genesisHash != MainnetGenesisHash {
 			return errors.New("signer-owned RPC is not Solana mainnet-beta")
 		}
 	case "devnet":
-		if genesisHash != devnetGenesisHash {
+		if genesisHash != DevnetGenesisHash {
 			return errors.New("signer-owned RPC is not Solana devnet")
 		}
 	case "local":
@@ -330,7 +330,7 @@ func ValidateClusterGenesis(cluster, genesisHash, rpcURL string) error {
 		if !isLoopbackHost(host, ip) {
 			return errors.New("typed local Vault bond execution requires a loopback signer-owned RPC")
 		}
-		if genesisHash == mainnetGenesisHash || genesisHash == devnetGenesisHash || strings.TrimSpace(genesisHash) == "" {
+		if genesisHash == MainnetGenesisHash || genesisHash == DevnetGenesisHash || strings.TrimSpace(genesisHash) == "" {
 			return errors.New("signer-owned local RPC has an invalid cluster genesis hash")
 		}
 	}
