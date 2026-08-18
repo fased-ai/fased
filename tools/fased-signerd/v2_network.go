@@ -9,7 +9,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -19,25 +18,19 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	solana "github.com/gagliardetto/solana-go"
+	"fased-signerd/internal/networkverify"
 	"github.com/gagliardetto/solana-go/rpc"
-	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	bolt "go.etcd.io/bbolt"
 )
 
 const (
-	maxSignerRPCURLBytesV2        = 2048
+	maxSignerRPCURLBytesV2        = networkverify.MaxRPCURLBytes
 	maxSignerNetworkInputBytesV2  = 8192
 	maxSignerNetworkRecordBytesV2 = 64 * 1024
-	maxSignerRPCResponseBytesV2   = 4 * 1024 * 1024
-	maxSignerRPCResponseHeaderV2  = 64 * 1024
-	maxSignerRPCJSONDepthV2       = 64
 )
 
 var (
@@ -200,13 +193,7 @@ func normalizeSignerNetworkInputV2(input signerNetworkPutRequestV2) (signerNetwo
 }
 
 func normalizeSignerGenesisHashV2(raw string) (string, error) {
-	if raw == "" || raw != strings.TrimSpace(raw) || len(raw) > 128 || strings.ContainsAny(raw, "\r\n\t\x00") {
-		return "", errors.New("invalid signer network genesis hash")
-	}
-	if _, err := solana.PublicKeyFromBase58(raw); err != nil {
-		return "", errors.New("invalid signer network genesis hash")
-	}
-	return raw, nil
+	return networkverify.NormalizeGenesisHash(raw)
 }
 
 func (m *signerKeyManagerV2) resolveSignerGenesisHashV2(rpcURL string) (string, error) {
@@ -297,295 +284,27 @@ func (m *signerKeyManagerV2) ensureSignerExecutionGenesisV2(config signerNetwork
 }
 
 func sameSignerRPCOriginV2(left, right string) bool {
-	leftOrigin, leftErr := independentSATLookupRPCOriginV2(left)
-	rightOrigin, rightErr := independentSATLookupRPCOriginV2(right)
-	return leftErr == nil && rightErr == nil && subtle.ConstantTimeCompare([]byte(leftOrigin), []byte(rightOrigin)) == 1
+	return networkverify.SameOrigin(left, right)
 }
 
 func normalizeSignerRPCURLV2(raw, field string) (string, error) {
-	if raw == "" {
-		return "", fmt.Errorf("%s is required", field)
-	}
-	if raw != strings.TrimSpace(raw) || len(raw) > maxSignerRPCURLBytesV2 || strings.ContainsAny(raw, "\r\n\t\x00") {
-		return "", fmt.Errorf("%s is invalid or exceeds %d bytes", field, maxSignerRPCURLBytesV2)
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || parsed.Host == "" {
-		return "", fmt.Errorf("%s must be an absolute HTTPS URL", field)
-	}
-	if parsed.User != nil {
-		return "", fmt.Errorf("%s must not contain URL user information", field)
-	}
-	if parsed.Fragment != "" || strings.Contains(raw, "#") {
-		return "", fmt.Errorf("%s must not contain a fragment", field)
-	}
-	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "https" && scheme != "http" {
-		return "", fmt.Errorf("%s must use HTTPS", field)
-	}
-	hostname := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
-	if hostname == "" || len(hostname) > 253 || strings.Contains(hostname, "%") {
-		return "", fmt.Errorf("%s contains an invalid host", field)
-	}
-	ip := net.ParseIP(hostname)
-	if ip == nil {
-		if looksLikeNonCanonicalIPLiteralV2(hostname) {
-			return "", fmt.Errorf("%s contains a non-canonical IP literal", field)
-		}
-		if err := validateSignerRPCHostnameV2(hostname); err != nil {
-			return "", fmt.Errorf("%s contains an unsafe host", field)
-		}
-	} else if isUnsafeSignerRPCIPV2(ip) {
-		return "", fmt.Errorf("%s targets an unsafe private, metadata, link-local, multicast, or unspecified address", field)
-	}
-	if scheme == "http" && !isSignerRPCLoopbackHostV2(hostname, ip) {
-		return "", fmt.Errorf("%s must use HTTPS except for loopback local development", field)
-	}
-	port := parsed.Port()
-	if port != "" {
-		value, err := strconv.ParseUint(port, 10, 16)
-		if err != nil || value == 0 {
-			return "", fmt.Errorf("%s contains an invalid port", field)
-		}
-		port = strconv.FormatUint(value, 10)
-	}
-	canonicalHost := hostname
-	if ip != nil {
-		canonicalHost = ip.String()
-	}
-	if strings.Contains(canonicalHost, ":") {
-		canonicalHost = "[" + canonicalHost + "]"
-	}
-	if port != "" {
-		joinHost := hostname
-		if ip != nil {
-			joinHost = ip.String()
-		}
-		canonicalHost = net.JoinHostPort(joinHost, port)
-	}
-	parsed.Scheme = scheme
-	parsed.Host = canonicalHost
-	return parsed.String(), nil
-}
-
-func looksLikeNonCanonicalIPLiteralV2(hostname string) bool {
-	if hostname == "" {
-		return false
-	}
-	parts := strings.Split(hostname, ".")
-	for _, part := range parts {
-		if part == "" {
-			return false
-		}
-		candidate := part
-		base := 10
-		if strings.HasPrefix(strings.ToLower(candidate), "0x") {
-			candidate = candidate[2:]
-			base = 16
-		}
-		if candidate == "" {
-			return false
-		}
-		for _, char := range candidate {
-			if char >= '0' && char <= '9' {
-				continue
-			}
-			if base == 16 && ((char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
-				continue
-			}
-			return false
-		}
-	}
-	return true
-}
-
-func validateSignerRPCHostnameV2(hostname string) error {
-	switch hostname {
-	case "metadata", "metadata.google.internal", "metadata.aws.internal", "metadata.azure.internal", "instance-data.ec2.internal":
-		return errors.New("metadata hostname")
-	}
-	labels := strings.Split(hostname, ".")
-	for _, label := range labels {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return errors.New("invalid hostname label")
-		}
-		for _, char := range label {
-			if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
-				continue
-			}
-			return errors.New("invalid hostname character")
-		}
-	}
-	return nil
-}
-
-func isUnsafeSignerRPCIPV2(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if ip.IsUnspecified() || ip.IsPrivate() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
-		return true
-	}
-	if ipv4 := ip.To4(); ipv4 != nil {
-		if ipv4.Equal(net.IPv4bcast) {
-			return true
-		}
-		for _, metadata := range []string{"100.100.100.200", "168.63.129.16", "192.0.0.192"} {
-			if ipv4.Equal(net.ParseIP(metadata).To4()) {
-				return true
-			}
-		}
-	} else {
-		for _, metadata := range []string{"fd00:ec2::254", "fd20:ce::254"} {
-			if ip.Equal(net.ParseIP(metadata)) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isSignerRPCLoopbackHostV2(hostname string, ip net.IP) bool {
-	if ip != nil {
-		return ip.IsLoopback()
-	}
-	return hostname == "localhost" || strings.HasSuffix(hostname, ".localhost")
+	return networkverify.NormalizeRPCURL(raw, field)
 }
 
 func newSignerOwnedSolanaRPCClientV2(endpoint string) *rpc.Client {
-	httpClient := newSignerOwnedHTTPClientV2()
-	client := jsonrpc.NewClientWithOpts(endpoint, &jsonrpc.RPCClientOpts{HTTPClient: httpClient})
-	return rpc.NewWithCustomRPCClient(client)
+	return networkverify.NewSolanaRPCClient(endpoint, solanaWriteRPCRequestTimeout())
 }
 
 func newSignerOwnedHTTPClientV2() *http.Client {
-	base := &http.Transport{
-		Proxy:                  nil,
-		DialContext:            dialSignerOwnedRPCV2,
-		ForceAttemptHTTP2:      true,
-		MaxIdleConns:           16,
-		MaxIdleConnsPerHost:    4,
-		IdleConnTimeout:        90 * time.Second,
-		TLSHandshakeTimeout:    10 * time.Second,
-		ResponseHeaderTimeout:  10 * time.Second,
-		ExpectContinueTimeout:  time.Second,
-		MaxResponseHeaderBytes: maxSignerRPCResponseHeaderV2,
-		DisableCompression:     true,
-		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
-	}
-	return &http.Client{
-		Transport: signerRPCResponseBudgetRoundTripperV2{base: base},
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-		Timeout: solanaWriteRPCRequestTimeout(),
-	}
-}
-
-type signerRPCResponseBudgetRoundTripperV2 struct {
-	base http.RoundTripper
-}
-
-func (t signerRPCResponseBudgetRoundTripperV2) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.base == nil {
-		return nil, errors.New("signer-owned Solana RPC transport is unavailable")
-	}
-	response, err := t.base.RoundTrip(req)
-	if err != nil {
-		return nil, err
-	}
-	if response == nil || response.Body == nil {
-		return nil, errors.New("signer-owned Solana RPC returned an empty response")
-	}
-	if response.ContentLength > maxSignerRPCResponseBytesV2 {
-		_ = response.Body.Close()
-		return nil, errors.New("signer-owned Solana RPC response exceeds the allowed size")
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxSignerRPCResponseBytesV2+1))
-	closeErr := response.Body.Close()
-	if readErr != nil {
-		return nil, errors.New("read signer-owned Solana RPC response")
-	}
-	if len(payload) > maxSignerRPCResponseBytesV2 {
-		return nil, errors.New("signer-owned Solana RPC response exceeds the allowed size")
-	}
-	if closeErr != nil {
-		return nil, errors.New("close signer-owned Solana RPC response")
-	}
-	if err := validateSignerRPCJSONDepthV2(payload); err != nil {
-		return nil, err
-	}
-	response.Body = io.NopCloser(bytes.NewReader(payload))
-	response.ContentLength = int64(len(payload))
-	return response, nil
+	return networkverify.NewHTTPClient(solanaWriteRPCRequestTimeout())
 }
 
 func validateSignerRPCJSONDepthV2(payload []byte) error {
-	trimmed := bytes.TrimSpace(payload)
-	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
-		return nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	depth := 0
-	for {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			if depth != 0 {
-				return errors.New("signer-owned Solana RPC returned invalid JSON")
-			}
-			return nil
-		}
-		if err != nil {
-			return errors.New("signer-owned Solana RPC returned invalid JSON")
-		}
-		delimiter, ok := token.(json.Delim)
-		if !ok {
-			continue
-		}
-		switch delimiter {
-		case '{', '[':
-			depth++
-			if depth > maxSignerRPCJSONDepthV2 {
-				return errors.New("signer-owned Solana RPC JSON exceeds the allowed nesting depth")
-			}
-		case '}', ']':
-			depth--
-			if depth < 0 {
-				return errors.New("signer-owned Solana RPC returned invalid JSON")
-			}
-		}
-	}
+	return networkverify.ValidateJSONDepth(payload)
 }
 
 func dialSignerOwnedRPCV2(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
-		return nil, errors.New("signer-owned Solana RPC dial address is invalid")
-	}
-	host = strings.Trim(host, "[]")
-	addresses := []net.IPAddr{}
-	if ip := net.ParseIP(host); ip != nil {
-		addresses = append(addresses, net.IPAddr{IP: ip})
-	} else {
-		resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil || len(resolved) == 0 {
-			return nil, errors.New("signer-owned Solana RPC host resolution failed")
-		}
-		addresses = resolved
-	}
-	for _, candidate := range addresses {
-		if isUnsafeSignerRPCIPV2(candidate.IP) {
-			return nil, errors.New("signer-owned Solana RPC resolved to an unsafe address")
-		}
-	}
-	dialer := net.Dialer{Timeout: solanaWriteRPCRequestTimeout(), KeepAlive: 30 * time.Second}
-	for _, candidate := range addresses {
-		connection, err := dialer.DialContext(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
-		if err == nil {
-			return connection, nil
-		}
-	}
-	return nil, errors.New("signer-owned Solana RPC connection failed")
+	return networkverify.DialRPC(ctx, network, address, solanaWriteRPCRequestTimeout())
 }
 
 func deriveSignerNetworkKeyV2(masterKey []byte, purpose string) ([]byte, error) {
