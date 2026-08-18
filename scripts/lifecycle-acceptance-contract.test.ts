@@ -132,6 +132,50 @@ describe("lifecycle acceptance contract", () => {
     ).toThrow("published v2 contract digest is invalid");
   });
 
+  it("validates only the exact evidence-policy v2 contract published by rc.80", () => {
+    const current = contract();
+    const rc80 = {
+      ...current,
+      profiles: Object.fromEntries(
+        Object.entries(current.profiles).map(([profile, scenarios]) => [
+          profile,
+          Object.fromEntries(
+            Object.entries(scenarios).map(([scenario, predicates]) => [
+              scenario,
+              predicates.filter(
+                (predicate) =>
+                  ![
+                    "lifecycle-performance",
+                    "installer-noop-performance",
+                    "updater-noop-performance",
+                  ].includes(predicate),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    };
+    expect(validatePublishedAcceptanceContract(rc80)).toBe(rc80);
+    expect(digestPublishedAcceptanceContract(rc80)).toBe(
+      "sha256:8cf857831936399150ce4fef5339dc4371ba64bffc54509a768c5f45cc022a14",
+    );
+    expect(() => validateAcceptanceContract(rc80)).toThrow(
+      "protected-local/fresh-install predicates are incomplete or reordered",
+    );
+    expect(() =>
+      validatePublishedAcceptanceContract({
+        ...rc80,
+        profiles: {
+          ...rc80.profiles,
+          hosting: {
+            ...rc80.profiles.hosting,
+            "fresh-install": rc80.profiles.hosting["fresh-install"].slice(1),
+          },
+        },
+      }),
+    ).toThrow("protected-local/fresh-install predicates are incomplete or reordered");
+  });
+
   it("defines identical evidence classes for Local and Hosting", () => {
     const value = contract();
     expect(validateAcceptanceContract(value)).toBe(value);
