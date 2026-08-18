@@ -150,8 +150,8 @@ describe("task ledger store", () => {
     const { DatabaseSync } = requireNodeSqlite();
     const db = new DatabaseSync(ledgerPath);
     try {
-      db.exec("UPDATE task_ledger_meta SET value = '2' WHERE key = 'schema_version'");
-      db.exec("PRAGMA user_version=2");
+      db.exec("UPDATE task_ledger_meta SET value = '3' WHERE key = 'schema_version'");
+      db.exec("PRAGMA user_version=3");
       db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     } finally {
       db.close();
@@ -159,6 +159,31 @@ describe("task ledger store", () => {
     const before = fs.readFileSync(ledgerPath);
 
     expect(() => openTaskLedgerStore(ledgerPath)).toThrow("newer than supported");
+    expect(fs.readFileSync(ledgerPath)).toEqual(before);
+  });
+
+  it("fails closed before mutation when a v2 definitions table is missing", () => {
+    const ledgerPath = resolveTaskLedgerPath();
+    createTaskRecord({
+      source: "cron",
+      runtime: "cron",
+      task: "creates ledger",
+      status: "queued",
+    });
+    resetTaskRegistryForTests({ persist: false });
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(ledgerPath);
+    try {
+      db.exec("DROP INDEX task_ledger_definitions_collection_scope_updated_idx");
+      db.exec("DROP INDEX task_ledger_definitions_collection_updated_idx");
+      db.exec("DROP TABLE task_ledger_definitions");
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } finally {
+      db.close();
+    }
+    const before = fs.readFileSync(ledgerPath);
+
+    expect(() => openTaskLedgerStore(ledgerPath)).toThrow("definitions table is missing");
     expect(fs.readFileSync(ledgerPath)).toEqual(before);
   });
 
@@ -185,6 +210,51 @@ describe("task ledger store", () => {
       }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades v1 transactionally without changing existing task rows", () => {
+    const ledgerPath = resolveTaskLedgerPath();
+    createTaskRecord({
+      taskId: "v1-task",
+      source: "cron",
+      runtime: "cron",
+      task: "preserved",
+      status: "queued",
+    });
+    resetTaskRegistryForTests({ persist: false });
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(ledgerPath);
+    let before: { task_json: string }[];
+    try {
+      before = db.prepare("SELECT task_json FROM task_ledger_tasks ORDER BY task_id").all() as {
+        task_json: string;
+      }[];
+      db.exec("DROP INDEX task_ledger_definitions_collection_scope_updated_idx");
+      db.exec("DROP INDEX task_ledger_definitions_collection_updated_idx");
+      db.exec("DROP TABLE task_ledger_definitions");
+      db.exec("UPDATE task_ledger_meta SET value = '1' WHERE key = 'schema_version'");
+      db.exec("PRAGMA user_version=1");
+    } finally {
+      db.close();
+    }
+
+    const upgraded = openTaskLedgerStore(ledgerPath);
+    try {
+      expect(upgraded.list()).toEqual([expect.objectContaining({ taskId: "v1-task" })]);
+    } finally {
+      upgraded.close();
+    }
+    const verified = new DatabaseSync(ledgerPath, { readOnly: true });
+    try {
+      expect(
+        verified.prepare("SELECT task_json FROM task_ledger_tasks ORDER BY task_id").all(),
+      ).toEqual(before!);
+      expect(
+        verified.prepare("SELECT value FROM task_ledger_meta WHERE key = 'schema_version'").get(),
+      ).toEqual({ value: "2" });
+    } finally {
+      verified.close();
     }
   });
 

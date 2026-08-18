@@ -4,13 +4,24 @@ import type { DatabaseSync } from "node:sqlite";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import type { TaskRecord } from "./task-registry.types.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const BUSY_TIMEOUT_MS = 5_000;
 const WAL_AUTOCHECKPOINT_PAGES = 256;
 const EMPTY_LOCK_GRACE_MS = 30_000;
 const LOCK_OWNER_FILE = "owner.json";
 
 type TaskRow = { task_json: string };
+type DefinitionRow = { record_json: string };
+
+export type TaskDefinitionCollection = "task_flow" | "standing_order" | "workflow_definition";
+
+export type TaskDefinitionRecord<T> = {
+  collection: TaskDefinitionCollection;
+  scopeKey: string;
+  recordId: string;
+  updatedAt: number;
+  record: T;
+};
 
 export type TaskLedgerInitialization = {
   databasePath: string;
@@ -171,7 +182,7 @@ function configureDatabase(db: DatabaseSync): void {
   db.exec(`PRAGMA wal_autocheckpoint=${WAL_AUTOCHECKPOINT_PAGES}`);
 }
 
-function validateExistingSchema(db: DatabaseSync): void {
+function existingSchemaVersion(db: DatabaseSync): number {
   const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
   if (userVersion.user_version > SCHEMA_VERSION) {
     throw new Error(
@@ -182,7 +193,10 @@ function validateExistingSchema(db: DatabaseSync): void {
     .prepare("SELECT value FROM task_ledger_meta WHERE key = 'schema_version'")
     .get() as { value?: string } | undefined;
   const metaVersion = meta ? Number(meta.value) : Number.NaN;
-  if (userVersion.user_version !== SCHEMA_VERSION || metaVersion !== SCHEMA_VERSION) {
+  if (
+    userVersion.user_version !== metaVersion ||
+    (userVersion.user_version !== 1 && userVersion.user_version !== 2)
+  ) {
     throw new Error("Task ledger schema is missing, corrupt, or unsupported");
   }
   const tasksTable = db
@@ -190,6 +204,47 @@ function validateExistingSchema(db: DatabaseSync): void {
     .get();
   if (!tasksTable) {
     throw new Error("Task ledger tasks table is missing");
+  }
+  if (userVersion.user_version === 2) {
+    const definitionsTable = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_ledger_definitions'",
+      )
+      .get();
+    if (!definitionsTable) {
+      throw new Error("Task ledger definitions table is missing");
+    }
+  }
+  return userVersion.user_version;
+}
+
+function upgradeSchemaV1ToV2(db: DatabaseSync): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE task_ledger_definitions (
+        collection_kind TEXT NOT NULL,
+        scope_key TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        record_json TEXT NOT NULL,
+        PRIMARY KEY (collection_kind, scope_key, record_id)
+      );
+      CREATE INDEX task_ledger_definitions_collection_scope_updated_idx
+        ON task_ledger_definitions(collection_kind, scope_key, updated_at DESC, record_id);
+      CREATE INDEX task_ledger_definitions_collection_updated_idx
+        ON task_ledger_definitions(collection_kind, updated_at DESC, record_id);
+    `);
+    db.prepare("UPDATE task_ledger_meta SET value = ? WHERE key = 'schema_version'").run("2");
+    db.exec("PRAGMA user_version=2");
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // The transaction may not have been opened successfully.
+    }
+    throw err;
   }
 }
 
@@ -222,6 +277,18 @@ function initializeSchema(db: DatabaseSync): void {
         ON task_ledger_tasks(agent_id, updated_at DESC);
       CREATE INDEX task_ledger_tasks_session_keys_idx
         ON task_ledger_tasks(requester_session_key, session_key, owner_key, updated_at DESC);
+      CREATE TABLE task_ledger_definitions (
+        collection_kind TEXT NOT NULL,
+        scope_key TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        record_json TEXT NOT NULL,
+        PRIMARY KEY (collection_kind, scope_key, record_id)
+      );
+      CREATE INDEX task_ledger_definitions_collection_scope_updated_idx
+        ON task_ledger_definitions(collection_kind, scope_key, updated_at DESC, record_id);
+      CREATE INDEX task_ledger_definitions_collection_updated_idx
+        ON task_ledger_definitions(collection_kind, updated_at DESC, record_id);
     `);
     db.prepare("INSERT INTO task_ledger_meta (key, value) VALUES ('schema_version', ?)").run(
       String(SCHEMA_VERSION),
@@ -274,7 +341,10 @@ export class TaskLedgerStore {
     const { DatabaseSync } = requireNodeSqlite();
     this.db = new DatabaseSync(databasePath);
     try {
-      validateExistingSchema(this.db);
+      const schemaVersion = existingSchemaVersion(this.db);
+      if (schemaVersion === 1) {
+        upgradeSchemaV1ToV2(this.db);
+      }
       configureDatabase(this.db);
       secureSqliteFamily(this.databasePath);
     } catch (err) {
@@ -353,6 +423,107 @@ export class TaskLedgerStore {
     });
   }
 
+  isDefinitionCollectionImported(collection: TaskDefinitionCollection): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 FROM task_ledger_meta WHERE key = ?")
+        .get(`definition_import:${collection}`),
+    );
+  }
+
+  listDefinitionRecords<T>(collection: TaskDefinitionCollection): TaskDefinitionRecord<T>[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT collection_kind, scope_key, record_id, updated_at, record_json FROM task_ledger_definitions WHERE collection_kind = ?",
+        )
+        .all(collection) as Array<{
+        collection_kind: TaskDefinitionCollection;
+        scope_key: string;
+        record_id: string;
+        updated_at: number;
+        record_json: string;
+      }>
+    ).map((row) => ({
+      collection: row.collection_kind,
+      scopeKey: row.scope_key,
+      recordId: row.record_id,
+      updatedAt: row.updated_at,
+      record: this.parseDefinitionRow<T>(row),
+    }));
+  }
+
+  updateDefinitionRecord<T>(
+    collection: TaskDefinitionCollection,
+    scopeKey: string,
+    recordId: string,
+    update: (current: T | undefined) => T | undefined,
+    updatedAt: (record: T) => number,
+  ): T | undefined {
+    return this.withWriteTransaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT record_json FROM task_ledger_definitions WHERE collection_kind = ? AND scope_key = ? AND record_id = ?",
+        )
+        .get(collection, scopeKey, recordId) as DefinitionRow | undefined;
+      const next = update(row ? this.parseDefinitionRow<T>(row) : undefined);
+      if (next === undefined) {
+        if (row) {
+          this.db
+            .prepare(
+              "DELETE FROM task_ledger_definitions WHERE collection_kind = ? AND scope_key = ? AND record_id = ?",
+            )
+            .run(collection, scopeKey, recordId);
+        }
+        return undefined;
+      }
+      this.writeDefinitionRecord(collection, scopeKey, recordId, next, updatedAt(next));
+      return next;
+    });
+  }
+
+  replaceDefinitionCollection<T>(
+    collection: TaskDefinitionCollection,
+    records: TaskDefinitionRecord<T>[],
+  ): void {
+    this.withWriteTransaction(() => {
+      this.db
+        .prepare("DELETE FROM task_ledger_definitions WHERE collection_kind = ?")
+        .run(collection);
+      for (const entry of records) {
+        this.writeDefinitionRecord(
+          collection,
+          entry.scopeKey,
+          entry.recordId,
+          entry.record,
+          entry.updatedAt,
+        );
+      }
+    });
+  }
+
+  importDefinitionCollection<T>(
+    collection: TaskDefinitionCollection,
+    records: TaskDefinitionRecord<T>[],
+  ): void {
+    this.withWriteTransaction(() => {
+      const marker = `definition_import:${collection}`;
+      if (this.db.prepare("SELECT 1 FROM task_ledger_meta WHERE key = ?").get(marker)) {
+        return;
+      }
+      for (const entry of records) {
+        this.writeDefinitionRecord(
+          collection,
+          entry.scopeKey,
+          entry.recordId,
+          entry.record,
+          entry.updatedAt,
+        );
+      }
+      this.db.prepare("INSERT INTO task_ledger_meta (key, value) VALUES (?, '1')").run(marker);
+    });
+  }
+
   private withWriteTransaction<T>(operation: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -376,6 +547,33 @@ export class TaskLedgerStore {
         | TaskRow
         | undefined,
     );
+  }
+
+  private parseDefinitionRow<T>(row: DefinitionRow): T {
+    try {
+      return JSON.parse(row.record_json) as T;
+    } catch (err) {
+      throw new Error("Task ledger contains invalid definition JSON", { cause: err });
+    }
+  }
+
+  private writeDefinitionRecord<T>(
+    collection: TaskDefinitionCollection,
+    scopeKey: string,
+    recordId: string,
+    record: T,
+    updatedAt: number,
+  ): void {
+    this.db
+      .prepare(`
+        INSERT INTO task_ledger_definitions (
+          collection_kind, scope_key, record_id, updated_at, record_json
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(collection_kind, scope_key, record_id) DO UPDATE SET
+          updated_at = excluded.updated_at,
+          record_json = excluded.record_json
+      `)
+      .run(collection, scopeKey, recordId, updatedAt, JSON.stringify(record));
   }
 
   private findByRunId(runId: string): TaskRecord | undefined {

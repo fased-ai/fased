@@ -2,6 +2,13 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
+import {
+  listTaskDefinitionRecords,
+  replaceTaskDefinitionCollection,
+  resetTaskDefinitionLedgerForTests,
+  updateTaskDefinitionRecord,
+  type DefinitionCollectionAdapter,
+} from "./task-definition-ledger.js";
 import type { TaskAuditFinding, TaskNotifyPolicy } from "./task-registry.types.js";
 import {
   normalizeTaskWorkflowGraphInput,
@@ -35,8 +42,7 @@ type SavedTaskWorkflowStore = {
   definitions: SavedTaskWorkflowDefinition[];
 };
 
-let loadedPath: string | null = null;
-let cachedStore: SavedTaskWorkflowStore | null = null;
+let ephemeralStore: SavedTaskWorkflowStore | null = null;
 
 export function resolveTaskWorkflowDefinitionsPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(resolveStateDir(env), TASKS_DIR, WORKFLOWS_FILE);
@@ -119,7 +125,7 @@ function sanitizeDefinition(raw: unknown): SavedTaskWorkflowDefinition | null {
   }
 }
 
-function sanitizeStore(raw: unknown): SavedTaskWorkflowStore {
+export function sanitizeTaskWorkflowDefinitionsStore(raw: unknown): SavedTaskWorkflowStore {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return defaultStore();
   }
@@ -259,29 +265,35 @@ export function auditTaskWorkflowDefinitions(params?: { filePath?: string }): {
   return { findings };
 }
 
-function loadStore(filePath = resolveTaskWorkflowDefinitionsPath()): SavedTaskWorkflowStore {
-  if (cachedStore && loadedPath === filePath) {
-    return cachedStore;
+const workflowDefinitionCollection: DefinitionCollectionAdapter<SavedTaskWorkflowDefinition> = {
+  collection: "workflow_definition",
+  legacyFileName: WORKFLOWS_FILE,
+  sanitizeLegacy: (raw) => sanitizeTaskWorkflowDefinitionsStore(raw).definitions,
+  identity: (record) => ({
+    scopeKey: record.agentId,
+    recordId: record.id,
+    updatedAt: record.updatedAt,
+  }),
+};
+
+function loadStore(): SavedTaskWorkflowStore {
+  if (ephemeralStore) {
+    return ephemeralStore;
   }
-  try {
-    cachedStore = sanitizeStore(JSON.parse(fs.readFileSync(filePath, "utf8")));
-  } catch {
-    cachedStore = defaultStore();
-  }
-  loadedPath = filePath;
-  return cachedStore;
+  return {
+    version: 1,
+    definitions: listTaskDefinitionRecords(workflowDefinitionCollection).map(
+      (entry) => entry.record,
+    ),
+  };
 }
 
-function saveStore(
-  store: SavedTaskWorkflowStore,
-  filePath = resolveTaskWorkflowDefinitionsPath(),
-): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  fs.renameSync(tmpPath, filePath);
-  cachedStore = store;
-  loadedPath = filePath;
+function saveStore(store: SavedTaskWorkflowStore): void {
+  if (ephemeralStore) {
+    ephemeralStore = store;
+    return;
+  }
+  replaceTaskDefinitionCollection(workflowDefinitionCollection, store.definitions);
 }
 
 function normalizeDefinitionId(raw: string | undefined, name: string): string {
@@ -339,16 +351,41 @@ export function saveTaskWorkflowDefinition(raw: unknown): SavedTaskWorkflowDefin
   if (!agentId) {
     throw new Error("workflow definition requires agentId");
   }
-  const store = loadStore();
   const now = Date.now();
   if (record.graph) {
     const normalized = normalizeTaskWorkflowGraphInput({ ...record, agentId });
     const id = normalizeDefinitionId(readString(record, "id"), normalized.name);
-    const existingIndex = store.definitions.findIndex(
-      (definition) => definition.agentId === agentId && definition.id === id,
-    );
-    const createdAt = existingIndex >= 0 ? store.definitions[existingIndex].createdAt : now;
-    const definition: SavedTaskWorkflowDefinition = {
+    if (ephemeralStore) {
+      const store = loadStore();
+      const existingIndex = store.definitions.findIndex(
+        (definition) => definition.agentId === agentId && definition.id === id,
+      );
+      const existing = existingIndex >= 0 ? store.definitions[existingIndex] : undefined;
+      const definition: SavedTaskWorkflowDefinition = {
+        id,
+        agentId,
+        mode: "graph",
+        name: normalized.name,
+        task: normalized.task,
+        notifyPolicy: normalized.notifyPolicy,
+        steps: normalized.graph.nodes.map((node) => ({
+          id: node.id,
+          label: node.label,
+          type: "checkpoint",
+        })),
+        graph: normalized.graph,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      if (existingIndex >= 0) {
+        store.definitions[existingIndex] = definition;
+      } else {
+        store.definitions.push(definition);
+      }
+      saveStore(store);
+      return definition;
+    }
+    return updateTaskDefinitionRecord(workflowDefinitionCollection, agentId, id, (existing) => ({
       id,
       agentId,
       mode: "graph",
@@ -361,7 +398,28 @@ export function saveTaskWorkflowDefinition(raw: unknown): SavedTaskWorkflowDefin
         type: "checkpoint",
       })),
       graph: normalized.graph,
-      createdAt,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    }))!;
+  }
+  const normalized = normalizeSimpleTaskWorkflowInput({ ...record, agentId });
+  const name = normalized.name ?? "Workflow";
+  const id = normalizeDefinitionId(readString(record, "id"), name);
+  if (ephemeralStore) {
+    const store = loadStore();
+    const existingIndex = store.definitions.findIndex(
+      (definition) => definition.agentId === agentId && definition.id === id,
+    );
+    const existing = existingIndex >= 0 ? store.definitions[existingIndex] : undefined;
+    const definition: SavedTaskWorkflowDefinition = {
+      id,
+      agentId,
+      mode: "steps",
+      name,
+      task: normalized.task ?? name,
+      notifyPolicy: normalized.notifyPolicy ?? "done_only",
+      steps: normalized.steps,
+      createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
     if (existingIndex >= 0) {
@@ -372,14 +430,7 @@ export function saveTaskWorkflowDefinition(raw: unknown): SavedTaskWorkflowDefin
     saveStore(store);
     return definition;
   }
-  const normalized = normalizeSimpleTaskWorkflowInput({ ...record, agentId });
-  const name = normalized.name ?? "Workflow";
-  const id = normalizeDefinitionId(readString(record, "id"), name);
-  const existingIndex = store.definitions.findIndex(
-    (definition) => definition.agentId === agentId && definition.id === id,
-  );
-  const createdAt = existingIndex >= 0 ? store.definitions[existingIndex].createdAt : now;
-  const definition: SavedTaskWorkflowDefinition = {
+  return updateTaskDefinitionRecord(workflowDefinitionCollection, agentId, id, (existing) => ({
     id,
     agentId,
     mode: "steps",
@@ -387,16 +438,9 @@ export function saveTaskWorkflowDefinition(raw: unknown): SavedTaskWorkflowDefin
     task: normalized.task ?? name,
     notifyPolicy: normalized.notifyPolicy ?? "done_only",
     steps: normalized.steps,
-    createdAt,
+    createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-  };
-  if (existingIndex >= 0) {
-    store.definitions[existingIndex] = definition;
-  } else {
-    store.definitions.push(definition);
-  }
-  saveStore(store);
-  return definition;
+  }))!;
 }
 
 export function removeTaskWorkflowDefinition(raw: unknown): SavedTaskWorkflowDefinitionsResult {
@@ -409,11 +453,15 @@ export function removeTaskWorkflowDefinition(raw: unknown): SavedTaskWorkflowDef
   if (!agentId || !id) {
     throw new Error("workflow definition remove requires agentId and id");
   }
-  const store = loadStore();
-  store.definitions = store.definitions.filter(
-    (definition) => !(definition.agentId === agentId && definition.id === id),
-  );
-  saveStore(store);
+  if (ephemeralStore) {
+    const store = loadStore();
+    store.definitions = store.definitions.filter(
+      (definition) => !(definition.agentId === agentId && definition.id === id),
+    );
+    saveStore(store);
+    return listSavedTaskWorkflowDefinitions({ agentId });
+  }
+  updateTaskDefinitionRecord(workflowDefinitionCollection, agentId, id, () => undefined);
   return listSavedTaskWorkflowDefinitions({ agentId });
 }
 
@@ -425,9 +473,11 @@ export function resetTaskWorkflowDefinitionsForTests(opts?: {
     version: 1 as const,
     definitions: opts?.definitions ? [...opts.definitions] : [],
   };
-  cachedStore = store;
-  loadedPath = resolveTaskWorkflowDefinitionsPath();
-  if (opts?.persist !== false) {
-    saveStore(store);
+  if (opts?.persist === false) {
+    ephemeralStore = store;
+    return;
   }
+  ephemeralStore = null;
+  resetTaskDefinitionLedgerForTests();
+  saveStore(store);
 }
