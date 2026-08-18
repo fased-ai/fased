@@ -117,6 +117,19 @@ const configureSignerOwnedWalletNetwork = vi.hoisted(() =>
     ready: true,
   })),
 );
+const invokeNativeSignerNetworkSetPrimary = vi.hoisted(() =>
+  vi.fn(() => ({
+    walletId: "wallet_1",
+    configured: true,
+    version: 2,
+    hash: `hmac-sha256:${"a".repeat(64)}`,
+    ready: true,
+  })),
+);
+const readSignerOwnedWalletReadiness = vi.hoisted(() => vi.fn(async () => ({ networkVersion: 1 })));
+const resolveNativeSignerOperatorLifecycle = vi.hoisted(() =>
+  vi.fn<() => { signerBinPath: string; operatorSocketPath: string } | null>(() => null),
+);
 const configureWalletForOnboarding = vi.hoisted(() =>
   vi.fn(async ({ nextConfig }) => ({
     ...nextConfig,
@@ -180,6 +193,15 @@ vi.mock("../config/config.js", async (importActual) => {
 vi.mock("../commands/wallet.js", () => ({
   walletSetupCommand,
   collectWalletSignerDoctorReport,
+  invokeNativeSignerNetworkSetPrimary,
+}));
+
+vi.mock("../wallet/local-socket-signer-lifecycle.js", () => ({
+  readSignerOwnedWalletReadiness,
+}));
+
+vi.mock("../wallet/native-signer-lifecycle-context.js", () => ({
+  resolveNativeSignerOperatorLifecycle,
 }));
 
 vi.mock("../wallet/wallet-provider-registry.js", () => ({
@@ -321,6 +343,10 @@ vi.mock("./onboarding.federation.js", () => ({
   configureFederationForOnboarding,
 }));
 
+vi.mock("./host-security-capability.js", () => ({
+  isHostedSecurityCapableSession: vi.fn(() => false),
+}));
+
 vi.mock("./onboarding.host-security.js", () => ({
   applyHostingSecurity,
 }));
@@ -414,6 +440,11 @@ describe("runOnboardingWizard", () => {
       hash: `sha256:${"a".repeat(64)}`,
     });
     configureSignerOwnedWalletNetwork.mockClear();
+    invokeNativeSignerNetworkSetPrimary.mockClear();
+    readSignerOwnedWalletReadiness.mockClear();
+    readSignerOwnedWalletReadiness.mockResolvedValue({ networkVersion: 1 });
+    resolveNativeSignerOperatorLifecycle.mockClear();
+    resolveNativeSignerOperatorLifecycle.mockReturnValue(null);
     configureGatewayForOnboarding.mockClear();
     configureFederationForOnboarding.mockClear();
     configureWalletForOnboarding.mockClear();
@@ -1702,6 +1733,10 @@ describe("runOnboardingWizard", () => {
   it("can update Solana RPC for an existing self-hosted wallet during onboarding management", async () => {
     writeConfigFile.mockClear();
     restartLocalSocketSigner.mockClear();
+    resolveNativeSignerOperatorLifecycle.mockReturnValue({
+      signerBinPath: "/opt/fased/current/payload/bin/fased-signerd",
+      operatorSocketPath: "/run/fased-local/instance-1/operator/operator.sock",
+    });
     readConfigFileSnapshot.mockResolvedValueOnce({
       exists: true,
       valid: true,
@@ -1802,12 +1837,17 @@ describe("runOnboardingWizard", () => {
       }),
     );
     expect(restartLocalSocketSigner).not.toHaveBeenCalled();
-    expect(configureSignerOwnedWalletNetwork).toHaveBeenCalledWith(
+    expect(invokeNativeSignerNetworkSetPrimary).toHaveBeenCalledWith(
       expect.objectContaining({
-        walletId: "wallet-1",
+        walletId: "wallet_1",
         primaryRpcUrl: "https://new-rpc.example",
+        expectedVersion: 1,
+        signerBinPath: "/opt/fased/current/payload/bin/fased-signerd",
+        socketFlag: "--operator-socket",
+        socketPath: "/run/fased-local/instance-1/operator/operator.sock",
       }),
     );
+    expect(configureSignerOwnedWalletNetwork).not.toHaveBeenCalled();
     expect(prompter.note).toHaveBeenCalledWith(
       "Saved RPC for Wallet 1 · @wallet:wallet-1; wallet network version 2 is ready",
       "Wallet setup",
@@ -1815,9 +1855,9 @@ describe("runOnboardingWizard", () => {
   });
 
   it("keeps the current RPC and stays in onboarding when a replacement cannot be verified", async () => {
-    configureSignerOwnedWalletNetwork.mockRejectedValueOnce(
-      new Error("signer-owned Solana RPC genesis verification failed"),
-    );
+    invokeNativeSignerNetworkSetPrimary.mockImplementationOnce(() => {
+      throw new Error("signer-owned Solana RPC genesis verification failed");
+    });
     readConfigFileSnapshot.mockResolvedValueOnce({
       exists: true,
       valid: true,

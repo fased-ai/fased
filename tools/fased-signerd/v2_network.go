@@ -949,16 +949,18 @@ func (m *signerKeyManagerV2) RepairMigratedPrimaryNetworkV1(walletID string, req
 }
 
 // PutApplicationNetworkV2 is the fixed-purpose application-socket broker for
-// ordinary one-RPC onboarding and edits. It cannot set a fallback, witness,
-// policy, key, path, or command. Initial activation is limited to a fresh
-// deny-all wallet or the exact signer-owned role baseline selected during
-// ordinary setup. Later edits must retain the wallet's already pinned genesis.
+// ordinary initial one-RPC onboarding. It cannot replace an existing network
+// or set a fallback, witness, policy, key, path, or command. Replacements use
+// the control or authenticated operator lifecycle socket.
 func (m *signerKeyManagerV2) PutApplicationNetworkV2(walletID string, request signerNetworkPutRequestV2) (signerNetworkSummaryV2, error) {
 	if request.ExpectedVersion == nil {
 		return signerNetworkSummaryV2{}, errors.New("expectedVersion is required")
 	}
 	if request.ExecutionFallbackRPCURL != "" || request.VerificationRPCURL != "" || request.LegacyFallbackRPCURL != "" {
 		return signerNetworkSummaryV2{}, errors.New("application network activation accepts exactly one primaryRpcUrl")
+	}
+	if *request.ExpectedVersion != 0 {
+		return signerNetworkSummaryV2{}, errors.New("application network broker is limited to initial network activation; use the signer lifecycle socket for replacements")
 	}
 	walletID = normalizeWalletID(walletID)
 	wallet, err := m.PublicRecord(walletID)
@@ -975,25 +977,23 @@ func (m *signerKeyManagerV2) PutApplicationNetworkV2(walletID string, request si
 	if policy.Role != "agent" && policy.Role != "mining" && policy.Role != "vault" {
 		return signerNetworkSummaryV2{}, errors.New("signer wallet role is invalid")
 	}
-	if *request.ExpectedVersion == 0 {
-		freshDenyAll := policy.Version == 1 && policy.BaselineVersion == 0 &&
-			len(policy.Operations) == 0 && len(policy.Programs) == 0 && len(policy.Assets) == 0
-		baseline, baselineErr := compileSignerRoleBaselineV1(
-			walletID,
-			wallet.PublicKey,
-			signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: policy.Role},
-			signerRoleBaselineRuntimeFromEnvV1(),
-		)
-		freshRoleBaseline := false
-		if baselineErr == nil {
-			baseline.Version = policy.Version
-			if normalized, normalizeErr := normalizeSignerPolicyV2(baseline); normalizeErr == nil {
-				freshRoleBaseline = policy.Version == 1 && policy.Hash == normalized.Hash
-			}
+	freshDenyAll := policy.Version == 1 && policy.BaselineVersion == 0 &&
+		len(policy.Operations) == 0 && len(policy.Programs) == 0 && len(policy.Assets) == 0
+	baseline, baselineErr := compileSignerRoleBaselineV1(
+		walletID,
+		wallet.PublicKey,
+		signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: policy.Role},
+		signerRoleBaselineRuntimeFromEnvV1(),
+	)
+	freshRoleBaseline := false
+	if baselineErr == nil {
+		baseline.Version = policy.Version
+		if normalized, normalizeErr := normalizeSignerPolicyV2(baseline); normalizeErr == nil {
+			freshRoleBaseline = policy.Version == 1 && policy.Hash == normalized.Hash
 		}
-		if !freshDenyAll && !freshRoleBaseline {
-			return signerNetworkSummaryV2{}, errors.New("initial application network activation requires a fresh deny-all wallet or exact signer-owned role baseline")
-		}
+	}
+	if !freshDenyAll && !freshRoleBaseline {
+		return signerNetworkSummaryV2{}, errors.New("initial application network activation requires a fresh deny-all wallet or exact signer-owned role baseline")
 	}
 	return m.PutNetworkV2(walletID, request)
 }

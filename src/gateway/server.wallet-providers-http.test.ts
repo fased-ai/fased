@@ -1587,7 +1587,7 @@ describe("wallet providers HTTP", () => {
                       ok: true,
                       result: {
                         walletId: "trading_main",
-                        publicKey: "2bm8fYZ6BDVE5LMRotEdQSqCgAonenegsVzKDuVGtaic",
+                        publicKey: "2bm8fYZ6BDVE5LMRotEdQSqCgAonenegsVzKDuVGtaic", // pragma: allowlist secret
                       },
                     })}\n`,
                   );
@@ -1812,7 +1812,7 @@ describe("wallet providers HTTP", () => {
     });
   });
 
-  test("requires Wallet Control approval before updating a signer-owned primary RPC", async () => {
+  test("routes signer-owned primary RPC changes to the owner lifecycle CLI", async () => {
     await withTempConfig({
       cfg: {
         ...baseConfig,
@@ -1857,10 +1857,13 @@ describe("wallet providers HTTP", () => {
           }),
           response.res,
         );
-        expect(response.res.statusCode).toBe(401);
+        expect(response.res.statusCode).toBe(409);
         expect(JSON.parse(response.getBody())).toMatchObject({
           ok: false,
-          error: { code: "wallet_control_passkey_not_ready" },
+          error: {
+            code: "wallet_owner_lifecycle_required",
+            message: expect.stringContaining("fased wallet rpc set"),
+          },
         });
       },
     });

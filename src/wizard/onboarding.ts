@@ -34,6 +34,7 @@ import type {
 } from "../commands/onboard-types.js";
 import {
   collectWalletSignerDoctorReport,
+  invokeNativeSignerNetworkSetPrimary,
   walletRecoveryExportCommand,
   walletSetupCommand,
 } from "../commands/wallet.js";
@@ -44,7 +45,9 @@ import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
 import { lockSignerOwnedWalletForArchive } from "../wallet/local-socket-signer-archive.js";
-import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
+import { readSignerOwnedWalletReadiness } from "../wallet/local-socket-signer-lifecycle.js";
+import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
+import { resolveNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
 import { discoverSolanaNetworkFromRpc } from "../wallet/solana-network-discovery.js";
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
@@ -58,6 +61,7 @@ import {
 } from "../wallet/wallet-provider-registry.js";
 import {
   ensureWalletStateDir,
+  resolveLocalSignerControlSocketPath,
   resolveLocalSignerMaterialRootDir,
   resolveLocalSignerSocketPath,
 } from "../wallet/wallet-runtime-config.js";
@@ -1334,11 +1338,23 @@ export async function runOnboardingWizard(
                   ...nextConfig.env?.vars,
                   FASED_HOST_PROFILE: hostProfile,
                 } as NodeJS.ProcessEnv;
-                const network = await configureSignerOwnedWalletNetwork({
-                  walletId,
-                  primaryRpcUrl: effectiveSolanaRpcUrl,
-                  env: effectiveEnv,
+                const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
+                const signerWalletId = resolveNativeSignerWalletId(targetWallet);
+                const current = await readSignerOwnedWalletReadiness({
+                  walletId: signerWalletId,
                   socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+                });
+                const network = invokeNativeSignerNetworkSetPrimary({
+                  signerBinPath:
+                    operatorLifecycle?.signerBinPath ?? resolveSignerdBinaryPath(effectiveEnv),
+                  socketFlag: operatorLifecycle ? "--operator-socket" : "--control-socket",
+                  socketPath:
+                    operatorLifecycle?.operatorSocketPath ??
+                    resolveLocalSignerControlSocketPath(effectiveEnv),
+                  walletId: signerWalletId,
+                  primaryRpcUrl: effectiveSolanaRpcUrl,
+                  expectedVersion: current.networkVersion,
+                  env: effectiveEnv,
                 });
                 signerNetworkVersion = network.version;
               } else {
