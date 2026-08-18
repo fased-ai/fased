@@ -22,6 +22,8 @@ import (
 	"syscall"
 	"time"
 
+	"fased-signerd/internal/custody"
+
 	"golang.org/x/crypto/scrypt"
 )
 
@@ -225,9 +227,7 @@ func getenvInt64(name string, fallback int64) int64 {
 }
 
 func zeroBytes(buf []byte) {
-	for index := range buf {
-		buf[index] = 0
-	}
+	custody.ZeroBytes(buf)
 }
 
 func currentDayBucket(now time.Time) string {

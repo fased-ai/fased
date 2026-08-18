@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 
+	"fased-signerd/internal/custody"
+
 	solana "github.com/gagliardetto/solana-go"
 	bolt "go.etcd.io/bbolt"
 )
@@ -50,63 +52,7 @@ func (m *signerKeyManagerV2) Close() {
 }
 
 func loadOrCreateMasterKeyV2(path string) ([]byte, error) {
-	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("signer master key path is required")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create signer key directory: %w", err)
-	}
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return nil, errors.New("signer master key must be a regular non-symlink file")
-		}
-		if info.Mode().Perm()&0o077 != 0 {
-			return nil, errors.New("signer master key must not be group/world accessible")
-		}
-		if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) != os.Geteuid() {
-			return nil, fmt.Errorf("signer master key must be owned by uid %d", os.Geteuid())
-		}
-		key, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read signer master key: %w", err)
-		}
-		if len(key) != 32 {
-			zeroBytes(key)
-			return nil, errors.New("signer master key has invalid length")
-		}
-		return key, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("inspect signer master key: %w", err)
-	}
-
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("generate signer master key: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		zeroBytes(key)
-		return nil, fmt.Errorf("create signer master key: %w", err)
-	}
-	writeErr := error(nil)
-	if _, err := file.Write(key); err != nil {
-		writeErr = err
-	} else if err := file.Sync(); err != nil {
-		writeErr = err
-	}
-	if err := file.Close(); writeErr == nil && err != nil {
-		writeErr = err
-	}
-	if writeErr != nil {
-		zeroBytes(key)
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("persist signer master key: %w", writeErr)
-	}
-	if dir, err := os.Open(filepath.Dir(path)); err == nil {
-		_ = dir.Sync()
-		_ = dir.Close()
-	}
-	return key, nil
+	return custody.LoadOrCreateMasterKey(path)
 }
 
 func (m *signerKeyManagerV2) CreateWithPolicy(req signerWalletCreateRequestV2) (signerWalletRecordV2, signerPolicyV2, error) {
@@ -194,7 +140,7 @@ func (m *signerKeyManagerV2) putReencryptedRecordV2(original, updated signerWall
 			return errors.New("invalid stored signer wallet")
 		}
 		if current.WalletID != original.WalletID || current.PublicKey != original.PublicKey ||
-			current.Version != original.Version || current.Nonce != original.Nonce || current.Secret != original.Secret ||
+			current.Version != original.Version || current.Nonce != original.Nonce || current.Secret != original.Secret || // pragma: allowlist secret
 			current.RetiredAt != original.RetiredAt || current.SuccessorWalletID != original.SuccessorWalletID ||
 			current.RotationID != original.RotationID {
 			return errors.New("signer wallet encrypted state changed concurrently; inspect wallet and rotation status before retrying")
