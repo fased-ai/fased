@@ -1184,7 +1184,7 @@ function invokeNativeSignerWalletCreate(params: {
   });
 }
 
-function invokeNativeSignerNetworkSetPrimary(params: {
+export function invokeNativeSignerNetworkSetPrimary(params: {
   signerBinPath: string;
   socketFlag: "--control-socket" | "--operator-socket";
   socketPath: string;

@@ -1468,6 +1468,32 @@ export function shouldDeferInstallerGatewayActivation(params: {
   );
 }
 
+export function shouldWaitForGatewayServiceActivation(params: {
+  platform: NodeJS.Platform;
+  deferInstallerGatewayActivation: boolean;
+  installDaemon: boolean;
+}): boolean {
+  return (
+    params.platform === "linux" && !params.deferInstallerGatewayActivation && params.installDaemon
+  );
+}
+
+export function shouldVerifyLocalDashboardReadiness(params: {
+  deferInstallerGatewayActivation: boolean;
+  strictVps: boolean;
+  mode?: string;
+  skipUi?: boolean;
+  skipHealth?: boolean;
+}): boolean {
+  return (
+    !params.deferInstallerGatewayActivation &&
+    !params.strictVps &&
+    params.mode !== "remote" &&
+    !params.skipUi &&
+    !params.skipHealth
+  );
+}
+
 export async function finalizeOnboardingWizard(
   options: FinalizeOnboardingOptions,
 ): Promise<{ launchedTui: boolean }> {
@@ -1959,7 +1985,13 @@ export async function finalizeOnboardingWizard(
     }
   }
 
-  if (process.platform === "linux" && !deferInstallerGatewayActivation) {
+  if (
+    shouldWaitForGatewayServiceActivation({
+      platform: process.platform,
+      deferInstallerGatewayActivation,
+      installDaemon,
+    })
+  ) {
     const localSignerSync = resolveLocalSignerSyncForFinalize({ strictVps });
     if (localSignerSync.sync) {
       try {
@@ -2554,23 +2586,29 @@ export async function finalizeOnboardingWizard(
     token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
     walletSecurityFocus: options.walletSecurityFocus ?? null,
   });
+  const verifyLocalDashboardReadiness = shouldVerifyLocalDashboardReadiness({
+    deferInstallerGatewayActivation,
+    strictVps,
+    mode: opts.mode,
+    skipUi: opts.skipUi,
+    skipHealth: opts.skipHealth,
+  });
   let gatewayProbe = deferInstallerGatewayActivation
     ? {
         ok: false,
         detail: "Gateway activation is deferred until installer setup commits",
       }
-    : await probeGatewayReachable({
-        url: links.wsUrl,
-        token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
-        password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
-      });
-  if (
-    !deferInstallerGatewayActivation &&
-    !strictVps &&
-    opts.mode !== "remote" &&
-    !opts.skipUi &&
-    !gatewayProbe.ok
-  ) {
+    : opts.skipHealth
+      ? {
+          ok: false,
+          detail: "Gateway health checks were skipped",
+        }
+      : await probeGatewayReachable({
+          url: links.wsUrl,
+          token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
+          password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
+        });
+  if (verifyLocalDashboardReadiness && !gatewayProbe.ok) {
     const warmup = await waitForGatewayReachable({
       url: links.wsUrl,
       token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,
@@ -2583,13 +2621,7 @@ export async function finalizeOnboardingWizard(
       gatewayProbe = warmup;
     }
   }
-  if (
-    !deferInstallerGatewayActivation &&
-    !strictVps &&
-    opts.mode !== "remote" &&
-    !opts.skipUi &&
-    !gatewayProbe.ok
-  ) {
+  if (verifyLocalDashboardReadiness && !gatewayProbe.ok) {
     await prompter.note(
       "Gateway is not reachable yet; restarting the service once before showing the dashboard link.",
       "Gateway startup",
@@ -2618,7 +2650,7 @@ export async function finalizeOnboardingWizard(
     }
     gatewayProbe = { ok: true };
   }
-  if (!deferInstallerGatewayActivation && !strictVps && opts.mode !== "remote" && !opts.skipUi) {
+  if (verifyLocalDashboardReadiness) {
     let localDashboardReady = await waitForLocalDashboardReady({
       links,
       token: settings.authMode === "token" ? gatewayTokenForUi || undefined : undefined,

@@ -85,7 +85,6 @@ import {
 import type { LocalSocketSignerPolicyV2 } from "../wallet/local-socket-signer-protocol.js";
 import { resolveNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
 import { LocalSocketSignerAdapter } from "../wallet/providers/local-socket-signer-adapter.js";
-import { configureSignerOwnedWalletNetwork } from "../wallet/signer-network-admin.js";
 import { isValidSolanaAddress } from "../wallet/solana-address.js";
 import {
   fetchSolanaMintInfoViaRpc,
@@ -6333,69 +6332,17 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               });
               return;
             }
-            const cfg = loadConfig();
-            if (!ensureWalletApprovalAuthorized({ operation: "wallet.network", cfg })) {
-              return;
-            }
-            try {
-              const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
-              const signerWalletId = resolveNativeSignerWalletId(existing);
-              const network = await configureSignerOwnedWalletNetwork({
-                walletId: signerWalletId,
-                primaryRpcUrl: rpcUrl,
-                env: effectiveEnv,
-                socketPath: resolveLocalSignerSocketPath(effectiveEnv),
-              });
-              const suffix = normalizeWalletIdForEnvSuffix(walletId)?.toUpperCase();
-              const rpcKey = suffix
-                ? `FASED_WALLET_SOLANA_RPC_URL__${suffix}`
-                : "FASED_WALLET_SOLANA_RPC_URL";
-              const configUpdate = await updateWalletConfig({
-                env: effectiveEnv,
-                mutate: (next) => {
-                  next.env = { ...next.env, vars: { ...next.env?.vars, [rpcKey]: rpcUrl } };
-                },
-              });
-              if (!configUpdate.ok) {
-                throw new Error(
-                  `signer accepted network version ${network.version}, but app configuration persistence failed: ${configUpdate.message}`,
-                );
-              }
-              upsertNamedWallet({
-                walletId: existing.id,
-                name: existing.name,
-                providerId: existing.providerId,
-                addresses: existing.addresses,
-                metadata: {
-                  ...existing.metadata,
-                  networkHash: network.hash,
-                  networkVersion: network.version,
-                  networkReady: network.ready,
-                },
-                env: process.env,
-              });
-              appendWalletAuditEntry({
-                action: "wallet_rpc_updated",
-                actor: "control-ui",
-                details: { walletId, networkVersion: network.version, networkReady: network.ready },
-                env: process.env,
-              });
-            } catch (err) {
-              const rawMessage = err instanceof Error ? err.message : String(err);
-              const message = /does not match|no longer agrees|disagree/iu.test(rawMessage)
-                ? "This RPC is on a different Solana network. Use a provider URL for this wallet's current network."
-                : /genesis verification failed|returned an invalid genesis hash/iu.test(rawMessage)
-                  ? "This URL did not answer as a Solana RPC. Check the provider URL and API key, then try again."
-                  : rawMessage;
-              sendLoginResponse(502, {
-                ok: false,
-                error: {
-                  code: "wallet_rpc_update_failed",
-                  message,
-                },
-              });
-              return;
-            }
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "wallet_owner_lifecycle_required",
+                message:
+                  "Existing signer RPC changes require the owner lifecycle socket. Run `fased wallet rpc set --wallet-id " +
+                  walletId +
+                  " --rpc-url <url>` from the owner terminal.",
+              },
+            });
+            return;
           }
           const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
           if (requestedRole === "mining") {

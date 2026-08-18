@@ -15,6 +15,8 @@ import {
   isRootPreparedHostingFinalization,
   shouldDeferInstallerAccessHandoff,
   shouldDeferInstallerGatewayActivation,
+  shouldVerifyLocalDashboardReadiness,
+  shouldWaitForGatewayServiceActivation,
   validateLocalDashboardBootCheck,
   waitForGatewayHttpListener,
 } from "./onboarding.finalize.js";
@@ -99,6 +101,62 @@ describe("shouldDeferInstallerGatewayActivation", () => {
         installerOnboard: false,
         deferProtectedLocalGatewayActivation: false,
         rootPreparedHosting: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldWaitForGatewayServiceActivation", () => {
+  it("waits only when Linux onboarding actually installed a daemon", () => {
+    expect(
+      shouldWaitForGatewayServiceActivation({
+        platform: "linux",
+        deferInstallerGatewayActivation: false,
+        installDaemon: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldWaitForGatewayServiceActivation({
+        platform: "linux",
+        deferInstallerGatewayActivation: false,
+        installDaemon: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldWaitForGatewayServiceActivation({
+        platform: "linux",
+        deferInstallerGatewayActivation: true,
+        installDaemon: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldWaitForGatewayServiceActivation({
+        platform: "darwin",
+        deferInstallerGatewayActivation: false,
+        installDaemon: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldVerifyLocalDashboardReadiness", () => {
+  it("skips blocking dashboard probes when health checks are explicitly disabled", () => {
+    expect(
+      shouldVerifyLocalDashboardReadiness({
+        deferInstallerGatewayActivation: false,
+        strictVps: false,
+        mode: "local",
+        skipUi: false,
+        skipHealth: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldVerifyLocalDashboardReadiness({
+        deferInstallerGatewayActivation: false,
+        strictVps: false,
+        mode: "local",
+        skipUi: false,
+        skipHealth: true,
       }),
     ).toBe(false);
   });

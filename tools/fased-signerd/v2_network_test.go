@@ -62,11 +62,11 @@ func TestSignerApplicationNetworkBrokerIsOneRPCRoleBoundAndGenesisPinned(t *test
 	}); err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("application broker accepted witness/fallback input: %v", err)
 	}
-	currentGenesis = solana.NewWallet().PublicKey().String()
+	currentGenesis = genesis
 	if _, err := keys.PutApplicationNetworkV2("agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: primaryB,
-	}); err == nil || !strings.Contains(err.Error(), "pinned genesis") {
-		t.Fatalf("application broker allowed a network change: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "initial network activation") {
+		t.Fatalf("application broker replaced an existing RPC: %v", err)
 	}
 	ready, err := keys.NetworkSummaryV2("agent")
 	if err != nil || ready.Version != 1 {
@@ -132,8 +132,8 @@ func TestSignerMigratedNetworkRepairRequiresExactFencesAndRepinsOnceRequested(t 
 	}
 	if _, err := keys.PutApplicationNetworkV2("legacy_agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(repaired.Version), PrimaryRPCURL: "https://old.example/rpc",
-	}); err == nil || !strings.Contains(err.Error(), "pinned genesis") {
-		t.Fatalf("ordinary application edit changed the repaired genesis: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "initial network activation") {
+		t.Fatalf("application broker replaced a repaired RPC: %v", err)
 	}
 }
 
@@ -208,7 +208,7 @@ func TestSignerNetworkLegacyFallbackMigratesOnlyAsExecutionFallback(t *testing.T
 	}
 }
 
-func TestSignerApplicationNetworkBrokerPinsLegacyGenesisBeforeReplacement(t *testing.T) {
+func TestSignerControlNetworkBrokerPinsLegacyGenesisBeforeReplacement(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	createTestSignerWalletV2(t, store, keys, "legacy_agent", solana.NewWallet().PublicKey().String(), 100, 1000)
 	legacyPrimary := "https://legacy-primary.example/rpc"
@@ -240,7 +240,7 @@ func TestSignerApplicationNetworkBrokerPinsLegacyGenesisBeforeReplacement(t *tes
 
 	if _, err := keys.PutApplicationNetworkV2("legacy_agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: replacementPrimary,
-	}); err == nil || !strings.Contains(err.Error(), "pinned genesis") {
+	}); err == nil || !strings.Contains(err.Error(), "initial network activation") {
 		t.Fatalf("application broker repinned an unmigrated legacy wallet: %v", err)
 	}
 	stored, err := keys.getNetworkRecordV2("legacy_agent")
@@ -249,7 +249,7 @@ func TestSignerApplicationNetworkBrokerPinsLegacyGenesisBeforeReplacement(t *tes
 	}
 
 	replacementGenesis = legacyGenesis
-	summary, err := keys.PutApplicationNetworkV2("legacy_agent", signerNetworkPutRequestV2{
+	summary, err := keys.PutNetworkV2("legacy_agent", signerNetworkPutRequestV2{
 		ExpectedVersion: signerUint64PointerV2(1), PrimaryRPCURL: replacementPrimary,
 	})
 	if err != nil || !summary.Ready || summary.Version != 2 {
