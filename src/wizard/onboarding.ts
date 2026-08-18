@@ -35,7 +35,6 @@ import type {
 import {
   collectWalletSignerDoctorReport,
   invokeNativeSignerNetworkSetPrimary,
-  walletRecoveryExportCommand,
   walletSetupCommand,
 } from "../commands/wallet.js";
 import type { FasedAgentConfig } from "../config/config.js";
@@ -59,6 +58,7 @@ import {
   setNamedWalletRole,
   upsertNamedWallet,
 } from "../wallet/wallet-provider-registry.js";
+import { walletRecoveryFacade } from "../wallet/wallet-recovery-facade.js";
 import {
   ensureWalletStateDir,
   resolveLocalSignerControlSocketPath,
@@ -1772,7 +1772,7 @@ export async function runOnboardingWizard(
                       : "Enter an absolute path for a new file",
                 })
               ).trim();
-              await walletRecoveryExportCommand(runtime, {
+              await walletRecoveryFacade.exportEncrypted(runtime, {
                 walletId: walletId ?? walletPurpose,
                 output: recoveryOutput,
               });

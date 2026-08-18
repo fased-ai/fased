@@ -11,9 +11,6 @@ import {
   walletPolicyActivateRoleBaselineCommand,
   walletProviderConfigureCommand,
   walletRotateKeysCommand,
-  walletRecoveryExportCommand,
-  walletRecoveryImportCommand,
-  walletRawExportCommand,
   walletRetireCommand,
   walletRpcSetCommand,
   walletRoleSetCommand,
@@ -23,6 +20,7 @@ import {
   walletStatusCommand,
 } from "../../commands/wallet.js";
 import { defaultRuntime } from "../../runtime.js";
+import { walletRecoveryFacade } from "../../wallet/wallet-recovery-facade.js";
 import { runCommandWithRuntime } from "../cli-utils.js";
 import {
   addGatewayClientOptions,
@@ -57,7 +55,7 @@ export function registerWalletCommands(program: Command) {
     .requiredOption("--output <absolute-path>", "New owner-only recovery package path")
     .action(async (opts) => {
       await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletRecoveryExportCommand(defaultRuntime, {
+        await walletRecoveryFacade.exportEncrypted(defaultRuntime, {
           walletId: String(opts.walletId),
           output: String(opts.output),
         });
@@ -75,7 +73,7 @@ export function registerWalletCommands(program: Command) {
     .requiredOption("--rpc-url <url>", "One primary Solana RPC URL")
     .action(async (opts) => {
       await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletRecoveryImportCommand(defaultRuntime, {
+        await walletRecoveryFacade.restoreEncrypted(defaultRuntime, {
           walletId: String(opts.walletId),
           walletName: String(opts.walletName),
           role: String(opts.role),
@@ -96,7 +94,7 @@ export function registerWalletCommands(program: Command) {
     )
     .action(async (opts) => {
       await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletRawExportCommand(defaultRuntime, {
+        await walletRecoveryFacade.exportRaw(defaultRuntime, {
           walletId: String(opts.walletId),
           output: String(opts.output),
           acknowledgeCustodyReduction: Boolean(opts.acknowledgeCustodyReduction),
@@ -115,7 +113,7 @@ export function registerWalletCommands(program: Command) {
     )
     .action(async (opts) => {
       await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletRawExportCommand(defaultRuntime, {
+        await walletRecoveryFacade.exportRaw(defaultRuntime, {
           walletId: String(opts.walletId),
           output: String(opts.output),
           acknowledgeCustodyReduction: Boolean(opts.acknowledgeCustodyReduction),
