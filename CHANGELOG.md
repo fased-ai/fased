@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.102
+
+- Prepare the protected candidate output directory before finalization so
+  publication can attest the exact P1-tested bytes without rebuilding them.
+- Reuse exact product artifacts across publication-workflow-only corrections
+  while continuing to reject every product-path difference.
+
 ## 0.1.76-rc.101
 
 - Require the literal fresh-login `fased` command from any directory before
