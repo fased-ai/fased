@@ -71,9 +71,9 @@ install -m 0755 "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \
   "$OUTPUT_DIR/fased-privileged-release-evidence.mjs"
 install -m 0644 "$ROOT_DIR/config/lifecycle-acceptance.v2.json" \
   "$OUTPUT_DIR/fased-lifecycle-acceptance-v2.json"
-node "$ROOT_DIR/scripts/lifecycle-release-compatibility.mjs" build \
-  --version "$VERSION" --commit "$COMMIT" --tree "$TREE" \
-  --output "$OUTPUT_DIR/fased-lifecycle-release-compatibility-v1.json"
+node "$ROOT_DIR/scripts/lifecycle-release-compatibility.mjs" verify \
+  --manifest "$OUTPUT_DIR/fased-lifecycle-release-compatibility-v1.json" \
+  --version "$VERSION" --commit "$COMMIT" --tree "$TREE" >/dev/null
 
 readarray -t lifecycle_times < <(node -e '
   const issued = new Date(process.argv[1]);

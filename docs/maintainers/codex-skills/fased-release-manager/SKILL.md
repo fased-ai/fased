@@ -23,6 +23,11 @@ unless the owner explicitly asks for that inventory.
 
 4. Preserve unrelated dirty work and isolate the requested change.
 
+The newest owner-selected plan is the sole controlling plan until the owner
+replaces or completes it. Superseded incident plans and reports are evidence
+only; never resume work from them. At every handoff, name the first incomplete
+checkpoint and continue from it.
+
 Use one mode:
 
 - `REPORT`: inspect and answer; make no mutation.
@@ -32,6 +37,27 @@ Use one mode:
 
 Do not allocate a version, build a candidate, or enter release mode to diagnose
 a source or fixture failure.
+
+## Enforce the plan before release
+
+Release authority permits an irreversible action; it never proves readiness or
+overrides the controlling plan. Before PRE-CANDIDATE, a version-only change, RC
+allocation, P1, tag creation, channel movement, publication, or promotion:
+
+1. Read the controlling plan's ordered checkpoints.
+2. Reconcile them against exact current evidence, including preserved failures
+   and unfinished branches or worktrees.
+3. Identify the requested action's immediately preceding exit predicate.
+4. Proceed only when that predicate and every earlier required predicate are
+   `PASS` for the same commit, tree, artifact, and environment class.
+
+Any required `FAIL`, `BLOCKED`, `SUPPORTING`, stale receipt, unresolved product
+failure, or unclassified unfinished implementation keeps the task in `FIX` or
+`LIFECYCLE`; do not run release tools. A later owner authorization does not
+waive an earlier failed predicate unless the owner explicitly records a named
+`WAIVED` risk decision. Never use a new RC, tag, or publication to discover
+whether a correction works, and never present release progress as completion
+of later architecture phases.
 
 ## Continue without loops
 

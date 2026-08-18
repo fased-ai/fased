@@ -281,4 +281,22 @@ describe("npm-free managed lifecycle", () => {
     expect(release).toContain("Any change to a bound input");
     expect(redesign).toContain("Only after both pass may the next unused RC be allocated");
   });
+
+  it("keeps release authority subordinate to the controlling plan", async () => {
+    const skill = await source("docs/maintainers/codex-skills/fased-release-manager/SKILL.md");
+
+    expect(skill).toContain(
+      "The newest owner-selected plan is the sole controlling plan until the owner",
+    );
+    expect(skill).toContain(
+      "Release authority permits an irreversible action; it never proves readiness or",
+    );
+    expect(skill).toContain(
+      "Proceed only when that predicate and every earlier required predicate are",
+    );
+    expect(skill).toContain("Never use a new RC, tag, or publication to discover");
+    expect(skill).toContain(
+      "never present release progress as completion\nof later architecture phases",
+    );
+  });
 });
