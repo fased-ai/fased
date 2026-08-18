@@ -6,7 +6,8 @@ import {
   type WalletProviderRegistry,
 } from "../../wallet/wallet-provider-registry.js";
 import { resolveWalletProviderId } from "../../wallet/wallet-provider-resolver.js";
-import { readWalletStatusSnapshot, type WalletStatusSnapshot } from "../../wallet/wallet-status.js";
+import { walletReadinessFacade } from "../../wallet/wallet-readiness-facade.js";
+import type { WalletStatusSnapshot } from "../../wallet/wallet-status.js";
 
 type WalletChainEntry = {
   walletId: string;
@@ -53,7 +54,7 @@ export type GatewayWalletSignerFacade = {
 };
 
 type GatewayWalletSignerFacadeDependencies = {
-  readStatusSnapshot: typeof readWalletStatusSnapshot;
+  readStatusSnapshot: typeof walletReadinessFacade.read;
   readRegistry: (env: NodeJS.ProcessEnv) => WalletProviderRegistry;
   resolveProviderId: typeof resolveWalletProviderId;
   restartLocalSigner: (env: NodeJS.ProcessEnv) => Promise<void>;
@@ -287,7 +288,7 @@ export function createGatewayWalletSignerFacade(
   overrides: Partial<GatewayWalletSignerFacadeDependencies> = {},
 ): GatewayWalletSignerFacade {
   const dependencies: GatewayWalletSignerFacadeDependencies = {
-    readStatusSnapshot: readWalletStatusSnapshot,
+    readStatusSnapshot: walletReadinessFacade.read,
     readRegistry: readWalletProviderRegistry,
     resolveProviderId: resolveWalletProviderId,
     restartLocalSigner: async (env) => {

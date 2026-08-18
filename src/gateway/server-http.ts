@@ -153,6 +153,7 @@ import {
   resolveScopedRpcUrlForWallet,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
+import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
 import { walletDiagnosticErrorMessage } from "../wallet/wallet-redaction.js";
 import {
   resolveLocalSignerSocketPath,
@@ -182,7 +183,6 @@ import {
   prepareWalletStandardReview,
   readWalletStandardReviewTxHash,
 } from "../wallet/wallet-standard-review.js";
-import { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
 import { renderQrPngBase64 } from "../web/qr-image.js";
 import { createA2aHandler } from "./a2a-http.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
@@ -6922,7 +6922,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         const providerSecret = readWalletProviderSecretStatus(providerId, process.env);
         const rpc = readWalletRpcSecretStatus(process.env, { providerId });
         const checks: Array<{ id: string; ok: boolean; message: string }> = [];
-        const status = await readWalletStatusSnapshot({ config: cfg, env: process.env });
+        const status = await walletReadinessFacade.read({ config: cfg, env: process.env });
         checks.push({
           id: "wallet.service.healthy",
           ok: status.service.healthy,

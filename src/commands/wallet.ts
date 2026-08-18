@@ -45,6 +45,7 @@ import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
+import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
 import { redactWalletDiagnosticText } from "../wallet/wallet-redaction.js";
 import { walletRegistryFacade } from "../wallet/wallet-registry-facade.js";
 import {
@@ -60,10 +61,6 @@ import {
   readWalletProviderSecretStatus,
   saveWalletProviderSecret,
 } from "../wallet/wallet-secrets-store.js";
-import {
-  readWalletStatusSnapshot,
-  resolveWalletConfigForRuntime,
-} from "../wallet/wallet-status.js";
 import {
   installSignerdBinary,
   restartLocalSocketSigner,
@@ -83,6 +80,8 @@ const {
   upsert: upsertNamedWallet,
   write: writeWalletProviderRegistry,
 } = walletRegistryFacade;
+const { read: readWalletStatusSnapshot, resolveRuntimeConfig: resolveWalletConfigForRuntime } =
+  walletReadinessFacade;
 
 export type WalletSetupOptions = {
   managed?: boolean;
