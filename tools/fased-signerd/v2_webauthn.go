@@ -11,22 +11,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"fased-signerd/internal/webauthn"
 	"github.com/go-webauthn/webauthn/protocol"
-	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 	bolt "go.etcd.io/bbolt"
 )
 
 const (
-	signerWebAuthnRegistrationTTL = 5 * time.Minute
-	signerWebAuthnReviewTTL       = 2 * time.Minute
+	signerWebAuthnRegistrationTTL = webauthn.RegistrationTTL
+	signerWebAuthnReviewTTL       = webauthn.ReviewTTL
 	signerWebAuthnProofTTL        = 45 * time.Second
 	signerWebAuthnMaxResponse     = 256 << 10
 	signerReviewMaxIntentBytes    = 64 << 10
@@ -53,39 +51,21 @@ var (
 // relays opaque WebAuthn ceremony data. It cannot choose the RP ID, origins,
 // credential public keys, counters, challenge bindings, or authorization state.
 type signerWebAuthnServiceV2 struct {
-	store    *signerStoreV2
-	provider *webauthnlib.WebAuthn
-	rpID     string
-	origins  []string
-	enabled  bool
+	store   *signerStoreV2
+	rp      *webauthn.RelyingParty
+	rpID    string
+	origins []string
+	enabled bool
 }
 
-type signerWebAuthnUserV2 struct {
-	id          []byte
-	credentials []webauthnlib.Credential
-}
-
-func (u signerWebAuthnUserV2) WebAuthnID() []byte {
-	return bytes.Clone(u.id)
-}
-
-func (u signerWebAuthnUserV2) WebAuthnName() string {
-	return "wallet-operator"
-}
-
-func (u signerWebAuthnUserV2) WebAuthnDisplayName() string {
-	return "Fased Wallet Operator"
-}
-
-func (u signerWebAuthnUserV2) WebAuthnCredentials() []webauthnlib.Credential {
-	return append([]webauthnlib.Credential(nil), u.credentials...)
-}
+type signerWebAuthnCredentialV2 = webauthn.Credential
+type signerWebAuthnSessionV2 = webauthn.SessionData
 
 type signerWebAuthnCredentialRecordV2 struct {
-	Credential webauthnlib.Credential `json:"credential"`
-	Label      string                 `json:"label"`
-	CreatedAt  string                 `json:"createdAt"`
-	LastUsedAt string                 `json:"lastUsedAt,omitempty"`
+	Credential signerWebAuthnCredentialV2 `json:"credential"`
+	Label      string                     `json:"label"`
+	CreatedAt  string                     `json:"createdAt"`
+	LastUsedAt string                     `json:"lastUsedAt,omitempty"`
 }
 
 type signerWebAuthnCredentialMetadataV2 struct {
@@ -144,7 +124,7 @@ type signerWebAuthnChallengeV2 struct {
 	ID         string                  `json:"id"`
 	Kind       string                  `json:"kind"`
 	State      string                  `json:"state"`
-	Session    webauthnlib.SessionData `json:"session"`
+	Session    signerWebAuthnSessionV2 `json:"session"`
 	Label      string                  `json:"label,omitempty"`
 	Binding    *signerReviewBindingV2  `json:"binding,omitempty"`
 	CreatedAt  string                  `json:"createdAt"`
@@ -229,91 +209,29 @@ type signerWebAuthnHealthV2 struct {
 
 func newSignerWebAuthnServiceV2(store *signerStoreV2, rpID, originList string) (*signerWebAuthnServiceV2, error) {
 	service := &signerWebAuthnServiceV2{store: store}
-	rpID = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(rpID), "."))
-	originList = strings.TrimSpace(originList)
-	if rpID == "" && originList == "" {
-		return service, nil
-	}
-	if rpID == "" || originList == "" {
-		return nil, errors.New("WebAuthn requires both --webauthn-rp-id and --webauthn-origins")
-	}
-	origins, err := normalizeSignerWebAuthnOriginsV2(rpID, strings.Split(originList, ","))
+	rp, err := webauthn.New(rpID, originList)
 	if err != nil {
 		return nil, err
 	}
-	provider, err := webauthnlib.New(&webauthnlib.Config{
-		RPID:                  rpID,
-		RPDisplayName:         "FasedAgent Wallet",
-		RPOrigins:             origins,
-		RPAllowCrossOrigin:    false,
-		AttestationPreference: protocol.PreferNoAttestation,
-		AuthenticatorSelection: protocol.AuthenticatorSelection{
-			ResidentKey:      protocol.ResidentKeyRequirementPreferred,
-			UserVerification: protocol.VerificationRequired,
-		},
-		Timeouts: webauthnlib.TimeoutsConfig{
-			Login:        webauthnlib.TimeoutConfig{Timeout: signerWebAuthnReviewTTL},
-			Registration: webauthnlib.TimeoutConfig{Timeout: signerWebAuthnRegistrationTTL},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("configure signer WebAuthn relying party: %w", err)
+	if rp.Enabled() {
+		service.rp = rp
+		service.rpID = rp.RPID()
+		service.origins = rp.Origins()
+		service.enabled = true
 	}
-	service.provider = provider
-	service.rpID = rpID
-	service.origins = origins
-	service.enabled = true
 	return service, nil
 }
 
 func normalizeSignerWebAuthnOriginsV2(rpID string, rawOrigins []string) ([]string, error) {
-	seen := map[string]bool{}
-	origins := make([]string, 0, len(rawOrigins))
-	for _, raw := range rawOrigins {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			return nil, errors.New("WebAuthn origin allowlist contains an empty origin")
-		}
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return nil, fmt.Errorf("invalid WebAuthn origin %q", raw)
-		}
-		if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return nil, fmt.Errorf("WebAuthn origin must not include credentials, path, query, or fragment: %q", raw)
-		}
-		scheme := strings.ToLower(parsed.Scheme)
-		hostname := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
-		if scheme != "https" && !(scheme == "http" && isLoopbackWebAuthnHostV2(hostname)) {
-			return nil, fmt.Errorf("WebAuthn origin must use HTTPS except for localhost: %q", raw)
-		}
-		rpIsIP := net.ParseIP(rpID) != nil
-		if hostname != rpID && (rpIsIP || !strings.HasSuffix(hostname, "."+rpID)) {
-			return nil, fmt.Errorf("WebAuthn origin host %q is outside RP ID %q", hostname, rpID)
-		}
-		canonical := scheme + "://" + strings.ToLower(parsed.Host)
-		if seen[canonical] {
-			continue
-		}
-		seen[canonical] = true
-		origins = append(origins, canonical)
-	}
-	if len(origins) == 0 {
-		return nil, errors.New("WebAuthn requires at least one exact origin")
-	}
-	sort.Strings(origins)
-	return origins, nil
+	return webauthn.NormalizeOrigins(rpID, rawOrigins)
 }
 
 func isLoopbackWebAuthnHostV2(host string) bool {
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return webauthn.IsLoopbackHost(host)
 }
 
 func (s *signerWebAuthnServiceV2) requireEnabled() error {
-	if s == nil || !s.enabled || s.provider == nil || s.store == nil || s.store.db == nil {
+	if s == nil || !s.enabled || s.rp == nil || !s.rp.Enabled() || s.store == nil || s.store.db == nil {
 		return errors.New("signer WebAuthn is not configured by the host administrator")
 	}
 	return nil
@@ -427,20 +345,20 @@ func signerWebAuthnCredentialSummaryFromTxV2(tx *bolt.Tx) (signerWebAuthnCredent
 	}, nil
 }
 
-func signerWebAuthnUserFromTxV2(tx *bolt.Tx) (signerWebAuthnUserV2, []signerWebAuthnCredentialRecordV2, error) {
+func signerWebAuthnCredentialsFromTxV2(tx *bolt.Tx) ([]byte, []signerWebAuthnCredentialRecordV2, []signerWebAuthnCredentialV2, error) {
 	userID, err := getOrCreateSignerWebAuthnUserIDV2(tx)
 	if err != nil {
-		return signerWebAuthnUserV2{}, nil, err
+		return nil, nil, nil, err
 	}
 	records, err := loadSignerWebAuthnCredentialRecordsV2(tx)
 	if err != nil {
-		return signerWebAuthnUserV2{}, nil, err
+		return nil, nil, nil, err
 	}
-	credentials := make([]webauthnlib.Credential, 0, len(records))
+	credentials := make([]signerWebAuthnCredentialV2, 0, len(records))
 	for _, record := range records {
 		credentials = append(credentials, record.Credential)
 	}
-	return signerWebAuthnUserV2{id: userID, credentials: credentials}, records, nil
+	return userID, records, credentials, nil
 }
 
 func putSignerWebAuthnChallengeV2(tx *bolt.Tx, challenge signerWebAuthnChallengeV2) error {
@@ -547,23 +465,14 @@ func (s *signerWebAuthnServiceV2) beginRegistration(label string) (signerWebAuth
 		if activeChallenges >= signerWebAuthnMaxChallenges {
 			return errors.New("too many pending signer WebAuthn challenges")
 		}
-		user, records, err := signerWebAuthnUserFromTxV2(tx)
+		userID, records, credentials, err := signerWebAuthnCredentialsFromTxV2(tx)
 		if err != nil {
 			return err
 		}
 		if len(records) >= signerWebAuthnMaxCredentials {
 			return errors.New("signer WebAuthn credential limit reached")
 		}
-		exclusions := webauthnlib.Credentials(user.credentials).CredentialDescriptors()
-		options, session, err := s.provider.BeginRegistration(
-			user,
-			webauthnlib.WithExclusions(exclusions),
-			webauthnlib.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
-				ResidentKey:      protocol.ResidentKeyRequirementPreferred,
-				UserVerification: protocol.VerificationRequired,
-			}),
-			webauthnlib.WithConveyancePreference(protocol.PreferNoAttestation),
-		)
+		options, session, err := s.rp.BeginRegistration(userID, credentials)
 		if err != nil {
 			return err
 		}
@@ -630,30 +539,20 @@ func (s *signerWebAuthnServiceV2) finishRegistration(body signerWebAuthnRegistra
 		if challenge.Kind != signerWebAuthnChallengeRegistration || challenge.Binding != nil {
 			return errors.New("signer WebAuthn challenge is not a registration ceremony")
 		}
-		user, records, err := signerWebAuthnUserFromTxV2(tx)
+		userID, records, credentials, err := signerWebAuthnCredentialsFromTxV2(tx)
 		if err != nil {
 			return err
 		}
 		if len(records) >= signerWebAuthnMaxCredentials {
 			return errors.New("signer WebAuthn credential limit reached")
 		}
-		parsed, err := protocol.ParseCredentialCreationResponseBytes(body.Credential)
+		credential, err := s.rp.FinishRegistration(userID, credentials, challenge.Session, body.Credential)
 		if err != nil {
-			return errors.New("invalid WebAuthn registration response")
-		}
-		credential, err := s.provider.CreateCredential(user, challenge.Session, parsed)
-		if err != nil {
-			return fmt.Errorf("verify WebAuthn registration: %w", err)
-		}
-		if credential == nil || len(credential.ID) == 0 || len(credential.PublicKey) == 0 {
-			return errors.New("WebAuthn attestation did not contain a credential public key")
-		}
-		if !credential.Flags.UserPresent || !credential.Flags.UserVerified {
-			return errors.New("WebAuthn registration requires user presence and verification")
+			return err
 		}
 		key := signerWebAuthnCredentialKeyV2(credential.ID)
-		credentials := tx.Bucket(bucketSignerWebAuthnCredentialsV2)
-		if credentials.Get(key) != nil {
+		credentialBucket := tx.Bucket(bucketSignerWebAuthnCredentialsV2)
+		if credentialBucket.Get(key) != nil {
 			return errors.New("WebAuthn credential is already enrolled")
 		}
 		record := signerWebAuthnCredentialRecordV2{
@@ -665,7 +564,7 @@ func (s *signerWebAuthnServiceV2) finishRegistration(body signerWebAuthnRegistra
 		if err != nil {
 			return err
 		}
-		if err := credentials.Put(key, encoded); err != nil {
+		if err := credentialBucket.Put(key, encoded); err != nil {
 			return err
 		}
 		challenge.State = signerWebAuthnChallengeConsumed
@@ -1074,14 +973,14 @@ func (s *signerWebAuthnServiceV2) beginReviewAuthorization(walletID string, body
 		if !containsStringV2(policy.Operations, binding.PolicyOperation) {
 			return fmt.Errorf("policy denies reviewed operation %s", binding.PolicyOperation)
 		}
-		user, records, err := signerWebAuthnUserFromTxV2(tx)
+		userID, records, credentials, err := signerWebAuthnCredentialsFromTxV2(tx)
 		if err != nil {
 			return err
 		}
 		if len(records) == 0 {
 			return errors.New("no signer-owned WebAuthn credential is enrolled; from host administration, run 'fased-signerd admin webauthn registration begin --control-socket <signer-control.sock> --label <label>' and complete 'webauthn registration finish' through the same control socket; Gateway enrollment is intentionally unavailable")
 		}
-		options, session, err := s.provider.BeginLogin(user, webauthnlib.WithUserVerification(protocol.VerificationRequired))
+		options, session, err := s.rp.BeginReviewAuthentication(userID, credentials)
 		if err != nil {
 			return err
 		}
@@ -1165,27 +1064,17 @@ func (s *signerWebAuthnServiceV2) finishReviewAuthorization(walletID string, bod
 		if !equalSignerReviewBindingV2(currentBinding, *challenge.Binding) {
 			return errors.New("review authorization binding is no longer current")
 		}
-		user, records, err := signerWebAuthnUserFromTxV2(tx)
+		userID, records, credentials, err := signerWebAuthnCredentialsFromTxV2(tx)
 		if err != nil {
 			return err
 		}
-		parsed, err := protocol.ParseCredentialRequestResponseBytes(body.Credential)
+		credential, err := s.rp.FinishReviewAuthentication(userID, credentials, challenge.Session, body.Credential)
 		if err != nil {
-			return errors.New("invalid WebAuthn assertion response")
+			return err
 		}
-		storedRecord, found := findSignerWebAuthnCredentialRecordV2(records, parsed.RawID)
+		storedRecord, found := findSignerWebAuthnCredentialRecordV2(records, credential.ID)
 		if !found {
 			return errors.New("unknown signer WebAuthn credential")
-		}
-		credential, err := s.provider.ValidateLogin(user, challenge.Session, parsed)
-		if err != nil {
-			return fmt.Errorf("verify signer WebAuthn assertion: %w", err)
-		}
-		if credential == nil || !credential.Flags.UserPresent || !credential.Flags.UserVerified {
-			return errors.New("review authorization requires user presence and verification")
-		}
-		if credential.Authenticator.CloneWarning {
-			return errors.New("WebAuthn signature counter rollback detected")
 		}
 		storedRecord.Credential = *credential
 		storedRecord.LastUsedAt = timestampV2(now)
