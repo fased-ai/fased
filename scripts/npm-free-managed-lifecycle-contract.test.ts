@@ -272,8 +272,10 @@ describe("npm-free managed lifecycle", () => {
       "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle-redesign.md",
     );
 
-    expect(skill).toContain("Before PRE-CANDIDATE, a version-only change, or RC allocation");
-    expect(skill).toContain("new RC as a test iteration");
+    expect(skill).toMatch(
+      /Candidate and release work begins only after the literal end-user command\s+passes\./u,
+    );
+    expect(skill).toContain("publication must not rebuild");
     expect(release).toContain("one unpublished, tag-free candidate-shaped Linux-x64 build");
     expect(release).toContain("serial LOCAL0 fresh/update/takeover Local and Hosting fixtures");
     expect(release).toContain("Any change to a bound input");
