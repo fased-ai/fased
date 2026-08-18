@@ -49,8 +49,13 @@ describe("version-neutral lifecycle acceptance", () => {
       git(repo, "init", "--quiet");
       git(repo, "config", "user.name", "Fased Fixture Test");
       git(repo, "config", "user.email", "fixture@example.invalid");
+      await mkdir(resolve(repo, ".github/workflows"), { recursive: true });
       await mkdir(resolve(repo, "src"), { recursive: true });
       await mkdir(resolve(repo, "scripts"), { recursive: true });
+      await writeFile(
+        resolve(repo, ".github/workflows/hosted-runtime-release.yml"),
+        "publication fixture v1\n",
+      );
       await writeFile(resolve(repo, "src/product.txt"), "identical product bytes\n");
       await writeFile(resolve(repo, "scripts/run-lifecycle-local0.sh"), "fixture v1\n");
       git(repo, "add", ".");
@@ -59,8 +64,13 @@ describe("version-neutral lifecycle acceptance", () => {
 
       git(repo, "checkout", "--quiet", "--orphan", "squashed-main");
       git(repo, "rm", "-r", "-f", "--quiet", ".");
+      await mkdir(resolve(repo, ".github/workflows"), { recursive: true });
       await mkdir(resolve(repo, "src"), { recursive: true });
       await mkdir(resolve(repo, "scripts"), { recursive: true });
+      await writeFile(
+        resolve(repo, ".github/workflows/hosted-runtime-release.yml"),
+        "publication fixture v2\n",
+      );
       await writeFile(resolve(repo, "src/product.txt"), "identical product bytes\n");
       await writeFile(resolve(repo, "scripts/run-lifecycle-local0.sh"), "fixture v2\n");
       git(repo, "add", ".");
