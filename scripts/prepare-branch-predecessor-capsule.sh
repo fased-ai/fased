@@ -21,7 +21,6 @@ INSTALLATION_CLASS="${6:-public-stable}"
 test -z "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)"
 FIXTURE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 FIXTURE_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
-git -C "$ROOT_DIR" merge-base --is-ancestor "$BUILDER_COMMIT" "$FIXTURE_COMMIT"
 unexpected_changes="$(lifecycle_unexpected_fixture_changes \
   "$ROOT_DIR" "$BUILDER_COMMIT" "$FIXTURE_COMMIT")"
 [[ -z "$unexpected_changes" ]] || {

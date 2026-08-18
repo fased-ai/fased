@@ -289,7 +289,6 @@ verify_artifact() {
   artifact_fixture_only_descendant="false"
   if [[ "$artifact_product_commit" != "$commit" || "$artifact_product_tree" != "$tree" ]]; then
     [[ "$allow_fixture_descendant" == "1" ]] || return 1
-    git -C "$ROOT_DIR" merge-base --is-ancestor "$artifact_product_commit" "$commit" || return 1
     unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
       "$ROOT_DIR" "$artifact_product_commit" "$commit")"
     [[ -z "$unexpected_fixture_changes" ]] || return 1

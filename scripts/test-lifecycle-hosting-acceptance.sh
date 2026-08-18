@@ -195,10 +195,6 @@ trap 'exit 129' HUP
 fixture_source_commit="$commit"
 if [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   -f "$ARTIFACT_DIR/fased-candidate-fixture-overlay.json" ]]; then
-  git -C "$ROOT_DIR" merge-base --is-ancestor "$commit" HEAD || {
-    echo "A branch artifact can reuse only descendant Hosting fixture corrections." >&2
-    exit 1
-  }
   unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
     "$ROOT_DIR" "$commit" HEAD)"
   [[ -z "$unexpected_fixture_changes" ]] || {

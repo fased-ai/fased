@@ -6,7 +6,11 @@ lifecycle_unexpected_fixture_changes() {
   local root_dir="${1:?repository root is required}"
   local product_commit="${2:?product commit is required}"
   local fixture_commit="${3:?fixture commit is required}"
+  local changed_paths
 
-  git -C "$root_dir" diff --name-only "$product_commit..$fixture_commit" |
-    grep -Ev "$FASED_LIFECYCLE_FIXTURE_ONLY_PATH_RE" || true
+  changed_paths="$(git -C "$root_dir" diff --name-only "$product_commit..$fixture_commit")" ||
+    return 1
+  if [[ -n "$changed_paths" ]]; then
+    printf '%s\n' "$changed_paths" | grep -Ev "$FASED_LIFECYCLE_FIXTURE_ONLY_PATH_RE" || true
+  fi
 }
