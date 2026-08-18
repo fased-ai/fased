@@ -242,8 +242,8 @@ import {
   resolveGatewayClientIp,
 } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
-import { buildGatewayProbePayload, buildGatewayReadinessPayload } from "./probe-payload.js";
 import { canonicalizePathVariant, isPathProtectedByPrefixes } from "./security-path.js";
+import { handleGatewayReadinessHttpRequest } from "./server/readiness-http-service.js";
 import type { ReadinessChecker } from "./server/readiness.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
@@ -265,13 +265,6 @@ const SIGNED_FEDERATION_INBOUND_ROUTES = new Set([
 const CONTROL_UI_SETTINGS_STORAGE_KEY = "fased.control.settings.v1";
 const CONTROL_UI_TOKEN_LOCAL_STORAGE_KEY = "fased.control.token.local.v1";
 const CONTROL_UI_TOKEN_SESSION_STORAGE_KEY = "fased.control.token.session.v1";
-const GATEWAY_PROBE_STATUS_BY_PATH = new Map<string, "live" | "ready">([
-  ["/health", "live"],
-  ["/healthz", "live"],
-  ["/ready", "ready"],
-  ["/readyz", "ready"],
-]);
-
 type HookDispatchers = {
   dispatchWakeHook: (value: { text: string; mode: "now" | "next-heartbeat" }) => void;
   dispatchAgentHook: (value: {
@@ -4040,64 +4033,6 @@ async function handlePrometheusMetricsRequest(params: {
           getReadiness: params.getReadiness,
         }),
   );
-  return true;
-}
-
-async function handleGatewayProbeRequest(params: {
-  req: IncomingMessage;
-  res: ServerResponse;
-  requestPath: string;
-  resolvedAuth: ResolvedGatewayAuth;
-  trustedProxies: string[];
-  allowRealIpFallback: boolean;
-  rateLimiter?: AuthRateLimiter;
-  getReadiness?: ReadinessChecker;
-}): Promise<boolean> {
-  const status = GATEWAY_PROBE_STATUS_BY_PATH.get(params.requestPath);
-  if (!status) {
-    return false;
-  }
-
-  const method = (params.req.method ?? "GET").toUpperCase();
-  if (method !== "GET" && method !== "HEAD") {
-    params.res.statusCode = 405;
-    params.res.setHeader("Allow", "GET, HEAD");
-    params.res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    params.res.end("Method Not Allowed");
-    return true;
-  }
-
-  params.res.setHeader("Content-Type", "application/json; charset=utf-8");
-  params.res.setHeader("Cache-Control", "no-store");
-
-  let statusCode = 200;
-  let body: string;
-  if (status === "ready" && params.getReadiness) {
-    const includeDetails = await canRevealReadinessDetails({
-      req: params.req,
-      resolvedAuth: params.resolvedAuth,
-      trustedProxies: params.trustedProxies,
-      allowRealIpFallback: params.allowRealIpFallback,
-      rateLimiter: params.rateLimiter,
-    });
-    try {
-      const result = params.getReadiness();
-      statusCode = result.ready ? 200 : 503;
-      body = JSON.stringify(
-        includeDetails ? buildGatewayReadinessPayload(result) : { ready: result.ready },
-      );
-    } catch {
-      statusCode = 503;
-      body = JSON.stringify(
-        includeDetails ? { ready: false, failing: ["internal"], uptimeMs: 0 } : { ready: false },
-      );
-    }
-  } else {
-    body = JSON.stringify(buildGatewayProbePayload(status));
-  }
-
-  params.res.statusCode = statusCode;
-  params.res.end(method === "HEAD" ? undefined : body);
   return true;
 }
 
@@ -10718,15 +10653,19 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
       }
 
       if (
-        await handleGatewayProbeRequest({
+        await handleGatewayReadinessHttpRequest({
           req,
           res,
           requestPath,
-          resolvedAuth,
-          trustedProxies,
-          allowRealIpFallback,
-          rateLimiter,
           getReadiness,
+          canRevealDetails: () =>
+            canRevealReadinessDetails({
+              req,
+              resolvedAuth,
+              trustedProxies,
+              allowRealIpFallback,
+              rateLimiter,
+            }),
         })
       ) {
         return;

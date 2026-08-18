@@ -76,6 +76,25 @@ describe("server-http-lazy", () => {
     expect(__testing.isServerHttpModuleLoaded()).toBe(false);
   });
 
+  it("serves readiness without loading the full HTTP product handlers", async () => {
+    const port = await getFreePort();
+    const server = createGatewayHttpServer({
+      ...baseOpts(),
+      getReadiness: () => ({ ready: false, failing: ["wallet"], uptimeMs: 2_000 }),
+    });
+
+    await listen(server, port);
+    const response = await get(port, "/readyz");
+
+    expect(response.status).toBe(503);
+    expect(JSON.parse(response.body)).toMatchObject({
+      ready: false,
+      failing: ["wallet"],
+      uptimeMs: 2_000,
+    });
+    expect(__testing.isServerHttpModuleLoaded()).toBe(false);
+  });
+
   it("delegates non-probe requests to the full HTTP handler on demand", async () => {
     const port = await getFreePort();
     const server = createGatewayHttpServer(baseOpts());
