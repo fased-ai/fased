@@ -15,12 +15,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	signerpolicy "fased-signerd/internal/policy"
 	solana "github.com/gagliardetto/solana-go"
 )
 
 const (
 	federationBondChallengeSchemaV2   = "https://schemas.fased.ai/fased-bond-challenge-v1.json"
-	federationBondPolicyDomainV2      = "domain:fased:federation-bond-challenge-v1"
+	federationBondPolicyDomainV2      = signerpolicy.FederationBondProgramDomain
 	federationBondSignatureDomainV2   = "fased:federation-bond-challenge-signature:v2"
 	federationBondChallengeMaxBytesV2 = 16 << 10
 	federationBondChallengeMaxTTL     = 10 * time.Minute

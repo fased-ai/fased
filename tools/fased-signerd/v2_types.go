@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	signerpolicy "fased-signerd/internal/policy"
 	solana "github.com/gagliardetto/solana-go"
 )
 
@@ -92,26 +93,8 @@ type signerOperationLookupV2 struct {
 	RequestID string `json:"requestId"`
 }
 
-type signerPolicyAssetV2 struct {
-	Asset                string   `json:"asset"`
-	Destinations         []string `json:"destinations"`
-	MaxPerTx             string   `json:"maxPerTx"`
-	MaxDaily             string   `json:"maxDaily"`
-	ReviewedDestinations bool     `json:"reviewedDestinations,omitempty"`
-	TypedSATDestinations bool     `json:"typedSatDestinations,omitempty"`
-}
-
-type signerPolicyV2 struct {
-	WalletID         string                `json:"walletId"`
-	Role             string                `json:"role"`
-	Version          uint64                `json:"version"`
-	BaselineVersion  uint64                `json:"baselineVersion,omitempty"`
-	Operations       []string              `json:"operations"`
-	Programs         []string              `json:"programs"`
-	TypedSATPrograms bool                  `json:"typedSatPrograms,omitempty"`
-	Assets           []signerPolicyAssetV2 `json:"assets"`
-	Hash             string                `json:"hash"`
-}
+type signerPolicyAssetV2 = signerpolicy.Asset
+type signerPolicyV2 = signerpolicy.Policy
 
 type signerPolicyPutRequestV2 struct {
 	ExpectedVersion uint64         `json:"expectedVersion"`
@@ -454,99 +437,7 @@ func normalizeSortedStringsV2(values []string, normalize func(string) (string, e
 }
 
 func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
-	policy := signerPolicyV2{
-		WalletID:         normalizeWalletID(input.WalletID),
-		Version:          input.Version,
-		BaselineVersion:  input.BaselineVersion,
-		Role:             strings.TrimSpace(strings.ToLower(input.Role)),
-		TypedSATPrograms: input.TypedSATPrograms,
-		Assets:           make([]signerPolicyAssetV2, 0, len(input.Assets)),
-	}
-	if strings.TrimSpace(input.WalletID) == "" {
-		return signerPolicyV2{}, errors.New("walletId is required")
-	}
-	switch policy.Role {
-	case "agent", "mining", "vault":
-	default:
-		return signerPolicyV2{}, errors.New("policy role must be agent, mining, or vault")
-	}
-	var err error
-	policy.Operations, err = normalizeSortedStringsV2(input.Operations, func(raw string) (string, error) {
-		value := strings.TrimSpace(raw)
-		if value == "" {
-			return "", errors.New("policy operation cannot be empty")
-		}
-		return value, nil
-	})
-	if err != nil {
-		return signerPolicyV2{}, err
-	}
-	policy.Programs, err = normalizeSortedStringsV2(input.Programs, func(raw string) (string, error) {
-		if strings.TrimSpace(raw) == federationBondPolicyDomainV2 {
-			return federationBondPolicyDomainV2, nil
-		}
-		return normalizePublicKeyV2(raw, "policy program")
-	})
-	if err != nil {
-		return signerPolicyV2{}, err
-	}
-
-	seenAssets := map[string]bool{}
-	for _, rawAsset := range input.Assets {
-		asset := signerPolicyAssetV2{
-			Asset:                strings.TrimSpace(rawAsset.Asset),
-			ReviewedDestinations: rawAsset.ReviewedDestinations,
-			TypedSATDestinations: rawAsset.TypedSATDestinations,
-		}
-		if asset.Asset == "solana:native" || asset.Asset == "sat:action" || asset.Asset == "sat:capital:lamports" || asset.Asset == "federation:bond-challenge" {
-			// canonical as-is
-		} else if strings.HasPrefix(asset.Asset, "solana:spl:") {
-			mint, err := normalizePublicKeyV2(strings.TrimPrefix(asset.Asset, "solana:spl:"), "policy asset mint")
-			if err != nil {
-				return signerPolicyV2{}, err
-			}
-			asset.Asset = "solana:spl:" + mint
-		} else if strings.HasPrefix(asset.Asset, "sat:mint:") {
-			mint, err := normalizePublicKeyV2(strings.TrimPrefix(asset.Asset, "sat:mint:"), "SAT policy asset mint")
-			if err != nil {
-				return signerPolicyV2{}, err
-			}
-			asset.Asset = "sat:mint:" + mint
-		} else {
-			return signerPolicyV2{}, fmt.Errorf("unsupported policy asset %q", asset.Asset)
-		}
-		if seenAssets[asset.Asset] {
-			return signerPolicyV2{}, fmt.Errorf("duplicate policy asset %s", asset.Asset)
-		}
-		seenAssets[asset.Asset] = true
-		asset.Destinations, err = normalizeSortedStringsV2(rawAsset.Destinations, func(raw string) (string, error) {
-			return normalizePublicKeyV2(raw, "policy destination")
-		})
-		if err != nil {
-			return signerPolicyV2{}, err
-		}
-		maxPerTx, err := parsePositiveAmountV2(rawAsset.MaxPerTx, "policy maxPerTx")
-		if err != nil {
-			return signerPolicyV2{}, err
-		}
-		maxDaily, err := parsePositiveAmountV2(rawAsset.MaxDaily, "policy maxDaily")
-		if err != nil {
-			return signerPolicyV2{}, err
-		}
-		asset.MaxPerTx = maxPerTx.String()
-		asset.MaxDaily = maxDaily.String()
-		policy.Assets = append(policy.Assets, asset)
-	}
-	sort.Slice(policy.Assets, func(i, j int) bool { return policy.Assets[i].Asset < policy.Assets[j].Asset })
-
-	policy.Hash = ""
-	canonical, err := json.Marshal(policy)
-	if err != nil {
-		return signerPolicyV2{}, err
-	}
-	hash := sha256.Sum256(canonical)
-	policy.Hash = "sha256:" + hex.EncodeToString(hash[:])
-	return policy, nil
+	return signerpolicy.Normalize(input)
 }
 
 func isTypedSATIntentV2(policy signerPolicyV2, intent normalizedIntentV2) bool {
