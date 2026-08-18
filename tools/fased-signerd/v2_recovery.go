@@ -2,10 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,22 +10,21 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
+	"fased-signerd/internal/recovery"
 	solana "github.com/gagliardetto/solana-go"
-	"golang.org/x/crypto/argon2"
 )
 
 const (
-	signerRecoveryKindV1           = "fased-signer-wallet-recovery"
-	signerRecoveryVersionV1        = uint8(1)
-	signerRecoveryMemoryKiBV1      = uint32(64 * 1024)
-	signerRecoveryIterationsV1     = uint32(3)
-	signerRecoveryParallelismV1    = uint8(1)
-	signerRecoverySaltBytesV1      = 16
-	signerRecoveryKeyBytesV1       = 32
-	maxSignerRecoveryPackageBytes  = 16 << 10
-	maxSignerRecoveryPasswordBytes = 1024
+	signerRecoveryKindV1           = recovery.KindV1
+	signerRecoveryVersionV1        = recovery.VersionV1
+	signerRecoveryMemoryKiBV1      = recovery.MemoryKiBV1
+	signerRecoveryIterationsV1     = recovery.IterationsV1
+	signerRecoveryParallelismV1    = recovery.ParallelismV1
+	signerRecoverySaltBytesV1      = recovery.SaltBytesV1
+	signerRecoveryKeyBytesV1       = recovery.KeyBytesV1
+	maxSignerRecoveryPackageBytes  = recovery.MaxPackageBytes
+	maxSignerRecoveryPasswordBytes = recovery.MaxPasswordBytes // pragma: allowlist secret
 )
 
 func readSignerRecoveryPasswordV1(path string) ([]byte, error) {
@@ -49,144 +44,16 @@ func readSignerRecoveryPasswordV1(path string) ([]byte, error) {
 	return password, nil
 }
 
-func signerRecoveryAADV1(pkg signerWalletRecoveryPackageV1) []byte {
-	return []byte(fmt.Sprintf(
-		"fased-signerd:wallet-recovery:v1:%s:%s:%s:%s",
-		pkg.WalletID,
-		pkg.Role,
-		pkg.PublicKey,
-		pkg.CreatedAt,
-	))
-}
-
 func encryptSignerRecoveryPackageV1(wallet signerWalletRecordV2, role string, secret, password []byte) (signerWalletRecoveryPackageV1, error) {
-	if len(secret) != 64 || !validateSolanaCLIPrivateKeyV2(secret) {
-		return signerWalletRecoveryPackageV1{}, errors.New("signer wallet key is invalid")
-	}
-	salt := make([]byte, signerRecoverySaltBytesV1)
-	if _, err := rand.Read(salt); err != nil {
-		return signerWalletRecoveryPackageV1{}, errors.New("generate recovery salt")
-	}
-	defer zeroBytes(salt)
-	key := argon2.IDKey(password, salt, signerRecoveryIterationsV1, signerRecoveryMemoryKiBV1, signerRecoveryParallelismV1, signerRecoveryKeyBytesV1)
-	defer zeroBytes(key)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return signerWalletRecoveryPackageV1{}, errors.New("initialize recovery encryption")
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return signerWalletRecoveryPackageV1{}, errors.New("initialize recovery authenticated encryption")
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return signerWalletRecoveryPackageV1{}, errors.New("generate recovery nonce")
-	}
-	defer zeroBytes(nonce)
-	pkg := signerWalletRecoveryPackageV1{
-		Kind:      signerRecoveryKindV1,
-		Version:   signerRecoveryVersionV1,
-		WalletID:  wallet.WalletID,
-		Role:      role,
-		PublicKey: wallet.PublicKey,
-		CreatedAt: wallet.CreatedAt,
-		KDF: signerWalletRecoveryKDFV1{
-			Name:        "argon2id",
-			MemoryKiB:   signerRecoveryMemoryKiBV1,
-			Iterations:  signerRecoveryIterationsV1,
-			Parallelism: signerRecoveryParallelismV1,
-			Salt:        base64.RawURLEncoding.EncodeToString(salt),
-		},
-		Encryption: signerWalletRecoveryEncryptionV1{
-			Name:  "aes-256-gcm",
-			Nonce: base64.RawURLEncoding.EncodeToString(nonce),
-		},
-	}
-	ciphertext := aead.Seal(nil, nonce, secret, signerRecoveryAADV1(pkg))
-	pkg.Encryption.Ciphertext = base64.RawURLEncoding.EncodeToString(ciphertext)
-	zeroBytes(ciphertext)
-	return pkg, nil
+	return recovery.Encrypt(wallet.WalletID, role, wallet.PublicKey, wallet.CreatedAt, secret, password)
 }
 
 func validateSignerRecoveryPackageV1(pkg signerWalletRecoveryPackageV1) error {
-	if pkg.Kind != signerRecoveryKindV1 || pkg.Version != signerRecoveryVersionV1 {
-		return errors.New("unsupported recovery package kind or version")
-	}
-	if normalizeWalletID(pkg.WalletID) != pkg.WalletID || pkg.WalletID == "" {
-		return errors.New("recovery package walletId is invalid")
-	}
-	if pkg.Role != "agent" && pkg.Role != "mining" && pkg.Role != "vault" {
-		return errors.New("recovery package role is invalid")
-	}
-	if _, err := normalizeRotationPublicKeyV2(pkg.PublicKey, "publicKey"); err != nil {
-		return errors.New("recovery package publicKey is invalid")
-	}
-	createdAt, createdAtErr := time.Parse(time.RFC3339Nano, pkg.CreatedAt)
-	if createdAtErr != nil || createdAt.UTC().Format(time.RFC3339Nano) != pkg.CreatedAt {
-		return errors.New("recovery package createdAt is invalid")
-	}
-	if pkg.KDF.Name != "argon2id" || pkg.KDF.MemoryKiB != signerRecoveryMemoryKiBV1 ||
-		pkg.KDF.Iterations != signerRecoveryIterationsV1 || pkg.KDF.Parallelism != signerRecoveryParallelismV1 {
-		return errors.New("recovery package KDF parameters are unsupported")
-	}
-	if pkg.Encryption.Name != "aes-256-gcm" {
-		return errors.New("recovery package encryption is unsupported")
-	}
-	salt, err := base64.RawURLEncoding.DecodeString(pkg.KDF.Salt)
-	if err != nil || len(salt) != signerRecoverySaltBytesV1 {
-		zeroBytes(salt)
-		return errors.New("recovery package salt is invalid")
-	}
-	zeroBytes(salt)
-	nonce, err := base64.RawURLEncoding.DecodeString(pkg.Encryption.Nonce)
-	if err != nil || len(nonce) != 12 {
-		zeroBytes(nonce)
-		return errors.New("recovery package nonce is invalid")
-	}
-	zeroBytes(nonce)
-	ciphertext, err := base64.RawURLEncoding.DecodeString(pkg.Encryption.Ciphertext)
-	if err != nil || len(ciphertext) != 64+16 {
-		zeroBytes(ciphertext)
-		return errors.New("recovery package ciphertext is invalid")
-	}
-	zeroBytes(ciphertext)
-	return nil
+	return recovery.Validate(pkg)
 }
 
 func decryptSignerRecoveryPackageV1(pkg signerWalletRecoveryPackageV1, password []byte) ([]byte, error) {
-	if err := validateSignerRecoveryPackageV1(pkg); err != nil {
-		return nil, err
-	}
-	salt, _ := base64.RawURLEncoding.DecodeString(pkg.KDF.Salt)
-	defer zeroBytes(salt)
-	nonce, _ := base64.RawURLEncoding.DecodeString(pkg.Encryption.Nonce)
-	defer zeroBytes(nonce)
-	ciphertext, _ := base64.RawURLEncoding.DecodeString(pkg.Encryption.Ciphertext)
-	defer zeroBytes(ciphertext)
-	key := argon2.IDKey(password, salt, pkg.KDF.Iterations, pkg.KDF.MemoryKiB, pkg.KDF.Parallelism, signerRecoveryKeyBytesV1)
-	defer zeroBytes(key)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, errors.New("initialize recovery decryption")
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, errors.New("initialize recovery authenticated decryption")
-	}
-	secret, err := aead.Open(nil, nonce, ciphertext, signerRecoveryAADV1(pkg))
-	if err != nil {
-		return nil, errors.New("recovery password is incorrect or the package was modified")
-	}
-	if !validateSolanaCLIPrivateKeyV2(secret) {
-		zeroBytes(secret)
-		return nil, errors.New("recovery package contains an invalid wallet key")
-	}
-	privateKeyPublic := solana.PrivateKey(secret).PublicKey().String()
-	if privateKeyPublic != pkg.PublicKey {
-		zeroBytes(secret)
-		return nil, errors.New("recovery package public key does not match its private key")
-	}
-	return secret, nil
+	return recovery.Decrypt(pkg, password)
 }
 func (m *signerKeyManagerV2) ExportRecoveryV1(walletID string, req signerWalletRecoveryExportRequestV2) (signerWalletRecoveryExportResultV2, error) {
 	walletID = normalizeWalletID(walletID)

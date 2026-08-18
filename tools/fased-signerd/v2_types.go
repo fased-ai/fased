@@ -14,6 +14,7 @@ import (
 	"time"
 
 	signerpolicy "fased-signerd/internal/policy"
+	"fased-signerd/internal/recovery"
 	solana "github.com/gagliardetto/solana-go"
 )
 
@@ -144,30 +145,9 @@ type signerWalletRawExportRequestV2 struct {
 	Path              string `json:"path"`
 }
 
-type signerWalletRecoveryPackageV1 struct {
-	Kind       string                           `json:"kind"`
-	Version    uint8                            `json:"version"`
-	WalletID   string                           `json:"walletId"`
-	Role       string                           `json:"role"`
-	PublicKey  string                           `json:"publicKey"`
-	CreatedAt  string                           `json:"createdAt"`
-	KDF        signerWalletRecoveryKDFV1        `json:"kdf"`
-	Encryption signerWalletRecoveryEncryptionV1 `json:"encryption"`
-}
-
-type signerWalletRecoveryKDFV1 struct {
-	Name        string `json:"name"`
-	MemoryKiB   uint32 `json:"memoryKiB"`
-	Iterations  uint32 `json:"iterations"`
-	Parallelism uint8  `json:"parallelism"`
-	Salt        string `json:"salt"`
-}
-
-type signerWalletRecoveryEncryptionV1 struct {
-	Name       string `json:"name"`
-	Nonce      string `json:"nonce"`
-	Ciphertext string `json:"ciphertext"`
-}
+type signerWalletRecoveryPackageV1 = recovery.PackageV1
+type signerWalletRecoveryKDFV1 = recovery.KDFV1
+type signerWalletRecoveryEncryptionV1 = recovery.EncryptionV1
 
 type signerWalletRecoveryExportResultV2 struct {
 	WalletID  string                        `json:"walletId"`
