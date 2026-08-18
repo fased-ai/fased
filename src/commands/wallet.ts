@@ -40,23 +40,13 @@ import {
   type WalletInboundStatus,
 } from "../wallet/wallet-inbound-events.js";
 import { buildWalletProviderCapabilityMatrix } from "../wallet/wallet-provider-capabilities.js";
-import {
-  normalizeWalletUserRole,
-  nextRoleWalletIdentity,
-  readWalletProviderRegistry,
-  replaceRetiredMiningWallet,
-  resolveWalletUserRole,
-  setDefaultWallet,
-  setNamedWalletRole,
-  setWalletProviderEnabled,
-  upsertNamedWallet,
-  writeWalletProviderRegistry,
-} from "../wallet/wallet-provider-registry.js";
+import type { WalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
 import { redactWalletDiagnosticText } from "../wallet/wallet-redaction.js";
+import { walletRegistryFacade } from "../wallet/wallet-registry-facade.js";
 import {
   ensureWalletStateDir,
   isLocalSignerExternallyManaged,
@@ -80,6 +70,19 @@ import {
   resolveSignerdBinaryPath,
   writeLocalSignerEnvFile as writeManagedLocalSignerEnvFile,
 } from "../wizard/onboarding.wallet.js";
+
+const {
+  nextRoleIdentity: nextRoleWalletIdentity,
+  normalizeRole: normalizeWalletUserRole,
+  read: readWalletProviderRegistry,
+  replaceRetiredMiningWallet,
+  resolveRole: resolveWalletUserRole,
+  setDefault: setDefaultWallet,
+  setProviderEnabled: setWalletProviderEnabled,
+  setRole: setNamedWalletRole,
+  upsert: upsertNamedWallet,
+  write: writeWalletProviderRegistry,
+} = walletRegistryFacade;
 
 export type WalletSetupOptions = {
   managed?: boolean;
@@ -744,7 +747,7 @@ async function configureLocalSignerMode(
 }
 
 function findNativeSignerWalletIdCollision(
-  wallets: ReturnType<typeof readWalletProviderRegistry>["wallets"],
+  wallets: WalletProviderRegistry["wallets"],
   friendlyWalletId: string,
   signerWalletId: string,
 ) {
