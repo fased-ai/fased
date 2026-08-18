@@ -8,10 +8,15 @@ import { createServer as createHttpsServer } from "node:https";
 import type { Duplex } from "node:stream";
 import type { WebSocketServer } from "ws";
 import type { CanvasHostHandler } from "../canvas-host/server.js";
+import { safeEqualSecret } from "../security/secret-equal.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
-import type { ResolvedGatewayAuth } from "./auth.js";
-import { buildGatewayProbePayload, buildGatewayReadinessPayload } from "./probe-payload.js";
+import { isDirectLoopbackRequest, type ResolvedGatewayAuth } from "./auth.js";
+import { getBearerToken } from "./http-utils.js";
 import type { GatewayHttpServerOpts } from "./server-http.js";
+import {
+  handleGatewayReadinessHttpRequest,
+  resolveGatewayProbeStatus,
+} from "./server/readiness-http-service.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 
 type ServerHttpModule = typeof import("./server-http.js");
@@ -23,51 +28,21 @@ function loadServerHttpModule(): Promise<ServerHttpModule> {
   return serverHttpModulePromise;
 }
 
-function handleGatewayProbeRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  opts: Pick<GatewayHttpServerOpts, "getReadiness">,
-): boolean {
-  const requestPath = new URL(req.url ?? "/", "http://localhost").pathname;
-  const status =
-    requestPath === "/health" || requestPath === "/healthz"
-      ? "live"
-      : requestPath === "/ready" || requestPath === "/readyz"
-        ? "ready"
-        : null;
-  if (!status) {
+function canRevealLazyReadinessDetails(req: IncomingMessage, auth: ResolvedGatewayAuth): boolean {
+  if (isDirectLoopbackRequest(req)) {
+    return true;
+  }
+  const bearerToken = getBearerToken(req);
+  if (!bearerToken) {
     return false;
   }
-
-  const method = (req.method ?? "GET").toUpperCase();
-  if (method !== "GET" && method !== "HEAD") {
-    res.statusCode = 405;
-    res.setHeader("Allow", "GET, HEAD");
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end("Method Not Allowed");
-    return true;
+  if (auth.mode === "token" && auth.token) {
+    return safeEqualSecret(auth.token, bearerToken);
   }
-
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
-
-  if (status === "ready" && opts.getReadiness) {
-    try {
-      const readiness = opts.getReadiness();
-      res.statusCode = readiness.ready ? 200 : 503;
-      res.end(
-        method === "HEAD" ? undefined : JSON.stringify(buildGatewayReadinessPayload(readiness)),
-      );
-    } catch {
-      res.statusCode = 503;
-      res.end(method === "HEAD" ? undefined : JSON.stringify({ ready: false }));
-    }
-    return true;
+  if (auth.mode === "password" && auth.password) {
+    return safeEqualSecret(auth.password, bearerToken);
   }
-
-  res.statusCode = 200;
-  res.end(method === "HEAD" ? undefined : JSON.stringify(buildGatewayProbePayload(status)));
-  return true;
+  return false;
 }
 
 export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer {
@@ -80,7 +55,21 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
   };
 
   const handleRequest = (req: IncomingMessage, res: ServerResponse) => {
-    if (handleGatewayProbeRequest(req, res, opts)) {
+    const requestPath = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (resolveGatewayProbeStatus(requestPath)) {
+      void handleGatewayReadinessHttpRequest({
+        req,
+        res,
+        requestPath,
+        getReadiness: opts.getReadiness,
+        canRevealDetails: () => canRevealLazyReadinessDetails(req, opts.resolvedAuth),
+      }).catch(() => {
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        }
+        res.end("Gateway readiness handler failed");
+      });
       return;
     }
 
