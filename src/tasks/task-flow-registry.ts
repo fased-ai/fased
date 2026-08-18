@@ -1,7 +1,13 @@
-import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
+import {
+  listTaskDefinitionRecords,
+  replaceTaskDefinitionCollection,
+  resetTaskDefinitionLedgerForTests,
+  updateTaskDefinitionRecord,
+  type DefinitionCollectionAdapter,
+} from "./task-definition-ledger.js";
 import { findTaskRecord, markTaskTerminal, updateTaskRecord } from "./task-registry.js";
 import type {
   TaskNotifyPolicy,
@@ -68,8 +74,7 @@ type TaskFlowStore = {
   flows: TaskFlowRecord[];
 };
 
-let loadedPath: string | null = null;
-let cachedStore: TaskFlowStore | null = null;
+let ephemeralStore: TaskFlowStore | null = null;
 
 export function resolveTaskFlowRegistryPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(resolveStateDir(env), TASKS_DIR, FLOWS_FILE);
@@ -152,7 +157,7 @@ function sanitizeFlow(raw: unknown): TaskFlowRecord | null {
   };
 }
 
-function sanitizeStore(raw: unknown): TaskFlowStore {
+export function sanitizeTaskFlowStore(raw: unknown): TaskFlowStore {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return defaultStore();
   }
@@ -165,26 +170,29 @@ function sanitizeStore(raw: unknown): TaskFlowStore {
   return { version: 1, flows };
 }
 
-function loadStore(filePath = resolveTaskFlowRegistryPath()): TaskFlowStore {
-  if (cachedStore && loadedPath === filePath) {
-    return cachedStore;
+const taskFlowCollection: DefinitionCollectionAdapter<TaskFlowRecord> = {
+  collection: "task_flow",
+  legacyFileName: FLOWS_FILE,
+  sanitizeLegacy: (raw) => sanitizeTaskFlowStore(raw).flows,
+  identity: (record) => ({ scopeKey: "", recordId: record.flowId, updatedAt: record.updatedAt }),
+};
+
+function loadStore(): TaskFlowStore {
+  if (ephemeralStore) {
+    return ephemeralStore;
   }
-  try {
-    cachedStore = sanitizeStore(JSON.parse(fs.readFileSync(filePath, "utf8")));
-  } catch {
-    cachedStore = defaultStore();
-  }
-  loadedPath = filePath;
-  return cachedStore;
+  return {
+    version: 1,
+    flows: listTaskDefinitionRecords(taskFlowCollection).map((entry) => entry.record),
+  };
 }
 
-function saveStore(store: TaskFlowStore, filePath = resolveTaskFlowRegistryPath()): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  fs.renameSync(tmpPath, filePath);
-  cachedStore = store;
-  loadedPath = filePath;
+function saveStore(store: TaskFlowStore): void {
+  if (ephemeralStore) {
+    ephemeralStore = store;
+    return;
+  }
+  replaceTaskDefinitionCollection(taskFlowCollection, store.flows);
 }
 
 function normalizeId(input: string): string {
@@ -359,9 +367,6 @@ export function upsertTaskFlowFromTask(
   const flowId = normalizeId(
     opts.flowId ?? metadataString(task, "flowId") ?? taskFlowIdForTask(task),
   );
-  const store = loadStore();
-  const existingIndex = store.flows.findIndex((flow) => flow.flowId === flowId);
-  const existing = existingIndex >= 0 ? store.flows[existingIndex] : undefined;
   const now = Date.now();
   const status = statusFromTask(task);
   const endedAt = isTerminalStatus(status) ? (task.endedAt ?? task.updatedAt ?? now) : undefined;
@@ -372,8 +377,62 @@ export function upsertTaskFlowFromTask(
     metadataString(task, "workflowDefinitionId") ??
     metadataString(task, "definitionId") ??
     (task.sourceId && task.taskKind === "workflow" ? task.sourceId : undefined);
-  const taskIds = Array.from(new Set([...(existing?.taskIds ?? []), task.taskId]));
-  const next: TaskFlowRecord = {
+  if (ephemeralStore) {
+    const store = loadStore();
+    const existingIndex = store.flows.findIndex((flow) => flow.flowId === flowId);
+    const existing = existingIndex >= 0 ? store.flows[existingIndex] : undefined;
+    const next: TaskFlowRecord = {
+      flowId,
+      syncMode: task.taskKind === "workflow" ? "workflow" : "task_mirrored",
+      revision: existing ? existing.revision + 1 : 0,
+      status,
+      goal: task.task,
+      notifyPolicy: task.notifyPolicy,
+      ownerKey: task.ownerKey,
+      agentId: taskAgentId(task),
+      sessionKey: task.sessionKey,
+      definitionId,
+      sourceId: task.sourceId,
+      taskIds: Array.from(new Set([...(existing?.taskIds ?? []), task.taskId])),
+      currentTaskId: task.taskId,
+      currentStep,
+      blockedTaskId: status === "blocked" ? task.taskId : undefined,
+      blockedSummary:
+        status === "blocked"
+          ? (task.terminalSummary ?? task.error ?? task.progressSummary ?? "Workflow is blocked.")
+          : undefined,
+      cancelRequestedAt: existing?.cancelRequestedAt,
+      createdAt: existing?.createdAt ?? task.createdAt,
+      updatedAt: task.updatedAt ?? now,
+      endedAt,
+      metadata: {
+        ...existing?.metadata,
+        ...opts.metadata,
+        runId: task.runId,
+        rootTaskId: task.rootTaskId,
+        parentTaskId: task.parentTaskId,
+        correlationId: task.correlationId,
+        definitionId,
+        definitionKind: task.definitionKind,
+        workflowRunId: task.workflowRunId,
+        workflowNodeId: task.workflowNodeId,
+        taskKind: task.taskKind,
+        source: task.source,
+        runtime: task.runtime,
+        stepCount: task.steps?.length ?? task.metadata?.stepCount,
+        approvalGates: task.metadata?.approvalGates,
+        ...sourceTaskMetadataFromTask(task),
+      },
+    };
+    if (existingIndex >= 0) {
+      store.flows[existingIndex] = next;
+    } else {
+      store.flows.push(next);
+    }
+    saveStore(store);
+    return next;
+  }
+  return updateTaskDefinitionRecord(taskFlowCollection, "", flowId, (existing) => ({
     flowId,
     syncMode: task.taskKind === "workflow" ? "workflow" : "task_mirrored",
     revision: existing ? existing.revision + 1 : 0,
@@ -385,7 +444,7 @@ export function upsertTaskFlowFromTask(
     sessionKey: task.sessionKey,
     definitionId,
     sourceId: task.sourceId,
-    taskIds,
+    taskIds: Array.from(new Set([...(existing?.taskIds ?? []), task.taskId])),
     currentTaskId: task.taskId,
     currentStep,
     blockedTaskId: status === "blocked" ? task.taskId : undefined,
@@ -415,14 +474,7 @@ export function upsertTaskFlowFromTask(
       approvalGates: task.metadata?.approvalGates,
       ...sourceTaskMetadataFromTask(task),
     },
-  };
-  if (existingIndex >= 0) {
-    store.flows[existingIndex] = next;
-  } else {
-    store.flows.push(next);
-  }
-  saveStore(store);
-  return next;
+  }));
 }
 
 export function cancelTaskFlow(flowId: string, reason?: string): TaskFlowRecord | undefined {
@@ -430,12 +482,10 @@ export function cancelTaskFlow(flowId: string, reason?: string): TaskFlowRecord 
   if (!key) {
     return undefined;
   }
-  const store = loadStore();
-  const index = store.flows.findIndex((flow) => flow.flowId === key);
-  if (index < 0) {
+  const current = getTaskFlowById(key);
+  if (!current) {
     return undefined;
   }
-  const current = store.flows[index];
   const now = Date.now();
   for (const taskId of current.taskIds) {
     const task = findTaskRecord(taskId);
@@ -455,23 +505,43 @@ export function cancelTaskFlow(flowId: string, reason?: string): TaskFlowRecord 
       }
     }
   }
-  const next: TaskFlowRecord = {
-    ...current,
-    revision: current.revision + 1,
-    status: "cancelled",
-    cancelRequestedAt: current.cancelRequestedAt ?? now,
-    endedAt: now,
-    updatedAt: now,
-    blockedTaskId: undefined,
-    blockedSummary: undefined,
-    metadata: {
-      ...current.metadata,
-      cancelReason: reason,
-    },
-  };
-  store.flows[index] = next;
-  saveStore(store);
-  return next;
+  if (ephemeralStore) {
+    const store = loadStore();
+    const index = store.flows.findIndex((flow) => flow.flowId === key);
+    if (index < 0) {
+      return undefined;
+    }
+    const next: TaskFlowRecord = {
+      ...store.flows[index],
+      revision: store.flows[index].revision + 1,
+      status: "cancelled",
+      cancelRequestedAt: store.flows[index].cancelRequestedAt ?? now,
+      endedAt: now,
+      updatedAt: now,
+      blockedTaskId: undefined,
+      blockedSummary: undefined,
+      metadata: { ...store.flows[index].metadata, cancelReason: reason },
+    };
+    store.flows[index] = next;
+    saveStore(store);
+    return next;
+  }
+  return updateTaskDefinitionRecord(taskFlowCollection, "", key, (latest) => {
+    if (!latest) {
+      return undefined;
+    }
+    return {
+      ...latest,
+      revision: latest.revision + 1,
+      status: "cancelled",
+      cancelRequestedAt: latest.cancelRequestedAt ?? now,
+      endedAt: now,
+      updatedAt: now,
+      blockedTaskId: undefined,
+      blockedSummary: undefined,
+      metadata: { ...latest.metadata, cancelReason: reason },
+    };
+  });
 }
 
 function activeFlowForMaintenance(flow: TaskFlowRecord): boolean {
@@ -520,27 +590,56 @@ export function runTaskFlowRegistryMaintenance(params?: { nowMs?: number; staleF
 } {
   const now = params?.nowMs ?? Date.now();
   const staleFlowMs = params?.staleFlowMs ?? DEFAULT_STALE_FLOW_MS;
-  const store = loadStore();
-  let updated = 0;
-  store.flows = store.flows.map((flow) => {
-    if (!activeFlowForMaintenance(flow) || flowAgeMs(flow, now) <= staleFlowMs) {
-      return flow;
+  if (ephemeralStore) {
+    const store = loadStore();
+    let updated = 0;
+    store.flows = store.flows.map((flow) => {
+      if (!activeFlowForMaintenance(flow) || flowAgeMs(flow, now) <= staleFlowMs) {
+        return flow;
+      }
+      updated += 1;
+      return {
+        ...flow,
+        revision: flow.revision + 1,
+        status: "lost",
+        endedAt: now,
+        updatedAt: now,
+        metadata: { ...flow.metadata, maintenanceReason: "stale workflow run marked lost" },
+      };
+    });
+    if (updated > 0) {
+      saveStore(store);
     }
-    updated += 1;
-    return {
-      ...flow,
-      revision: flow.revision + 1,
-      status: "lost",
-      endedAt: now,
-      updatedAt: now,
-      metadata: {
-        ...flow.metadata,
-        maintenanceReason: "stale workflow run marked lost",
+    return { updated, findings: auditTaskFlowRegistry({ nowMs: now, staleFlowMs }).findings };
+  }
+  let updated = 0;
+  for (const flow of loadStore().flows) {
+    if (!activeFlowForMaintenance(flow) || flowAgeMs(flow, now) <= staleFlowMs) {
+      continue;
+    }
+    let changed = false;
+    updateTaskDefinitionRecord(
+      taskFlowCollection,
+      "",
+      flow.flowId,
+      (latest): TaskFlowRecord | undefined => {
+        if (!latest || !activeFlowForMaintenance(latest) || flowAgeMs(latest, now) <= staleFlowMs) {
+          return latest;
+        }
+        changed = true;
+        return {
+          ...latest,
+          revision: latest.revision + 1,
+          status: "lost",
+          endedAt: now,
+          updatedAt: now,
+          metadata: { ...latest.metadata, maintenanceReason: "stale workflow run marked lost" },
+        };
       },
-    };
-  });
-  if (updated > 0) {
-    saveStore(store);
+    );
+    if (changed) {
+      updated += 1;
+    }
   }
   return { updated, findings: auditTaskFlowRegistry({ nowMs: now, staleFlowMs }).findings };
 }
@@ -550,9 +649,11 @@ export function resetTaskFlowRegistryForTests(opts?: {
   persist?: boolean;
 }): void {
   const store = { version: 1 as const, flows: opts?.flows ? [...opts.flows] : [] };
-  cachedStore = store;
-  loadedPath = resolveTaskFlowRegistryPath();
-  if (opts?.persist !== false) {
-    saveStore(store);
+  if (opts?.persist === false) {
+    ephemeralStore = store;
+    return;
   }
+  ephemeralStore = null;
+  resetTaskDefinitionLedgerForTests();
+  saveStore(store);
 }

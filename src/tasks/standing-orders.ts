@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
+import {
+  listTaskDefinitionRecords,
+  replaceTaskDefinitionCollection,
+  resetTaskDefinitionLedgerForTests,
+  updateTaskDefinitionRecord,
+  type DefinitionCollectionAdapter,
+} from "./task-definition-ledger.js";
 import { createTaskRecord } from "./task-registry.js";
 import type { TaskRecord } from "./task-registry.types.js";
 
@@ -40,8 +46,7 @@ type StandingOrdersStore = {
   orders: StandingOrderRecord[];
 };
 
-let loadedPath: string | null = null;
-let cachedStore: StandingOrdersStore | null = null;
+let ephemeralStore: StandingOrdersStore | null = null;
 
 export function resolveStandingOrdersPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(resolveStateDir(env), TASKS_DIR, STANDING_ORDERS_FILE);
@@ -104,7 +109,7 @@ function sanitizeOrder(raw: unknown): StandingOrderRecord | null {
   };
 }
 
-function sanitizeStore(raw: unknown): StandingOrdersStore {
+export function sanitizeStandingOrdersStore(raw: unknown): StandingOrdersStore {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return defaultStore();
   }
@@ -116,26 +121,33 @@ function sanitizeStore(raw: unknown): StandingOrdersStore {
   return { version: 1, orders };
 }
 
-function loadStore(filePath = resolveStandingOrdersPath()): StandingOrdersStore {
-  if (cachedStore && loadedPath === filePath) {
-    return cachedStore;
+const standingOrderCollection: DefinitionCollectionAdapter<StandingOrderRecord> = {
+  collection: "standing_order",
+  legacyFileName: STANDING_ORDERS_FILE,
+  sanitizeLegacy: (raw) => sanitizeStandingOrdersStore(raw).orders,
+  identity: (record) => ({
+    scopeKey: record.agentId,
+    recordId: record.id,
+    updatedAt: record.updatedAt,
+  }),
+};
+
+function loadStore(): StandingOrdersStore {
+  if (ephemeralStore) {
+    return ephemeralStore;
   }
-  try {
-    cachedStore = sanitizeStore(JSON.parse(fs.readFileSync(filePath, "utf8")));
-  } catch {
-    cachedStore = defaultStore();
-  }
-  loadedPath = filePath;
-  return cachedStore;
+  return {
+    version: 1,
+    orders: listTaskDefinitionRecords(standingOrderCollection).map((entry) => entry.record),
+  };
 }
 
-function saveStore(store: StandingOrdersStore, filePath = resolveStandingOrdersPath()): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  fs.renameSync(tmpPath, filePath);
-  cachedStore = store;
-  loadedPath = filePath;
+function saveStore(store: StandingOrdersStore): void {
+  if (ephemeralStore) {
+    ephemeralStore = store;
+    return;
+  }
+  replaceTaskDefinitionCollection(standingOrderCollection, store.orders);
 }
 
 function sortOrders(orders: StandingOrderRecord[]): StandingOrderRecord[] {
@@ -179,16 +191,38 @@ export function saveStandingOrder(raw: unknown): StandingOrderRecord {
   if (!instructions) {
     throw new Error("standing order requires instructions");
   }
-  const store = loadStore();
   const now = Date.now();
   const id = normalizeId(readString(record, "id"), name);
-  const existingIndex = store.orders.findIndex(
-    (order) => order.agentId === agentId && order.id === id,
-  );
-  const createdAt = existingIndex >= 0 ? store.orders[existingIndex].createdAt : now;
-  const lastProposedAt =
-    existingIndex >= 0 ? store.orders[existingIndex].lastProposedAt : undefined;
-  const order: StandingOrderRecord = {
+  if (ephemeralStore) {
+    const store = loadStore();
+    const existingIndex = store.orders.findIndex(
+      (order) => order.agentId === agentId && order.id === id,
+    );
+    const existing = existingIndex >= 0 ? store.orders[existingIndex] : undefined;
+    const order: StandingOrderRecord = {
+      id,
+      agentId,
+      name,
+      instructions,
+      ...(readString(record, "triggerHint")
+        ? { triggerHint: readString(record, "triggerHint") }
+        : {}),
+      proposalKind: normalizeProposalKind(record.proposalKind),
+      status: normalizeStatus(record.status),
+      approvalRequired: true,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      ...(existing?.lastProposedAt ? { lastProposedAt: existing.lastProposedAt } : {}),
+    };
+    if (existingIndex >= 0) {
+      store.orders[existingIndex] = order;
+    } else {
+      store.orders.push(order);
+    }
+    saveStore(store);
+    return order;
+  }
+  return updateTaskDefinitionRecord(standingOrderCollection, agentId, id, (existing) => ({
     id,
     agentId,
     name,
@@ -199,17 +233,10 @@ export function saveStandingOrder(raw: unknown): StandingOrderRecord {
     proposalKind: normalizeProposalKind(record.proposalKind),
     status: normalizeStatus(record.status),
     approvalRequired: true,
-    createdAt,
+    createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-    ...(lastProposedAt ? { lastProposedAt } : {}),
-  };
-  if (existingIndex >= 0) {
-    store.orders[existingIndex] = order;
-  } else {
-    store.orders.push(order);
-  }
-  saveStore(store);
-  return order;
+    ...(existing?.lastProposedAt ? { lastProposedAt: existing.lastProposedAt } : {}),
+  }))!;
 }
 
 export function removeStandingOrder(raw: unknown): StandingOrdersResult {
@@ -222,9 +249,13 @@ export function removeStandingOrder(raw: unknown): StandingOrdersResult {
   if (!agentId || !id) {
     throw new Error("standing order remove requires agentId and id");
   }
-  const store = loadStore();
-  store.orders = store.orders.filter((order) => !(order.agentId === agentId && order.id === id));
-  saveStore(store);
+  if (ephemeralStore) {
+    const store = loadStore();
+    store.orders = store.orders.filter((order) => !(order.agentId === agentId && order.id === id));
+    saveStore(store);
+    return buildResult(agentId);
+  }
+  updateTaskDefinitionRecord(standingOrderCollection, agentId, id, () => undefined);
   return buildResult(agentId);
 }
 
@@ -241,9 +272,11 @@ export function proposeStandingOrder(raw: unknown): {
   if (!agentId || !id) {
     throw new Error("standing order proposal requires agentId and id");
   }
-  const store = loadStore();
-  const index = store.orders.findIndex((order) => order.agentId === agentId && order.id === id);
-  const order = index >= 0 ? store.orders[index] : undefined;
+  const order = ephemeralStore
+    ? loadStore().orders.find((entry) => entry.agentId === agentId && entry.id === id)
+    : listTaskDefinitionRecords(standingOrderCollection).find(
+        (entry) => entry.scopeKey === agentId && entry.recordId === id,
+      )?.record;
   if (!order) {
     throw new Error("standing order not found for selected Agent");
   }
@@ -285,9 +318,27 @@ export function proposeStandingOrder(raw: unknown): {
       forbiddenGrants: ["wallet", "tools", "mining"],
     },
   });
-  store.orders[index] = { ...order, lastProposedAt: now, updatedAt: now };
-  saveStore(store);
-  return { order: store.orders[index], task };
+  const updatedOrder = ephemeralStore
+    ? (() => {
+        const store = loadStore();
+        const index = store.orders.findIndex(
+          (entry) => entry.agentId === agentId && entry.id === id,
+        );
+        if (index < 0) {
+          return undefined;
+        }
+        const updated = { ...store.orders[index], lastProposedAt: now, updatedAt: now };
+        store.orders[index] = updated;
+        saveStore(store);
+        return updated;
+      })()
+    : updateTaskDefinitionRecord(standingOrderCollection, agentId, id, (latest) =>
+        latest ? { ...latest, lastProposedAt: now, updatedAt: now } : undefined,
+      );
+  if (!updatedOrder) {
+    throw new Error("standing order not found for selected Agent");
+  }
+  return { order: updatedOrder, task };
 }
 
 export function resetStandingOrdersForTests(opts?: {
@@ -295,9 +346,11 @@ export function resetStandingOrdersForTests(opts?: {
   persist?: boolean;
 }): void {
   const store = { version: 1 as const, orders: opts?.orders ? [...opts.orders] : [] };
-  cachedStore = store;
-  loadedPath = resolveStandingOrdersPath();
-  if (opts?.persist !== false) {
-    saveStore(store);
+  if (opts?.persist === false) {
+    ephemeralStore = store;
+    return;
   }
+  ephemeralStore = null;
+  resetTaskDefinitionLedgerForTests();
+  saveStore(store);
 }
