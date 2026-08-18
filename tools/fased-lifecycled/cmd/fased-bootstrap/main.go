@@ -62,13 +62,16 @@ type bootstrapResult struct {
 }
 
 type bootstrapPerformance struct {
+	MetadataMillis              uint64 `json:"metadataMillis"`
 	SignatureVerificationMillis uint64 `json:"signatureVerificationMillis"`
-	DownloadMillis              uint64 `json:"downloadMillis"`
+	AssetAcquisitionMillis      uint64 `json:"assetAcquisitionMillis"`
 	ExtractionMillis            uint64 `json:"extractionMillis"`
 	FsyncMillis                 uint64 `json:"fsyncMillis"`
 	ActivationMillis            uint64 `json:"activationMillis"`
 	TotalMillis                 uint64 `json:"totalMillis"`
 	TransferredBytes            uint64 `json:"transferredBytes"`
+	MetadataTransferredBytes    uint64 `json:"metadataTransferredBytes"`
+	ArtifactTransferredBytes    uint64 `json:"artifactTransferredBytes"`
 	CacheHits                   uint32 `json:"cacheHits"`
 	CacheMisses                 uint32 `json:"cacheMisses"`
 }
@@ -156,16 +159,16 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: secureMetadataRedirect}
 	}
-	verificationStarted := time.Now()
-	root, err := resolveTrustedRoot(ctx, client, request.StateRoot, request.OwnerUID, request.RootURL, request.RootRotationBaseURL, request.RootRotationURLs, request.PinnedRootSHA256, request.ExpectedRootVersion, request.ExpectedRootSHA256, request.Now)
+	performance := bootstrapPerformance{}
+	root, err := resolveTrustedRootMeasured(ctx, client, request.StateRoot, request.OwnerUID, request.RootURL, request.RootRotationBaseURL, request.RootRotationURLs, request.PinnedRootSHA256, request.ExpectedRootVersion, request.ExpectedRootSHA256, request.Now, &performance)
 	if err != nil {
 		return bootstrapResult{}, err
 	}
-	indexJSON, err := fetchMetadata(ctx, client, request.IndexURL)
+	indexJSON, err := fetchMetadataMeasured(ctx, client, request.IndexURL, &performance)
 	if err != nil {
 		return bootstrapResult{}, err
 	}
-	indexAttestationJSON, err := fetchMetadata(ctx, client, request.IndexAttestationURL)
+	indexAttestationJSON, err := fetchMetadataMeasured(ctx, client, request.IndexAttestationURL, &performance)
 	if err != nil {
 		return bootstrapResult{}, err
 	}
@@ -173,14 +176,15 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	if verifyIndex == nil {
 		verifyIndex = verifyAttestedReleaseIndex
 	}
+	verificationStarted := time.Now()
 	verifiedIndex, err := verifyIndex(root, indexJSON, indexAttestationJSON, request.Now)
+	performance.SignatureVerificationMillis += durationMillis(verificationStarted)
 	if err != nil {
 		return bootstrapResult{}, err
 	}
 	if !plainSHA256(verifiedIndex.Digest) || !plainSHA256(verifiedIndex.ReleaseAuthorityDigest) {
 		return bootstrapResult{}, errors.New("verified release authority returned malformed digests")
 	}
-	performance := bootstrapPerformance{SignatureVerificationMillis: durationMillis(verificationStarted)}
 	index := verifiedIndex.Index
 	if index.Channel != request.Channel || (request.Version != "" && index.Version != request.Version) {
 		return bootstrapResult{}, errors.New("signed release index differs from requested channel or version")
@@ -198,7 +202,6 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 		return bootstrapResult{}, err
 	}
 	defer inbox.Close()
-	downloadStarted := time.Now()
 	object, err := (acquire.Downloader{Client: client}).Fetch(ctx, assetURL, asset, inbox)
 	if err != nil {
 		return bootstrapResult{}, err
@@ -231,7 +234,6 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 		return bootstrapResult{}, err
 	}
 	performance.addAcquisition(signerReceipt)
-	performance.DownloadMillis = durationMillis(downloadStarted)
 	activationStarted := time.Now()
 	if err := store.Activate(staged, func(candidate host.StagedHost) error { return request.Inspect(ctx, candidate) }); err != nil {
 		return bootstrapResult{}, err
@@ -250,12 +252,29 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 }
 
 func (performance *bootstrapPerformance) addAcquisition(receipt acquire.Receipt) {
+	performance.AssetAcquisitionMillis += receipt.DurationMillis
 	performance.TransferredBytes += receipt.TransferredBytes
+	performance.ArtifactTransferredBytes += receipt.TransferredBytes
 	performance.FsyncMillis += receipt.FsyncMillis
 	if receipt.CacheHit {
 		performance.CacheHits++
 	} else {
 		performance.CacheMisses++
+	}
+}
+
+func (performance *bootstrapPerformance) addMetadata(data []byte, started time.Time) {
+	if performance == nil {
+		return
+	}
+	performance.MetadataMillis += durationMillis(started)
+	performance.MetadataTransferredBytes += uint64(len(data))
+	performance.TransferredBytes += uint64(len(data))
+}
+
+func (performance *bootstrapPerformance) addSignatureVerification(started time.Time) {
+	if performance != nil {
+		performance.SignatureVerificationMillis += durationMillis(started)
 	}
 }
 
@@ -323,6 +342,15 @@ func fetchMetadata(ctx context.Context, client *http.Client, rawURL string) ([]b
 		return nil, errors.New("trust metadata exceeds size limit")
 	}
 	return data, nil
+}
+
+func fetchMetadataMeasured(ctx context.Context, client *http.Client, rawURL string, performance *bootstrapPerformance) ([]byte, error) {
+	started := time.Now()
+	data, err := fetchMetadata(ctx, client, rawURL)
+	if err == nil {
+		performance.addMetadata(data, started)
+	}
+	return data, err
 }
 
 func assetURL(base, name string) (string, error) {

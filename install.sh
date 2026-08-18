@@ -131,8 +131,21 @@ bootstrap_transferred_bytes=0
 bootstrap_download_seconds=0
 installed_sha256=""
 
+require_protected_bootstrap_ancestry() {
+  local directory=""
+  local mode=""
+  for directory in / /opt /opt/fased /opt/fased/lifecycle "$bootstrap_dir"; do
+    [[ -d "$directory" ]] && test ! -L "$directory" && \
+      [[ "$(stat -c '%U' "$directory")" == "root" ]] || return 1
+    mode="$(stat -c '%a' "$directory")"
+    [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#${mode: -3} & 8#022) == 0 )) || return 1
+  done
+}
+
 if [[ -e "$bootstrap" || -L "$bootstrap" ]]; then
-  [[ -f "$bootstrap" ]] && test ! -L "$bootstrap" && \
+  require_protected_bootstrap_ancestry && \
+    [[ -f "$bootstrap" ]] && test ! -L "$bootstrap" && \
     [[ "$(stat -c '%U:%G:%a:%h' "$bootstrap")" == "root:root:555:1" ]] || {
     echo "Fased installer: existing bootstrap projection is unsafe." >&2
     exit 1

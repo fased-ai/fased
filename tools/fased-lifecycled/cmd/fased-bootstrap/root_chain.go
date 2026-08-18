@@ -39,27 +39,51 @@ func resolveTrustedRoot(
 	expectedRootSHA256 string,
 	now time.Time,
 ) (trust.VerifiedRoot, error) {
+	return resolveTrustedRootMeasured(
+		ctx, client, stateRoot, ownerUID, rootURL, rotationBaseURL, explicitRotationURLs,
+		pinnedRootSHA256, expectedRootVersion, expectedRootSHA256, now, nil,
+	)
+}
+
+func resolveTrustedRootMeasured(
+	ctx context.Context,
+	client *http.Client,
+	stateRoot string,
+	ownerUID uint32,
+	rootURL string,
+	rotationBaseURL string,
+	explicitRotationURLs []string,
+	pinnedRootSHA256 string,
+	expectedRootVersion uint64,
+	expectedRootSHA256 string,
+	now time.Time,
+	performance *bootstrapPerformance,
+) (trust.VerifiedRoot, error) {
 	if (expectedRootVersion == 0) != (expectedRootSHA256 == "") {
 		return trust.VerifiedRoot{}, errors.New("lifecycle root-head expectation is incomplete")
 	}
 	if rotationBaseURL != "" && len(explicitRotationURLs) != 0 {
 		return trust.VerifiedRoot{}, errors.New("root rotation base and explicit rotation URLs are mutually exclusive")
 	}
-	rootJSON, err := fetchMetadata(ctx, client, rootURL)
+	rootJSON, err := fetchMetadataMeasured(ctx, client, rootURL, performance)
 	if err != nil {
 		return trust.VerifiedRoot{}, err
 	}
+	verificationStarted := time.Now()
 	root, err := trust.VerifyInitialRootChainLink(rootJSON, pinnedRootSHA256)
+	performance.addSignatureVerification(verificationStarted)
 	if err != nil {
 		return trust.VerifiedRoot{}, err
 	}
 	if len(explicitRotationURLs) != 0 {
 		for _, rotationURL := range explicitRotationURLs {
-			rotationJSON, fetchErr := fetchMetadata(ctx, client, rotationURL)
+			rotationJSON, fetchErr := fetchMetadataMeasured(ctx, client, rotationURL, performance)
 			if fetchErr != nil {
 				return trust.VerifiedRoot{}, fetchErr
 			}
+			verificationStarted = time.Now()
 			root, err = trust.VerifyRootRotationChainLink(root, rotationJSON)
+			performance.addSignatureVerification(verificationStarted)
 			if err != nil {
 				return trust.VerifiedRoot{}, err
 			}
@@ -89,7 +113,9 @@ func resolveTrustedRoot(
 		if readErr != nil {
 			return trust.VerifiedRoot{}, readErr
 		}
+		verificationStarted = time.Now()
 		root, err = trust.VerifyRootRotationChainLink(root, cached)
+		performance.addSignatureVerification(verificationStarted)
 		if err != nil {
 			return trust.VerifiedRoot{}, fmt.Errorf("verify cached lifecycle root rotation: %w", err)
 		}
@@ -113,7 +139,7 @@ func resolveTrustedRoot(
 		if urlErr != nil {
 			return trust.VerifiedRoot{}, urlErr
 		}
-		rotationJSON, found, fetchErr := fetchOptionalMetadata(ctx, client, rotationURL)
+		rotationJSON, found, fetchErr := fetchOptionalMetadataMeasured(ctx, client, rotationURL, performance)
 		if fetchErr != nil {
 			return trust.VerifiedRoot{}, fetchErr
 		}
@@ -126,7 +152,9 @@ func resolveTrustedRoot(
 			}
 			return root, nil
 		}
+		verificationStarted = time.Now()
 		rotated, verifyErr := trust.VerifyRootRotationChainLink(root, rotationJSON)
+		performance.addSignatureVerification(verificationStarted)
 		if verifyErr != nil {
 			return trust.VerifiedRoot{}, fmt.Errorf("verify lifecycle root rotation %d: %w", root.Version()+1, verifyErr)
 		}
@@ -285,4 +313,13 @@ func fetchOptionalMetadata(ctx context.Context, client *http.Client, rawURL stri
 		return nil, false, errors.New("trust metadata is empty or exceeds size limit")
 	}
 	return data, true, nil
+}
+
+func fetchOptionalMetadataMeasured(ctx context.Context, client *http.Client, rawURL string, performance *bootstrapPerformance) ([]byte, bool, error) {
+	started := time.Now()
+	data, found, err := fetchOptionalMetadata(ctx, client, rawURL)
+	if err == nil {
+		performance.addMetadata(data, started)
+	}
+	return data, found, err
 }

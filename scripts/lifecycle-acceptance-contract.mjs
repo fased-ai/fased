@@ -27,11 +27,18 @@ const commonPredicates = Object.freeze([
   "plugin-doctor",
   "restart-health",
   "state-preservation",
+  "installer-noop-performance",
+  "updater-noop-performance",
   "installer-already-current",
   "updater-already-current",
 ]);
 const legacyV2CommonPredicates = Object.freeze(
-  commonPredicates.filter((predicate) => predicate !== "lifecycle-performance"),
+  commonPredicates.filter(
+    (predicate) =>
+      !["lifecycle-performance", "installer-noop-performance", "updater-noop-performance"].includes(
+        predicate,
+      ),
+  ),
 );
 
 export const REQUIRED_PREDICATES = Object.freeze(

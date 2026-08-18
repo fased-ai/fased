@@ -118,6 +118,13 @@ describe("installer platform preflight", () => {
   });
 
   it("reuses only the exact protected bootstrap and reports installer timing and transfer evidence", () => {
+    expect(installer).toContain("require_protected_bootstrap_ancestry() {");
+    expect(installer).toContain(
+      'for directory in / /opt /opt/fased /opt/fased/lifecycle "$bootstrap_dir"',
+    );
+    expect(installer).toContain(`[[ "$(stat -c '%U' "$directory")" == "root" ]]`);
+    expect(installer).toContain("(( (8#${mode: -3} & 8#022) == 0 ))");
+    expect(installer).toContain("require_protected_bootstrap_ancestry &&");
     expect(installer).toContain('test ! -L "$bootstrap"');
     expect(installer).toContain('"$(stat -c \'%U:%G:%a:%h\' "$bootstrap")" == "root:root:555:1"');
     expect(installer).toContain('installed_sha256="$(sha256sum "$bootstrap")"');

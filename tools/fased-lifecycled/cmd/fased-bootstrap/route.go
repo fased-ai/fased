@@ -93,6 +93,7 @@ type publicLifecyclePerformance struct {
 	TotalMillis             uint64                        `json:"totalMillis"`
 	Acquisition             bootstrapPerformance          `json:"acquisition"`
 	Transaction             *protocol.PerformanceEvidence `json:"transaction,omitempty"`
+	TransactionStatus       string                        `json:"transactionStatus"`
 }
 
 type lifecyclePhaseProgress struct {
@@ -843,6 +844,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err := pruneAcquisitionInbox(platform.BootstrapCacheRootForOS(runtime.GOOS)); err != nil {
 		return fmt.Errorf("lifecycle committed but verified acquisition cleanup is pending: %w", err)
 	}
+	performance.TransactionStatus = transactionPerformanceStatus(outcome, performance.Transaction)
 	performance.TotalMillis = durationMillis(lifecycleStarted)
 	if request.JSON {
 		response := struct {
@@ -870,13 +872,15 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 
 func formatLifecyclePerformance(performance publicLifecyclePerformance) string {
 	return fmt.Sprintf(
-		"Lifecycle performance: resolution=%dms signature=%dms download=%dms extraction=%dms fsync=%dms activation=%dms quiesce=%dms switch=%dms readiness=%dms apply=%dms onboarding=%dms total=%dms transferred=%dB cache-hits=%d cache-misses=%d",
+		"Lifecycle performance: resolution=%dms metadata=%dms verify=%dms assets=%dms extraction=%dms fsync=%dms activation=%dms transaction=%s quiesce=%s switch=%s readiness=%s apply=%dms onboarding=%dms total=%dms transferred=%dB metadata-bytes=%dB artifact-bytes=%dB cache-hits=%d cache-misses=%d",
 		performance.ReleaseResolutionMillis,
+		performance.Acquisition.MetadataMillis,
 		performance.Acquisition.SignatureVerificationMillis,
-		performance.Acquisition.DownloadMillis,
+		performance.Acquisition.AssetAcquisitionMillis,
 		performance.Acquisition.ExtractionMillis,
 		performance.Acquisition.FsyncMillis,
 		performance.Acquisition.ActivationMillis,
+		performance.TransactionStatus,
 		transactionMillis(performance.Transaction, func(value *protocol.PerformanceEvidence) uint64 { return value.QuiesceMillis }),
 		transactionMillis(performance.Transaction, func(value *protocol.PerformanceEvidence) uint64 { return value.SwitchMillis }),
 		transactionMillis(performance.Transaction, func(value *protocol.PerformanceEvidence) uint64 { return value.ServiceReadinessMillis }),
@@ -884,16 +888,28 @@ func formatLifecyclePerformance(performance publicLifecyclePerformance) string {
 		performance.OnboardingMillis,
 		performance.TotalMillis,
 		performance.Acquisition.TransferredBytes,
+		performance.Acquisition.MetadataTransferredBytes,
+		performance.Acquisition.ArtifactTransferredBytes,
 		performance.Acquisition.CacheHits,
 		performance.Acquisition.CacheMisses,
 	)
 }
 
-func transactionMillis(evidence *protocol.PerformanceEvidence, selectValue func(*protocol.PerformanceEvidence) uint64) uint64 {
-	if evidence == nil {
-		return 0
+func transactionPerformanceStatus(outcome string, evidence *protocol.PerformanceEvidence) string {
+	if evidence != nil {
+		return "measured"
 	}
-	return selectValue(evidence)
+	if outcome == "ALREADY_CURRENT" {
+		return "not-applicable"
+	}
+	return "unavailable"
+}
+
+func transactionMillis(evidence *protocol.PerformanceEvidence, selectValue func(*protocol.PerformanceEvidence) uint64) string {
+	if evidence == nil {
+		return "na"
+	}
+	return fmt.Sprintf("%dms", selectValue(evidence))
 }
 
 func hostingSecurityTransactionNeedsFinalization(state hostsecurity.State) bool {

@@ -37,6 +37,8 @@
         "plugin-doctor",
         "restart-health",
         "state-preservation",
+        "installer-noop-performance",
+        "updater-noop-performance",
         "installer-already-current",
         "updater-already-current"
       ],
@@ -55,6 +57,8 @@
         "plugin-doctor",
         "restart-health",
         "state-preservation",
+        "installer-noop-performance",
+        "updater-noop-performance",
         "installer-already-current",
         "updater-already-current"
       ]
@@ -73,6 +77,8 @@
         "plugin-doctor",
         "restart-health",
         "state-preservation",
+        "installer-noop-performance",
+        "updater-noop-performance",
         "installer-already-current",
         "updater-already-current"
       ],
@@ -91,6 +97,8 @@
         "plugin-doctor",
         "restart-health",
         "state-preservation",
+        "installer-noop-performance",
+        "updater-noop-performance",
         "installer-already-current",
         "updater-already-current"
       ]

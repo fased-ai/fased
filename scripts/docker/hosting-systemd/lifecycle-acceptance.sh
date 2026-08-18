@@ -437,17 +437,30 @@ compact_performance_summary() {
   printf '%s\n' "${lines[0]}" | sed -E \
     -e 's/^Lifecycle performance: /perf /' \
     -e 's/resolution=/res=/' \
-    -e 's/signature=/sig=/' \
-    -e 's/download=/dl=/' \
+    -e 's/metadata=/meta=/' \
+    -e 's/verify=/sig=/' \
+    -e 's/assets=/asset=/' \
     -e 's/extraction=/x=/' \
     -e 's/activation=/act=/' \
+    -e 's/transaction=/tx=/' \
     -e 's/quiesce=/q=/' \
     -e 's/switch=/sw=/' \
     -e 's/readiness=/ready=/' \
     -e 's/onboarding=/onboard=/' \
     -e 's/transferred=/bytes=/' \
+    -e 's/metadata-bytes=/meta-bytes=/' \
+    -e 's/artifact-bytes=/asset-bytes=/' \
     -e 's/cache-hits=/hits=/' \
     -e 's/cache-misses=/misses=/'
+}
+
+record_noop_performance() {
+  local predicate="${1:?performance predicate is required}"
+  local evidence_file="${2:?performance evidence file is required}"
+  local performance_summary=""
+  performance_summary="$(compact_performance_summary "$evidence_file")"
+  test "${#performance_summary}" -le 240
+  acceptance_mark "$predicate" "$evidence_file" "$performance_summary"
 }
 
 acceptance_start() {
@@ -661,7 +674,7 @@ run_public_updater() {
     HOME=/home/app USER=app LOGNAME=app SHELL=/bin/bash \
     PATH=/usr/local/bin:/usr/bin:/bin \
     /bin/bash --login -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && exec fased update "$@"' \
-    fased --channel "$target_channel" --tag "$version" --timeout 120
+    fased --channel "$target_channel" --tag "$version" --timeout 120 --verbose
 }
 
 wait_for_gateway_version() {
@@ -793,6 +806,8 @@ case "$phase" in
     grep -F "Already current: $version" /tmp/fased-hosting-noop.out >/dev/null
     run_public_updater >/tmp/fased-hosting-update-noop.out 2>/tmp/fased-hosting-update-noop.err
     grep -F "Already current: $version" /tmp/fased-hosting-update-noop.out >/dev/null
+    record_noop_performance installer-noop-performance /tmp/fased-hosting-noop.out
+    record_noop_performance updater-noop-performance /tmp/fased-hosting-update-noop.out
     acceptance_mark installer-already-current /tmp/fased-hosting-noop.out \
       "Already current: $version"
     acceptance_mark updater-already-current /tmp/fased-hosting-update-noop.out \
@@ -896,6 +911,8 @@ EOF_TARGET_DROPIN
     grep -F "Already current: $version" /tmp/fased-hosting-update-installer-noop.out >/dev/null
     run_public_updater >/tmp/fased-hosting-update-noop.out 2>/tmp/fased-hosting-update-noop.err
     grep -F "Already current: $version" /tmp/fased-hosting-update-noop.out >/dev/null
+    record_noop_performance installer-noop-performance /tmp/fased-hosting-update-installer-noop.out
+    record_noop_performance updater-noop-performance /tmp/fased-hosting-update-noop.out
     acceptance_mark installer-already-current /tmp/fased-hosting-update-installer-noop.out \
       "Already current: $version"
     acceptance_mark updater-already-current /tmp/fased-hosting-update-noop.out \

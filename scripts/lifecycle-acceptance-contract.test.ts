@@ -101,7 +101,14 @@ describe("lifecycle acceptance contract", () => {
           Object.fromEntries(
             Object.entries(scenarios).map(([scenario, predicates]) => [
               scenario,
-              predicates.filter((predicate) => predicate !== "lifecycle-performance"),
+              predicates.filter(
+                (predicate) =>
+                  ![
+                    "lifecycle-performance",
+                    "installer-noop-performance",
+                    "updater-noop-performance",
+                  ].includes(predicate),
+              ),
             ]),
           ),
         ]),
@@ -366,8 +373,11 @@ describe("lifecycle acceptance contract", () => {
     );
     for (const fixture of [local, hosting]) {
       expect(fixture).toContain("compact_performance_summary() {");
+      expect(fixture).toContain("record_noop_performance() {");
       expect(fixture).toContain('test "${#lines[@]}" -eq 1');
       expect(fixture).toContain("-e 's/^Lifecycle performance: /perf /'");
+      expect(fixture).toContain("-e 's/metadata=/meta=/'");
+      expect(fixture).toContain("-e 's/transaction=/tx=/'");
       expect(fixture).toContain("-e 's/transferred=/bytes=/'");
       expect(fixture).toContain("-e 's/cache-hits=/hits=/'");
       expect(fixture).toContain("-e 's/cache-misses=/misses=/'");
@@ -378,9 +388,21 @@ describe("lifecycle acceptance contract", () => {
       );
       expect(fixture).not.toContain("install timing, bytes, and cache evidence recorded");
       expect(fixture).not.toContain("update timing, bytes, and cache evidence recorded");
+      expect(fixture).toContain("record_noop_performance installer-noop-performance /tmp/");
+      expect(fixture).toContain("record_noop_performance updater-noop-performance /tmp/");
     }
     expect(local.match(/acceptance_mark lifecycle-performance/gu)?.length).toBe(3);
     expect(hosting.match(/acceptance_mark lifecycle-performance/gu)?.length).toBe(2);
+    expect(local).toContain("chmod 0775 /opt/fased/lifecycle");
+    expect(local).toContain("installer reused a bootstrap through writable ancestry");
+    expect(local).toContain("existing bootstrap projection is unsafe");
+    expect(local).toContain("chmod 0755 /opt/fased/lifecycle");
+    for (const profile of ["protected-local", "hosting"]) {
+      for (const scenario of ["fresh-install", "managed-update"]) {
+        expect(contract().profiles[profile][scenario]).toContain("installer-noop-performance");
+        expect(contract().profiles[profile][scenario]).toContain("updater-noop-performance");
+      }
+    }
   });
 
   it("restores the protected Local system command ancestry after Node extraction", () => {
