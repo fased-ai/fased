@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.101
+
+- Require the literal fresh-login `fased` command from any directory before
+  candidate work and enforce signer RPC replacement and baseline authority.
+- Reuse pinned fixture images and content-equivalent artifacts while binding
+  install/update timing, byte counts, and cache-hit evidence.
+- Make Hosting readiness and curl transport bounded and diagnostic, and accept
+  the exact historical rc.80 lifecycle contract during compatibility proof.
+
 ## 0.1.76-rc.100
 
 - Make public lifecycle compatibility discovery reliable with direct exact

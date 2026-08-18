@@ -1,6 +1,6 @@
 {
   "name": "@fased/speech-runtime",
-  "version": "0.1.76-rc.100",
+  "version": "0.1.76-rc.101",
   "private": true,
   "description": "Optional speech runtime for Fased Agent",
   "files": [
@@ -12,7 +12,7 @@
     "node-edge-tts": "^1.2.10"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.100"
+    "@fased/fased": "^0.1.76-rc.101"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {

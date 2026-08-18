@@ -1,6 +1,6 @@
 {
   "name": "@fased/local-memory-runtime",
-  "version": "0.1.76-rc.100",
+  "version": "0.1.76-rc.101",
   "private": true,
   "description": "Optional local vector-memory runtime for Fased Agent",
   "files": [
@@ -12,7 +12,7 @@
     "sqlite-vec": "0.1.7-alpha.2"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.100"
+    "@fased/fased": "^0.1.76-rc.101"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {

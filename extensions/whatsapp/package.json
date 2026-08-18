@@ -1,6 +1,6 @@
 {
   "name": "@fased/whatsapp",
-  "version": "0.1.76-rc.100",
+  "version": "0.1.76-rc.101",
   "private": true,
   "description": "FasedAgent WhatsApp channel plugin",
   "files": [
@@ -15,7 +15,7 @@
     "@whiskeysockets/baileys": "7.0.0-rc12"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.100"
+    "@fased/fased": "^0.1.76-rc.101"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
