@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import type { TaskRecord } from "./task-registry.types.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const BUSY_TIMEOUT_MS = 5_000;
 const WAL_AUTOCHECKPOINT_PAGES = 256;
 const EMPTY_LOCK_GRACE_MS = 30_000;
@@ -12,6 +12,27 @@ const LOCK_OWNER_FILE = "owner.json";
 
 type TaskRow = { task_json: string };
 type DefinitionRow = { record_json: string };
+type CronQueueRow = { run_json: string };
+type CronQueueStoredRow = {
+  run_id: string;
+  job_id: string;
+  status: string;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
+  run_json: string;
+};
+
+const CRON_QUEUE_IMPORT_MARKER = "cron_task_run_queue_import";
+const CRON_QUEUE_TERMINAL_STATUSES = new Set([
+  "ok",
+  "error",
+  "skipped",
+  "blocked",
+  "canceled",
+  "recovered",
+]);
+const CRON_QUEUE_TERMINAL_HISTORY_LIMIT = 500;
 
 export type TaskDefinitionCollection = "task_flow" | "standing_order" | "workflow_definition";
 
@@ -27,6 +48,16 @@ export type TaskLedgerInitialization = {
   databasePath: string;
   legacyPath: string;
   sanitizeLegacy: (raw: unknown) => TaskRecord[];
+};
+
+/** The indexed fields are deliberately duplicated from the exact queue JSON. */
+export type TaskLedgerCronQueueRun = {
+  runId: string;
+  jobId: string;
+  status: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  completedAtMs?: number;
 };
 
 function sqliteFamilyPaths(databasePath: string): string[] {
@@ -195,7 +226,9 @@ function existingSchemaVersion(db: DatabaseSync): number {
   const metaVersion = meta ? Number(meta.value) : Number.NaN;
   if (
     userVersion.user_version !== metaVersion ||
-    (userVersion.user_version !== 1 && userVersion.user_version !== 2)
+    (userVersion.user_version !== 1 &&
+      userVersion.user_version !== 2 &&
+      userVersion.user_version !== 3)
   ) {
     throw new Error("Task ledger schema is missing, corrupt, or unsupported");
   }
@@ -205,7 +238,7 @@ function existingSchemaVersion(db: DatabaseSync): number {
   if (!tasksTable) {
     throw new Error("Task ledger tasks table is missing");
   }
-  if (userVersion.user_version === 2) {
+  if (userVersion.user_version >= 2) {
     const definitionsTable = db
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_ledger_definitions'",
@@ -213,6 +246,16 @@ function existingSchemaVersion(db: DatabaseSync): number {
       .get();
     if (!definitionsTable) {
       throw new Error("Task ledger definitions table is missing");
+    }
+  }
+  if (userVersion.user_version === 3) {
+    const queueTable = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_ledger_cron_queue'",
+      )
+      .get();
+    if (!queueTable) {
+      throw new Error("Task ledger cron queue table is missing");
     }
   }
   return userVersion.user_version;
@@ -237,6 +280,37 @@ function upgradeSchemaV1ToV2(db: DatabaseSync): void {
     `);
     db.prepare("UPDATE task_ledger_meta SET value = ? WHERE key = 'schema_version'").run("2");
     db.exec("PRAGMA user_version=2");
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // The transaction may not have been opened successfully.
+    }
+    throw err;
+  }
+}
+
+function upgradeSchemaV2ToV3(db: DatabaseSync): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE task_ledger_cron_queue (
+        run_id TEXT PRIMARY KEY NOT NULL,
+        job_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        run_json TEXT NOT NULL
+      );
+      CREATE INDEX task_ledger_cron_queue_status_recency_idx
+        ON task_ledger_cron_queue(status, completed_at DESC, updated_at DESC, run_id);
+      CREATE INDEX task_ledger_cron_queue_job_recency_idx
+        ON task_ledger_cron_queue(job_id, updated_at DESC, run_id);
+    `);
+    db.prepare("UPDATE task_ledger_meta SET value = ? WHERE key = 'schema_version'").run("3");
+    db.exec("PRAGMA user_version=3");
     db.exec("COMMIT");
   } catch (err) {
     try {
@@ -289,6 +363,19 @@ function initializeSchema(db: DatabaseSync): void {
         ON task_ledger_definitions(collection_kind, scope_key, updated_at DESC, record_id);
       CREATE INDEX task_ledger_definitions_collection_updated_idx
         ON task_ledger_definitions(collection_kind, updated_at DESC, record_id);
+      CREATE TABLE task_ledger_cron_queue (
+        run_id TEXT PRIMARY KEY NOT NULL,
+        job_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        run_json TEXT NOT NULL
+      );
+      CREATE INDEX task_ledger_cron_queue_status_recency_idx
+        ON task_ledger_cron_queue(status, completed_at DESC, updated_at DESC, run_id);
+      CREATE INDEX task_ledger_cron_queue_job_recency_idx
+        ON task_ledger_cron_queue(job_id, updated_at DESC, run_id);
     `);
     db.prepare("INSERT INTO task_ledger_meta (key, value) VALUES ('schema_version', ?)").run(
       String(SCHEMA_VERSION),
@@ -344,6 +431,9 @@ export class TaskLedgerStore {
       const schemaVersion = existingSchemaVersion(this.db);
       if (schemaVersion === 1) {
         upgradeSchemaV1ToV2(this.db);
+      }
+      if (schemaVersion <= 2) {
+        upgradeSchemaV2ToV3(this.db);
       }
       configureDatabase(this.db);
       secureSqliteFamily(this.databasePath);
@@ -420,6 +510,52 @@ export class TaskLedgerStore {
       for (const record of records) {
         this.write(record);
       }
+    });
+  }
+
+  /**
+   * Read the cron queue in its stable insertion order. Queue JSON is parsed only
+   * after the durable import marker exists; callers use ensureCronQueueImported
+   * for the one-time legacy transition.
+   */
+  listCronTaskRuns<T extends TaskLedgerCronQueueRun>(): T[] {
+    return (
+      this.db
+        .prepare("SELECT run_json FROM task_ledger_cron_queue ORDER BY rowid ASC")
+        .all() as CronQueueRow[]
+    ).map((row) => this.parseCronQueueRow<T>(row));
+  }
+
+  isCronTaskRunQueueImported(): boolean {
+    return Boolean(
+      this.db.prepare("SELECT 1 FROM task_ledger_meta WHERE key = ?").get(CRON_QUEUE_IMPORT_MARKER),
+    );
+  }
+
+  /**
+   * Atomically checks the marker, reads legacy state at most once, records its
+   * sanitized runs, bounds terminal history, and only then commits the marker.
+   */
+  ensureCronTaskRunQueueImported<T extends TaskLedgerCronQueueRun>(loadLegacy: () => T[]): void {
+    this.withWriteTransaction(() => {
+      if (this.isCronTaskRunQueueImported()) {
+        return;
+      }
+      const runs = loadLegacy();
+      this.persistCronTaskRuns(runs);
+      this.db
+        .prepare("INSERT INTO task_ledger_meta (key, value) VALUES (?, '1')")
+        .run(CRON_QUEUE_IMPORT_MARKER);
+    });
+  }
+
+  /** Every queue mutation has one BEGIN IMMEDIATE authority across handles. */
+  updateCronTaskRunQueue<T extends TaskLedgerCronQueueRun, R>(update: (runs: T[]) => R): R {
+    return this.withWriteTransaction(() => {
+      const runs = this.listCronTaskRuns<T>();
+      const result = update(runs);
+      this.persistCronTaskRuns(runs);
+      return result;
     });
   }
 
@@ -554,6 +690,104 @@ export class TaskLedgerStore {
       return JSON.parse(row.record_json) as T;
     } catch (err) {
       throw new Error("Task ledger contains invalid definition JSON", { cause: err });
+    }
+  }
+
+  private parseCronQueueRow<T extends TaskLedgerCronQueueRun>(row: CronQueueRow): T {
+    try {
+      const run = JSON.parse(row.run_json) as T;
+      if (!run || typeof run.runId !== "string" || typeof run.jobId !== "string") {
+        throw new Error("Cron queue row has no valid run identity");
+      }
+      return run;
+    } catch (err) {
+      throw new Error("Task ledger contains invalid cron queue JSON", { cause: err });
+    }
+  }
+
+  private persistCronTaskRuns<T extends TaskLedgerCronQueueRun>(runs: T[]): void {
+    const seen = new Set<string>();
+    for (const run of runs) {
+      if (
+        !run.runId.trim() ||
+        !run.jobId.trim() ||
+        !run.status.trim() ||
+        !Number.isFinite(run.createdAtMs) ||
+        !Number.isFinite(run.updatedAtMs) ||
+        seen.has(run.runId)
+      ) {
+        throw new Error("Task ledger cron queue mutation has an invalid or duplicate run");
+      }
+      seen.add(run.runId);
+    }
+    const terminalRuns = runs
+      .filter((run) => CRON_QUEUE_TERMINAL_STATUSES.has(run.status))
+      .toSorted((left, right) => {
+        const leftRecency = left.completedAtMs ?? left.updatedAtMs;
+        const rightRecency = right.completedAtMs ?? right.updatedAtMs;
+        return (
+          rightRecency - leftRecency ||
+          right.updatedAtMs - left.updatedAtMs ||
+          left.runId.localeCompare(right.runId)
+        );
+      });
+    const retainedTerminalIds = new Set(
+      terminalRuns.slice(0, CRON_QUEUE_TERMINAL_HISTORY_LIMIT).map((run) => run.runId),
+    );
+    const retainedRuns = runs.filter(
+      (run) => !CRON_QUEUE_TERMINAL_STATUSES.has(run.status) || retainedTerminalIds.has(run.runId),
+    );
+    const existingRows = new Map(
+      (
+        this.db
+          .prepare(
+            "SELECT run_id, job_id, status, created_at, updated_at, completed_at, run_json FROM task_ledger_cron_queue",
+          )
+          .all() as CronQueueStoredRow[]
+      ).map((row) => [row.run_id, row]),
+    );
+    const write = this.db.prepare(`
+      INSERT INTO task_ledger_cron_queue (
+        run_id, job_id, status, created_at, updated_at, completed_at, run_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET
+        job_id = excluded.job_id,
+        status = excluded.status,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        completed_at = excluded.completed_at,
+        run_json = excluded.run_json
+    `);
+    for (const run of retainedRuns) {
+      const completedAt = run.completedAtMs ?? null;
+      const runJson = JSON.stringify(run);
+      const existing = existingRows.get(run.runId);
+      if (
+        existing &&
+        existing.job_id === run.jobId &&
+        existing.status === run.status &&
+        existing.created_at === run.createdAtMs &&
+        existing.updated_at === run.updatedAtMs &&
+        existing.completed_at === completedAt &&
+        existing.run_json === runJson
+      ) {
+        existingRows.delete(run.runId);
+        continue;
+      }
+      write.run(
+        run.runId,
+        run.jobId,
+        run.status,
+        run.createdAtMs,
+        run.updatedAtMs,
+        completedAt,
+        runJson,
+      );
+      existingRows.delete(run.runId);
+    }
+    const remove = this.db.prepare("DELETE FROM task_ledger_cron_queue WHERE run_id = ?");
+    for (const runId of existingRows.keys()) {
+      remove.run(runId);
     }
   }
 

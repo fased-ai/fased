@@ -1,12 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveCronStore } from "../cron/store.js";
 import {
   enqueueCronTaskRunQueueItem,
-  readCronTaskRunQueue,
-  resolveCronTaskRunQueuePath,
+  checkpointCronTaskRunQueueStep,
 } from "../cron/task-run-queue.js";
 import type { CronJob } from "../cron/types.js";
 import { resetStandingOrdersForTests } from "../tasks/standing-orders.js";
@@ -151,10 +150,12 @@ describe("task server methods", () => {
       trigger: "manual",
       nowMs: now,
     });
-    const queue = await readCronTaskRunQueue({ storePath: cronStorePath });
-    const liveRun = queue.runs.find((run) => run.runId === "live-run");
-    if (liveRun?.steps[0]) {
-      liveRun.steps[0].checkpoint = {
+    await checkpointCronTaskRunQueueStep({
+      storePath: cronStorePath,
+      runId: "live-run",
+      stepId: "reserve",
+      nowMs: now,
+      checkpoint: {
         coordinationEvidence: [
           {
             agentId: "agent-2",
@@ -165,13 +166,8 @@ describe("task server methods", () => {
             summary: "Helper checked the plan.",
           },
         ],
-      };
-    }
-    await writeFile(
-      resolveCronTaskRunQueuePath({ storePath: cronStorePath }),
-      `${JSON.stringify(queue, null, 2)}\n`,
-      "utf8",
-    );
+      },
+    });
     await enqueueCronTaskRunQueueItem({
       storePath: cronStorePath,
       job: deletedJob,
