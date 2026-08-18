@@ -350,9 +350,14 @@ EOF_RELEASE_SERVER
 set -euo pipefail
 output=""
 url=""
+write_out=""
 args=("\$@")
 for ((index = 0; index < \${#args[@]}; index++)); do
   case "\${args[\$index]}" in
+    --write-out|-w)
+      write_out="\${args[\$((index + 1))]:-}"
+      index=\$((index + 1))
+      ;;
     -o)
       output="\${args[\$((index + 1))]:-}"
       index=\$((index + 1))
@@ -374,6 +379,18 @@ if [[ "\$url" == "\$prefix"* && -n "\$output" ]]; then
   fi
   [[ "\$asset" =~ ^[A-Za-z0-9._+-]+$ && -f "/artifacts/\$asset" && ! -L "/artifacts/\$asset" ]] || exit 22
   install -m 0600 "/artifacts/\$asset" "\$output"
+  if [[ -n "\$write_out" ]]; then
+    case "\$write_out" in
+      '%{size_download} %{time_total}\n')
+        transferred_bytes="\$(stat -c %s "/artifacts/\$asset")"
+        printf '%s 0.000000\n' "\$transferred_bytes"
+        ;;
+      *)
+        echo "Unsupported fixture curl --write-out template: \$write_out" >&2
+        exit 2
+        ;;
+    esac
+  fi
   exit 0
 fi
 exec /usr/local/libexec/fased-fixture-curl-real "\$@"

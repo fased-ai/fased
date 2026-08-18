@@ -342,6 +342,25 @@ describe("lifecycle acceptance contract", () => {
     expect(readiness).not.toContain("for _ in {1..40}");
   });
 
+  it("preserves installer transfer evidence through the Hosting curl adapter", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const adapterStart = hosting.indexOf("cat >/usr/bin/curl <<EOF_FIXTURE_CURL");
+    const adapter = hosting.slice(
+      adapterStart,
+      hosting.indexOf("\nEOF_FIXTURE_CURL", adapterStart),
+    );
+    expect(adapter).toContain('write_out=""');
+    expect(adapter).toContain("--write-out|-w)");
+    expect(adapter).toContain('write_out="\\${args[\\$((index + 1))]:-}"');
+    expect(adapter).toContain("'%{size_download} %{time_total}\\n'");
+    expect(adapter).toContain('stat -c %s "/artifacts/\\$asset"');
+    expect(adapter).toContain("printf '%s 0.000000\\n'");
+    expect(adapter).toContain("Unsupported fixture curl --write-out template");
+  });
+
   it("requires managed update to execute the predecessor-installed updater", () => {
     const fixture = readFileSync(
       new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
