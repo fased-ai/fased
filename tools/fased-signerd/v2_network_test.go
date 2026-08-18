@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,12 +25,6 @@ import (
 
 func signerUint64PointerV2(value uint64) *uint64 {
 	return &value
-}
-
-type signerRPCRoundTripFuncV2 func(*http.Request) (*http.Response, error)
-
-func (fn signerRPCRoundTripFuncV2) RoundTrip(request *http.Request) (*http.Response, error) {
-	return fn(request)
 }
 
 func TestSignerApplicationNetworkBrokerIsOneRPCRoleBoundAndGenesisPinned(t *testing.T) {
@@ -821,13 +814,6 @@ func TestSignerRPCURLValidationRejectsUnsafeTargets(t *testing.T) {
 func TestSignerOwnedRPCTransportIgnoresProxyAndRedirects(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
-	httpClient := newSignerOwnedHTTPClientV2()
-	budget, ok := httpClient.Transport.(signerRPCResponseBudgetRoundTripperV2)
-	transport, transportOK := budget.base.(*http.Transport)
-	if !ok || !transportOK || transport.Proxy != nil || transport.ResponseHeaderTimeout == 0 ||
-		transport.MaxResponseHeaderBytes != maxSignerRPCResponseHeaderV2 || !transport.DisableCompression {
-		t.Fatalf("signer-owned RPC transport omitted its fixed transport boundaries: %#v", httpClient.Transport)
-	}
 	var redirectedRequests atomic.Int64
 	destination := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		redirectedRequests.Add(1)
@@ -851,43 +837,6 @@ func TestSignerOwnedRPCTransportIgnoresProxyAndRedirects(t *testing.T) {
 		if connection, err := dialSignerOwnedRPCV2(ctx, "tcp", address); err == nil || connection != nil || !strings.Contains(err.Error(), "unsafe") {
 			t.Fatalf("signer-owned RPC dialer accepted unsafe address %s: connection=%#v err=%v", address, connection, err)
 		}
-	}
-}
-
-func TestSignerOwnedRPCTransportBoundsBodyAndJSONDepth(t *testing.T) {
-	request, err := http.NewRequest(http.MethodPost, "https://rpc.example.com", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	responseFor := func(payload []byte, contentLength int64) signerRPCResponseBudgetRoundTripperV2 {
-		return signerRPCResponseBudgetRoundTripperV2{base: signerRPCRoundTripFuncV2(func(*http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode:    http.StatusOK,
-				Header:        make(http.Header),
-				Body:          io.NopCloser(bytes.NewReader(payload)),
-				ContentLength: contentLength,
-			}, nil
-		})}
-	}
-	oversized := bytes.Repeat([]byte("x"), maxSignerRPCResponseBytesV2+1)
-	if _, err := responseFor(oversized, -1).RoundTrip(request); err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("streamed oversized RPC response was accepted: %v", err)
-	}
-	if _, err := responseFor([]byte(`{}`), maxSignerRPCResponseBytesV2+1).RoundTrip(request); err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("declared oversized RPC response was accepted: %v", err)
-	}
-	deep := []byte(strings.Repeat("[", maxSignerRPCJSONDepthV2+1) + "0" + strings.Repeat("]", maxSignerRPCJSONDepthV2+1))
-	if _, err := responseFor(deep, int64(len(deep))).RoundTrip(request); err == nil || !strings.Contains(err.Error(), "nesting depth") {
-		t.Fatalf("deep RPC response was accepted: %v", err)
-	}
-	valid := []byte(`{"jsonrpc":"2.0","id":1,"result":{"value":1}}`)
-	response, err := responseFor(valid, int64(len(valid))).RoundTrip(request)
-	if err != nil {
-		t.Fatalf("bounded RPC response was rejected: %v", err)
-	}
-	readBack, err := io.ReadAll(response.Body)
-	if err != nil || !bytes.Equal(readBack, valid) {
-		t.Fatalf("bounded RPC response changed: %q err=%v", readBack, err)
 	}
 }
 

@@ -12,12 +12,11 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"net"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"fased-signerd/internal/networkverify"
 	solana "github.com/gagliardetto/solana-go"
 	addresslookuptable "github.com/gagliardetto/solana-go/programs/address-lookup-table"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -818,33 +817,7 @@ func signerCurrentSlotV2(rpcURLs []string) (uint64, error) {
 }
 
 func independentSATLookupRPCOriginV2(raw string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Hostname() == "" {
-		return "", errors.New("signer-owned Solana RPC URL is invalid")
-	}
-	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", errors.New("signer-owned Solana RPC URL must use http or https")
-	}
-	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
-	if ip := net.ParseIP(host); ip != nil {
-		host = ip.String()
-	}
-	port := parsed.Port()
-	if port == "" {
-		if scheme == "https" {
-			port = "443"
-		} else {
-			port = "80"
-		}
-	} else {
-		value, err := strconv.ParseUint(port, 10, 16)
-		if err != nil || value == 0 {
-			return "", errors.New("signer-owned Solana RPC URL has an invalid port")
-		}
-		port = strconv.FormatUint(value, 10)
-	}
-	return scheme + "://" + net.JoinHostPort(host, port), nil
+	return networkverify.CanonicalOrigin(raw)
 }
 
 func independentSATLookupRPCURLsV2(rpcURLs []string) ([]string, error) {
