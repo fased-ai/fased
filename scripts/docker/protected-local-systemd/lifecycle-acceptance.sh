@@ -78,6 +78,30 @@ acceptance_mark() {
     >>"$acceptance_evidence"
 }
 
+compact_performance_summary() {
+  local evidence_file="${1:?performance evidence file is required}"
+  local lines=()
+  mapfile -t lines < <(
+    grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' \
+      "$evidence_file"
+  )
+  test "${#lines[@]}" -eq 1
+  printf '%s\n' "${lines[0]}" | sed -E \
+    -e 's/^Lifecycle performance: /perf /' \
+    -e 's/resolution=/res=/' \
+    -e 's/signature=/sig=/' \
+    -e 's/download=/dl=/' \
+    -e 's/extraction=/x=/' \
+    -e 's/activation=/act=/' \
+    -e 's/quiesce=/q=/' \
+    -e 's/switch=/sw=/' \
+    -e 's/readiness=/ready=/' \
+    -e 's/onboarding=/onboard=/' \
+    -e 's/transferred=/bytes=/' \
+    -e 's/cache-hits=/hits=/' \
+    -e 's/cache-misses=/misses=/'
+}
+
 acceptance_start() {
   test "$public_acquisition" = "1"
   test -f "$acceptance_contract"
@@ -1420,8 +1444,9 @@ if [[ "$phase" == "fresh-install" ]]; then
 
 	hash -r
   acceptance_start
-	grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/fresh-install.out >/dev/null
-	acceptance_mark lifecycle-performance /tmp/fresh-install.out "install timing, bytes, and cache evidence recorded"
+  performance_summary="$(compact_performance_summary /tmp/fresh-install.out)"
+	test "${#performance_summary}" -le 240
+	acceptance_mark lifecycle-performance /tmp/fresh-install.out "$performance_summary"
   service_started="$SECONDS"
   test -s "$state/fased.json"
   test -s "$state/install.json"
@@ -1775,8 +1800,9 @@ EOF_STABLE_BRIDGE_DROPIN
     cat /tmp/stable-bridge-failure.err /tmp/stable-bridge-update.out \
       >/tmp/stable-bridge-rollback-retry.evidence
     acceptance_mark rollback-retry /tmp/stable-bridge-rollback-retry.evidence
-		grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/stable-bridge-update.out >/dev/null
-		acceptance_mark lifecycle-performance /tmp/stable-bridge-update.out "update timing, bytes, and cache evidence recorded"
+		performance_summary="$(compact_performance_summary /tmp/stable-bridge-update.out)"
+		test "${#performance_summary}" -le 240
+		acceptance_mark lifecycle-performance /tmp/stable-bridge-update.out "$performance_summary"
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
     sha256sum --check "$stable_bridge_manifest"
@@ -2064,8 +2090,9 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   cat /tmp/managed-update-failure.err /tmp/managed-update-success.out \
     >/tmp/managed-rollback-retry.evidence
   acceptance_mark rollback-retry /tmp/managed-rollback-retry.evidence
-	grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/managed-update-success.out >/dev/null
-	acceptance_mark lifecycle-performance /tmp/managed-update-success.out "update timing, bytes, and cache evidence recorded"
+	performance_summary="$(compact_performance_summary /tmp/managed-update-success.out)"
+	test "${#performance_summary}" -le 240
+	acceptance_mark lifecycle-performance /tmp/managed-update-success.out "$performance_summary"
   if [[ -n "$managed_recovery_transaction" ]]; then
     managed_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${managed_recovery_transaction}.json"
     test "$(jq -er .operation "$managed_recovery_receipt")" = "recoverRelease"

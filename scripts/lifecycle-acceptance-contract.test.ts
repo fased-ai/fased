@@ -355,6 +355,34 @@ describe("lifecycle acceptance contract", () => {
     expect(hosting).not.toContain("/home/app/.fased/bin/fased update");
   });
 
+  it("records exact bounded lifecycle performance evidence in Local and Hosting receipts", () => {
+    const local = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    for (const fixture of [local, hosting]) {
+      expect(fixture).toContain("compact_performance_summary() {");
+      expect(fixture).toContain('test "${#lines[@]}" -eq 1');
+      expect(fixture).toContain("-e 's/^Lifecycle performance: /perf /'");
+      expect(fixture).toContain("-e 's/transferred=/bytes=/'");
+      expect(fixture).toContain("-e 's/cache-hits=/hits=/'");
+      expect(fixture).toContain("-e 's/cache-misses=/misses=/'");
+      expect(fixture).toContain('performance_summary="$(compact_performance_summary /tmp/');
+      expect(fixture).toContain('test "${#performance_summary}" -le 240');
+      expect(fixture).toMatch(
+        /acceptance_mark lifecycle-performance \/tmp\/[a-z-]+\.out "\$performance_summary"/u,
+      );
+      expect(fixture).not.toContain("install timing, bytes, and cache evidence recorded");
+      expect(fixture).not.toContain("update timing, bytes, and cache evidence recorded");
+    }
+    expect(local.match(/acceptance_mark lifecycle-performance/gu)?.length).toBe(3);
+    expect(hosting.match(/acceptance_mark lifecycle-performance/gu)?.length).toBe(2);
+  });
+
   it("restores the protected Local system command ancestry after Node extraction", () => {
     for (const containerfile of [
       "./docker/protected-local-systemd/Containerfile.ubuntu",

@@ -426,6 +426,30 @@ acceptance_mark() {
     >>"$acceptance_evidence"
 }
 
+compact_performance_summary() {
+  local evidence_file="${1:?performance evidence file is required}"
+  local lines=()
+  mapfile -t lines < <(
+    grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' \
+      "$evidence_file"
+  )
+  test "${#lines[@]}" -eq 1
+  printf '%s\n' "${lines[0]}" | sed -E \
+    -e 's/^Lifecycle performance: /perf /' \
+    -e 's/resolution=/res=/' \
+    -e 's/signature=/sig=/' \
+    -e 's/download=/dl=/' \
+    -e 's/extraction=/x=/' \
+    -e 's/activation=/act=/' \
+    -e 's/quiesce=/q=/' \
+    -e 's/switch=/sw=/' \
+    -e 's/readiness=/ready=/' \
+    -e 's/onboarding=/onboard=/' \
+    -e 's/transferred=/bytes=/' \
+    -e 's/cache-hits=/hits=/' \
+    -e 's/cache-misses=/misses=/'
+}
+
 acceptance_start() {
   /fixture-node /fixture-tools/lifecycle-acceptance-contract.mjs validate \
     --contract "$acceptance_contract" >/dev/null
@@ -744,9 +768,9 @@ case "$phase" in
     ! grep -Fq 'Type the Tailscale DNS name' /tmp/fased-hosting-install.out
     ! command -v node >/dev/null 2>&1
     acceptance_start
-	grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/fased-hosting-install.out >/dev/null
-	acceptance_mark lifecycle-performance /tmp/fased-hosting-install.out \
-	  "install timing, bytes, and cache evidence recorded"
+	performance_summary="$(compact_performance_summary /tmp/fased-hosting-install.out)"
+	test "${#performance_summary}" -le 240
+	acceptance_mark lifecycle-performance /tmp/fased-hosting-install.out "$performance_summary"
     assert_healthy
     acceptance_mark canonical-lifecycle /var/lib/fased-lifecycled/installation-manifest.json \
       "canonical Hosting lifecycle verified"
@@ -834,9 +858,9 @@ EOF_TARGET_DROPIN
 
     run_public_installer >/tmp/fased-hosting-update.out 2>/tmp/fased-hosting-update.err
     acceptance_mark rollback-retry /tmp/fased-hosting-update.out "rollback and identical retry verified"
-	grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' /tmp/fased-hosting-update.out >/dev/null
-	acceptance_mark lifecycle-performance /tmp/fased-hosting-update.out \
-	  "update timing, bytes, and cache evidence recorded"
+	performance_summary="$(compact_performance_summary /tmp/fased-hosting-update.out)"
+	test "${#performance_summary}" -le 240
+	acceptance_mark lifecycle-performance /tmp/fased-hosting-update.out "$performance_summary"
     assert_healthy
     acceptance_mark canonical-lifecycle /var/lib/fased-lifecycled/installation-manifest.json \
       "canonical Hosting lifecycle verified"
