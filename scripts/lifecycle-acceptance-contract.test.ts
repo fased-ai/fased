@@ -321,6 +321,27 @@ describe("lifecycle acceptance contract", () => {
     expect(prepare).toContain("hosting-systemd");
   });
 
+  it("waits up to 30 seconds for the substituted Hosting release server", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const readiness = hosting.slice(
+      hosting.indexOf("start_release_transport_server() {"),
+      hosting.indexOf("acceptance_mark() {"),
+    );
+    expect(readiness).toContain("local deadline=$((SECONDS + 30))");
+    expect(readiness).toContain("while ((SECONDS < deadline)); do");
+    expect(readiness).toContain("--connect-timeout 1 --max-time 1");
+    expect(readiness).toContain('"$release_url" >/dev/null 2>&1');
+    expect(readiness).toContain("return 0");
+    expect(readiness).toContain("cat /tmp/fased-hosting-release-server.log >&2");
+    expect(readiness).toContain(
+      "Hosting fixture release server did not become ready within 30 seconds",
+    );
+    expect(readiness).not.toContain("for _ in {1..40}");
+  });
+
   it("requires managed update to execute the predecessor-installed updater", () => {
     const fixture = readFileSync(
       new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),

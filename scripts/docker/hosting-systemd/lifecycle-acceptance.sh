@@ -383,6 +383,8 @@ EOF_FIXTURE_CURL
 }
 
 start_release_transport_server() {
+  local deadline=$((SECONDS + 30))
+  local release_url="https://github.com/fased-ai/fased/releases/download/v${version}/fased-lifecycle-root-v1.json"
   grep -Fqx "127.0.0.1 github.com" /etc/hosts ||
     printf '127.0.0.1 github.com\n' >>/etc/hosts
   grep -Fqx "127.0.0.1 registry.npmjs.org" /etc/hosts ||
@@ -393,21 +395,22 @@ start_release_transport_server() {
     /fixture-node /usr/local/libexec/fased-hosting-release-server.mjs \
     >/tmp/fased-hosting-release-server.log 2>&1 &
   fixture_release_server_pid=$!
-  for _ in {1..40}; do
+  while ((SECONDS < deadline)); do
     kill -0 "$fixture_release_server_pid" 2>/dev/null || {
       cat /tmp/fased-hosting-release-server.log >&2
+      echo "Hosting fixture release server exited before readiness: $release_url" >&2
       return 1
     }
     if /usr/local/libexec/fased-fixture-curl-real -fsS \
-      "https://github.com/fased-ai/fased/releases/download/v${version}/fased-lifecycle-root-v1.json" \
-      >/dev/null; then
-      break
+      --connect-timeout 1 --max-time 1 \
+      "$release_url" >/dev/null 2>&1; then
+      return 0
     fi
     sleep 0.1
   done
-  /usr/local/libexec/fased-fixture-curl-real -fsS \
-    "https://github.com/fased-ai/fased/releases/download/v${version}/fased-lifecycle-root-v1.json" \
-    >/dev/null
+  cat /tmp/fased-hosting-release-server.log >&2
+  echo "Hosting fixture release server did not become ready within 30 seconds: $release_url" >&2
+  return 1
 }
 
 acceptance_mark() {
