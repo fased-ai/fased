@@ -49,11 +49,8 @@ import { getTotalQueueSize } from "../process/command-queue.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { clearSecretsRuntimeSnapshot } from "../secrets/runtime.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
+import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
-import {
-  createWalletProviderAdapter,
-  resolveWalletProviderId,
-} from "../wallet/wallet-provider-resolver.js";
 import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
@@ -113,6 +110,9 @@ import {
 } from "./session-event-subscribers.js";
 
 export { __resetModelCatalogCacheForTest } from "./server-model-catalog.js";
+
+const { createAdapter: createWalletProviderAdapter, resolveId: resolveWalletProviderId } =
+  walletProviderFacade;
 
 ensureFasedAgentCliOnPath();
 

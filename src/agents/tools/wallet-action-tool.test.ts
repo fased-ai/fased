@@ -46,9 +46,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../wallet/wallet-provider-resolver.js", () => ({
   createWalletProviderAdapter: mocks.createWalletProviderAdapter,
   resolveScopedRpcUrlForWallet: () => process.env.FASED_WALLET_SOLANA_RPC_URL,
+  resolveWalletProviderId: () => "local-socket-signer",
 }));
 
-const USDC_MINT = "EPjFWdd5AufqSSqeM2qJ3aZ1d1zN7T7Z6viNwY7u1D8";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qJ3aZ1d1zN7T7Z6viNwY7u1D8"; // pragma: allowlist secret
 const TOKEN_A_MINT = Keypair.generate().publicKey.toBase58();
 const ROUTE_PROGRAM_ID = Keypair.generate().publicKey.toBase58();
 const AGENT_PUBLIC_KEY = Keypair.generate().publicKey;
@@ -259,7 +260,7 @@ function stubJupiterOrder(opts?: {
             json: async () => ({
               result: {
                 value: {
-                  owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                  owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
                   data: { parsed: { info: { decimals: 6, extensions: [] } } },
                 },
               },
@@ -310,7 +311,7 @@ function stubJupiterOrder(opts?: {
                 value: keys.map(() =>
                   jsonParsed
                     ? {
-                        owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                        owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // pragma: allowlist secret
                         executable: false,
                         data: { parsed: { info: { decimals: 6, extensions: [] } } },
                       }

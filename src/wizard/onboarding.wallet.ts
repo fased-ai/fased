@@ -21,12 +21,12 @@ import {
 import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
 import { invokeNativeSignerOperatorCapabilities } from "../wallet/native-signer-operator-client.js";
 import { callLocalSocketSigner } from "../wallet/providers/local-socket-signer-adapter.js";
+import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import {
   WALLET_PROVIDER_IDS,
   readWalletProviderRegistry,
   setWalletProvidersEnabled,
 } from "../wallet/wallet-provider-registry.js";
-import { resolveWalletProviderId } from "../wallet/wallet-provider-resolver.js";
 import {
   ensureWalletStateDir,
   isLocalSignerExternallyManaged,
@@ -39,6 +39,8 @@ import {
 } from "../wallet/wallet-runtime-config.js";
 import type { HostSetupProfile, WizardFlow } from "./onboarding.types.js";
 import type { WizardPrompter } from "./prompts.js";
+
+const { resolveId: resolveWalletProviderId } = walletProviderFacade;
 
 export function resolveSignerdBinaryPath(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = String(env.FASED_WALLET_LOCAL_SIGNER_BIN ?? "").trim();

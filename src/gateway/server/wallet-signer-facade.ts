@@ -1,13 +1,15 @@
 import type { WalletSignerDoctorReport } from "../../commands/wallet.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import type { WalletProviderId } from "../../config/types.wallet.js";
+import { walletProviderFacade } from "../../wallet/wallet-provider-facade.js";
 import {
   readWalletProviderRegistry,
   type WalletProviderRegistry,
 } from "../../wallet/wallet-provider-registry.js";
-import { resolveWalletProviderId } from "../../wallet/wallet-provider-resolver.js";
 import { walletReadinessFacade } from "../../wallet/wallet-readiness-facade.js";
 import type { WalletStatusSnapshot } from "../../wallet/wallet-status.js";
+
+const { resolveId: resolveWalletProviderId } = walletProviderFacade;
 
 type WalletChainEntry = {
   walletId: string;
