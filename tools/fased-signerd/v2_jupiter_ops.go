@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 
+	"fased-signerd/internal/execution"
+
 	solana "github.com/gagliardetto/solana-go"
 )
 
@@ -423,7 +425,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, payloadErr)
 			return signerReviewExecutionResultV2{}, payloadErr
 		}
-		signature, signErr := privateKey.Sign(message)
+		signatureBase64, signErr := execution.SignDomainMessageBase64(privateKey, message)
 		if signErr != nil {
 			failed, markErr := s.store.markFailedClaim(operation.RequestID, attempt, signErr)
 			if markErr != nil {
@@ -431,7 +433,6 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			}
 			return signerReviewExecutionResultV2{Operation: &failed}, signErr
 		}
-		signatureBase64 := base64.StdEncoding.EncodeToString(signature[:])
 		operation, err = s.store.markCompletedClaim(operation.RequestID, attempt, signatureBase64, artifact.Digest)
 		if err != nil {
 			return signerReviewExecutionResultV2{}, err

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fased-signerd/internal/custody"
+	"fased-signerd/internal/execution"
 	signerpolicy "fased-signerd/internal/policy"
 
 	"golang.org/x/crypto/scrypt"
@@ -938,16 +939,7 @@ func decryptSolanaEnvelope(envelope *solanaEnvelopeV1, passphrase string) ([]byt
 	return plaintext, nil
 }
 
-type solanaWriteRPCEndpointState struct {
-	ConsecutiveFailures int
-	BackoffUntil        time.Time
-	QuotaLikely         bool
-}
-
-var solanaWriteRPCCircuits = struct {
-	sync.Mutex
-	Endpoints map[string]solanaWriteRPCEndpointState
-}{Endpoints: map[string]solanaWriteRPCEndpointState{}}
+var solanaWriteRPCPool = execution.NewRPCPool(time.Now)
 
 func solanaWriteRPCRequestTimeout() time.Duration {
 	return time.Duration(getenvInt("FASED_WALLET_SOLANA_WRITE_RPC_TIMEOUT_MS", 12_000)) * time.Millisecond
@@ -958,74 +950,17 @@ func solanaWriteRPCConfirmTimeout() time.Duration {
 }
 
 func looksLikeSolanaRPCQuotaFailure(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "429") ||
-		strings.Contains(message, "rate limit") ||
-		strings.Contains(message, "too many requests") ||
-		strings.Contains(message, "quota") ||
-		strings.Contains(message, "credit") ||
-		strings.Contains(message, "resource exhausted")
+	return execution.LooksLikeQuotaFailure(err)
 }
 
 func markSolanaWriteRPCSuccess(rpcURL string) {
-	solanaWriteRPCCircuits.Lock()
-	defer solanaWriteRPCCircuits.Unlock()
-	delete(solanaWriteRPCCircuits.Endpoints, strings.TrimSpace(rpcURL))
+	solanaWriteRPCPool.MarkSuccess(rpcURL)
 }
 
 func markSolanaWriteRPCFailure(rpcURL string, err error) {
-	key := strings.TrimSpace(rpcURL)
-	if key == "" {
-		return
-	}
-	solanaWriteRPCCircuits.Lock()
-	defer solanaWriteRPCCircuits.Unlock()
-	state := solanaWriteRPCCircuits.Endpoints[key]
-	state.ConsecutiveFailures++
-	state.QuotaLikely = looksLikeSolanaRPCQuotaFailure(err)
-	if state.QuotaLikely {
-		state.BackoffUntil = time.Now().Add(30 * time.Second)
-	} else if state.ConsecutiveFailures >= 2 {
-		backoff := 5 * time.Second * time.Duration(1<<(state.ConsecutiveFailures-2))
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
-		state.BackoffUntil = time.Now().Add(backoff)
-	}
-	solanaWriteRPCCircuits.Endpoints[key] = state
+	solanaWriteRPCPool.MarkFailure(rpcURL, err)
 }
 
 func activeSolanaWriteRPCURLs(rpcURLs []string) ([]string, error) {
-	now := time.Now()
-	solanaWriteRPCCircuits.Lock()
-	defer solanaWriteRPCCircuits.Unlock()
-	active := make([]string, 0, len(rpcURLs))
-	shortestBackoff := time.Duration(0)
-	configured := 0
-	for _, rpcURL := range rpcURLs {
-		trimmed := strings.TrimSpace(rpcURL)
-		if trimmed == "" {
-			continue
-		}
-		configured++
-		state := solanaWriteRPCCircuits.Endpoints[trimmed]
-		if state.BackoffUntil.After(now) {
-			remaining := state.BackoffUntil.Sub(now)
-			if shortestBackoff == 0 || remaining < shortestBackoff {
-				shortestBackoff = remaining
-			}
-			continue
-		}
-		active = append(active, trimmed)
-	}
-	if len(active) > 0 {
-		return active, nil
-	}
-	if configured == 0 {
-		return nil, errors.New("missing Solana write RPC URL")
-	}
-	return nil, fmt.Errorf("all Solana write RPC endpoints are in circuit cooldown; retry in %s", shortestBackoff.Round(time.Second))
+	return solanaWriteRPCPool.ActiveURLs(rpcURLs)
 }

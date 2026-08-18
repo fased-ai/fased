@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"fased-signerd/internal/execution"
+
 	solana "github.com/gagliardetto/solana-go"
 	bolt "go.etcd.io/bbolt"
 )
@@ -294,13 +296,11 @@ func TestCompatibilityReadsUseSignerOwnedWalletAndNetwork(t *testing.T) {
 }
 
 func TestSolanaWriteRPCCircuitKeepsPrimaryFailureAfterFallbackSuccess(t *testing.T) {
-	solanaWriteRPCCircuits.Lock()
-	solanaWriteRPCCircuits.Endpoints = map[string]solanaWriteRPCEndpointState{}
-	solanaWriteRPCCircuits.Unlock()
+	now := time.Unix(100, 0)
+	priorPool := solanaWriteRPCPool
+	solanaWriteRPCPool = execution.NewRPCPool(func() time.Time { return now })
 	t.Cleanup(func() {
-		solanaWriteRPCCircuits.Lock()
-		solanaWriteRPCCircuits.Endpoints = map[string]solanaWriteRPCEndpointState{}
-		solanaWriteRPCCircuits.Unlock()
+		solanaWriteRPCPool = priorPool
 	})
 
 	primary := "https://primary.invalid"
@@ -315,27 +315,20 @@ func TestSolanaWriteRPCCircuitKeepsPrimaryFailureAfterFallbackSuccess(t *testing
 		t.Fatalf("expected only fallback while primary cools down, got %#v", active)
 	}
 
-	solanaWriteRPCCircuits.Lock()
-	primaryState := solanaWriteRPCCircuits.Endpoints[primary]
-	primaryState.BackoffUntil = time.Now().Add(-time.Second)
-	solanaWriteRPCCircuits.Endpoints[primary] = primaryState
-	solanaWriteRPCCircuits.Unlock()
+	now = now.Add(30 * time.Second)
 	active, err = activeSolanaWriteRPCURLs([]string{primary, fallback})
 	if err != nil || len(active) != 2 || active[0] != primary || active[1] != fallback {
-		t.Fatalf("expected a primary probe after cooldown: active=%#v err=%v", active, err)
+		t.Fatalf("expected primary after quota cooldown expiry: active=%#v err=%v", active, err)
 	}
-	solanaWriteRPCCircuits.Lock()
-	_, primaryStillFailed := solanaWriteRPCCircuits.Endpoints[primary]
-	solanaWriteRPCCircuits.Unlock()
-	if !primaryStillFailed {
-		t.Fatal("cooldown expiry cleared the primary failure before a successful probe")
+	markSolanaWriteRPCFailure(primary, errors.New("temporary network failure"))
+	active, err = activeSolanaWriteRPCURLs([]string{primary, fallback})
+	if err != nil || len(active) != 1 || active[0] != fallback {
+		t.Fatalf("cooldown expiry erased primary failure history: active=%#v err=%v", active, err)
 	}
 	markSolanaWriteRPCSuccess(primary)
-	solanaWriteRPCCircuits.Lock()
-	_, primaryStillFailed = solanaWriteRPCCircuits.Endpoints[primary]
-	solanaWriteRPCCircuits.Unlock()
-	if primaryStillFailed {
-		t.Fatal("successful primary probe did not clear its circuit state")
+	active, err = activeSolanaWriteRPCURLs([]string{primary, fallback})
+	if err != nil || len(active) != 2 || active[0] != primary || active[1] != fallback {
+		t.Fatalf("expected successful primary reset to restore configured order: active=%#v err=%v", active, err)
 	}
 }
 
@@ -347,7 +340,7 @@ func TestSignerOwnedRPCMalformedResponseDoesNotLeakCredentials(t *testing.T) {
 		_, _ = writer.Write([]byte("{"))
 	}))
 	defer server.Close()
-	secret := "write-rpc-secret"
+	secret := "write-rpc-secret" // pragma: allowlist secret
 	rpcURL := server.URL + "?api-key=" + secret
 	_, err := signerLatestBlockhashWithFallbackV2([]string{rpcURL})
 	if err == nil {
