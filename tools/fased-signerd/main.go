@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"fased-signerd/internal/audit"
 	"fased-signerd/internal/custody"
 	"fased-signerd/internal/execution"
 	signerpolicy "fased-signerd/internal/policy"
@@ -119,89 +120,43 @@ type auditWriter struct {
 	path     string
 	maxBytes int64
 	mu       sync.Mutex
-	failed   bool
-	lastErr  string
+	delegate *audit.Writer
 }
 
-type signerAuditHealthV2 struct {
-	Configured bool   `json:"configured"`
-	Healthy    bool   `json:"healthy"`
-	LastError  string `json:"lastError,omitempty"`
+type signerAuditHealthV2 = audit.Health
+
+func (a *auditWriter) writer() *audit.Writer {
+	if a == nil {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.delegate == nil {
+		a.delegate = audit.New(a.path, a.maxBytes, func(message string) {
+			log.Printf("fased-signerd audit failure: %s", message)
+		})
+	}
+	return a.delegate
 }
 
 func (a *auditWriter) health() signerAuditHealthV2 {
-	if a == nil {
-		return signerAuditHealthV2{Healthy: true}
+	if writer := a.writer(); writer != nil {
+		return writer.Health()
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return signerAuditHealthV2{
-		Configured: a.path != "",
-		Healthy:    !a.failed,
-		LastError:  a.lastErr,
-	}
-}
-
-func (a *auditWriter) recordFailure(err error) {
-	a.failed = true
-	a.lastErr = safeOperationErrorV2(err)
-	log.Printf("fased-signerd audit failure: %s", a.lastErr)
+	return signerAuditHealthV2{Healthy: true}
 }
 
 func (a *auditWriter) write(entry map[string]any) {
-	_ = a.writeRequired(entry)
+	if writer := a.writer(); writer != nil {
+		writer.Write(entry)
+	}
 }
 
 func (a *auditWriter) writeRequired(entry map[string]any) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.path == "" {
-		err := errors.New("signer audit log path is required")
-		a.recordFailure(err)
-		return err
+	if writer := a.writer(); writer != nil {
+		return writer.WriteRequired(entry)
 	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		a.recordFailure(err)
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(a.path), 0o700); err != nil {
-		a.recordFailure(err)
-		return err
-	}
-	if stat, err := os.Stat(a.path); err == nil && stat.Size() >= a.maxBytes && a.maxBytes > 0 {
-		rotated := a.path + ".1"
-		if err := os.Remove(rotated); err != nil && !errors.Is(err, os.ErrNotExist) {
-			a.recordFailure(err)
-			return err
-		}
-		if err := os.Rename(a.path, rotated); err != nil {
-			a.recordFailure(err)
-			return err
-		}
-	}
-	file, err := os.OpenFile(a.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		a.recordFailure(err)
-		return err
-	}
-	if _, err := file.Write(append(data, '\n')); err != nil {
-		_ = file.Close()
-		a.recordFailure(err)
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		a.recordFailure(err)
-		return err
-	}
-	if err := file.Close(); err != nil {
-		a.recordFailure(err)
-		return err
-	}
-	a.failed = false
-	a.lastErr = ""
-	return nil
+	return audit.ErrPathRequired
 }
 
 func getenvInt(name string, fallback int) int {
