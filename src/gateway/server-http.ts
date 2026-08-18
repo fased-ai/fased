@@ -245,6 +245,7 @@ import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { canonicalizePathVariant, isPathProtectedByPrefixes } from "./security-path.js";
 import { handleGatewayReadinessHttpRequest } from "./server/readiness-http-service.js";
 import type { ReadinessChecker } from "./server/readiness.js";
+import { createGatewayWalletSignerFacade } from "./server/wallet-signer-facade.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
 
@@ -265,6 +266,7 @@ const SIGNED_FEDERATION_INBOUND_ROUTES = new Set([
 const CONTROL_UI_SETTINGS_STORAGE_KEY = "fased.control.settings.v1";
 const CONTROL_UI_TOKEN_LOCAL_STORAGE_KEY = "fased.control.token.local.v1";
 const CONTROL_UI_TOKEN_SESSION_STORAGE_KEY = "fased.control.token.session.v1";
+const gatewayWalletSignerFacade = createGatewayWalletSignerFacade();
 type HookDispatchers = {
   dispatchWakeHook: (value: { text: string; mode: "now" | "next-heartbeat" }) => void;
   dispatchAgentHook: (value: {
@@ -1604,18 +1606,6 @@ async function normalizeWalletAmountFromFormat(params: {
   return { ok: true, amount: (whole * base + fraction).toString() };
 }
 
-function formatLamportsToSol(raw: string): string {
-  try {
-    const lamports = BigInt(raw);
-    const base = 10n ** 9n;
-    const whole = lamports / base;
-    const frac = (lamports % base).toString().padStart(9, "0").replace(/0+$/, "");
-    return frac ? `${whole.toString()}.${frac} SOL` : `${whole.toString()} SOL`;
-  } catch {
-    return "invalid";
-  }
-}
-
 function resolveProviderFromWalletSelection(params: {
   walletId?: string;
   env?: NodeJS.ProcessEnv;
@@ -1639,29 +1629,6 @@ function normalizeWalletIdForEnvSuffix(walletId?: string): string | undefined {
   }
   const normalized = raw.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return normalized || undefined;
-}
-
-function walletIdsMatchForStatus(left?: string, right?: string): boolean {
-  const normalizedLeft = String(left ?? "")
-    .trim()
-    .toLowerCase();
-  const normalizedRight = String(right ?? "")
-    .trim()
-    .toLowerCase();
-  if (!normalizedLeft || !normalizedRight) {
-    return false;
-  }
-  return (
-    normalizedLeft === normalizedRight ||
-    normalizeWalletIdForEnvSuffix(normalizedLeft) === normalizeWalletIdForEnvSuffix(normalizedRight)
-  );
-}
-
-function findWalletChainEntry<T extends { walletId: string }>(
-  entries: T[] | undefined,
-  walletId: string,
-): T | undefined {
-  return (entries ?? []).find((entry) => walletIdsMatchForStatus(entry.walletId, walletId));
 }
 
 function inferWalletSummaryChain(wallet: {
@@ -7190,127 +7157,15 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         const cfg = loadConfig();
         const effectiveEnv = { ...process.env, ...cfg.env?.vars };
         const selectedWalletId = parsedUrl.searchParams.get("walletId")?.trim() || undefined;
-        const configuredProviderId = resolveWalletProviderId(cfg, effectiveEnv);
-        let snapshot = await readWalletStatusSnapshot({
+        const { status } = await gatewayWalletSignerFacade.readStatus({
           config: cfg,
           env: effectiveEnv,
+          registryEnv: process.env,
           walletId: selectedWalletId,
         });
-        if (configuredProviderId === "local-socket-signer" && !snapshot.service.healthy) {
-          try {
-            const { restartLocalSocketSigner } = await import("../wizard/onboarding.wallet.js");
-            await restartLocalSocketSigner(undefined, effectiveEnv);
-            snapshot = await readWalletStatusSnapshot({
-              config: cfg,
-              env: effectiveEnv,
-              walletId: selectedWalletId,
-            });
-          } catch {
-            // Keep original unhealthy snapshot; signer doctor endpoint provides deeper detail.
-          }
-        }
-        const activeSignerMode = (() => {
-          if (configuredProviderId === "local-socket-signer") {
-            return "local-native-signer" as const;
-          }
-          if (
-            configuredProviderId === "turnkey" ||
-            configuredProviderId === "privy" ||
-            configuredProviderId === "alchemy"
-          ) {
-            return "hosted-provider" as const;
-          }
-          return "local-native-signer" as const;
-        })();
-        const providerSummary = {
-          id: configuredProviderId,
-          label:
-            configuredProviderId === "local-socket-signer"
-              ? "Local signer socket"
-              : configuredProviderId === "turnkey"
-                ? "Turnkey"
-                : configuredProviderId === "privy"
-                  ? "Privy"
-                  : configuredProviderId === "alchemy"
-                    ? "Alchemy"
-                    : configuredProviderId,
-          category:
-            activeSignerMode === "hosted-provider"
-              ? ("hosted-provider" as const)
-              : activeSignerMode === "local-native-signer"
-                ? ("local-signer" as const)
-                : ("embedded" as const),
-          signerMode: activeSignerMode,
-        };
-        const statusPayload: Record<string, unknown> = {
-          ...snapshot,
-          configuredProviderId,
-          activeSignerMode,
-          providerSummary,
-        };
-        const registry = readWalletProviderRegistry(process.env);
-        type ChainEntry = { walletId: string; rpcConfigured: boolean; decryptReady: boolean };
-        const snapshotAny = snapshot as typeof snapshot & {
-          chainWallets?: { solana?: ChainEntry[] };
-        };
-        statusPayload.capabilities = {
-          canEditPolicy: true,
-          canSend: true,
-          canSetupWallets: false,
-          canEditProviders: false,
-          canEditRpc: false,
-        };
-        statusPayload.policyDisplay = {
-          solana: {
-            maxPerTx: {
-              raw: snapshot.policy.solana.maxPerTx,
-              human: formatLamportsToSol(snapshot.policy.solana.maxPerTx),
-            },
-            maxDaily: {
-              raw: snapshot.policy.solana.maxDaily,
-              human: formatLamportsToSol(snapshot.policy.solana.maxDaily),
-            },
-          },
-        };
-        statusPayload.wallets = registry.wallets.map((wallet) => {
-          const liveWallet = snapshot.wallets?.find((entry) => entry.id === wallet.id);
-          const solana = findWalletChainEntry(snapshotAny.chainWallets?.solana, wallet.id);
-          const readiness = liveWallet?.readiness ?? {
-            keystore: Boolean(solana?.decryptReady ?? false),
-            rpc: Boolean(solana?.rpcConfigured),
-            ready: false,
-          };
-          return {
-            id: wallet.id,
-            walletId: wallet.id,
-            name: wallet.name,
-            providerId: wallet.providerId,
-            provider: wallet.providerId,
-            addresses: wallet.addresses,
-            readiness,
-            chains: wallet.addresses?.solana ? ["solana"] : [],
-            rpcConfigured: readiness.rpc,
-            health: readiness.ready ? "ok" : "degraded",
-          };
-        });
-        if (configuredProviderId === "local-socket-signer") {
-          statusPayload.providerAuthMode = snapshot.authMode;
-          statusPayload.providerAuthSource = snapshot.authSource;
-          statusPayload.providerAuthDetails = snapshot.authBootstrap
-            ? {
-                endpoint: snapshot.authBootstrap.endpoint,
-                lastError: snapshot.authBootstrap.lastError,
-                lastSuccessAt: snapshot.authBootstrap.lastSuccessAt,
-                expiresAt: snapshot.authBootstrap.expiresAt,
-              }
-            : undefined;
-        }
-        delete (statusPayload as { authMode?: unknown }).authMode;
-        delete (statusPayload as { authSource?: unknown }).authSource;
-        delete (statusPayload as { authBootstrap?: unknown }).authBootstrap;
         sendLoginResponse(200, {
           ok: true,
-          status: statusPayload,
+          status,
         });
         return;
       }
@@ -7329,53 +7184,15 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
 
-        const { collectWalletSignerDoctorReport } = await import("../commands/wallet.js");
         const cfg = loadConfig();
         const effectiveEnv = { ...process.env, ...cfg.env?.vars };
-        const doctor = await collectWalletSignerDoctorReport(effectiveEnv, { config: cfg });
-        const registry = readWalletProviderRegistry(effectiveEnv);
-        const parseWalletIds = (_chain: "solana") => {
-          const ids = new Set<string>();
-          for (const wallet of registry.wallets) {
-            const hasChain = wallet.addresses?.solana;
-            if (hasChain && wallet.id.trim()) {
-              ids.add(wallet.id.trim().toLowerCase());
-            }
-          }
-          return [...ids].toSorted();
-        };
-        const checks = doctor.checks ?? [];
-        const lookupWalletCheck = (prefix: string, chain: "solana", walletId: string) =>
-          checks.find((entry) => {
-            const check = String(entry.check ?? "");
-            const expectedPrefix = `${prefix}.${chain}.`;
-            if (!check.startsWith(expectedPrefix)) {
-              return false;
-            }
-            return walletIdsMatchForStatus(check.slice(expectedPrefix.length), walletId);
-          });
-        const buildChainEntries = (chain: "solana", ids: string[]) =>
-          ids.map((walletId) => ({
-            walletId,
-            keystoreReady: lookupWalletCheck("keystore.file", chain, walletId)?.ok ?? false,
-            decryptReady: lookupWalletCheck("keystore.decrypt", chain, walletId)?.ok ?? false,
-            rpcConfigured: lookupWalletCheck("rpc.configured", chain, walletId)?.ok ?? false,
-            keystoreDetail: lookupWalletCheck("keystore.file", chain, walletId)?.detail,
-            rpcDetail: lookupWalletCheck("rpc.configured", chain, walletId)?.detail,
-          }));
+        const doctor = await gatewayWalletSignerFacade.readSignerDoctor({
+          config: cfg,
+          env: effectiveEnv,
+        });
         sendLoginResponse(200, {
           ok: true,
-          report: {
-            ok: doctor.ok,
-            socketPath: doctor.socketPath,
-            pidPath: doctor.pidPath,
-            auditPath: doctor.auditPath,
-            running: doctor.checks.find((c) => c.check === "socket.health")?.ok ?? false,
-            checks: doctor.checks,
-          },
-          chainWallets: {
-            solana: buildChainEntries("solana", parseWalletIds("solana")),
-          },
+          ...doctor,
         });
         return;
       }
