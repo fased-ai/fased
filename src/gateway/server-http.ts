@@ -38,13 +38,7 @@ import {
 } from "../canvas-host/a2ui.js";
 import type { CanvasHostHandler } from "../canvas-host/server.js";
 import { walletSetupCommand } from "../commands/wallet.js";
-import {
-  loadConfig,
-  readConfigFileSnapshotForWrite,
-  setRuntimeConfigSnapshot,
-  validateConfigObjectWithPlugins,
-  writeConfigFile,
-} from "../config/config.js";
+import { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { tryResolveSatRuntimeIds } from "../config/sat-runtime-ids.js";
 import type {
@@ -240,6 +234,7 @@ import {
 } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { canonicalizePathVariant } from "./security-path.js";
+import { createGatewayConfigurationFacade } from "./server/configuration-facade.js";
 import { createGatewayFederationNetworkFacade } from "./server/federation-network-facade.js";
 import { createGatewayMiningFacade } from "./server/mining-facade.js";
 import { handleGatewayReadinessHttpRequest } from "./server/readiness-http-service.js";
@@ -257,6 +252,7 @@ const HOOK_AUTH_FAILURE_TRACK_MAX = 2048;
 const CONTROL_UI_SETTINGS_STORAGE_KEY = "fased.control.settings.v1";
 const CONTROL_UI_TOKEN_LOCAL_STORAGE_KEY = "fased.control.token.local.v1";
 const CONTROL_UI_TOKEN_SESSION_STORAGE_KEY = "fased.control.token.session.v1";
+const gatewayConfigurationFacade = createGatewayConfigurationFacade();
 const gatewayFederationNetworkFacade = createGatewayFederationNetworkFacade();
 const gatewayMiningFacade = createGatewayMiningFacade();
 const gatewayWalletSignerFacade = createGatewayWalletSignerFacade();
@@ -2158,34 +2154,12 @@ async function updateWalletConfig(params: {
   env: NodeJS.ProcessEnv;
   mutate: (cfg: ReturnType<typeof loadConfig>) => void;
 }): Promise<{ ok: true; cfg: ReturnType<typeof loadConfig> } | { ok: false; message: string }> {
-  const writeSnapshot = await readConfigFileSnapshotForWrite();
-  const baseConfig = structuredClone(writeSnapshot.snapshot.resolved ?? {});
-  migrateWalletApprovalAuthFromEnvIfNeeded(baseConfig, params.env);
-  try {
-    params.mutate(baseConfig);
-  } catch (err) {
-    return { ok: false, message: String(err) };
-  }
-  const validated = validateConfigObjectWithPlugins(baseConfig);
-  if (!validated.ok) {
-    const detail = validated.issues
-      .slice(0, 3)
-      .map((issue) => `${issue.path || "<root>"}: ${issue.message}`)
-      .join("; ");
-    return { ok: false, message: detail || "invalid wallet config patch" };
-  }
-  await writeConfigFile(validated.config, writeSnapshot.writeOptions);
-  const activated = await activateLatestWalletRuntimeConfig();
-  return { ok: true, cfg: activated };
-}
-
-async function activateLatestWalletRuntimeConfig(): Promise<ReturnType<typeof loadConfig>> {
-  const latest = await readConfigFileSnapshotForWrite();
-  if (!latest.snapshot.valid) {
-    throw new Error("wallet config write produced an invalid runtime snapshot");
-  }
-  setRuntimeConfigSnapshot(latest.snapshot.config, latest.snapshot.resolved);
-  return latest.snapshot.config;
+  const result = await gatewayConfigurationFacade.update({
+    prepare: (config) => migrateWalletApprovalAuthFromEnvIfNeeded(config, params.env),
+    mutate: params.mutate,
+    invalidMessage: "invalid wallet config patch",
+  });
+  return result.ok ? { ok: true, cfg: result.config } : result;
 }
 
 type FederationBondWalletInput = {
@@ -5952,7 +5926,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               // Wallet setup writes through the CLI lifecycle. Refresh the Gateway's
               // runtime snapshot before and after it so repeated UI creations cannot
               // overwrite a prior wallet RPC and the new wallet is usable immediately.
-              await activateLatestWalletRuntimeConfig();
+              await gatewayConfigurationFacade.refreshRuntime();
               await walletSetupCommand(silentWalletSetupRuntime, {
                 mode: "local-signer-create",
                 chain,
@@ -5968,7 +5942,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 noSignerHints: true,
                 noDoctor: true,
               });
-              await activateLatestWalletRuntimeConfig();
+              await gatewayConfigurationFacade.refreshRuntime();
               const registry = readWalletProviderRegistry(process.env);
               const wallet = registry.wallets.find((entry) => entry.id === localSignerWalletId);
               if (!wallet) {
