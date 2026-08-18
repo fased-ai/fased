@@ -1,7 +1,11 @@
-import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
+import {
+  initializeTaskLedger,
+  openTaskLedgerStore,
+  type TaskLedgerStore,
+} from "./task-ledger-store.js";
 import type {
   TaskDefinitionKind,
   TaskDeliverySummary,
@@ -16,11 +20,13 @@ import type {
 
 const TASKS_DIR = "tasks";
 const TASKS_FILE = "tasks.json";
+const TASK_LEDGER_FILE = "task-ledger.sqlite";
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1_000;
 
-let loadedPath: string | null = null;
-let cachedStore: TaskRegistryStore | null = null;
+let ephemeralStore: TaskRegistryStore | null = null;
+let loadedLedgerPath: string | null = null;
+let cachedLedger: TaskLedgerStore | null = null;
 
 export type TaskRecordInput = Omit<TaskRecord, "taskId" | "createdAt" | "updatedAt"> & {
   taskId?: string;
@@ -42,11 +48,15 @@ export function resolveTaskRegistryPath(env: NodeJS.ProcessEnv = process.env): s
   return path.join(resolveStateDir(env), TASKS_DIR, TASKS_FILE);
 }
 
+export function resolveTaskLedgerPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(resolveStateDir(env), TASKS_DIR, TASK_LEDGER_FILE);
+}
+
 function defaultStore(): TaskRegistryStore {
   return { version: 1, tasks: [] };
 }
 
-function sanitizeStore(raw: unknown): TaskRegistryStore {
+export function sanitizeTaskRegistryStore(raw: unknown): TaskRegistryStore {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return defaultStore();
   }
@@ -70,27 +80,29 @@ function sanitizeStore(raw: unknown): TaskRegistryStore {
   return { version: 1, tasks };
 }
 
-function loadStore(filePath = resolveTaskRegistryPath()): TaskRegistryStore {
-  if (cachedStore && loadedPath === filePath) {
-    return cachedStore;
+function taskLedger(): TaskLedgerStore {
+  const databasePath = resolveTaskLedgerPath();
+  if (cachedLedger && loadedLedgerPath === databasePath) {
+    return cachedLedger;
   }
-  try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    cachedStore = sanitizeStore(JSON.parse(raw));
-  } catch {
-    cachedStore = defaultStore();
-  }
-  loadedPath = filePath;
-  return cachedStore;
+  closeCachedLedger();
+  initializeTaskLedger({
+    databasePath,
+    legacyPath: resolveTaskRegistryPath(),
+    sanitizeLegacy: (raw) => sanitizeTaskRegistryStore(raw).tasks,
+  });
+  cachedLedger = openTaskLedgerStore(databasePath);
+  loadedLedgerPath = databasePath;
+  return cachedLedger;
 }
 
-function saveStore(store: TaskRegistryStore, filePath = resolveTaskRegistryPath()): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  fs.renameSync(tmpPath, filePath);
-  cachedStore = store;
-  loadedPath = filePath;
+function closeCachedLedger(): void {
+  try {
+    cachedLedger?.close();
+  } finally {
+    cachedLedger = null;
+    loadedLedgerPath = null;
+  }
 }
 
 function normalizeTaskId(input: string): string {
@@ -256,21 +268,27 @@ function taskMatchesFilter(task: TaskRecord, filter: TaskListFilter): boolean {
 
 export function createTaskRecord(input: TaskRecordInput): TaskRecord {
   const record = normalizeRecord(input);
-  const store = loadStore();
-  const existingIndex = store.tasks.findIndex(
-    (task) => task.taskId === record.taskId || (record.runId && task.runId === record.runId),
-  );
-  if (existingIndex >= 0) {
-    store.tasks[existingIndex] = {
-      ...store.tasks[existingIndex],
-      ...record,
-      updatedAt: Date.now(),
-    };
-  } else {
-    store.tasks.push(record);
+  if (ephemeralStore) {
+    const existingIndex = ephemeralStore.tasks.findIndex(
+      (task) => task.taskId === record.taskId || (record.runId && task.runId === record.runId),
+    );
+    if (existingIndex >= 0) {
+      ephemeralStore.tasks[existingIndex] = {
+        ...ephemeralStore.tasks[existingIndex],
+        ...record,
+        updatedAt: Date.now(),
+      };
+      return ephemeralStore.tasks[existingIndex];
+    }
+    ephemeralStore.tasks.push(record);
+    return record;
   }
-  saveStore(store);
-  return existingIndex >= 0 ? store.tasks[existingIndex] : record;
+  const store = taskLedger();
+  return store.upsert(record, (existing, incoming) => ({
+    ...existing,
+    ...incoming,
+    updatedAt: Date.now(),
+  }));
 }
 
 export function upsertTaskRecord(record: TaskRecord): TaskRecord {
@@ -282,8 +300,11 @@ export function findTaskRecord(taskIdOrRunId: string): TaskRecord | undefined {
   if (!key) {
     return undefined;
   }
-  const store = loadStore();
-  return store.tasks.find((task) => task.taskId === key || task.runId === key);
+  if (ephemeralStore) {
+    return ephemeralStore.tasks.find((task) => task.taskId === key || task.runId === key);
+  }
+  const store = taskLedger();
+  return store.find(key);
 }
 
 export function updateTaskRecord(
@@ -296,24 +317,29 @@ export function updateTaskRecord(
   if (!key) {
     return undefined;
   }
-  const store = loadStore();
-  const index = store.tasks.findIndex((task) => task.taskId === key || task.runId === key);
-  if (index < 0) {
-    return undefined;
+  if (ephemeralStore) {
+    const index = ephemeralStore.tasks.findIndex(
+      (task) => task.taskId === key || task.runId === key,
+    );
+    if (index < 0) {
+      return undefined;
+    }
+    const current = ephemeralStore.tasks[index];
+    const nextPatch = typeof patch === "function" ? patch(current) : patch;
+    if (!nextPatch) {
+      return current;
+    }
+    const next = normalizeRecord({ ...current, ...nextPatch, updatedAt: Date.now() });
+    ephemeralStore.tasks[index] = next;
+    return next;
   }
-  const current = store.tasks[index];
-  const nextPatch = typeof patch === "function" ? patch(current) : patch;
-  if (!nextPatch) {
-    return current;
-  }
-  const next = normalizeRecord({
-    ...current,
-    ...nextPatch,
-    updatedAt: Date.now(),
+  const store = taskLedger();
+  return store.update(key, (current) => {
+    const nextPatch = typeof patch === "function" ? patch(current) : patch;
+    return nextPatch
+      ? normalizeRecord({ ...current, ...nextPatch, updatedAt: Date.now() })
+      : undefined;
   });
-  store.tasks[index] = next;
-  saveStore(store);
-  return next;
 }
 
 export function markTaskTerminal(
@@ -347,8 +373,9 @@ export function listTaskRecords(filter: TaskListFilter = {}): TaskListResult {
   const limit = Math.max(1, Math.min(MAX_LIMIT, Math.floor(filter.limit ?? DEFAULT_LIMIT)));
   const rawOffset = Math.floor(filter.offset ?? 0);
   const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
-  const filteredTasks = loadStore()
-    .tasks.filter((task) => taskMatchesFilter(task, filter))
+  const allTasks = ephemeralStore ? ephemeralStore.tasks : readLedgerTasks();
+  const filteredTasks = allTasks
+    .filter((task) => taskMatchesFilter(task, filter))
     .toSorted((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
   const tasks = filteredTasks.slice(offset, offset + limit);
   const result = buildTaskListResult(tasks);
@@ -388,16 +415,24 @@ export function buildTaskListResult(tasks: TaskRecord[], generatedAt = Date.now(
 }
 
 export function listAllTaskRecords(): TaskRecord[] {
-  return loadStore().tasks.toSorted(
-    (a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt),
-  );
+  const tasks = ephemeralStore ? ephemeralStore.tasks : readLedgerTasks();
+  return tasks.toSorted((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
 }
 
 export function resetTaskRegistryForTests(opts?: { tasks?: TaskRecord[]; persist?: boolean }) {
   const store = { version: 1 as const, tasks: opts?.tasks ? [...opts.tasks] : [] };
-  cachedStore = store;
-  loadedPath = resolveTaskRegistryPath();
-  if (opts?.persist !== false) {
-    saveStore(store);
+  if (opts?.persist === false) {
+    closeCachedLedger();
+    ephemeralStore = store;
+    return;
   }
+  closeCachedLedger();
+  ephemeralStore = null;
+  const ledger = taskLedger();
+  ledger.replaceAll(store.tasks);
+}
+
+function readLedgerTasks(): TaskRecord[] {
+  const store = taskLedger();
+  return store.list();
 }
