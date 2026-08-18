@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+	"time"
 
 	"fased-lifecycled/trust"
 )
@@ -174,6 +175,8 @@ func readRootDirectory(root *os.Root, name string) ([]os.DirEntry, error) {
 }
 
 func (inbox *Inbox) Put(ctx context.Context, asset trust.Asset, source io.Reader) (*Object, error) {
+	started := time.Now()
+	var fsyncMillis uint64
 	if inbox == nil || inbox.root == nil || source == nil {
 		return nil, errors.New("artifact inbox is unavailable")
 	}
@@ -211,9 +214,11 @@ func (inbox *Inbox) Put(ctx context.Context, asset trust.Asset, source io.Reader
 	if err := file.Chmod(0o400); err != nil {
 		return nil, err
 	}
+	fsyncStarted := time.Now()
 	if err := file.Sync(); err != nil {
 		return nil, err
 	}
+	fsyncMillis += elapsedMillis(fsyncStarted)
 	info, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -236,7 +241,7 @@ func (inbox *Inbox) Put(ctx context.Context, asset trust.Asset, source io.Reader
 		file.Close()
 		_ = inbox.root.Remove(tempPath)
 		removeTemp = false
-		return newObject(existing, asset, finalPath), nil
+		return newObject(existing, asset, finalPath, asset.Size, false, elapsedMillis(started), fsyncMillis), nil
 	} else if !errors.Is(openErr, os.ErrNotExist) {
 		return nil, openErr
 	}
@@ -244,6 +249,7 @@ func (inbox *Inbox) Put(ctx context.Context, asset trust.Asset, source io.Reader
 		return nil, err
 	}
 	removeTemp = false
+	fsyncStarted = time.Now()
 	if err := syncRelativeDirectory(inbox.root, ".staging"); err != nil {
 		file.Close()
 		return nil, err
@@ -256,7 +262,29 @@ func (inbox *Inbox) Put(ctx context.Context, asset trust.Asset, source io.Reader
 		file.Close()
 		return nil, err
 	}
-	return newObject(file, asset, finalPath), nil
+	fsyncMillis += elapsedMillis(fsyncStarted)
+	return newObject(file, asset, finalPath, asset.Size, false, elapsedMillis(started), fsyncMillis), nil
+}
+
+// Open returns an already verified immutable object without consuming network
+// bytes. Every call revalidates metadata and content against the signed asset
+// identity, so CacheHit never means a name-only or stale-path match.
+func (inbox *Inbox) Open(asset trust.Asset) (*Object, error) {
+	started := time.Now()
+	if inbox == nil || inbox.root == nil || !canonicalAssetName.MatchString(asset.Name) || asset.Size == 0 || !strings.HasPrefix(asset.SHA256, "sha256:") || len(asset.SHA256) != 71 {
+		return nil, errors.New("artifact identity is invalid")
+	}
+	relative := filepath.Join(strings.TrimPrefix(asset.SHA256, "sha256:"), asset.Name)
+	file, err := openBoundRegular(inbox.root, relative, inbox.ownerUID, asset.Size)
+	if err != nil {
+		return nil, err
+	}
+	digest, err := hashOpenFile(file)
+	if err != nil || digest != asset.SHA256 {
+		file.Close()
+		return nil, errors.Join(err, errors.New("existing inbox object conflicts with signed identity"))
+	}
+	return newObject(file, asset, relative, 0, true, elapsedMillis(started), 0), nil
 }
 
 func (object *Object) Receipt() Receipt { return object.receipt }
@@ -276,10 +304,18 @@ func (object *Object) CopyTo(writer io.Writer) (int64, error) {
 	return io.Copy(writer, io.LimitReader(object.file, int64(object.receipt.Size)))
 }
 
-func newObject(file *os.File, asset trust.Asset, relative string) *Object {
+func newObject(file *os.File, asset trust.Asset, relative string, transferredBytes uint64, cacheHit bool, durationMillis, fsyncMillis uint64) *Object {
 	info, _ := file.Stat()
 	device, inode := fileIdentity(info)
-	return &Object{file: file, receipt: Receipt{SchemaVersion: 1, Asset: asset.Name, SHA256: asset.SHA256, Size: asset.Size, RelativePath: relative, Device: device, Inode: inode}}
+	return &Object{file: file, receipt: Receipt{SchemaVersion: 2, Asset: asset.Name, SHA256: asset.SHA256, Size: asset.Size, RelativePath: relative, Device: device, Inode: inode, TransferredBytes: transferredBytes, CacheHit: cacheHit, DurationMillis: durationMillis, FsyncMillis: fsyncMillis}}
+}
+
+func elapsedMillis(started time.Time) uint64 {
+	elapsed := time.Since(started).Milliseconds()
+	if elapsed < 1 {
+		return 1
+	}
+	return uint64(elapsed)
 }
 
 func OpenSecureRoot(path string, ownerUID uint32, create bool) (*os.Root, error) {

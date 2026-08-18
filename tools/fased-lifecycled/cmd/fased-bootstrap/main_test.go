@@ -26,6 +26,7 @@ import (
 	"fased-lifecycled/hostsecurity"
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
+	"fased-lifecycled/protocol"
 	"fased-lifecycled/trust"
 )
 
@@ -135,6 +136,15 @@ func TestOfflineRootBootstrapStagesAndExecutesVerifiedHost(t *testing.T) {
 		!strings.HasPrefix(result.ReleaseAuthorityDigest, "sha256:") || len(result.ReleaseAuthorityDigest) != 71 {
 		t.Fatalf("bootstrap result lost algorithm-bound trust digests: %+v", result)
 	}
+	wantArtifactTransferred := hostAsset.Size + applicationAsset.Size + dependencyAsset.Size + signerAsset.Size
+	wantMetadataTransferred := uint64(len(rootJSON) + len(indexJSON) + len(indexAttestation))
+	wantTransferred := wantArtifactTransferred + wantMetadataTransferred
+	if result.Performance.TransferredBytes != wantTransferred || result.Performance.ArtifactTransferredBytes != wantArtifactTransferred ||
+		result.Performance.MetadataTransferredBytes != wantMetadataTransferred || result.Performance.CacheHits != 0 || result.Performance.CacheMisses != 4 ||
+		result.Performance.MetadataMillis == 0 || result.Performance.SignatureVerificationMillis == 0 || result.Performance.AssetAcquisitionMillis == 0 ||
+		result.Performance.ExtractionMillis == 0 || result.Performance.FsyncMillis == 0 || result.Performance.ActivationMillis == 0 || result.Performance.TotalMillis == 0 {
+		t.Fatalf("bootstrap performance evidence is incomplete: %+v", result.Performance)
+	}
 	if current, err := os.ReadFile(filepath.Join(fixtureRoot, "host", "host-current")); err != nil || string(current) != result.HostDigest+"\n" {
 		t.Fatalf("host pointer was not committed: %q err=%v", current, err)
 	}
@@ -147,6 +157,14 @@ func TestOfflineRootBootstrapStagesAndExecutesVerifiedHost(t *testing.T) {
 		if strings.Contains(strings.ToLower(obsolete), "delegation") {
 			t.Fatalf("bootstrap fetched obsolete delegation metadata: %v", requestedPaths)
 		}
+	}
+	warmResult, err := execute(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warmResult.Performance.TransferredBytes != wantMetadataTransferred || warmResult.Performance.ArtifactTransferredBytes != 0 ||
+		warmResult.Performance.MetadataTransferredBytes != wantMetadataTransferred || warmResult.Performance.CacheHits != 4 || warmResult.Performance.CacheMisses != 0 {
+		t.Fatalf("warm bootstrap did not reuse the verified inbox: %+v", warmResult.Performance)
 	}
 }
 
@@ -181,6 +199,44 @@ func TestPublicBootstrapRequiresTerminalGenerationAndConvergenceDigests(t *testi
 				t.Fatal("non-terminal lifecycle response was accepted")
 			}
 		})
+	}
+}
+
+func TestLifecyclePerformanceOutputBindsTimingBytesAndCacheEvidence(t *testing.T) {
+	formatted := formatLifecyclePerformance(publicLifecyclePerformance{
+		ReleaseResolutionMillis: 2,
+		ApplyMillis:             7,
+		OnboardingMillis:        11,
+		TotalMillis:             31,
+		TransactionStatus:       "measured",
+		Transaction: &protocol.PerformanceEvidence{
+			QuiesceMillis: 8, SwitchMillis: 10, ServiceReadinessMillis: 12, TotalMillis: 30,
+		},
+		Acquisition: bootstrapPerformance{
+			MetadataMillis:              1,
+			SignatureVerificationMillis: 3,
+			AssetAcquisitionMillis:      5,
+			ExtractionMillis:            4,
+			FsyncMillis:                 9,
+			ActivationMillis:            6,
+			TransferredBytes:            1234,
+			MetadataTransferredBytes:    34,
+			ArtifactTransferredBytes:    1200,
+			CacheHits:                   3,
+			CacheMisses:                 1,
+		},
+	})
+	want := "Lifecycle performance: resolution=2ms metadata=1ms verify=3ms assets=5ms extraction=4ms fsync=9ms activation=6ms transaction=measured quiesce=8ms switch=10ms readiness=12ms apply=7ms onboarding=11ms total=31ms transferred=1234B metadata-bytes=34B artifact-bytes=1200B cache-hits=3 cache-misses=1"
+	if formatted != want {
+		t.Fatalf("performance evidence changed: %q", formatted)
+	}
+	legacy := publicLifecyclePerformance{TransactionStatus: transactionPerformanceStatus("UPDATED", nil)}
+	if got := formatLifecyclePerformance(legacy); !strings.Contains(got, "transaction=unavailable quiesce=na switch=na readiness=na") {
+		t.Fatalf("missing predecessor performance was presented as measured: %q", got)
+	}
+	noop := publicLifecyclePerformance{TransactionStatus: transactionPerformanceStatus("ALREADY_CURRENT", nil)}
+	if got := formatLifecyclePerformance(noop); !strings.Contains(got, "transaction=not-applicable quiesce=na switch=na readiness=na") {
+		t.Fatalf("no-op transaction phases were not explicit: %q", got)
 	}
 }
 

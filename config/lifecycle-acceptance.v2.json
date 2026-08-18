@@ -27,6 +27,7 @@
       "fresh-install": [
         "artifact-identity",
         "public-installer-acquisition",
+        "lifecycle-performance",
         "canonical-lifecycle",
         "three-services-active",
         "wallet-status",
@@ -36,6 +37,8 @@
         "plugin-doctor",
         "restart-health",
         "state-preservation",
+        "installer-noop-performance",
+        "updater-noop-performance",
         "installer-already-current",
         "updater-already-current"
       ],
@@ -44,6 +47,7 @@
         "public-installer-acquisition",
         "predecessor-capsule-attestation",
         "rollback-retry",
+        "lifecycle-performance",
         "canonical-lifecycle",
         "three-services-active",
         "wallet-status",
@@ -53,6 +57,8 @@
         "plugin-doctor",
         "restart-health",
         "state-preservation",
+        "installer-noop-performance",
+        "updater-noop-performance",
         "installer-already-current",
         "updater-already-current"
       ]
@@ -61,6 +67,7 @@
       "fresh-install": [
         "artifact-identity",
         "public-installer-acquisition",
+        "lifecycle-performance",
         "canonical-lifecycle",
         "three-services-active",
         "wallet-status",
@@ -70,6 +77,8 @@
         "plugin-doctor",
         "restart-health",
         "state-preservation",
+        "installer-noop-performance",
+        "updater-noop-performance",
         "installer-already-current",
         "updater-already-current"
       ],
@@ -78,6 +87,7 @@
         "public-installer-acquisition",
         "predecessor-capsule-attestation",
         "rollback-retry",
+        "lifecycle-performance",
         "canonical-lifecycle",
         "three-services-active",
         "wallet-status",
@@ -87,6 +97,8 @@
         "plugin-doctor",
         "restart-health",
         "state-preservation",
+        "installer-noop-performance",
+        "updater-noop-performance",
         "installer-already-current",
         "updater-already-current"
       ]

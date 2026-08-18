@@ -117,6 +117,24 @@ describe("installer platform preflight", () => {
     expect(installer).toContain('"${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"');
   });
 
+  it("reuses only the exact protected bootstrap and reports installer timing and transfer evidence", () => {
+    expect(installer).toContain("require_protected_bootstrap_ancestry() {");
+    expect(installer).toContain(
+      'for directory in / /opt /opt/fased /opt/fased/lifecycle "$bootstrap_dir"',
+    );
+    expect(installer).toContain(`[[ "$(stat -c '%U' "$directory")" == "root" ]]`);
+    expect(installer).toContain("(( (8#${mode: -3} & 8#022) == 0 ))");
+    expect(installer).toContain("require_protected_bootstrap_ancestry &&");
+    expect(installer).toContain('test ! -L "$bootstrap"');
+    expect(installer).toContain('"$(stat -c \'%U:%G:%a:%h\' "$bootstrap")" == "root:root:555:1"');
+    expect(installer).toContain('installed_sha256="$(sha256sum "$bootstrap")"');
+    expect(installer).toContain('bootstrap_cache_hit="true"');
+    expect(installer).toContain("--write-out '%{size_download} %{time_total}\\n'");
+    expect(installer).toContain("Installer performance: total=");
+    expect(installer).toContain("transferred=%sB cache-hit=%s");
+    expect(installer).toContain('"$bootstrap_transferred_bytes" "$bootstrap_cache_hit"');
+  });
+
   it("does not install Node, pnpm, npm, Corepack, or Git on the public path", () => {
     for (const residue of [
       "npm install",

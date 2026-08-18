@@ -86,6 +86,16 @@ type signedChannelSelection struct {
 	RootSHA256             string
 }
 
+type publicLifecyclePerformance struct {
+	ReleaseResolutionMillis uint64                        `json:"releaseResolutionMillis"`
+	ApplyMillis             uint64                        `json:"applyMillis"`
+	OnboardingMillis        uint64                        `json:"onboardingMillis"`
+	TotalMillis             uint64                        `json:"totalMillis"`
+	Acquisition             bootstrapPerformance          `json:"acquisition"`
+	Transaction             *protocol.PerformanceEvidence `json:"transaction,omitempty"`
+	TransactionStatus       string                        `json:"transactionStatus"`
+}
+
 type lifecyclePhaseProgress struct {
 	output   io.Writer
 	terminal bool
@@ -622,6 +632,7 @@ func confirmManagedUninstall(ownerHome string) (bool, error) {
 }
 
 func runPublicLifecycle(operation string, args []string, output io.Writer) error {
+	lifecycleStarted := time.Now()
 	request, err := parsePublicLifecycleRequest(operation, args)
 	if err != nil {
 		return err
@@ -686,7 +697,9 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	}
 	now := time.Now().UTC()
 	var channelSelection *signedChannelSelection
+	performance := publicLifecyclePerformance{}
 	if request.Version == "" {
+		resolutionStarted := time.Now()
 		resolutionProgress := beginLifecyclePhase(output, request.JSON, "resolving the trusted release")
 		discoveryClient := &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect}
 		selection, selectionErr := discoverSignedChannelRelease(
@@ -700,6 +713,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		}
 		request.Version = selection.Version
 		channelSelection = &selection
+		performance.ReleaseResolutionMillis = durationMillis(resolutionStarted)
 	}
 	releaseRoute, err := publicTrustRoute(request.Version)
 	if err != nil {
@@ -737,6 +751,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			return err
 		}
 	}
+	performance.Acquisition = result.Performance
 	var hostingParticipant *hostsecurity.Participant
 	hostingTransactionID := ""
 	hostingSecurityReused := false
@@ -775,9 +790,12 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		hostingTransactionID = prepared.TransactionID
 		hostingSecurityReused = !hostingSecurityTransactionNeedsFinalization(prepared)
 	}
+	applyStarted := time.Now()
 	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
 	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result)
 	applyProgress.Stop()
+	performance.ApplyMillis = durationMillis(applyStarted)
+	performance.Transaction = convergence.Performance
 	emitLifecycleHostVerbose(lifecycleHostVerboseOutputWriter(request, output, os.Stderr), verboseOutput)
 	if err != nil {
 		if hostingParticipant != nil && !hostingSecurityReused {
@@ -792,7 +810,9 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	}
 	outcome := convergence.Outcome
 	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
+		onboardingStarted := time.Now()
 		convergence, err = runOnboarding(ctx, request, operator, result, output, os.Stderr)
+		performance.OnboardingMillis = durationMillis(onboardingStarted)
 		if err != nil {
 			return err
 		}
@@ -824,8 +844,19 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err := pruneAcquisitionInbox(platform.BootstrapCacheRootForOS(runtime.GOOS)); err != nil {
 		return fmt.Errorf("lifecycle committed but verified acquisition cleanup is pending: %w", err)
 	}
+	performance.TransactionStatus = transactionPerformanceStatus(outcome, performance.Transaction)
+	performance.TotalMillis = durationMillis(lifecycleStarted)
 	if request.JSON {
-		_, err = fmt.Fprintf(output, "{\"status\":%q,\"version\":%q,\"releaseSequence\":%d,\"securityEpoch\":%d,\"activeGenerationId\":%q,\"convergenceReceiptDigest\":%q}\n", outcome, result.Version, result.ReleaseSequence, result.SecurityEpoch, convergence.ActiveGenerationID, convergence.ConvergenceReceiptDigest)
+		response := struct {
+			Status                   string                     `json:"status"`
+			Version                  string                     `json:"version"`
+			ReleaseSequence          uint64                     `json:"releaseSequence"`
+			SecurityEpoch            uint64                     `json:"securityEpoch"`
+			ActiveGenerationID       string                     `json:"activeGenerationId"`
+			ConvergenceReceiptDigest string                     `json:"convergenceReceiptDigest"`
+			Performance              publicLifecyclePerformance `json:"performance"`
+		}{outcome, result.Version, result.ReleaseSequence, result.SecurityEpoch, convergence.ActiveGenerationID, convergence.ConvergenceReceiptDigest, performance}
+		err = json.NewEncoder(output).Encode(response)
 	} else if outcome == "ALREADY_CURRENT" {
 		_, err = fmt.Fprintf(output, "Already current: %s\n", result.Version)
 	} else if request.Operation == "repair" {
@@ -833,7 +864,52 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	} else {
 		_, err = fmt.Fprintf(output, "Updated successfully: %s\n", result.Version)
 	}
+	if err == nil && request.Verbose && !request.JSON {
+		_, err = fmt.Fprintln(output, formatLifecyclePerformance(performance))
+	}
 	return err
+}
+
+func formatLifecyclePerformance(performance publicLifecyclePerformance) string {
+	return fmt.Sprintf(
+		"Lifecycle performance: resolution=%dms metadata=%dms verify=%dms assets=%dms extraction=%dms fsync=%dms activation=%dms transaction=%s quiesce=%s switch=%s readiness=%s apply=%dms onboarding=%dms total=%dms transferred=%dB metadata-bytes=%dB artifact-bytes=%dB cache-hits=%d cache-misses=%d",
+		performance.ReleaseResolutionMillis,
+		performance.Acquisition.MetadataMillis,
+		performance.Acquisition.SignatureVerificationMillis,
+		performance.Acquisition.AssetAcquisitionMillis,
+		performance.Acquisition.ExtractionMillis,
+		performance.Acquisition.FsyncMillis,
+		performance.Acquisition.ActivationMillis,
+		performance.TransactionStatus,
+		transactionMillis(performance.Transaction, func(value *protocol.PerformanceEvidence) uint64 { return value.QuiesceMillis }),
+		transactionMillis(performance.Transaction, func(value *protocol.PerformanceEvidence) uint64 { return value.SwitchMillis }),
+		transactionMillis(performance.Transaction, func(value *protocol.PerformanceEvidence) uint64 { return value.ServiceReadinessMillis }),
+		performance.ApplyMillis,
+		performance.OnboardingMillis,
+		performance.TotalMillis,
+		performance.Acquisition.TransferredBytes,
+		performance.Acquisition.MetadataTransferredBytes,
+		performance.Acquisition.ArtifactTransferredBytes,
+		performance.Acquisition.CacheHits,
+		performance.Acquisition.CacheMisses,
+	)
+}
+
+func transactionPerformanceStatus(outcome string, evidence *protocol.PerformanceEvidence) string {
+	if evidence != nil {
+		return "measured"
+	}
+	if outcome == "ALREADY_CURRENT" {
+		return "not-applicable"
+	}
+	return "unavailable"
+}
+
+func transactionMillis(evidence *protocol.PerformanceEvidence, selectValue func(*protocol.PerformanceEvidence) uint64) string {
+	if evidence == nil {
+		return "na"
+	}
+	return fmt.Sprintf("%dms", selectValue(evidence))
 }
 
 func hostingSecurityTransactionNeedsFinalization(state hostsecurity.State) bool {

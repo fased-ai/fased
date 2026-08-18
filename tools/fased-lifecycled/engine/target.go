@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"time"
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/store"
@@ -27,6 +28,14 @@ type Result struct {
 	Phase                    model.Phase
 	ActiveGenerationID       string
 	ConvergenceReceiptDigest string
+	Performance              PerformanceEvidence
+}
+
+type PerformanceEvidence struct {
+	QuiesceMillis          uint64 `json:"quiesceMillis"`
+	SwitchMillis           uint64 `json:"switchMillis"`
+	ServiceReadinessMillis uint64 `json:"serviceReadinessMillis"`
+	TotalMillis            uint64 `json:"totalMillis"`
 }
 
 // ConvergenceReceipt is the durable, adapter-produced proof that the
@@ -123,6 +132,8 @@ type TargetEngine struct {
 }
 
 func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Result, error) {
+	runStarted := time.Now()
+	performance := PerformanceEvidence{}
 	if err := engine.validate(); err != nil {
 		return Result{}, err
 	}
@@ -170,12 +181,15 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 	if err := engine.progress(tx, store.ProgressQuiesceStarted, nil, nil); err != nil {
 		return engine.rollback(ctx, tx, false, err)
 	}
+	quiesceStarted := time.Now()
 	if err := engine.Adapter.Quiesce(ctx, tx); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
+	performance.QuiesceMillis = measuredMillis(quiesceStarted)
 	if err := engine.progress(tx, store.ProgressQuiesced, nil, nil); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
+	switchStarted := time.Now()
 	stateReceipt, stateUndoDigest, err := engine.Adapter.PrepareState(ctx, tx)
 	if err != nil {
 		return engine.rollback(ctx, tx, true, err)
@@ -211,10 +225,12 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 	if err := engine.progress(tx, store.ProgressPlatformActivated, nil, nil); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
+	performance.SwitchMillis = measuredMillis(switchStarted)
 	tx, err = engine.advance(tx, model.PhaseSwitched)
 	if err != nil {
 		return Result{}, err
 	}
+	readinessStarted := time.Now()
 	if err := engine.Migrator.Verify(ctx, tx, migratorReceipt); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
@@ -244,14 +260,17 @@ func (engine *TargetEngine) Run(ctx context.Context, tx model.Transaction) (Resu
 	if err := engine.progress(tx, store.ProgressPlatformVerified, nil, nil); err != nil {
 		return engine.rollback(ctx, tx, true, err)
 	}
+	performance.ServiceReadinessMillis = measuredMillis(readinessStarted)
 	tx, err = engine.advance(tx, model.PhaseVerified)
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Outcome: OutcomePrepared, Phase: tx.Phase}, nil
+	performance.TotalMillis = measuredMillis(runStarted)
+	return Result{Outcome: OutcomePrepared, Phase: tx.Phase, Performance: performance}, nil
 }
 
 func (engine *TargetEngine) Commit(ctx context.Context, transactionID string) (Result, error) {
+	commitStarted := time.Now()
 	if err := engine.validate(); err != nil {
 		return Result{}, err
 	}
@@ -274,7 +293,15 @@ func (engine *TargetEngine) Commit(ctx context.Context, transactionID string) (R
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Outcome: OutcomeUpdated, Phase: tx.Phase, ActiveGenerationID: tx.Target.ID, ConvergenceReceiptDigest: receiptDigest}, nil
+	return Result{Outcome: OutcomeUpdated, Phase: tx.Phase, ActiveGenerationID: tx.Target.ID, ConvergenceReceiptDigest: receiptDigest, Performance: PerformanceEvidence{ServiceReadinessMillis: measuredMillis(commitStarted), TotalMillis: measuredMillis(commitStarted)}}, nil
+}
+
+func measuredMillis(started time.Time) uint64 {
+	elapsed := time.Since(started).Milliseconds()
+	if elapsed < 1 {
+		return 1
+	}
+	return uint64(elapsed)
 }
 
 func (engine *TargetEngine) Abort(ctx context.Context, transactionID string) (Result, error) {

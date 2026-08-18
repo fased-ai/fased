@@ -92,7 +92,28 @@ describe("lifecycle acceptance contract", () => {
   });
 
   it("validates the exact historical v2 public contract without accepting mutations", () => {
-    const { evidencePolicy: _evidencePolicy, ...legacyV2 } = contract();
+    const { evidencePolicy: _evidencePolicy, ...currentV2 } = contract();
+    const legacyV2 = {
+      ...currentV2,
+      profiles: Object.fromEntries(
+        Object.entries(currentV2.profiles).map(([profile, scenarios]) => [
+          profile,
+          Object.fromEntries(
+            Object.entries(scenarios).map(([scenario, predicates]) => [
+              scenario,
+              predicates.filter(
+                (predicate) =>
+                  ![
+                    "lifecycle-performance",
+                    "installer-noop-performance",
+                    "updater-noop-performance",
+                  ].includes(predicate),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    };
     expect(validatePublishedAcceptanceContract(legacyV2)).toBe(legacyV2);
     expect(digestPublishedAcceptanceContract(legacyV2)).toBe(
       "sha256:a1a15e2b080c25921339ed2aa38d05a9745213728866b9f19b48cedc79854197",
@@ -339,6 +360,52 @@ describe("lifecycle acceptance contract", () => {
     expect(hosting.match(/assert_public_command_projection/gu)?.length).toBe(2);
     expect(local).not.toContain('"$state/bin/fased" update');
     expect(hosting).not.toContain("/home/app/.fased/bin/fased update");
+  });
+
+  it("records exact bounded lifecycle performance evidence in Local and Hosting receipts", () => {
+    const local = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    for (const fixture of [local, hosting]) {
+      expect(fixture).toContain("compact_performance_summary() {");
+      expect(fixture).toContain(
+        "transferred=[0-9]+B metadata-bytes=[0-9]+B artifact-bytes=[0-9]+B",
+      );
+      expect(fixture).toContain("record_noop_performance() {");
+      expect(fixture).toContain('test "${#lines[@]}" -eq 1');
+      expect(fixture).toContain("-e 's/^Lifecycle performance: /perf /'");
+      expect(fixture).toContain("-e 's/metadata=/meta=/'");
+      expect(fixture).toContain("-e 's/transaction=/tx=/'");
+      expect(fixture).toContain("-e 's/transferred=/bytes=/'");
+      expect(fixture).toContain("-e 's/cache-hits=/hits=/'");
+      expect(fixture).toContain("-e 's/cache-misses=/misses=/'");
+      expect(fixture).toContain('performance_summary="$(compact_performance_summary /tmp/');
+      expect(fixture).toContain('test "${#performance_summary}" -le 240');
+      expect(fixture).toMatch(
+        /acceptance_mark lifecycle-performance \/tmp\/[a-z-]+\.out "\$performance_summary"/u,
+      );
+      expect(fixture).not.toContain("install timing, bytes, and cache evidence recorded");
+      expect(fixture).not.toContain("update timing, bytes, and cache evidence recorded");
+      expect(fixture).toContain("record_noop_performance installer-noop-performance /tmp/");
+      expect(fixture).toContain("record_noop_performance updater-noop-performance /tmp/");
+    }
+    expect(local.match(/acceptance_mark lifecycle-performance/gu)?.length).toBe(3);
+    expect(hosting.match(/acceptance_mark lifecycle-performance/gu)?.length).toBe(2);
+    expect(local).toContain("chmod 0775 /opt/fased/lifecycle");
+    expect(local).toContain("installer reused a bootstrap through writable ancestry");
+    expect(local).toContain("existing bootstrap projection is unsafe");
+    expect(local).toContain("chmod 0755 /opt/fased/lifecycle");
+    for (const profile of ["protected-local", "hosting"]) {
+      for (const scenario of ["fresh-install", "managed-update"]) {
+        expect(contract().profiles[profile][scenario]).toContain("installer-noop-performance");
+        expect(contract().profiles[profile][scenario]).toContain("updater-noop-performance");
+      }
+    }
   });
 
   it("restores the protected Local system command ancestry after Node extraction", () => {

@@ -303,9 +303,15 @@ func TestTargetEngineCommitsOneOrderedTransaction(t *testing.T) {
 	if result.Phase != model.PhaseVerified || result.Outcome != OutcomePrepared {
 		t.Fatalf("unexpected result: %+v", result)
 	}
+	if result.Performance.QuiesceMillis == 0 || result.Performance.SwitchMillis == 0 || result.Performance.ServiceReadinessMillis == 0 || result.Performance.TotalMillis == 0 {
+		t.Fatalf("prepared transaction lacks phase timing evidence: %+v", result.Performance)
+	}
 	result, err = engine.Commit(context.Background(), transaction(model.PhaseIdle).ID)
 	if err != nil || result.Phase != model.PhaseCommitted || result.Outcome != OutcomeUpdated {
 		t.Fatalf("explicit target commit failed: %+v err=%v", result, err)
+	}
+	if result.Performance.ServiceReadinessMillis == 0 || result.Performance.TotalMillis == 0 {
+		t.Fatalf("commit lacks convergence timing evidence: %+v", result.Performance)
 	}
 	wantCalls := []string{
 		"generation.stage", "signer.prepare", "adapter.prepare",

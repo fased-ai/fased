@@ -78,6 +78,43 @@ acceptance_mark() {
     >>"$acceptance_evidence"
 }
 
+compact_performance_summary() {
+  local evidence_file="${1:?performance evidence file is required}"
+  local lines=()
+  mapfile -t lines < <(
+    grep -E '^Lifecycle performance: .*transferred=[0-9]+B metadata-bytes=[0-9]+B artifact-bytes=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' \
+      "$evidence_file"
+  )
+  test "${#lines[@]}" -eq 1
+  printf '%s\n' "${lines[0]}" | sed -E \
+    -e 's/^Lifecycle performance: /perf /' \
+    -e 's/resolution=/res=/' \
+    -e 's/metadata=/meta=/' \
+    -e 's/verify=/sig=/' \
+    -e 's/assets=/asset=/' \
+    -e 's/extraction=/x=/' \
+    -e 's/activation=/act=/' \
+    -e 's/transaction=/tx=/' \
+    -e 's/quiesce=/q=/' \
+    -e 's/switch=/sw=/' \
+    -e 's/readiness=/ready=/' \
+    -e 's/onboarding=/onboard=/' \
+    -e 's/transferred=/bytes=/' \
+    -e 's/metadata-bytes=/meta-bytes=/' \
+    -e 's/artifact-bytes=/asset-bytes=/' \
+    -e 's/cache-hits=/hits=/' \
+    -e 's/cache-misses=/misses=/'
+}
+
+record_noop_performance() {
+  local predicate="${1:?performance predicate is required}"
+  local evidence_file="${2:?performance evidence file is required}"
+  local performance_summary=""
+  performance_summary="$(compact_performance_summary "$evidence_file")"
+  test "${#performance_summary}" -le 240
+  acceptance_mark "$predicate" "$evidence_file" "$performance_summary"
+}
+
 acceptance_start() {
   test "$public_acquisition" = "1"
   test -f "$acceptance_contract"
@@ -1397,6 +1434,7 @@ if [[ "$phase" == "fresh-install" ]]; then
       --update-channel "$fresh_channel" \
       --gateway-port "$gateway_port" \
       --local \
+	  --verbose \
       -- \
       --non-interactive \
       --accept-risk \
@@ -1419,6 +1457,9 @@ if [[ "$phase" == "fresh-install" ]]; then
 
 	hash -r
   acceptance_start
+  performance_summary="$(compact_performance_summary /tmp/fresh-install.out)"
+	test "${#performance_summary}" -le 240
+	acceptance_mark lifecycle-performance /tmp/fresh-install.out "$performance_summary"
   service_started="$SECONDS"
   test -s "$state/fased.json"
   test -s "$state/install.json"
@@ -1507,12 +1548,27 @@ if [[ "$phase" == "fresh-install" ]]; then
   restart_elapsed="$((SECONDS - restart_started))"
 
   noop_started="$SECONDS"
+  chmod 0775 /opt/fased/lifecycle
+  if runuser -u testop -- env "${fresh_env[@]}" \
+    /bin/bash "$candidate_installer" \
+      --release "v$version" \
+      --update-channel "$fresh_channel" \
+      --gateway-port "$gateway_port" \
+      --local \
+      --no-onboard \
+      >/tmp/fresh-unsafe-bootstrap.out 2>/tmp/fresh-unsafe-bootstrap.err; then
+    echo "installer reused a bootstrap through writable ancestry" >&2
+    exit 1
+  fi
+  grep -F "existing bootstrap projection is unsafe" /tmp/fresh-unsafe-bootstrap.err >/dev/null
+  chmod 0755 /opt/fased/lifecycle
   runuser -u testop -- env "${fresh_env[@]}" \
     /bin/bash "$candidate_installer" \
       --release "v$version" \
       --update-channel "$fresh_channel" \
       --gateway-port "$gateway_port" \
       --local \
+      --verbose \
       --no-onboard \
     >/tmp/fresh-noop-installer.out 2>/tmp/fresh-noop-installer.err
   grep -F "Already current: $version" /tmp/fresh-noop-installer.out >/dev/null
@@ -1521,13 +1577,15 @@ if [[ "$phase" == "fresh-install" ]]; then
     HOME=/home/testop USER=testop LOGNAME=testop SHELL=/bin/bash \
     PATH=/usr/local/bin:/usr/bin:/bin \
     /bin/bash --login -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && exec fased update "$@"' \
-    fased "${target_update_args[@]}" --timeout 120 \
+    fased "${target_update_args[@]}" --timeout 120 --verbose \
     >/tmp/fresh-noop-update.out 2>/tmp/fresh-noop-update.err
   grep -F "Already current: $version" /tmp/fresh-noop-update.out >/dev/null
   if grep -F "Protected Local migration" /tmp/fresh-noop-update.err >/dev/null; then
     echo "fresh idempotent update repeated Protected Local migration" >&2
     exit 1
   fi
+  record_noop_performance installer-noop-performance /tmp/fresh-noop-installer.out
+  record_noop_performance updater-noop-performance /tmp/fresh-noop-update.out
   acceptance_mark installer-already-current /tmp/fresh-noop-installer.out "Already current: $version"
   acceptance_mark updater-already-current /tmp/fresh-noop-update.out "Already current: $version"
   noop_elapsed="$((SECONDS - noop_started))"
@@ -1681,6 +1739,7 @@ if [[ "$phase" == "managed-update" ]]; then
         --update-channel beta \
         --gateway-port "$gateway_port" \
         --local \
+		--verbose \
         -- \
         --non-interactive \
         --accept-risk \
@@ -1771,6 +1830,9 @@ EOF_STABLE_BRIDGE_DROPIN
     cat /tmp/stable-bridge-failure.err /tmp/stable-bridge-update.out \
       >/tmp/stable-bridge-rollback-retry.evidence
     acceptance_mark rollback-retry /tmp/stable-bridge-rollback-retry.evidence
+		performance_summary="$(compact_performance_summary /tmp/stable-bridge-update.out)"
+		test "${#performance_summary}" -le 240
+		acceptance_mark lifecycle-performance /tmp/stable-bridge-update.out "$performance_summary"
     test "$(jq -er .profile "$state/install.json")" = "protected-local"
     test "$(jq -er .runtime.activeVersion "$state/install.json")" = "$version"
     sha256sum --check "$stable_bridge_manifest"
@@ -1828,7 +1890,7 @@ EOF_STABLE_BRIDGE_DROPIN
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
       /bin/bash --login -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && exec fased update "$@"' \
-      fased "${target_update_args[@]}" --timeout 120 \
+      fased "${target_update_args[@]}" --timeout 120 --verbose \
       >/tmp/stable-bridge-noop.out 2>/tmp/stable-bridge-noop.err; then
       cat /tmp/stable-bridge-noop.err >&2
       exit 1
@@ -1837,6 +1899,8 @@ EOF_STABLE_BRIDGE_DROPIN
     run_stable_bridge_installer \
       >/tmp/stable-bridge-installer-noop.out 2>/tmp/stable-bridge-installer-noop.err
     grep -F "Already current: $version" /tmp/stable-bridge-installer-noop.out >/dev/null
+    record_noop_performance installer-noop-performance /tmp/stable-bridge-installer-noop.out
+    record_noop_performance updater-noop-performance /tmp/stable-bridge-noop.out
     acceptance_mark installer-already-current /tmp/stable-bridge-installer-noop.out "Already current: $version"
     acceptance_mark updater-already-current /tmp/stable-bridge-noop.out "Already current: $version"
     acceptance_finish
@@ -1973,6 +2037,7 @@ EOF_MANAGED_MINING_LEDGER
       --update-channel beta \
       --gateway-port "$gateway_port" \
       --local \
+	  --verbose \
       -- \
       --non-interactive \
       --accept-risk \
@@ -1993,7 +2058,7 @@ EOF_MANAGED_MINING_LEDGER
       npm_config_registry="http://127.0.0.1:$rpc_port" \
       FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port" \
       /bin/bash --login -c 'cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && exec fased update "$@"' \
-      fased "${target_update_args[@]}" --timeout 120
+      fased "${target_update_args[@]}" --timeout 120 --verbose
   }
 
   acceptance_start
@@ -2057,6 +2122,9 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   cat /tmp/managed-update-failure.err /tmp/managed-update-success.out \
     >/tmp/managed-rollback-retry.evidence
   acceptance_mark rollback-retry /tmp/managed-rollback-retry.evidence
+	performance_summary="$(compact_performance_summary /tmp/managed-update-success.out)"
+	test "${#performance_summary}" -le 240
+	acceptance_mark lifecycle-performance /tmp/managed-update-success.out "$performance_summary"
   if [[ -n "$managed_recovery_transaction" ]]; then
     managed_recovery_receipt="/var/lib/fased-local/$instance/controller/supervisor/receipts/${managed_recovery_transaction}.json"
     test "$(jq -er .operation "$managed_recovery_receipt")" = "recoverRelease"
@@ -2093,6 +2161,8 @@ EOF_MANAGED_FAILED_GATEWAY_DROPIN
   run_target_installer \
     >/tmp/managed-installer-noop.out 2>/tmp/managed-installer-noop.err
   grep -F "Already current: $version" /tmp/managed-installer-noop.out >/dev/null
+  record_noop_performance installer-noop-performance /tmp/managed-installer-noop.out
+  record_noop_performance updater-noop-performance /tmp/managed-update-noop.out
   acceptance_mark installer-already-current /tmp/managed-installer-noop.out "Already current: $version"
   acceptance_mark updater-already-current /tmp/managed-update-noop.out "Already current: $version"
   acceptance_finish
