@@ -212,7 +212,6 @@ import {
   isControlUiStaticAssetPath,
   type ControlUiRootState,
 } from "./control-ui.js";
-import { handleFederationHttpRequest } from "./federation-http.js";
 import { runPaidFederatedContentSummarize } from "./federation-marketplace.js";
 import { createFedifyHandler } from "./fedify-http.js";
 import { applyHookMappings } from "./hooks-mapping.js";
@@ -240,7 +239,8 @@ import {
   resolveGatewayClientIp,
 } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
-import { canonicalizePathVariant, isPathProtectedByPrefixes } from "./security-path.js";
+import { canonicalizePathVariant } from "./security-path.js";
+import { createGatewayFederationNetworkFacade } from "./server/federation-network-facade.js";
 import { createGatewayMiningFacade } from "./server/mining-facade.js";
 import { handleGatewayReadinessHttpRequest } from "./server/readiness-http-service.js";
 import type { ReadinessChecker } from "./server/readiness.js";
@@ -254,17 +254,10 @@ type HookAuthFailure = { count: number; windowStartedAtMs: number };
 const HOOK_AUTH_FAILURE_LIMIT = 20;
 const HOOK_AUTH_FAILURE_WINDOW_MS = 60_000;
 const HOOK_AUTH_FAILURE_TRACK_MAX = 2048;
-const FEDERATION_HTTP_ROUTE_PREFIXES = ["/api/federation"] as const;
-// These two peer-facing routes perform mandatory directory-bound Ed25519 v2
-// authentication in federation-http. Every other federation route stays
-// behind the local Gateway auth boundary.
-const SIGNED_FEDERATION_INBOUND_ROUTES = new Set([
-  "/api/federation/marketplace/orders",
-  "/api/federation/marketplace/deliveries",
-]);
 const CONTROL_UI_SETTINGS_STORAGE_KEY = "fased.control.settings.v1";
 const CONTROL_UI_TOKEN_LOCAL_STORAGE_KEY = "fased.control.token.local.v1";
 const CONTROL_UI_TOKEN_SESSION_STORAGE_KEY = "fased.control.token.session.v1";
+const gatewayFederationNetworkFacade = createGatewayFederationNetworkFacade();
 const gatewayMiningFacade = createGatewayMiningFacade();
 const gatewayWalletSignerFacade = createGatewayWalletSignerFacade();
 type HookDispatchers = {
@@ -3601,10 +3594,6 @@ function isCanvasPath(pathname: string): boolean {
     pathname.startsWith(`${CANVAS_HOST_PATH}/`) ||
     pathname === CANVAS_WS_PATH
   );
-}
-
-function isSignedFederationInboundRequest(req: IncomingMessage): boolean {
-  return req.method === "POST" && SIGNED_FEDERATION_INBOUND_ROUTES.has(req.url ?? "");
 }
 
 function hasAuthorizedWsClientForIp(clients: Set<GatewayWsClient>, clientIp: string): boolean {
@@ -10180,14 +10169,15 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         return;
       }
       if (
-        isPathProtectedByPrefixes(requestPath, FEDERATION_HTTP_ROUTE_PREFIXES) &&
-        !isSignedFederationInboundRequest(req) &&
+        gatewayFederationNetworkFacade.requiresGatewayAuth({ req, requestPath }) &&
         !(await ensureWalletApiAuthorized())
       ) {
         return;
       }
       if (
-        await handleFederationHttpRequest(req, res, {
+        await gatewayFederationNetworkFacade.handle({
+          req,
+          res,
           peerAuthClientIp: resolveGatewayClientIp({
             remoteAddr: req.socket?.remoteAddress ?? "",
             forwardedFor: getHeader(req, "x-forwarded-for"),
