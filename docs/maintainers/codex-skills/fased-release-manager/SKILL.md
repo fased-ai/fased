@@ -13,8 +13,10 @@ unless the owner explicitly asks for that inventory.
 
 1. Invoke `sol-advisor:orchestration` before task tools. It exclusively selects
    the primary prerequisite, route, role, model, effort, delegation, and review.
-2. Default to `solo`. Do not add an auxiliary or fresh review merely because the
-   task mentions lifecycle, security, or release work.
+2. Default to `solo`. Delegate only when it materially saves delivery time: use
+   Luna / Max for bounded routine work and Terra / High for privileged or
+   architecture-heavy implementation. Use fresh Sol / High only once for the
+   final accumulated high-risk review, never for every small fix.
 3. Select one controlling plan and one mode. Print:
 
    `PLAN: <path or name> | MODE: <mode> | CHECKPOINT: <id> | STATUS: <status> | NEXT: <predicate>`
@@ -66,6 +68,11 @@ runtime failure:
 5. Run that test, directly coupled contracts, and changed-file formatting.
 6. Report or continue the active plan.
 
+Keep the normal loop exact: reproduce -> focused regression -> fix -> focused
+test -> one literal runtime proof when required -> one PR and protected CI run
+-> merge. Never run GitHub CI while diagnosing; run it once only after local
+proof on the final PR.
+
 Until that predicate passes, do not divert into broad status work, worktree
 reconciliation, full suites, whole-repository security scans, CI, candidates,
 publication, or release planning. Separate an expected privilege prompt,
@@ -97,11 +104,16 @@ For lifecycle reports, lead with literal end-user commands and distinguish
 `documented`, `implemented`, and `proven`. Managed users never maintain Node,
 npm, pnpm, Git, Go, GitHub CLI, internal paths, services, or journals.
 
-When lifecycle product bytes change, run focused tests first, build one cached
-unpublished Linux-x64 artifact, exercise only affected topology, and reuse exact
-bytes. Fixture-only changes reuse verified prior product bytes. Full `LOCAL0`,
-PRE-CANDIDATE, P1, tags, and publication belong only to an explicitly selected
-release plan.
+Never rebuild Linux images for ordinary fixes. Reuse the pinned fixture image
+and cached artifact. Only when distributable runtime bytes change, build one
+cached unpublished Linux-x64 artifact after focused tests, exercise only the
+affected topology, and reuse those exact bytes. Fixture-only changes reuse
+verified prior product bytes.
+
+Candidate and release work begins only after the literal end-user command
+passes. Reuse identical artifact bytes across acceptance, P1, tagging, and
+publication; publication must not rebuild. Full `LOCAL0`, PRE-CANDIDATE, P1,
+tags, and publication belong only to an explicitly selected release plan.
 
 ## Evidence and authority
 
@@ -125,9 +137,14 @@ protected PR policy.
 
 - Prefer one owner workspace and one current-main development worktree. Create
   temporary worktrees only for conflicting preserved work or exact evidence.
-- Reuse the active issue branch across its checkpoints. After exact merged-tree
-  proof, return the owner workspace to `main` and remove the task worktree and
-  local issue branch. Never create one branch or worktree per agent or test.
+- Enforce a strict local branch budget: `main` plus at most one active task
+  branch. Move unique inactive work into one verified Git bundle with its exact
+  restore command, then remove its local branch; never discard unverified work.
+- When creating a task branch, record its deletion condition exactly as `remove
+after exact merged-tree validation`. Reuse that branch across checkpoints.
+  After the proof, return the owner workspace to `main` and immediately remove
+  the task worktree, local branch, and local remote-tracking ref. Never create
+  one branch or worktree per agent or test.
 - Cache immutable artifacts, dependencies, toolchains, fixture images, and one
   predecessor set; never cache installations, journals, Wallets, or signer state.
 - Use `${XDG_CACHE_HOME:-$HOME/.cache}/fased-dev`; never create cache, artifact,
