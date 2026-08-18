@@ -82,7 +82,7 @@ compact_performance_summary() {
   local evidence_file="${1:?performance evidence file is required}"
   local lines=()
   mapfile -t lines < <(
-    grep -E '^Lifecycle performance: .*transferred=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' \
+    grep -E '^Lifecycle performance: .*transferred=[0-9]+B metadata-bytes=[0-9]+B artifact-bytes=[0-9]+B cache-hits=[0-9]+ cache-misses=[0-9]+$' \
       "$evidence_file"
   )
   test "${#lines[@]}" -eq 1

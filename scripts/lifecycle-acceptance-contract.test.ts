@@ -373,6 +373,9 @@ describe("lifecycle acceptance contract", () => {
     );
     for (const fixture of [local, hosting]) {
       expect(fixture).toContain("compact_performance_summary() {");
+      expect(fixture).toContain(
+        "transferred=[0-9]+B metadata-bytes=[0-9]+B artifact-bytes=[0-9]+B",
+      );
       expect(fixture).toContain("record_noop_performance() {");
       expect(fixture).toContain('test "${#lines[@]}" -eq 1');
       expect(fixture).toContain("-e 's/^Lifecycle performance: /perf /'");
