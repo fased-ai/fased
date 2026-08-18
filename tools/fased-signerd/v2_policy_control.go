@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"strings"
 
+	signerpolicy "fased-signerd/internal/policy"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -69,63 +69,7 @@ func (s *signerStoreV2) tightenPolicy(input signerPolicyV2, expectedVersion uint
 }
 
 func requirePolicyTighteningV2(current, candidate signerPolicyV2) error {
-	if current.WalletID != candidate.WalletID || current.Role != candidate.Role {
-		return errors.New("application policy change cannot alter wallet identity or role")
-	}
-	if candidate.BaselineVersion != current.BaselineVersion || candidate.TypedSATPrograms != current.TypedSATPrograms {
-		return errors.New("application policy change cannot alter signer-owned baseline authority")
-	}
-	if !stringSetSubsetV2(candidate.Operations, current.Operations) {
-		return errors.New("application policy change cannot add operations")
-	}
-	if !stringSetSubsetV2(candidate.Programs, current.Programs) {
-		return errors.New("application policy change cannot add programs")
-	}
-	currentAssets := make(map[string]signerPolicyAssetV2, len(current.Assets))
-	for _, asset := range current.Assets {
-		currentAssets[asset.Asset] = asset
-	}
-	for _, candidateAsset := range candidate.Assets {
-		currentAsset, ok := currentAssets[candidateAsset.Asset]
-		if !ok {
-			return fmt.Errorf("application policy change cannot add asset %s", candidateAsset.Asset)
-		}
-		if !stringSetSubsetV2(candidateAsset.Destinations, currentAsset.Destinations) {
-			return fmt.Errorf("application policy change cannot add destinations for %s", candidateAsset.Asset)
-		}
-		if candidateAsset.ReviewedDestinations && !currentAsset.ReviewedDestinations {
-			return fmt.Errorf("application policy change cannot add reviewed destinations for %s", candidateAsset.Asset)
-		}
-		if candidateAsset.TypedSATDestinations && !currentAsset.TypedSATDestinations {
-			return fmt.Errorf("application policy change cannot add typed SAT destinations for %s", candidateAsset.Asset)
-		}
-		if !policyAmountAtMostV2(candidateAsset.MaxPerTx, currentAsset.MaxPerTx) {
-			return fmt.Errorf("application policy change cannot raise per-transaction cap for %s", candidateAsset.Asset)
-		}
-		if !policyAmountAtMostV2(candidateAsset.MaxDaily, currentAsset.MaxDaily) {
-			return fmt.Errorf("application policy change cannot raise daily cap for %s", candidateAsset.Asset)
-		}
-	}
-	return nil
-}
-
-func stringSetSubsetV2(candidate, current []string) bool {
-	allowed := make(map[string]bool, len(current))
-	for _, value := range current {
-		allowed[value] = true
-	}
-	for _, value := range candidate {
-		if !allowed[value] {
-			return false
-		}
-	}
-	return true
-}
-
-func policyAmountAtMostV2(candidate, current string) bool {
-	candidateAmount, candidateOK := new(big.Int).SetString(candidate, 10)
-	currentAmount, currentOK := new(big.Int).SetString(current, 10)
-	return candidateOK && currentOK && candidateAmount.Sign() > 0 && candidateAmount.Cmp(currentAmount) <= 0
+	return signerpolicy.RequireTightening(current, candidate)
 }
 
 func requireAutonomousRoleV2(policy signerPolicyV2, intent normalizedIntentV2) error {

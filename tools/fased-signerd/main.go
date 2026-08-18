@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fased-signerd/internal/custody"
+	signerpolicy "fased-signerd/internal/policy"
 
 	"golang.org/x/crypto/scrypt"
 )
@@ -235,29 +236,7 @@ func currentDayBucket(now time.Time) string {
 }
 
 func normalizeWalletID(walletID string) string {
-	value := strings.TrimSpace(strings.ToLower(walletID))
-	if value == "" {
-		return "default"
-	}
-	var normalized strings.Builder
-	lastUnderscore := false
-	for _, character := range value {
-		alphaNumeric := (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
-		if alphaNumeric {
-			normalized.WriteRune(character)
-			lastUnderscore = false
-			continue
-		}
-		if !lastUnderscore {
-			normalized.WriteRune('_')
-			lastUnderscore = true
-		}
-	}
-	result := strings.Trim(normalized.String(), "_")
-	if result == "" {
-		return "default"
-	}
-	return result
+	return signerpolicy.NormalizeWalletID(walletID)
 }
 
 func mustValidate(req request, cfg signerConfig) error {
