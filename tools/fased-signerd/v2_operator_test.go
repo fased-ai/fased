@@ -95,6 +95,29 @@ func TestSignerOperatorLifecycleAllowsTypedSetupButDeniesCustodyExport(t *testin
 	if err != nil || !network.Ready || network.Version != 1 || network.Hash == "" {
 		t.Fatalf("operator primary RPC was not durably activated: network=%#v err=%v", network, err)
 	}
+	locked, _, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
+		WalletID: "operator-locked", ExpectedVersion: 0,
+		Policy: signerPolicyV2{Role: "agent", Operations: []string{}, Programs: []string{}, Assets: []signerPolicyAssetV2{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationBody, err := json.Marshal(signerOperatorPolicyActivateBaselineRequestV1{
+		ExpectedVersion: 1,
+		Baseline:        signerRoleBaselineRequestV1{Version: 1, Role: "agent"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.handle(request{
+		Op: "v2.policy.activateBaseline", WalletID: locked.WalletID, Request: activationBody, operatorSocket: true,
+	}, signerConfig{}, false); err != nil {
+		t.Fatalf("operator role-baseline activation failed: %v", err)
+	}
+	activated, err := store.getPolicy(locked.WalletID)
+	if err != nil || activated.BaselineVersion != 1 || activated.Version != 2 {
+		t.Fatalf("operator role-baseline activation was not durable: policy=%#v err=%v", activated, err)
+	}
 
 	privateKey := solana.NewWallet().PrivateKey
 	importBody, err := json.Marshal(signerOperatorWalletImportRequestV1{

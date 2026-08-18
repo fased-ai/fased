@@ -405,6 +405,9 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")
 		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
 		var body signerRoleBaselineActivationRequestV1
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
 			return nil, err

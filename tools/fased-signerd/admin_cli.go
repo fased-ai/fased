@@ -120,6 +120,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminPolicyGet(args[2:], stdout)
 		case "put":
 			return runSignerAdminPolicyPut(args[2:], stdout)
+		case "activate-baseline":
+			return runSignerAdminPolicyActivateBaselineV1(args[2:], stdout)
 		default:
 			return errors.New("unknown signer admin policy command")
 		}
@@ -881,6 +883,55 @@ func runSignerAdminPolicyPut(args []string, stdout io.Writer) error {
 	}
 	body := signerPolicyPutRequestV2{ExpectedVersion: expected.value, Policy: policy}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.policy.put", walletID, body, stdout)
+}
+
+func runSignerAdminPolicyActivateBaselineV1(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("policy activate-baseline")
+	var walletID, role string
+	var expected signerAdminRequiredUint64
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	fs.StringVar(&role, "baseline-role", "", "immutable signer role baseline")
+	fs.Var(&expected, "expected-version", "required current policy version")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if !expected.set {
+		return errors.New("--expected-version is required")
+	}
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
+		return err
+	}
+	walletID, err = validateSignerAdminWalletID(walletID)
+	if err != nil {
+		return err
+	}
+	baseline := signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: strings.TrimSpace(role)}
+	if _, err := normalizeRoleBaselineRequestV1(baseline); err != nil {
+		return err
+	}
+	if operator {
+		return callAndWriteSignerOperatorV1(
+			common.operatorSocket,
+			"v2.policy.activateBaseline",
+			walletID,
+			signerOperatorPolicyActivateBaselineRequestV1{
+				ExpectedVersion: expected.value,
+				Baseline:        baseline,
+			},
+			stdout,
+		)
+	}
+	return callAndWriteSignerAdmin(
+		common.controlSocket,
+		"v2.policy.activateBaseline",
+		walletID,
+		signerRoleBaselineActivationRequestV1{
+			ExpectedVersion: expected.value,
+			Baseline:        baseline,
+		},
+		stdout,
+	)
 }
 
 func runSignerAdminNetworkGet(args []string, stdout io.Writer) error {
