@@ -43,6 +43,11 @@ import { buildWalletProviderCapabilityMatrix } from "../wallet/wallet-provider-c
 import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import type { WalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
+import type {
+  WalletRawExportOptions,
+  WalletRecoveryExportOptions,
+  WalletRecoveryImportOptions,
+} from "../wallet/wallet-recovery-facade.js";
 import { redactWalletDiagnosticText } from "../wallet/wallet-redaction.js";
 import { walletRegistryFacade } from "../wallet/wallet-registry-facade.js";
 import {
@@ -127,24 +132,11 @@ export type WalletLimitOrdersOptions = {
   json?: boolean;
 };
 
-export type WalletRecoveryExportOptions = {
-  walletId: string;
-  output: string;
-};
-
-export type WalletRecoveryImportOptions = {
-  walletId: string;
-  walletName?: string;
-  role: string;
-  recoveryFile: string;
-  rpcUrl: string;
-};
-
-export type WalletRawExportOptions = {
-  walletId: string;
-  output: string;
-  acknowledgeCustodyReduction: boolean;
-};
+export type {
+  WalletRawExportOptions,
+  WalletRecoveryExportOptions,
+  WalletRecoveryImportOptions,
+} from "../wallet/wallet-recovery-facade.js";
 
 export type WalletRetireOptions = {
   walletId: string;
