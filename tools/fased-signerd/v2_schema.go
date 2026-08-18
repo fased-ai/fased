@@ -2,18 +2,14 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-	"time"
 
+	"fased-signerd/internal/migration"
 	signerstore "fased-signerd/internal/store"
 	bolt "go.etcd.io/bbolt"
 )
 
-const signerStateSchemaVersionV2 uint64 = 7
+const signerStateSchemaVersionV2 = migration.SignerStateSchemaVersion
 
 var signerStateBucketsV2 = [][]byte{
 	bucketSignerMetaV2,
@@ -32,214 +28,51 @@ var signerStateBucketsV2 = [][]byte{
 	bucketSignerOperatorNoncesV2,
 }
 
-type signerSchemaHealthV2 struct {
-	Version   uint64 `json:"version"`
-	Supported uint64 `json:"supported"`
-	Ready     bool   `json:"ready"`
-}
+var signerStateSchemaContractV2 = migration.NewContract(
+	signerStateBucketsV2,
+	bucketSignerMetaV2,
+	[]byte("schemaVersion"),
+	bucketSignerWebAuthnCredentialsV2,
+	signerWebAuthnCredentialsVersionKeyV2,
+	[]byte("capabilities"),
+)
+
+type signerSchemaHealthV2 = migration.SchemaHealth
 
 func inspectSignerStateBeforeOpenV2(path string) (bool, bool, error) {
-	inspected, err := signerstore.Inspect(path)
-	if err != nil {
-		return false, false, err
-	}
-	return inspected.Existed(), inspected.HadState(), nil
+	return migration.InspectStateBeforeOpen(path)
 }
 
 func inspectSignerSchemaReadOnlyV2(path string) (uint64, error) {
-	inspected, err := signerstore.Inspect(path)
-	if err != nil {
-		return 0, err
-	}
-	db, err := signerstore.OpenReadOnly(inspected)
-	if err != nil {
-		return 0, err
-	}
-	defer db.Close()
-	return readSignerSchemaVersionV2(db)
+	return migration.InspectSchemaReadOnly(path, signerStateSchemaContractV2)
 }
 
 func readSignerSchemaVersionV2(db *signerstore.DB) (uint64, error) {
-	if db == nil {
-		return 0, errors.New("signer state database is unavailable")
-	}
-	var version uint64
-	err := db.View(func(tx *bolt.Tx) error {
-		var err error
-		version, err = readSignerSchemaVersionFromTxV2(tx)
-		return err
-	})
-	if err != nil {
-		return 0, fmt.Errorf("read signer state schema: %w", err)
-	}
-	return version, nil
+	return migration.ReadVersion(db, signerStateSchemaContractV2)
 }
 
 func readSignerSchemaVersionFromTxV2(tx *bolt.Tx) (uint64, error) {
-	meta := tx.Bucket(bucketSignerMetaV2)
-	if meta == nil {
-		return 0, nil
-	}
-	raw := meta.Get([]byte("schemaVersion"))
-	if len(raw) == 0 {
-		return 0, nil
-	}
-	version, err := strconv.ParseUint(string(raw), 10, 64)
-	if err != nil || version == 0 {
-		return 0, errors.New("signer state schema version is invalid")
-	}
-	return version, nil
+	return migration.ReadVersionFromTx(tx, signerStateSchemaContractV2)
 }
 
 func migrateSignerStateV2(db *signerstore.DB, fromVersion uint64) error {
-	if db == nil {
-		return errors.New("signer state database is unavailable")
-	}
-	if fromVersion > signerStateSchemaVersionV2 {
-		return fmt.Errorf(
-			"signer state schema %d is newer than supported schema %d; refusing to mutate",
-			fromVersion,
-			signerStateSchemaVersionV2,
-		)
-	}
-	if fromVersion == signerStateSchemaVersionV2 {
-		return validateSignerSchemaBucketsV2(db)
-	}
-	if fromVersion != 0 && fromVersion != 1 && fromVersion != 2 && fromVersion != 3 && fromVersion != 4 && fromVersion != 5 && fromVersion != 6 {
-		return fmt.Errorf("unsupported signer state migration from schema %d", fromVersion)
-	}
 	capabilities, err := json.Marshal(signerV2Capabilities)
 	if err != nil {
 		return fmt.Errorf("encode signer capabilities for migration: %w", err)
 	}
-	err = db.Update(func(tx *bolt.Tx) error {
-		current, err := readSignerSchemaVersionFromTxV2(tx)
-		if err != nil {
-			return err
-		}
-		if current != fromVersion {
-			return fmt.Errorf("signer state schema changed during migration: expected %d, current %d", fromVersion, current)
-		}
-		for _, bucket := range signerStateBucketsV2 {
-			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
-				return err
-			}
-		}
-		meta := tx.Bucket(bucketSignerMetaV2)
-		if meta.Get(signerWebAuthnCredentialsVersionKeyV2) == nil {
-			credentialCount := uint64(0)
-			if credentials := tx.Bucket(bucketSignerWebAuthnCredentialsV2); credentials != nil {
-				if err := credentials.ForEach(func(_, value []byte) error {
-					if value != nil {
-						credentialCount++
-					}
-					return nil
-				}); err != nil {
-					return err
-				}
-			}
-			if err := meta.Put(signerWebAuthnCredentialsVersionKeyV2, []byte(strconv.FormatUint(credentialCount, 10))); err != nil {
-				return err
-			}
-		}
-		if err := meta.Put([]byte("capabilities"), capabilities); err != nil {
-			return err
-		}
-		return meta.Put([]byte("schemaVersion"), []byte(strconv.FormatUint(signerStateSchemaVersionV2, 10)))
-	})
-	if err != nil {
-		return fmt.Errorf("migrate signer state schema %d to %d atomically: %w", fromVersion, signerStateSchemaVersionV2, err)
-	}
-	return validateSignerSchemaBucketsV2(db)
+	return migration.Migrate(db, fromVersion, signerStateSchemaContractV2.WithCapabilities(capabilities))
 }
 
 func validateSignerSchemaBucketsV2(db *signerstore.DB) error {
-	if db == nil {
-		return errors.New("signer state database is unavailable")
-	}
-	return db.View(func(tx *bolt.Tx) error {
-		version, err := readSignerSchemaVersionFromTxV2(tx)
-		if err != nil {
-			return err
-		}
-		if version != signerStateSchemaVersionV2 {
-			return fmt.Errorf("signer state schema is %d, expected %d", version, signerStateSchemaVersionV2)
-		}
-		for _, bucket := range signerStateBucketsV2 {
-			if tx.Bucket(bucket) == nil {
-				return fmt.Errorf("signer state schema %d is missing required bucket %q", version, string(bucket))
-			}
-		}
-		return nil
-	})
+	return migration.ValidateBuckets(db, signerStateSchemaContractV2)
 }
 
 func backupSignerStateBeforeMigrationV2(db *signerstore.DB, statePath string) (string, error) {
-	if db == nil {
-		return "", errors.New("signer state database is unavailable")
-	}
-	directory := filepath.Dir(statePath)
-	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
-	var backupPath string
-	var backup *os.File
-	for attempt := 0; attempt < 16; attempt++ {
-		suffix := ""
-		if attempt > 0 {
-			suffix = fmt.Sprintf(".%d", attempt)
-		}
-		candidate := fmt.Sprintf("%s.pre-v%d-%s%s.bak", statePath, signerStateSchemaVersionV2, stamp, suffix)
-		file, err := os.OpenFile(candidate, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if errors.Is(err, os.ErrExist) {
-			continue
-		}
-		if err != nil {
-			return "", fmt.Errorf("create pre-migration signer state backup: %w", err)
-		}
-		backupPath = candidate
-		backup = file
-		break
-	}
-	if backup == nil {
-		return "", errors.New("could not allocate exclusive pre-migration signer state backup")
-	}
-	cleanup := func(cause error) (string, error) {
-		_ = backup.Close()
-		_ = os.Remove(backupPath)
-		_ = syncSignerStateDirectoryV2(directory)
-		return "", cause
-	}
-	if err := backup.Chmod(0o600); err != nil {
-		return cleanup(fmt.Errorf("secure pre-migration signer state backup: %w", err))
-	}
-	if err := db.View(func(tx *bolt.Tx) error {
-		_, err := tx.WriteTo(backup)
-		return err
-	}); err != nil {
-		return cleanup(fmt.Errorf("write pre-migration signer state backup: %w", err))
-	}
-	if err := backup.Sync(); err != nil {
-		return cleanup(fmt.Errorf("fsync pre-migration signer state backup: %w", err))
-	}
-	if err := backup.Close(); err != nil {
-		return cleanup(fmt.Errorf("close pre-migration signer state backup: %w", err))
-	}
-	if err := syncSignerStateDirectoryV2(directory); err != nil {
-		_ = os.Remove(backupPath)
-		return "", err
-	}
-	return backupPath, nil
+	return migration.BackupBeforeMigration(db, statePath)
 }
 
 func syncSignerStateDirectoryV2(path string) error {
-	directory, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open signer state directory for fsync: %w", err)
-	}
-	defer directory.Close()
-	if err := directory.Sync(); err != nil {
-		return fmt.Errorf("fsync signer state directory: %w", err)
-	}
-	return nil
+	return migration.SyncDirectory(path)
 }
 
 func (s *signerStoreV2) schemaHealth() signerSchemaHealthV2 {
@@ -247,9 +80,5 @@ func (s *signerStoreV2) schemaHealth() signerSchemaHealthV2 {
 	if s != nil {
 		version = s.schemaVersion
 	}
-	return signerSchemaHealthV2{
-		Version:   version,
-		Supported: signerStateSchemaVersionV2,
-		Ready:     version == signerStateSchemaVersionV2,
-	}
+	return migration.Health(version)
 }
