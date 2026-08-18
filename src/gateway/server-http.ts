@@ -41,7 +41,6 @@ import { walletSetupCommand } from "../commands/wallet.js";
 import {
   loadConfig,
   readConfigFileSnapshotForWrite,
-  resolveGatewayPort,
   setRuntimeConfigSnapshot,
   validateConfigObjectWithPlugins,
   writeConfigFile,
@@ -200,7 +199,6 @@ import {
   type GatewayAuthResult,
   type ResolvedGatewayAuth,
 } from "./auth.js";
-import { callGatewayScoped } from "./call.js";
 import { normalizeCanvasScopedUrl } from "./canvas-capability.js";
 import { CONTROL_UI_BOOT_CHECK_PATH, resolveControlUiBootCheck } from "./control-ui-boot-check.js";
 import {
@@ -243,6 +241,7 @@ import {
 } from "./net.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { canonicalizePathVariant, isPathProtectedByPrefixes } from "./security-path.js";
+import { createGatewayMiningFacade } from "./server/mining-facade.js";
 import { handleGatewayReadinessHttpRequest } from "./server/readiness-http-service.js";
 import type { ReadinessChecker } from "./server/readiness.js";
 import { createGatewayWalletSignerFacade } from "./server/wallet-signer-facade.js";
@@ -266,6 +265,7 @@ const SIGNED_FEDERATION_INBOUND_ROUTES = new Set([
 const CONTROL_UI_SETTINGS_STORAGE_KEY = "fased.control.settings.v1";
 const CONTROL_UI_TOKEN_LOCAL_STORAGE_KEY = "fased.control.token.local.v1";
 const CONTROL_UI_TOKEN_SESSION_STORAGE_KEY = "fased.control.token.session.v1";
+const gatewayMiningFacade = createGatewayMiningFacade();
 const gatewayWalletSignerFacade = createGatewayWalletSignerFacade();
 type HookDispatchers = {
   dispatchWakeHook: (value: { text: string; mode: "now" | "next-heartbeat" }) => void;
@@ -1805,76 +1805,6 @@ function resolveWalletProbeTimeoutMs(env: NodeJS.ProcessEnv): number {
   return Math.max(250, Math.min(20_000, Math.floor(raw)));
 }
 
-async function callSatMiningGateway<T>(
-  method: string,
-  params?: unknown,
-  opts?: { timeoutMs?: number },
-): Promise<T> {
-  const currentConfig = loadConfig();
-  const token =
-    currentConfig.gateway?.auth?.mode === "token" &&
-    typeof currentConfig.gateway.auth.token === "string"
-      ? currentConfig.gateway.auth.token.trim() || undefined
-      : undefined;
-  const url = `ws://localhost:${resolveGatewayPort(currentConfig, process.env)}`;
-  return await callGatewayScoped<T>({
-    url,
-    token,
-    config: currentConfig,
-    method,
-    params,
-    scopes: ["operator.admin"],
-    deviceAuth: "disabled",
-    timeoutMs: typeof opts?.timeoutMs === "number" ? opts.timeoutMs : 15_000,
-  });
-}
-
-async function readSatMiningStatusPayload(): Promise<Record<string, unknown>> {
-  const result = await callSatMiningGateway<{ payload?: unknown }>("sat.getMiningStatus");
-  return result.payload && typeof result.payload === "object" && !Array.isArray(result.payload)
-    ? (result.payload as Record<string, unknown>)
-    : {};
-}
-
-function readSatMiningWalletIdFromConfig(cfg: ReturnType<typeof loadConfig>): string | undefined {
-  const config = cfg.plugins?.entries?.["sat-mining"]?.config;
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return undefined;
-  }
-  const walletId = (config as { walletId?: unknown }).walletId;
-  return typeof walletId === "string" ? walletId.trim() || undefined : undefined;
-}
-
-function resolveMiningAgentWalletConflict(walletId: string | undefined): string | null {
-  const normalizedWalletId = walletId?.trim();
-  if (!normalizedWalletId) {
-    return null;
-  }
-  const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
-  if (activeMiningWalletId && activeMiningWalletId !== normalizedWalletId) {
-    return `SAT Mining already uses ${activeMiningWalletId}. Archive that singleton wallet before attaching a replacement.`;
-  }
-  const registry = readWalletProviderRegistry(process.env);
-  const wallet = registry.wallets.find((entry) => entry.id === normalizedWalletId);
-  const otherMiningWallet = registry.wallets.find(
-    (entry) => entry.id !== normalizedWalletId && resolveWalletUserRole(entry) === "mining",
-  );
-  if (otherMiningWallet) {
-    return `SAT Mining already has the singleton wallet ${otherMiningWallet.id}. Archive it before attaching a replacement.`;
-  }
-  if (!wallet) {
-    return "SAT Mining requires an existing dedicated Mining wallet.";
-  }
-  const purpose = resolveWalletUserRole(wallet);
-  if (normalizedWalletId === registry.defaultWalletId || purpose === "agent") {
-    return "SAT Mining must use a dedicated Mining wallet. Create a new Mining wallet instead of reusing an Agent wallet.";
-  }
-  if (purpose && purpose !== "mining") {
-    return `SAT Mining must use a Mining wallet. ${wallet?.name ?? normalizedWalletId} is a ${purpose} wallet; create a new Mining wallet instead.`;
-  }
-  return null;
-}
-
 async function withWalletProbeTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -2336,7 +2266,7 @@ function validateFederationBondVaultWallet(
     };
   }
   const purpose = resolveWalletUserRole(wallet);
-  const activeMiningWalletId = readSatMiningWalletIdFromConfig(cfg);
+  const activeMiningWalletId = gatewayMiningFacade.readConfiguredWalletId(cfg);
   if (walletId === activeMiningWalletId || purpose === "mining") {
     return {
       ok: false,
@@ -5909,7 +5839,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               ? requestedWalletId || generatedLocalSignerIdentity?.walletId || ""
               : requestedWalletId;
           const walletName = requestedWalletName || generatedLocalSignerIdentity?.walletName || "";
-          const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
+          const activeMiningWalletId = gatewayMiningFacade.readConfiguredWalletId(loadConfig());
           if (
             requestedRole === "mining" &&
             activeMiningWalletId &&
@@ -6246,9 +6176,9 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
+          const activeMiningWalletId = gatewayMiningFacade.readConfiguredWalletId(loadConfig());
           if (requestedRole === "mining") {
-            const miningConflict = resolveMiningAgentWalletConflict(walletId);
+            const miningConflict = gatewayMiningFacade.resolveWalletConflict(walletId);
             if (miningConflict) {
               sendLoginResponse(409, {
                 ok: false,
@@ -6358,7 +6288,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
+          const activeMiningWalletId = gatewayMiningFacade.readConfiguredWalletId(loadConfig());
           if (activeMiningWalletId === walletId && !archiveRequested) {
             sendLoginResponse(409, {
               ok: false,
@@ -6583,7 +6513,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           if (typeof payload.defaultWalletId === "string" || payload.defaultWalletId === null) {
             const nextDefaultWalletId =
               typeof payload.defaultWalletId === "string" ? payload.defaultWalletId.trim() : "";
-            const activeMiningWalletId = readSatMiningWalletIdFromConfig(loadConfig());
+            const activeMiningWalletId = gatewayMiningFacade.readConfiguredWalletId(loadConfig());
             if (nextDefaultWalletId && nextDefaultWalletId === activeMiningWalletId) {
               sendLoginResponse(409, {
                 ok: false,
@@ -7490,7 +7420,9 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         if (req.method === "GET") {
-          const result = await callSatMiningGateway<{ payload?: unknown }>("sat.getMinerProfile");
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
+            "sat.getMinerProfile",
+          );
           sendLoginResponse(200, { ok: true, profile: result.payload ?? null });
           return;
         }
@@ -7523,7 +7455,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               : {};
           const profileWalletId =
             typeof profileRecord.walletId === "string" ? profileRecord.walletId.trim() : "";
-          const roleConflict = resolveMiningAgentWalletConflict(profileWalletId);
+          const roleConflict = gatewayMiningFacade.resolveWalletConflict(profileWalletId);
           if (roleConflict) {
             sendLoginResponse(409, {
               ok: false,
@@ -7534,7 +7466,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          const result = await callSatMiningGateway<{ payload?: unknown }>(
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
             "sat.setMinerProfile",
             body.value,
           );
@@ -7599,7 +7531,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         if (req.method === "GET") {
           const parsedUrl = new URL(req.url || "/", "http://localhost");
           const manifestUrl = parsedUrl.searchParams.get("manifestUrl")?.trim() || undefined;
-          const result = await callSatMiningGateway<{ payload?: unknown }>(
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
             "sat.getMainnetSyncStatus",
             manifestUrl ? { manifestUrl } : undefined,
             { timeoutMs: 30_000 },
@@ -7622,7 +7554,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 ? String((body.value as { manifestUrl?: unknown }).manifestUrl).trim() || undefined
                 : undefined
               : undefined;
-          const result = await callSatMiningGateway<{ payload?: unknown }>(
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
             "sat.syncMainnet",
             manifestUrl ? { manifestUrl } : undefined,
             { timeoutMs: 30_000 },
@@ -7643,7 +7575,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         if (req.method === "GET") {
-          const result = await callSatMiningGateway<{ payload?: unknown }>(
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
             "sat.getMiningWalletAttachment",
           );
           sendLoginResponse(200, { ok: true, attachment: result.payload ?? null });
@@ -7670,7 +7602,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
-        const result = await callSatMiningGateway<{
+        const result = await gatewayMiningFacade.call<{
           payload?: { wallets?: unknown[]; defaultWalletId?: string };
         }>("sat.listMiningWallets");
         sendLoginResponse(200, {
@@ -7695,7 +7627,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         }
         const parsedUrl = new URL(req.url || "/", "http://localhost");
         try {
-          const result = await callSatMiningGateway<{ payload?: unknown }>(
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
             "sat.getMiningReadiness",
             {
               walletId: parsedUrl.searchParams.get("walletId")?.trim() || undefined,
@@ -7732,7 +7664,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             .trim()
             .toLowerCase(),
         );
-        const result = await callSatMiningGateway<{ payload?: unknown }>(
+        const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
           "sat.getMiningStatus",
           { statusMode: "ui", responsive: true, ...(forceFresh ? { forceFresh: true } : {}) },
           { timeoutMs: 60_000 },
@@ -7766,7 +7698,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           typeof maxPointsRaw === "string" && maxPointsRaw.trim()
             ? Number(maxPointsRaw)
             : undefined;
-        const result = await callSatMiningGateway<{ payload?: unknown }>(
+        const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
           "sat.getMiningHistory",
           {
             window,
@@ -7791,7 +7723,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
-        const result = await callSatMiningGateway<{ payload?: unknown }>(
+        const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
           "sat.getMiningRecovery",
           undefined,
           { timeoutMs: 60_000 },
@@ -7827,8 +7759,8 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               : undefined
             : undefined;
         const effectiveWalletId =
-          requestedWalletId || readSatMiningWalletIdFromConfig(loadConfig());
-        const roleConflict = resolveMiningAgentWalletConflict(effectiveWalletId);
+          requestedWalletId || gatewayMiningFacade.readConfiguredWalletId(loadConfig());
+        const roleConflict = gatewayMiningFacade.resolveWalletConflict(effectiveWalletId);
         if (roleConflict) {
           sendLoginResponse(409, {
             ok: false,
@@ -7840,7 +7772,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         try {
-          const readiness = await callSatMiningGateway<{
+          const readiness = await gatewayMiningFacade.call<{
             payload?: {
               checks?: Array<{ key?: string; ok?: boolean; remediation?: string; detail?: string }>;
             };
@@ -7885,7 +7817,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           }
         } catch {
           try {
-            const wallets = await callSatMiningGateway<{
+            const wallets = await gatewayMiningFacade.call<{
               payload?: { wallets?: Array<{ walletId?: string; solBalanceLamports?: string }> };
             }>("sat.listMiningWallets");
             const activeWallet = (wallets.payload?.wallets ?? []).find(
@@ -7908,7 +7840,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           } catch {}
         }
         try {
-          const result = await callSatMiningGateway<{
+          const result = await gatewayMiningFacade.call<{
             payload?: { started?: boolean; status?: unknown };
           }>("sat.startMining", body.value, { timeoutMs: 90_000 });
           sendLoginResponse(200, {
@@ -7951,7 +7883,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         }
         let result;
         try {
-          result = await callSatMiningGateway<{
+          result = await gatewayMiningFacade.call<{
             payload?: { submitted?: unknown; status?: unknown };
           }>("sat.initMinerCapital", {});
         } catch (error) {
@@ -7989,7 +7921,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         }
         let result;
         try {
-          result = await callSatMiningGateway<{
+          result = await gatewayMiningFacade.call<{
             payload?: { submitted?: unknown; status?: unknown };
           }>("sat.topUpRegistryReserve", { targetBalanceLamports: 0 });
         } catch (error) {
@@ -8057,7 +7989,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             : "sat.withdrawMinerCapital";
         let result;
         try {
-          result = await callSatMiningGateway<{
+          result = await gatewayMiningFacade.call<{
             payload?: { submitted?: unknown; status?: unknown };
           }>(method, { lamports: Math.floor(lamports) }, { timeoutMs: 45_000 });
         } catch (error) {
@@ -8122,7 +8054,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             : undefined;
         let result;
         try {
-          result = await callSatMiningGateway<{
+          result = await gatewayMiningFacade.call<{
             payload?: { submitted?: unknown; status?: unknown };
           }>(
             "sat.setActiveCommit",
@@ -8158,7 +8090,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
         }
         let result;
         try {
-          result = await callSatMiningGateway<{
+          result = await gatewayMiningFacade.call<{
             payload?: { stopped?: boolean; status?: unknown };
           }>("sat.stopMining", undefined, { timeoutMs: 90_000 });
         } catch (error) {
@@ -8186,7 +8118,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         try {
-          const status = await readSatMiningStatusPayload();
+          const status = await gatewayMiningFacade.readStatusPayload();
           const epochId = Number(status.currentEpochId ?? 0);
           const microRoundId = Number(status.currentMicroRoundId ?? 0);
           const bucketHash =
@@ -8201,7 +8133,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          const result = await callSatMiningGateway<{ payload?: unknown }>(
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
             "sat.submitParticipation",
             {
               epochId,
@@ -8209,7 +8141,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               bucketHash,
             },
           );
-          const refreshedStatus = await readSatMiningStatusPayload().catch(() => null);
+          const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
           sendLoginResponse(200, {
             ok: true,
             result: result.payload ?? null,
@@ -8240,7 +8172,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         try {
-          const status = await readSatMiningStatusPayload();
+          const status = await gatewayMiningFacade.readStatusPayload();
           const epochId = Number(status.currentEpochId ?? 0);
           const microRoundId = Number(status.currentMicroRoundId ?? 0);
           if (!epochId || !microRoundId) {
@@ -8253,11 +8185,11 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          const result = await callSatMiningGateway<{ payload?: unknown }>("sat.miningCrank", {
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>("sat.miningCrank", {
             epochId,
             microRoundId,
           });
-          const refreshedStatus = await readSatMiningStatusPayload().catch(() => null);
+          const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
           sendLoginResponse(200, {
             ok: true,
             result: result.payload ?? null,
@@ -8288,7 +8220,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         try {
-          const status = await readSatMiningStatusPayload();
+          const status = await gatewayMiningFacade.readStatusPayload();
           const epochId = Number(status.currentEpochId ?? 0);
           const bucketRoot =
             typeof status.currentBucketRoot === "string" ? status.currentBucketRoot.trim() : "";
@@ -8304,12 +8236,15 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          const result = await callSatMiningGateway<{ payload?: unknown }>("sat.finalizeEpoch", {
-            epochId,
-            bucketRoot,
-            scoreRoot,
-          });
-          const refreshedStatus = await readSatMiningStatusPayload().catch(() => null);
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
+            "sat.finalizeEpoch",
+            {
+              epochId,
+              bucketRoot,
+              scoreRoot,
+            },
+          );
+          const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
           sendLoginResponse(200, {
             ok: true,
             result: result.payload ?? null,
@@ -8340,14 +8275,16 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           return;
         }
         try {
-          const status = await readSatMiningStatusPayload();
+          const status = await gatewayMiningFacade.readStatusPayload();
           const claimBacklog = status.claimBacklog as
             | { ready?: unknown; total?: unknown; oldestPendingCycleId?: unknown }
             | undefined;
           const readyBacklogCount = Number(claimBacklog?.ready ?? 0);
           if (Number.isFinite(readyBacklogCount) && readyBacklogCount > 0) {
-            const result = await callSatMiningGateway<{ payload?: unknown }>("sat.claimBacklog");
-            const refreshedStatus = await readSatMiningStatusPayload().catch(() => null);
+            const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
+              "sat.claimBacklog",
+            );
+            const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
             sendLoginResponse(200, {
               ok: true,
               result: result.payload ?? null,
@@ -8369,11 +8306,11 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          const result = await callSatMiningGateway<{ payload?: unknown }>(
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
             "sat.claimCycleRewards",
             { cycleId },
           );
-          const refreshedStatus = await readSatMiningStatusPayload().catch(() => null);
+          const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
           sendLoginResponse(200, {
             ok: true,
             result: result.payload ?? null,
@@ -8428,13 +8365,13 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             });
             return;
           }
-          const result = await callSatMiningGateway<{ payload?: unknown }>(
+          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
             "sat.claimCycleRewards",
             {
               cycleId: rawCycleId,
             },
           );
-          const refreshedStatus = await readSatMiningStatusPayload().catch(() => null);
+          const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
           sendLoginResponse(200, {
             ok: true,
             result: result.payload ?? null,
@@ -8472,7 +8409,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
-        const result = await callSatMiningGateway<{ payload?: unknown }>(
+        const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
           "sat.resolveDispute",
           body.value,
         );
@@ -8500,7 +8437,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
-        const result = await callSatMiningGateway<{ payload?: unknown }>(
+        const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
           "sat.republishEpochRoots",
           body.value,
         );
@@ -8528,7 +8465,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
-        const result = await callSatMiningGateway<{
+        const result = await gatewayMiningFacade.call<{
           payload?: { cleared?: boolean; status?: unknown };
         }>("sat.clearMiningHistory", body.value);
         sendLoginResponse(200, {
