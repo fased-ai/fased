@@ -20,8 +20,8 @@ import { discoverFasedAgentPlugins } from "./discovery.js";
 import { initializeGlobalHookRunner } from "./hook-runner-global.js";
 import { repairUpdateOwnedPluginInstallState } from "./installs.js";
 import { loadPluginManifestRegistry } from "./manifest-registry.js";
-import { isPathInside, safeStatSync } from "./path-safety.js";
-import { readCanonicalPluginLock } from "./readiness-receipt.js";
+import { isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
+import { bindManagedPluginSnapshot, readCanonicalPluginLock } from "./readiness-receipt.js";
 import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./registry.js";
 import { setActivePluginRegistry } from "./runtime.js";
 import { createPluginRuntime } from "./runtime/index.js";
@@ -690,6 +690,30 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
     candidates: discovery.candidates,
     diagnostics: discovery.diagnostics,
   });
+  if (discovery.managedLock && discovery.managedCodeRoot) {
+    const managedBindings = new Map<string, { id: string; digest: string; source: string }>();
+    for (const candidate of discovery.candidates) {
+      if (!candidate.managedDigest || !candidate.managedCodeRoot) {
+        continue;
+      }
+      const manifestRecord = manifestRegistry.plugins.find(
+        (record) => record.rootDir === candidate.rootDir && record.source === candidate.source,
+      );
+      if (!manifestRecord) {
+        continue;
+      }
+      managedBindings.set(manifestRecord.id, {
+        id: manifestRecord.id,
+        digest: candidate.managedDigest,
+        source: candidate.source,
+      });
+    }
+    bindManagedPluginSnapshot(registry, {
+      codeRoot: discovery.managedCodeRoot,
+      lock: discovery.managedLock,
+      bindings: managedBindings,
+    });
+  }
   pushDiagnostics(registry.diagnostics, manifestRegistry.diagnostics);
   warnWhenAllowlistIsOpen({
     logger,
@@ -803,6 +827,38 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
       continue;
     }
 
+    if (candidate.managedDigest && candidate.managedCodeRoot) {
+      const expectedRoot = path.join(
+        candidate.managedCodeRoot,
+        candidate.managedDigest.slice("sha256:".length),
+      );
+      const source = path.resolve(candidate.source);
+      const sourceRealPath = safeRealpathSync(source);
+      const root = path.resolve(candidate.rootDir);
+      const rootRealPath = safeRealpathSync(root);
+      if (
+        !sourceRealPath ||
+        sourceRealPath !== source ||
+        !isPathInside(expectedRoot, source) ||
+        !rootRealPath ||
+        rootRealPath !== root ||
+        !isPathInside(expectedRoot, root)
+      ) {
+        const message = `managed plugin identity rejected: lock entry "${pluginId}" source is not the exact canonical digest-bound path`;
+        record.status = "error";
+        record.error = message;
+        registry.plugins.push(record);
+        seenIds.set(pluginId, candidate.origin);
+        registry.diagnostics.push({
+          level: "error",
+          pluginId: record.id,
+          source: record.source,
+          message,
+        });
+        continue;
+      }
+    }
+
     const pluginRoot = safeRealpathOrResolve(candidate.rootDir);
     const opened = openBoundaryFileSync({
       absolutePath: candidate.source,
@@ -828,6 +884,20 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
     }
     const safeSource = opened.path;
     fs.closeSync(opened.fd);
+    if (candidate.managedDigest && candidate.managedCodeRoot && safeSource !== candidate.source) {
+      const message = `managed plugin identity rejected: lock entry "${pluginId}" source changed through a path alias`;
+      record.status = "error";
+      record.error = message;
+      registry.plugins.push(record);
+      seenIds.set(pluginId, candidate.origin);
+      registry.diagnostics.push({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message,
+      });
+      continue;
+    }
 
     repairOfficialChannelRuntimeDependencies({
       pluginId,

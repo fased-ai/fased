@@ -361,6 +361,77 @@ describe("loadFasedAgentPlugins", () => {
     expect(fs.existsSync(outputPath)).toBe(false);
   });
 
+  it("rejects readiness when the same plugin id switches digest before receipt", () => {
+    const root = makeTempDir();
+    const codeRoot = path.join(root, "plugin-code");
+    const dataRoot = path.join(root, "plugin-data");
+    const lockPath = path.join(root, "plugin.lock.json");
+    const outputPath = path.join(root, "plugin-readiness.json");
+    const digestA = `sha256:${"a".repeat(64)}`;
+    const digestB = `sha256:${"b".repeat(64)}`;
+
+    for (const digest of [digestA, digestB]) {
+      const pluginRoot = path.join(codeRoot, digest.slice("sha256:".length));
+      fs.mkdirSync(pluginRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(pluginRoot, "fased.plugin.json"),
+        JSON.stringify({ id: "race-plugin", configSchema: EMPTY_PLUGIN_SCHEMA }),
+      );
+      fs.writeFileSync(
+        path.join(pluginRoot, "index.js"),
+        'export default { id: "race-plugin", register() {} };',
+        "utf-8",
+      );
+    }
+    fs.mkdirSync(dataRoot, { recursive: true });
+    const lock = (digest: string) => ({
+      schemaVersion: 1,
+      type: "fased-plugin-lock",
+      entries: [
+        {
+          id: "race-plugin",
+          origin: "store",
+          digest,
+          apiCapability: "fased.plugin.v1",
+          required: true,
+        },
+      ],
+    });
+    fs.writeFileSync(lockPath, `${JSON.stringify(lock(digestB))}\n`, "utf-8");
+
+    withEnv(
+      {
+        FASED_BUNDLED_PLUGINS_DIR: "/nonexistent/bundled/plugins",
+        FASED_PLUGIN_CODE_ROOT: codeRoot,
+        FASED_PLUGIN_DATA_ROOT: dataRoot,
+        FASED_PLUGIN_LOCK_PATH: lockPath,
+      },
+      () => {
+        const registry = loadFasedAgentPlugins({
+          cache: false,
+          config: {
+            plugins: {
+              allow: ["race-plugin"],
+              entries: { "race-plugin": { enabled: true } },
+            },
+          },
+        });
+        expect(pluginStatus(registry, "race-plugin")).toBe("loaded");
+
+        fs.writeFileSync(lockPath, `${JSON.stringify(lock(digestA))}\n`, "utf-8");
+        expect(() =>
+          writePluginReadinessReceipt({
+            registry,
+            lockPath,
+            outputPath,
+            generationId: `sha256:${"c".repeat(64)}`,
+          }),
+        ).toThrow(/lock changed after plugin load/);
+      },
+    );
+    expect(fs.existsSync(outputPath)).toBe(false);
+  });
+
   it("disables bundled plugins by default", () => {
     const bundledDir = makeTempDir();
     writePlugin({

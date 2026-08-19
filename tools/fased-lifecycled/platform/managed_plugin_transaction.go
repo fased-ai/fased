@@ -23,8 +23,13 @@ const (
 	managedPluginTransactionVersion = 1
 	maxManagedPluginArchiveBytes    = 256 * 1024 * 1024
 	maxManagedPluginExpandedBytes   = 512 * 1024 * 1024
-	maxManagedPluginArchiveEntries  = 100_000
-	maxManagedPluginRecordBytes     = 1 << 20
+	// The tar reader consumes this decompressed stream while it processes
+	// headers, PAX/GNU extension records, and padding. Keep a separate bound
+	// from regular-file payload bytes so metadata cannot bypass the payload
+	// budget or make the root-owned extractor consume unbounded input.
+	maxManagedPluginTarStreamBytes = 640 * 1024 * 1024
+	maxManagedPluginArchiveEntries = 100_000
+	maxManagedPluginRecordBytes    = 1 << 20
 )
 
 var managedPluginTransactionID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -39,9 +44,10 @@ var managedPluginCreatedRootSync = syncPluginDirectory
 // managedPluginArchiveResourceLimits is fixed in production. Tests may lower
 // it to prove that the transaction-wide counters are not reset per archive.
 var managedPluginArchiveResourceLimits = managedPluginResourceLimits{
-	archiveBytes:  maxManagedPluginArchiveBytes,
-	expandedBytes: maxManagedPluginExpandedBytes,
-	entries:       maxManagedPluginArchiveEntries,
+	archiveBytes:   maxManagedPluginArchiveBytes,
+	expandedBytes:  maxManagedPluginExpandedBytes,
+	tarStreamBytes: maxManagedPluginTarStreamBytes,
+	entries:        maxManagedPluginArchiveEntries,
 }
 
 // Test-only seam invoked after the first source read while staging an archive.
@@ -50,16 +56,18 @@ var managedPluginArchiveResourceLimits = managedPluginResourceLimits{
 var managedPluginArchiveCopyAfterFirstRead func()
 
 type managedPluginResourceLimits struct {
-	archiveBytes  int64
-	expandedBytes int64
-	entries       int
+	archiveBytes   int64
+	expandedBytes  int64
+	tarStreamBytes int64
+	entries        int
 }
 
 type managedPluginResourceBudget struct {
-	limits        managedPluginResourceLimits
-	archiveBytes  int64
-	expandedBytes int64
-	entries       int
+	limits         managedPluginResourceLimits
+	archiveBytes   int64
+	expandedBytes  int64
+	tarStreamBytes int64
+	entries        int
 }
 
 func newManagedPluginResourceBudget() managedPluginResourceBudget {
@@ -80,6 +88,40 @@ func (budget *managedPluginResourceBudget) reserveExpandedBytes(size int64) erro
 	}
 	budget.expandedBytes += size
 	return nil
+}
+
+func (budget *managedPluginResourceBudget) readTarStream(reader io.Reader) io.Reader {
+	return &managedPluginTarStreamReader{reader: reader, budget: budget}
+}
+
+// managedPluginTarStreamReader counts every decompressed byte the tar reader
+// requests, including metadata and padding consumed inside Reader.Next. It
+// never hands the decompressor more room than remains in the transaction-wide
+// budget, so a limit violation occurs before extra stream bytes are read.
+type managedPluginTarStreamReader struct {
+	reader io.Reader
+	budget *managedPluginResourceBudget
+}
+
+func (reader *managedPluginTarStreamReader) Read(data []byte) (int, error) {
+	remaining := reader.budget.limits.tarStreamBytes - reader.budget.tarStreamBytes
+	if remaining <= 0 {
+		var probe [1]byte
+		read, err := reader.reader.Read(probe[:])
+		if read > 0 {
+			return 0, errors.New("managed plugin archives exceed cumulative tar stream byte budget")
+		}
+		if err != nil {
+			return 0, err
+		}
+		return 0, io.ErrNoProgress
+	}
+	if int64(len(data)) > remaining {
+		data = data[:int(remaining)]
+	}
+	read, err := reader.reader.Read(data)
+	reader.budget.tarStreamBytes += int64(read)
+	return read, err
 }
 
 func (budget *managedPluginResourceBudget) reserveEntry() error {
@@ -572,7 +614,7 @@ func (transaction ManagedPluginTransaction) extractArchive(archivePath, destinat
 		return err
 	}
 	defer gzipReader.Close()
-	reader := tar.NewReader(gzipReader)
+	reader := tar.NewReader(budget.readTarStream(gzipReader))
 	seen := map[string]bool{}
 	directories := []string{destination}
 	for {

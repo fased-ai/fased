@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isPathInside } from "./path-safety.js";
 import type { PluginRegistry } from "./registry.js";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
@@ -20,6 +21,31 @@ export type PluginLock = {
   type: "fased-plugin-lock";
   entries: PluginLockEntry[];
 };
+
+export type ManagedPluginBinding = {
+  id: string;
+  digest: string;
+  source: string;
+};
+
+export type ManagedPluginSnapshot = {
+  codeRoot: string;
+  lock: PluginLock;
+  bindings: ReadonlyMap<string, ManagedPluginBinding>;
+};
+
+const managedPluginSnapshots = new WeakMap<PluginRegistry, ManagedPluginSnapshot>();
+
+export function bindManagedPluginSnapshot(
+  registry: PluginRegistry,
+  snapshot: ManagedPluginSnapshot,
+): void {
+  managedPluginSnapshots.set(registry, snapshot);
+}
+
+function getManagedPluginSnapshot(registry: PluginRegistry): ManagedPluginSnapshot | undefined {
+  return managedPluginSnapshots.get(registry);
+}
 
 export function canonicalPluginLock(value: unknown): PluginLock {
   const lock = value as Partial<PluginLock>;
@@ -98,6 +124,56 @@ export function writePluginReadinessReceipt(params: {
       throw new Error(
         `managed plugin ${unboundLoaded.id} is loaded but absent from the plugin lock`,
       );
+    }
+
+    const snapshot = getManagedPluginSnapshot(params.registry);
+    if (!snapshot) {
+      throw new Error("managed plugin runtime identity snapshot is unavailable");
+    }
+    const snapshotCanonical = JSON.stringify(snapshot.lock);
+    const currentCanonical = JSON.stringify(lock);
+    if (snapshotCanonical !== currentCanonical) {
+      throw new Error("managed plugin lock changed after plugin load; readiness receipt rejected");
+    }
+    let codeRootRealPath: string;
+    try {
+      codeRootRealPath = fs.realpathSync(managedCodeRoot);
+    } catch {
+      throw new Error("managed plugin code root is unavailable; readiness receipt rejected");
+    }
+    if (codeRootRealPath !== snapshot.codeRoot) {
+      throw new Error(
+        "managed plugin code root changed after plugin load; readiness receipt rejected",
+      );
+    }
+
+    const loadedManaged = params.registry.plugins.filter(
+      (plugin) => plugin.origin === "global" && plugin.status === "loaded",
+    );
+    for (const plugin of loadedManaged) {
+      const binding = snapshot.bindings.get(plugin.id);
+      if (!binding) {
+        throw new Error(`managed plugin ${plugin.id} is loaded but absent from the plugin lock`);
+      }
+      const expectedRoot = path.join(snapshot.codeRoot, binding.digest.slice("sha256:".length));
+      const source = path.resolve(plugin.source);
+      let sourceRealPath: string;
+      try {
+        sourceRealPath = fs.realpathSync(source);
+      } catch {
+        throw new Error(
+          `managed plugin ${plugin.id} source is unavailable; readiness receipt rejected`,
+        );
+      }
+      if (
+        source !== sourceRealPath ||
+        source !== path.resolve(binding.source) ||
+        !isPathInside(expectedRoot, source)
+      ) {
+        throw new Error(
+          `managed plugin ${plugin.id} source is not the exact canonical digest-bound path; readiness receipt rejected`,
+        );
+      }
     }
   }
   const canonical = JSON.stringify(lock);

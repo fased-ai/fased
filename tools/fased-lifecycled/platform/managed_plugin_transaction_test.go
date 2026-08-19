@@ -123,6 +123,20 @@ func managedPluginArchive(t *testing.T, members []managedArchiveMember) []byte {
 	return data.Bytes()
 }
 
+func managedPluginArchiveTarStreamBytes(t *testing.T, archive []byte) int64 {
+	t.Helper()
+	reader, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	bytes, err := io.Copy(io.Discard, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes
+}
+
 func addManagedTransactionArchive(t *testing.T, transaction ManagedPluginTransaction, request *ManagedPluginStageRequest, root, id string, members []managedArchiveMember) string {
 	t.Helper()
 	archiveData := managedPluginArchive(t, members)
@@ -357,24 +371,30 @@ func TestManagedPluginTransactionRejectsArchiveGrowthDuringPinnedCopyAndRetriesC
 func TestManagedPluginTransactionEnforcesCumulativeArchiveBudgetsAndRetriesCleanly(t *testing.T) {
 	tests := []struct {
 		name   string
-		limits func(firstArchiveBytes, secondArchiveBytes, firstExpanded, secondExpanded int64) managedPluginResourceLimits
+		limits func(firstArchiveBytes, secondArchiveBytes, firstExpanded, secondExpanded, firstTarStreamBytes, secondTarStreamBytes int64) managedPluginResourceLimits
 	}{
 		{
 			name: "archive bytes",
-			limits: func(firstArchiveBytes, secondArchiveBytes, _, _ int64) managedPluginResourceLimits {
-				return managedPluginResourceLimits{archiveBytes: firstArchiveBytes + secondArchiveBytes - 1, expandedBytes: maxManagedPluginExpandedBytes, entries: maxManagedPluginArchiveEntries}
+			limits: func(firstArchiveBytes, secondArchiveBytes, _, _, _, _ int64) managedPluginResourceLimits {
+				return managedPluginResourceLimits{archiveBytes: firstArchiveBytes + secondArchiveBytes - 1, expandedBytes: maxManagedPluginExpandedBytes, tarStreamBytes: maxManagedPluginTarStreamBytes, entries: maxManagedPluginArchiveEntries}
 			},
 		},
 		{
 			name: "expanded bytes",
-			limits: func(_, _, firstExpanded, secondExpanded int64) managedPluginResourceLimits {
-				return managedPluginResourceLimits{archiveBytes: maxManagedPluginArchiveBytes, expandedBytes: firstExpanded + secondExpanded - 1, entries: maxManagedPluginArchiveEntries}
+			limits: func(_, _, firstExpanded, secondExpanded, _, _ int64) managedPluginResourceLimits {
+				return managedPluginResourceLimits{archiveBytes: maxManagedPluginArchiveBytes, expandedBytes: firstExpanded + secondExpanded - 1, tarStreamBytes: maxManagedPluginTarStreamBytes, entries: maxManagedPluginArchiveEntries}
 			},
 		},
 		{
 			name: "entry count",
-			limits: func(_, _, _, _ int64) managedPluginResourceLimits {
-				return managedPluginResourceLimits{archiveBytes: maxManagedPluginArchiveBytes, expandedBytes: maxManagedPluginExpandedBytes, entries: 1}
+			limits: func(_, _, _, _, _, _ int64) managedPluginResourceLimits {
+				return managedPluginResourceLimits{archiveBytes: maxManagedPluginArchiveBytes, expandedBytes: maxManagedPluginExpandedBytes, tarStreamBytes: maxManagedPluginTarStreamBytes, entries: 1}
+			},
+		},
+		{
+			name: "tar stream bytes",
+			limits: func(_, _, _, _, firstTarStreamBytes, secondTarStreamBytes int64) managedPluginResourceLimits {
+				return managedPluginResourceLimits{archiveBytes: maxManagedPluginArchiveBytes, expandedBytes: maxManagedPluginExpandedBytes, tarStreamBytes: firstTarStreamBytes + secondTarStreamBytes - 1, entries: maxManagedPluginArchiveEntries}
 			},
 		},
 	}
@@ -391,7 +411,15 @@ func TestManagedPluginTransactionEnforcesCumulativeArchiveBudgetsAndRetriesClean
 				t.Fatal(err)
 			}
 			previousLimits := managedPluginArchiveResourceLimits
-			managedPluginArchiveResourceLimits = testCase.limits(firstInfo.Size(), secondInfo.Size(), int64(len("first")), int64(len("second")))
+			firstArchive, err := os.ReadFile(request.Archives[0].Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondArchive, err := os.ReadFile(request.Archives[1].Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			managedPluginArchiveResourceLimits = testCase.limits(firstInfo.Size(), secondInfo.Size(), int64(len("first")), int64(len("second")), managedPluginArchiveTarStreamBytes(t, firstArchive), managedPluginArchiveTarStreamBytes(t, secondArchive))
 			t.Cleanup(func() { managedPluginArchiveResourceLimits = previousLimits })
 			if _, err := transaction.Stage(request); err == nil || !strings.Contains(err.Error(), "cumulative") {
 				t.Fatalf("cumulative %s overflow was accepted: %v", testCase.name, err)
@@ -400,6 +428,41 @@ func TestManagedPluginTransactionEnforcesCumulativeArchiveBudgetsAndRetriesClean
 			managedPluginArchiveResourceLimits = previousLimits
 			if _, err := transaction.Stage(request); err != nil {
 				t.Fatalf("clean retry after cumulative %s failure failed: %v", testCase.name, err)
+			}
+			if err := transaction.Discard(request.TransactionID); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestManagedPluginTransactionBoundsTarStreamMetadataAndRetriesCleanly(t *testing.T) {
+	tests := []struct {
+		name   string
+		header tar.Header
+	}{
+		{
+			name:   "PAX metadata",
+			header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644, Format: tar.FormatPAX, PAXRecords: map[string]string{"fased.test.metadata": strings.Repeat("p", 2048)}},
+		},
+		{
+			name:   "GNU long-name metadata",
+			header: tar.Header{Name: strings.Repeat("g", 180) + ".js", Typeflag: tar.TypeReg, Mode: 0o644, Format: tar.FormatGNU},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			transaction, request, _, digest := managedTransactionFixture(t, []managedArchiveMember{{header: testCase.header, data: "export default 1\n"}})
+			previousLimits := managedPluginArchiveResourceLimits
+			managedPluginArchiveResourceLimits = managedPluginResourceLimits{archiveBytes: maxManagedPluginArchiveBytes, expandedBytes: maxManagedPluginExpandedBytes, tarStreamBytes: 1_536, entries: maxManagedPluginArchiveEntries}
+			t.Cleanup(func() { managedPluginArchiveResourceLimits = previousLimits })
+			if _, err := transaction.Stage(request); err == nil || !strings.Contains(err.Error(), "tar stream byte budget") {
+				t.Fatalf("metadata tar stream overflow was accepted: %v", err)
+			}
+			assertManagedTransactionFailureLeavesNoResidue(t, transaction, request, digest)
+			managedPluginArchiveResourceLimits = previousLimits
+			if _, err := transaction.Stage(request); err != nil {
+				t.Fatalf("clean retry after metadata tar stream overflow failed: %v", err)
 			}
 			if err := transaction.Discard(request.TransactionID); err != nil {
 				t.Fatal(err)
