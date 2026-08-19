@@ -36,6 +36,76 @@ var managedPluginObjectDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var managedPluginPreRecordInterruption func() error
 var managedPluginCreatedRootSync = syncPluginDirectory
 
+// managedPluginArchiveResourceLimits is fixed in production. Tests may lower
+// it to prove that the transaction-wide counters are not reset per archive.
+var managedPluginArchiveResourceLimits = managedPluginResourceLimits{
+	archiveBytes:  maxManagedPluginArchiveBytes,
+	expandedBytes: maxManagedPluginExpandedBytes,
+	entries:       maxManagedPluginArchiveEntries,
+}
+
+// Test-only seam invoked after the first source read while staging an archive.
+// It lets the regression mutate the source during an otherwise synchronous
+// copy, proving the pinned identity and byte count are checked at completion.
+var managedPluginArchiveCopyAfterFirstRead func()
+
+type managedPluginResourceLimits struct {
+	archiveBytes  int64
+	expandedBytes int64
+	entries       int
+}
+
+type managedPluginResourceBudget struct {
+	limits        managedPluginResourceLimits
+	archiveBytes  int64
+	expandedBytes int64
+	entries       int
+}
+
+func newManagedPluginResourceBudget() managedPluginResourceBudget {
+	return managedPluginResourceBudget{limits: managedPluginArchiveResourceLimits}
+}
+
+func (budget *managedPluginResourceBudget) reserveArchiveBytes(size int64) error {
+	if size <= 0 || size > budget.limits.archiveBytes-budget.archiveBytes {
+		return errors.New("managed plugin archives exceed cumulative byte budget")
+	}
+	budget.archiveBytes += size
+	return nil
+}
+
+func (budget *managedPluginResourceBudget) reserveExpandedBytes(size int64) error {
+	if size < 0 || size > budget.limits.expandedBytes-budget.expandedBytes {
+		return errors.New("managed plugin archives exceed cumulative expanded byte budget")
+	}
+	budget.expandedBytes += size
+	return nil
+}
+
+func (budget *managedPluginResourceBudget) reserveEntry() error {
+	if budget.entries >= budget.limits.entries {
+		return errors.New("managed plugin archives exceed cumulative entry budget")
+	}
+	budget.entries++
+	return nil
+}
+
+type managedPluginArchiveCopyReader struct {
+	reader io.Reader
+	fired  bool
+}
+
+func (reader *managedPluginArchiveCopyReader) Read(data []byte) (int, error) {
+	read, err := reader.reader.Read(data)
+	if read > 0 && !reader.fired {
+		reader.fired = true
+		if managedPluginArchiveCopyAfterFirstRead != nil {
+			managedPluginArchiveCopyAfterFirstRead()
+		}
+	}
+	return read, err
+}
+
 // ManagedPluginTransaction owns only the root-owned immutable code store and
 // its durable transaction records. It deliberately has no owner-state or live
 // lock path: a later readiness/activation package owns the live lock switch.
@@ -141,13 +211,14 @@ func (transaction ManagedPluginTransaction) Stage(request ManagedPluginStageRequ
 			_ = transaction.removeTransactionRoots(request.TransactionID)
 		}
 	}()
+	budget := newManagedPluginResourceBudget()
 	for _, entry := range catalog.Entries {
-		archive, archiveErr := transaction.stageVerifiedArchive(request.TransactionID, archives[entry.ID])
+		archive, archiveErr := transaction.stageVerifiedArchive(request.TransactionID, archives[entry.ID], &budget)
 		if archiveErr != nil {
 			return ManagedPluginStageResult{}, fmt.Errorf("stage managed plugin %s archive: %w", entry.ID, archiveErr)
 		}
 		destination := transaction.stagingObjectPath(request.TransactionID, entry.Digest)
-		if err := transaction.extractArchive(archive, destination, entry.Digest); err != nil {
+		if err := transaction.extractArchive(archive, destination, entry.Digest, &budget); err != nil {
 			return ManagedPluginStageResult{}, fmt.Errorf("stage managed plugin %s: %w", entry.ID, err)
 		}
 	}
@@ -484,7 +555,7 @@ func (transaction ManagedPluginTransaction) safePreRecordStaging(root string) (b
 	return true, nil
 }
 
-func (transaction ManagedPluginTransaction) extractArchive(archivePath, destination, expectedDigest string) error {
+func (transaction ManagedPluginTransaction) extractArchive(archivePath, destination, expectedDigest string, budget *managedPluginResourceBudget) error {
 	archive, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -504,8 +575,6 @@ func (transaction ManagedPluginTransaction) extractArchive(archivePath, destinat
 	reader := tar.NewReader(gzipReader)
 	seen := map[string]bool{}
 	directories := []string{destination}
-	entries := 0
-	var expanded int64
 	for {
 		header, nextErr := reader.Next()
 		if errors.Is(nextErr, io.EOF) {
@@ -514,8 +583,10 @@ func (transaction ManagedPluginTransaction) extractArchive(archivePath, destinat
 		if nextErr != nil {
 			return nextErr
 		}
-		entries++
-		if entries > maxManagedPluginArchiveEntries || !safeArchivePath(header.Name) || seen[header.Name] {
+		if err := budget.reserveEntry(); err != nil {
+			return err
+		}
+		if !safeArchivePath(header.Name) || seen[header.Name] {
 			return errors.New("managed plugin archive contains an unsafe path or exceeds entry budget")
 		}
 		seen[header.Name] = true
@@ -536,9 +607,8 @@ func (transaction ManagedPluginTransaction) extractArchive(archivePath, destinat
 			if header.Size < 0 {
 				return errors.New("managed plugin archive file size is invalid")
 			}
-			expanded += header.Size
-			if expanded > maxManagedPluginExpandedBytes {
-				return errors.New("managed plugin archive exceeds expanded byte budget")
+			if err := budget.reserveExpandedBytes(header.Size); err != nil {
+				return err
 			}
 			mode := os.FileMode(0o444)
 			if header.FileInfo().Mode()&0o111 != 0 {
@@ -562,7 +632,7 @@ func (transaction ManagedPluginTransaction) extractArchive(archivePath, destinat
 			return errors.New("managed plugin archive contains unsupported entry type")
 		}
 	}
-	if entries == 0 {
+	if len(seen) == 0 {
 		return errors.New("managed plugin archive is empty")
 	}
 	for index := len(directories) - 1; index >= 0; index-- {
@@ -580,7 +650,7 @@ func (transaction ManagedPluginTransaction) extractArchive(archivePath, destinat
 	return nil
 }
 
-func (transaction ManagedPluginTransaction) stageVerifiedArchive(transactionID string, source ManagedPluginArchiveSource) (string, error) {
+func (transaction ManagedPluginTransaction) stageVerifiedArchive(transactionID string, source ManagedPluginArchiveSource, budget *managedPluginResourceBudget) (string, error) {
 	info, err := os.Lstat(source.Path)
 	if err != nil {
 		return "", err
@@ -588,6 +658,10 @@ func (transaction ManagedPluginTransaction) stageVerifiedArchive(transactionID s
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Nlink != 1 || stat.Uid != transaction.ArchiveOwnerUID || info.Mode().Perm()&0o022 != 0 || info.Size() <= 0 || info.Size() > maxManagedPluginArchiveBytes {
 		return "", errors.New("managed plugin archive identity or access is unsafe")
+	}
+	initialSize := info.Size()
+	if err := budget.reserveArchiveBytes(initialSize); err != nil {
+		return "", err
 	}
 	file, err := os.Open(source.Path)
 	if err != nil {
@@ -604,11 +678,13 @@ func (transaction ManagedPluginTransaction) stageVerifiedArchive(transactionID s
 		return "", err
 	}
 	hash := sha256.New()
-	_, copyErr := io.Copy(io.MultiWriter(output, hash), file)
+	pinned := io.LimitReader(file, initialSize+1)
+	copyReader := &managedPluginArchiveCopyReader{reader: pinned}
+	copied, copyErr := io.Copy(io.MultiWriter(output, hash), copyReader)
 	syncErr := output.Sync()
 	closeErr := output.Close()
-	if copyErr != nil || syncErr != nil || closeErr != nil {
-		return "", errors.Join(copyErr, syncErr, closeErr)
+	if copyErr != nil || copied != initialSize || syncErr != nil || closeErr != nil {
+		return "", errors.Join(copyErr, syncErr, closeErr, errors.New("managed plugin archive size changed while staging"))
 	}
 	if fmt.Sprintf("sha256:%x", hash.Sum(nil)) != source.SHA256 {
 		return "", errors.New("managed plugin archive does not match declared digest")

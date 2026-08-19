@@ -424,6 +424,10 @@ function resolvePluginModuleExport(moduleExport: unknown): {
   return {};
 }
 
+function isManagedPluginMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.FASED_PLUGIN_CODE_ROOT?.trim() && env.FASED_PLUGIN_LOCK_PATH?.trim());
+}
+
 function createPluginRecord(params: {
   id: string;
   name?: string;
@@ -859,12 +863,23 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
     const register = resolved.register;
 
     if (definition?.id && definition.id !== record.id) {
+      const managed = isManagedPluginMode();
+      const message = managed
+        ? `managed plugin identity rejected: lock entry "${record.id}" exports "${definition.id}"`
+        : `plugin id mismatch (config uses "${record.id}", export uses "${definition.id}")`;
       registry.diagnostics.push({
-        level: "warn",
+        level: managed ? "error" : "warn",
         pluginId: record.id,
         source: record.source,
-        message: `plugin id mismatch (config uses "${record.id}", export uses "${definition.id}")`,
+        message,
       });
+      if (managed) {
+        record.status = "error";
+        record.error = message;
+        registry.plugins.push(record);
+        seenIds.set(pluginId, candidate.origin);
+        continue;
+      }
     }
 
     record.name = definition?.name ?? record.name;

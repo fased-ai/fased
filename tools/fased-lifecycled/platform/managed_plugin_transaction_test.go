@@ -123,6 +123,90 @@ func managedPluginArchive(t *testing.T, members []managedArchiveMember) []byte {
 	return data.Bytes()
 }
 
+func addManagedTransactionArchive(t *testing.T, transaction ManagedPluginTransaction, request *ManagedPluginStageRequest, root, id string, members []managedArchiveMember) string {
+	t.Helper()
+	archiveData := managedPluginArchive(t, members)
+	archivePath := filepath.Join(root, id+".tar.gz")
+	if err := os.WriteFile(archivePath, archiveData, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(archivePath, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join(root, "expected-"+id)
+	if err := os.Mkdir(expected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range members {
+		if member.header.Typeflag != tar.TypeReg && member.header.Typeflag != tar.TypeRegA {
+			continue
+		}
+		item := filepath.Join(expected, filepath.FromSlash(member.header.Name))
+		if err := os.MkdirAll(filepath.Dir(item), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mode := os.FileMode(0o444)
+		if member.header.Mode&0o111 != 0 {
+			mode = 0o555
+		}
+		if err := os.WriteFile(item, []byte(member.data), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(item, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := filepath.WalkDir(expected, func(item string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return os.Chmod(item, 0o555)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makePluginTreeRemovable(expected) })
+	digest, err := stateparticipant.ImmutablePluginTreeDigest(expected, transaction.CodeOwnerUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveSum := sha256.Sum256(archiveData)
+	archiveDigest := fmt.Sprintf("sha256:%x", archiveSum)
+	catalog, err := stateparticipant.DecodeManagedPluginCatalog(request.CatalogData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog.Entries = append(catalog.Entries, stateparticipant.ManagedPluginCatalogEntry{ID: id, Digest: digest, ArchiveDigest: archiveDigest, APICapability: "fased.plugin.v1", Required: true})
+	data, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogDigest, err := stateparticipant.ManagedPluginCatalogDigest(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.CatalogData = data
+	request.ExpectedCatalogDigest = catalogDigest
+	request.Archives = append(request.Archives, ManagedPluginArchiveSource{ID: id, Path: archivePath, SHA256: archiveDigest})
+	return digest
+}
+
+func assertManagedTransactionFailureLeavesNoResidue(t *testing.T, transaction ManagedPluginTransaction, request ManagedPluginStageRequest, digests ...string) {
+	t.Helper()
+	for _, item := range []string{transaction.recordRoot(request.TransactionID), transaction.stagingRoot(request.TransactionID)} {
+		if _, err := os.Lstat(item); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed stage left transaction residue at %s: %v", item, err)
+		}
+	}
+	for _, digest := range digests {
+		if _, err := os.Lstat(transaction.objectPath(digest)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed stage activated destination %s: %v", digest, err)
+		}
+	}
+}
+
 func TestManagedPluginTransactionStagesImmutableCandidateWithoutLiveMutation(t *testing.T) {
 	transaction, request, root, digest := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
 	liveLock := filepath.Join(root, "plugin.lock.json")
@@ -214,6 +298,111 @@ func TestManagedPluginTransactionRejectsDigestMismatchTraversalSymlinkHardlinkAn
 			}
 			if _, err := transaction.Stage(request); err == nil {
 				t.Fatal("unsafe archive/catalog input was accepted")
+			}
+		})
+	}
+}
+
+func TestManagedPluginTransactionRejectsArchiveGrowthDuringPinnedCopyAndRetriesCleanly(t *testing.T) {
+	transaction, request, _, digest := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+	original, err := os.ReadFile(request.Archives[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mutationErr error
+	managedPluginArchiveCopyAfterFirstRead = func() {
+		if err := os.Chmod(request.Archives[0].Path, 0o600); err != nil {
+			mutationErr = err
+			return
+		}
+		file, err := os.OpenFile(request.Archives[0].Path, os.O_WRONLY|os.O_APPEND, 0)
+		if err == nil {
+			_, err = file.Write([]byte("growth"))
+			closeErr := file.Close()
+			if err == nil {
+				err = closeErr
+			}
+		}
+		if chmodErr := os.Chmod(request.Archives[0].Path, 0o444); err == nil {
+			err = chmodErr
+		}
+		mutationErr = err
+	}
+	t.Cleanup(func() { managedPluginArchiveCopyAfterFirstRead = nil })
+	if _, err := transaction.Stage(request); err == nil || !strings.Contains(err.Error(), "changed while staging") {
+		t.Fatalf("archive growth during copy was accepted: %v", err)
+	}
+	if mutationErr != nil {
+		t.Fatalf("could not grow archive during copy: %v", mutationErr)
+	}
+	assertManagedTransactionFailureLeavesNoResidue(t, transaction, request, digest)
+	managedPluginArchiveCopyAfterFirstRead = nil
+	if err := os.Chmod(request.Archives[0].Path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(request.Archives[0].Path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(request.Archives[0].Path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Stage(request); err != nil {
+		t.Fatalf("clean retry after archive growth failed: %v", err)
+	}
+	if err := transaction.Discard(request.TransactionID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagedPluginTransactionEnforcesCumulativeArchiveBudgetsAndRetriesCleanly(t *testing.T) {
+	tests := []struct {
+		name   string
+		limits func(firstArchiveBytes, secondArchiveBytes, firstExpanded, secondExpanded int64) managedPluginResourceLimits
+	}{
+		{
+			name: "archive bytes",
+			limits: func(firstArchiveBytes, secondArchiveBytes, _, _ int64) managedPluginResourceLimits {
+				return managedPluginResourceLimits{archiveBytes: firstArchiveBytes + secondArchiveBytes - 1, expandedBytes: maxManagedPluginExpandedBytes, entries: maxManagedPluginArchiveEntries}
+			},
+		},
+		{
+			name: "expanded bytes",
+			limits: func(_, _, firstExpanded, secondExpanded int64) managedPluginResourceLimits {
+				return managedPluginResourceLimits{archiveBytes: maxManagedPluginArchiveBytes, expandedBytes: firstExpanded + secondExpanded - 1, entries: maxManagedPluginArchiveEntries}
+			},
+		},
+		{
+			name: "entry count",
+			limits: func(_, _, _, _ int64) managedPluginResourceLimits {
+				return managedPluginResourceLimits{archiveBytes: maxManagedPluginArchiveBytes, expandedBytes: maxManagedPluginExpandedBytes, entries: 1}
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			transaction, request, root, firstDigest := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "first.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "first"}})
+			secondDigest := addManagedTransactionArchive(t, transaction, &request, root, "extra", []managedArchiveMember{{header: tar.Header{Name: "second.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "second"}})
+			firstInfo, err := os.Stat(request.Archives[0].Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondInfo, err := os.Stat(request.Archives[1].Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			previousLimits := managedPluginArchiveResourceLimits
+			managedPluginArchiveResourceLimits = testCase.limits(firstInfo.Size(), secondInfo.Size(), int64(len("first")), int64(len("second")))
+			t.Cleanup(func() { managedPluginArchiveResourceLimits = previousLimits })
+			if _, err := transaction.Stage(request); err == nil || !strings.Contains(err.Error(), "cumulative") {
+				t.Fatalf("cumulative %s overflow was accepted: %v", testCase.name, err)
+			}
+			assertManagedTransactionFailureLeavesNoResidue(t, transaction, request, firstDigest, secondDigest)
+			managedPluginArchiveResourceLimits = previousLimits
+			if _, err := transaction.Stage(request); err != nil {
+				t.Fatalf("clean retry after cumulative %s failure failed: %v", testCase.name, err)
+			}
+			if err := transaction.Discard(request.TransactionID); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
