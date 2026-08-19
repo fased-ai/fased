@@ -139,6 +139,47 @@ func (activation ManagedPluginActivation) AlreadyCurrent(transactionID string) (
 	return true, journal.ReadinessDigest, journal.CandidateLockDigest, nil
 }
 
+// ConvergeOtherUnfinished restores the one-engine transaction rule for the
+// dedicated plugin namespace. The caller must hold the installation-wide core
+// lifecycle mutation lease. Records with a committed (or rolled-back) journal
+// are durable provenance and cannot block later catalog work; every other
+// record is resumed to its terminal state before a new transaction is staged.
+func (activation ManagedPluginActivation) ConvergeOtherUnfinished(ctx context.Context, transactionID string) error {
+	guard, configGID, unit, err := activation.validate(transactionID)
+	if err != nil {
+		return err
+	}
+	return activation.convergeOtherUnfinishedBound(ctx, transactionID, guard, configGID, unit)
+}
+
+func (activation ManagedPluginActivation) convergeOtherUnfinishedBound(ctx context.Context, transactionID string, guard stateparticipant.PluginBoundary, configGID uint32, unit string) error {
+	ids, err := activation.Transaction.recordIDs()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if id == transactionID {
+			continue
+		}
+		journal, journalErr := activation.openJournal(id, guard, configGID, unit)
+		if journalErr != nil {
+			return fmt.Errorf("open unfinished managed plugin transaction %s: %w", id, journalErr)
+		}
+		if journal.Phase == managedPluginCommitted || journal.Phase == managedPluginRolledBack {
+			continue
+		}
+		if _, currentDigest, readErr := activation.readLiveLock(configGID); readErr != nil {
+			return fmt.Errorf("read live lock before converging managed plugin transaction %s: %w", id, readErr)
+		} else if currentDigest != journal.PreviousLockDigest && currentDigest != journal.CandidateLockDigest {
+			return fmt.Errorf("managed plugin transaction %s conflicts with the current live lock", id)
+		}
+		if _, applyErr := activation.applyBound(ctx, id, guard, configGID, unit); applyErr != nil {
+			return fmt.Errorf("converge unfinished managed plugin transaction %s: %w", id, applyErr)
+		}
+	}
+	return nil
+}
+
 func (activation ManagedPluginActivation) applyBound(ctx context.Context, transactionID string, guard stateparticipant.PluginBoundary, configGID uint32, unit string) (string, error) {
 	j, err := activation.openJournal(transactionID, guard, configGID, unit)
 	if err != nil {
@@ -355,6 +396,30 @@ func (activation ManagedPluginActivation) openJournal(transactionID string, guar
 		if recordErr != nil {
 			return managedPluginActivationJournal{}, recordErr
 		}
+		current, currentErr := stateparticipant.DecodePluginLock(previous.data)
+		if currentErr != nil {
+			return managedPluginActivationJournal{}, currentErr
+		}
+		catalog, catalogErr := stateparticipant.DecodeManagedPluginCatalog(result.CatalogData)
+		if catalogErr != nil {
+			return managedPluginActivationJournal{}, catalogErr
+		}
+		expectedCandidate, mergeErr := stateparticipant.MergeManagedPluginCatalog(current, catalog)
+		if mergeErr != nil {
+			return managedPluginActivationJournal{}, mergeErr
+		}
+		expectedData, marshalErr := json.Marshal(expectedCandidate)
+		if marshalErr != nil {
+			return managedPluginActivationJournal{}, marshalErr
+		}
+		recordCandidateData, recordMarshalErr := json.Marshal(result.CandidateLock)
+		if recordMarshalErr != nil {
+			return managedPluginActivationJournal{}, recordMarshalErr
+		}
+		expectedDigest, digestErr := stateparticipant.PluginLockDigest(expectedCandidate)
+		if digestErr != nil || expectedDigest != result.CandidateLockDigest || string(expectedData) != string(recordCandidateData) {
+			return managedPluginActivationJournal{}, errors.New("managed plugin transaction candidate conflicts with the current live lock")
+		}
 		candidate, candidateErr := stageResult(result)
 		if candidateErr != nil {
 			return managedPluginActivationJournal{}, candidateErr
@@ -437,16 +502,51 @@ func (activation ManagedPluginActivation) writeLiveLock(data []byte, mode os.Fil
 		return err
 	}
 	path := CanonicalPluginLockPath(activation.Config)
-	if err := writeAtomicFile(path, data, mode); err != nil {
+	return writeManagedPluginLiveLock(path, data, mode, uid, gid)
+}
+
+// managedPluginLiveLockBeforeRename is test-only fault injection at the final
+// interruption boundary. The live name is untouched until all final metadata
+// has been applied and the replacement has been fsynced.
+var managedPluginLiveLockBeforeRename func() error
+
+func writeManagedPluginLiveLock(path string, data []byte, mode os.FileMode, uid, gid uint32) error {
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, ".fased-plugin-lock-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Chown(path, int(uid), int(gid)); err != nil {
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	closeFailure := func(cause error) error {
+		return errors.Join(cause, temporary.Close())
+	}
+	if _, err := temporary.Write(data); err != nil {
+		return closeFailure(err)
+	}
+	// Chown can clear special mode bits. Set the final mode after chown, before
+	// syncing or renaming, so the live name never names a wrong-owner lock.
+	if err := temporary.Chown(int(uid), int(gid)); err != nil {
+		return closeFailure(err)
+	}
+	if err := temporary.Chmod(mode); err != nil {
+		return closeFailure(err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return closeFailure(err)
+	}
+	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(path, mode); err != nil {
+	if managedPluginLiveLockBeforeRename != nil {
+		if err := managedPluginLiveLockBeforeRename(); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
 		return err
 	}
-	return syncPluginDirectory(filepath.Dir(path))
+	return syncPluginDirectory(directory)
 }
 
 // A readiness file is evidence from one Gateway process only. Removing it

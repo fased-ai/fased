@@ -617,6 +617,47 @@ func (transaction ManagedPluginTransaction) validateRecordRoots(transactionID st
 	return nil
 }
 
+// recordIDs enumerates only a safe, dedicated plugin transaction namespace.
+// Any residue that cannot unambiguously be a root-owned transaction directory
+// is an unsafe transaction boundary and therefore fails closed.
+func (transaction ManagedPluginTransaction) recordIDs() ([]string, error) {
+	if err := transaction.validate(); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(transaction.TransactionRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil || !transaction.safeRecordDirectory(info) {
+		return nil, errors.New("managed plugin transaction root identity or access is unsafe")
+	}
+	entries, err := os.ReadDir(transaction.TransactionRoot)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > 4096 {
+		return nil, errors.New("managed plugin transaction namespace exceeds entry budget")
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !managedPluginTransactionID.MatchString(entry.Name()) || entry.Type()&os.ModeSymlink != 0 || !entry.IsDir() {
+			return nil, errors.New("managed plugin transaction namespace entry is unsafe")
+		}
+		entryInfo, entryErr := os.Lstat(filepath.Join(transaction.TransactionRoot, entry.Name()))
+		if entryErr != nil || !transaction.safeRecordDirectory(entryInfo) {
+			return nil, errors.New("managed plugin transaction record directory identity or access is unsafe")
+		}
+		ids = append(ids, entry.Name())
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (transaction ManagedPluginTransaction) safeRecordDirectory(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && info.IsDir() && info.Mode()&os.ModeSymlink == 0 && stat.Uid == transaction.CodeOwnerUID && stat.Gid == transaction.CodeOwnerGID && info.Mode().Perm() == 0o700
+}
+
 func (transaction ManagedPluginTransaction) readStableRecord(recordPath string) ([]byte, error) {
 	before, err := os.Lstat(recordPath)
 	if err != nil {

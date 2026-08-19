@@ -1,11 +1,45 @@
 package main
 
 import (
+	"fased-lifecycled/hostsecurity"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestManagedPluginAndCoreUseOneMutationLease(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lifecycle.lock")
+	uid := uint32(os.Getuid())
+	plugin, err := acquireManagedPluginMutationLock(path, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acquireManagedPluginMutationLock(path, uid); err == nil {
+		t.Fatal("second managed plugin mutation acquired while a plugin lease was active")
+	}
+	if err := plugin.Release(); err != nil {
+		t.Fatal(err)
+	}
+	core, err := hostsecurity.AcquireMutationLock(path, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.Release()
+	if _, err := acquireManagedPluginMutationLock(path, uid); err == nil {
+		t.Fatal("managed plugin mutation acquired while core lifecycle lease was active")
+	}
+	if err := core.Release(); err != nil {
+		t.Fatal(err)
+	}
+	plugin, err = acquireManagedPluginMutationLock(path, uid)
+	if err != nil {
+		t.Fatalf("managed plugin mutation could not acquire released core lease: %v", err)
+	}
+	if err := plugin.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestManagedPluginParserRejectsLegacyAndAcceptsExactCatalog(t *testing.T) {
 	root := t.TempDir()

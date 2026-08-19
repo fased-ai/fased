@@ -3,8 +3,10 @@ package platform
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,6 +165,177 @@ func TestManagedPluginActivationCommitsAndIsIdempotent(t *testing.T) {
 	}
 	if got := len(service.calls); got != 2 {
 		t.Fatalf("completed activation restarted Gateway: %v", service.calls)
+	}
+}
+
+func TestManagedPluginActivationConvergesDifferentUnfinishedBeforeNewStage(t *testing.T) {
+	activation, first, service, _, _, _ := managedPluginActivationFixture(t)
+	if _, err := activation.Transaction.Stage(first); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.TransactionID = "plugin-transaction-2"
+	guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: activation.Config.Operator.GID}
+	if err := activation.convergeOtherUnfinishedBound(context.Background(), second.TransactionID, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err != nil {
+		t.Fatalf("unfinished prior transaction was not converged: %v", err)
+	}
+	journal, err := activation.openJournal(first.TransactionID, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"])
+	if err != nil || journal.Phase != managedPluginCommitted {
+		t.Fatalf("prior transaction did not become committed provenance: phase=%s err=%v", journal.Phase, err)
+	}
+	live, _, err := guard.VerifyInstalledLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second = additionalManagedPluginRequest(t, activation, second.TransactionID, live)
+	result, err := activation.Transaction.Stage(second)
+	if err != nil {
+		t.Fatalf("new stage remained blocked after convergence: %v", err)
+	}
+	if len(result.CandidateLock.Entries) != 2 || result.CandidateLock.Entries[0].ID != "demo" || result.CandidateLock.Entries[1].ID != "extra" {
+		t.Fatalf("new candidate did not retain converged catalog: %+v", result.CandidateLock.Entries)
+	}
+	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service"; got != want {
+		t.Fatalf("convergence service order = %q, want %q", got, want)
+	}
+}
+
+func TestManagedPluginActivationRefusesUnfinishedJournalAgainstNewerLiveLock(t *testing.T) {
+	activation, first, service, _, _, _ := managedPluginActivationFixture(t)
+	if _, err := activation.Transaction.Stage(first); err != nil {
+		t.Fatal(err)
+	}
+	guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: activation.Config.Operator.GID}
+	if _, err := activation.openJournal(first.TransactionID, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err != nil {
+		t.Fatal(err)
+	}
+	newer := stateparticipant.PluginLock{SchemaVersion: stateparticipant.PluginLockSchemaVersion, Type: "fased-plugin-lock", Entries: []stateparticipant.PluginLockEntry{{ID: "newer", Origin: "store", Digest: "sha256:" + strings.Repeat("b", 64), APICapability: "fased.plugin.v1", Required: true}}}
+	newerData, err := json.Marshal(newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := activation.writeLiveLock(newerData, 0o640, activation.Config.Operator.UID, activation.Config.Operator.GID); err != nil {
+		t.Fatal(err)
+	}
+	if err := activation.convergeOtherUnfinishedBound(context.Background(), "plugin-transaction-2", guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err == nil || !strings.Contains(err.Error(), "conflicts with the current live lock") {
+		t.Fatalf("old journal did not fail closed against newer live lock: %v", err)
+	}
+	if data, err := os.ReadFile(CanonicalPluginLockPath(activation.Config)); err != nil || string(data) != string(newerData) {
+		t.Fatalf("old journal overwrote newer live lock: %q %v", data, err)
+	}
+	if len(service.calls) != 0 {
+		t.Fatalf("old journal touched Gateway before conflict refusal: %v", service.calls)
+	}
+}
+
+func TestManagedPluginActivationRefusesStagedCandidateAgainstNewerLiveLockBeforeJournal(t *testing.T) {
+	activation, first, service, _, _, _ := managedPluginActivationFixture(t)
+	base := stateparticipant.PluginLock{SchemaVersion: stateparticipant.PluginLockSchemaVersion, Type: "fased-plugin-lock", Entries: []stateparticipant.PluginLockEntry{{ID: "base", Origin: "store", Digest: "sha256:" + strings.Repeat("a", 64), APICapability: "fased.plugin.v1", Required: true}}}
+	first.BaseLock = base
+	if _, err := activation.Transaction.Stage(first); err != nil {
+		t.Fatal(err)
+	}
+	newer := base
+	newer.Entries = append(newer.Entries, stateparticipant.PluginLockEntry{ID: "newer", Origin: "store", Digest: "sha256:" + strings.Repeat("b", 64), APICapability: "fased.plugin.v1", Required: true})
+	newerData, err := json.Marshal(newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := activation.writeLiveLock(newerData, 0o640, activation.Config.Operator.UID, activation.Config.Operator.GID); err != nil {
+		t.Fatal(err)
+	}
+	guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: activation.Config.Operator.GID}
+	if err := activation.convergeOtherUnfinishedBound(context.Background(), "plugin-transaction-2", guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err == nil || !strings.Contains(err.Error(), "candidate conflicts with the current live lock") {
+		t.Fatalf("staged old candidate did not fail closed before journal creation: %v", err)
+	}
+	if _, err := os.Lstat(activation.journalPath(first.TransactionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale staged candidate created an activation journal: %v", err)
+	}
+	if data, err := os.ReadFile(CanonicalPluginLockPath(activation.Config)); err != nil || string(data) != string(newerData) {
+		t.Fatalf("staged old candidate overwrote newer live lock: %q %v", data, err)
+	}
+	if len(service.calls) != 0 {
+		t.Fatalf("staged old candidate touched Gateway before refusal: %v", service.calls)
+	}
+}
+
+func additionalManagedPluginRequest(t *testing.T, activation ManagedPluginActivation, transactionID string, base stateparticipant.PluginLock) ManagedPluginStageRequest {
+	t.Helper()
+	archiveData := managedPluginArchive(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 2\n"}})
+	archivePath := filepath.Join(t.TempDir(), "extra.tar.gz")
+	if err := os.WriteFile(archivePath, archiveData, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join(t.TempDir(), "expected")
+	if err := os.Mkdir(expected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(expected, "index.js"), []byte("export default 2\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(expected, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = makePluginTreeRemovable(expected) })
+	digest, err := stateparticipant.ImmutablePluginTreeDigest(expected, activation.Transaction.CodeOwnerUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveSum := sha256.Sum256(archiveData)
+	archiveDigest := fmt.Sprintf("sha256:%x", archiveSum)
+	catalog := stateparticipant.ManagedPluginCatalog{SchemaVersion: stateparticipant.ManagedPluginCatalogSchemaVersion, Type: "fased-managed-plugin-catalog", Entries: []stateparticipant.ManagedPluginCatalogEntry{{ID: "extra", Digest: digest, ArchiveDigest: archiveDigest, APICapability: "fased.plugin.v1", Required: true}}}
+	catalogData, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogDigest, err := stateparticipant.ManagedPluginCatalogDigest(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ManagedPluginStageRequest{TransactionID: transactionID, CatalogData: catalogData, ExpectedCatalogDigest: catalogDigest, BaseLock: base, Archives: []ManagedPluginArchiveSource{{ID: "extra", Path: archivePath, SHA256: archiveDigest}}}
+}
+
+func TestManagedPluginActivationCommittedJournalDoesNotBlockLaterCatalogWork(t *testing.T) {
+	activation, first, service, _, _, _ := managedPluginActivationFixture(t)
+	if _, err := activation.Transaction.Stage(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyManagedPluginFixture(t, activation, first.TransactionID); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.TransactionID = "plugin-transaction-2"
+	guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: activation.Config.Operator.GID}
+	if err := activation.convergeOtherUnfinishedBound(context.Background(), second.TransactionID, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := activation.Transaction.Stage(second); err != nil {
+		t.Fatalf("committed provenance blocked new stage: %v", err)
+	}
+	if got := len(service.calls); got != 2 {
+		t.Fatalf("committed provenance was replayed: %v", service.calls)
+	}
+}
+
+func TestManagedPluginLiveLockPublishesOnlyAfterFinalMetadata(t *testing.T) {
+	activation, request, _, previous, _, _ := managedPluginActivationFixture(t)
+	result, err := activation.Transaction.Stage(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedPluginLiveLockBeforeRename = func() error { return errors.New("injected interruption") }
+	t.Cleanup(func() { managedPluginLiveLockBeforeRename = nil })
+	if err := activation.writeLiveLock(result.CandidateLockData, 0o640, activation.Config.Operator.UID, activation.Config.Operator.GID); err == nil {
+		t.Fatal("interrupted live-lock publication succeeded")
+	}
+	path := CanonicalPluginLockPath(activation.Config)
+	if data, err := os.ReadFile(path); err != nil || string(data) != string(previous) {
+		t.Fatalf("interruption published a replacement lock: %q %v", data, err)
+	}
+	info, err := os.Lstat(path)
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if err != nil || !ok || info.Mode().Perm() != 0o640 || stat.Uid != activation.Config.Operator.UID || stat.Gid != activation.Config.Operator.GID {
+		t.Fatalf("interruption left invalid live-lock metadata: %+v %v", info, err)
 	}
 }
 

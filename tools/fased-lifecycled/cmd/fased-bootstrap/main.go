@@ -22,6 +22,7 @@ import (
 
 	"fased-lifecycled/acquire"
 	"fased-lifecycled/host"
+	"fased-lifecycled/hostsecurity"
 	"fased-lifecycled/model"
 	"fased-lifecycled/participant"
 	"fased-lifecycled/platform"
@@ -181,6 +182,15 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	lockPath, err := managedPluginMutationLockPath(model.Profile(command.profile))
+	if err != nil {
+		return err
+	}
+	lock, err := acquireManagedPluginMutationLock(lockPath, 0)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	data, err := readManagedPluginCatalog(command.catalog, operator.UID)
 	if err != nil {
 		return err
@@ -239,6 +249,18 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := production.Activation.ConvergeOtherUnfinished(ctx, transactionID); err != nil {
+		return err
+	}
+	// Convergence may have committed another catalog. Rebind the installed
+	// plugin lock only after that recovery so this stage cannot replace it with
+	// the pre-convergence snapshot.
+	production, err = platform.NewManagedPluginProduction(config, status.ActiveGenerationID, service)
+	if err != nil {
+		return err
+	}
 	if current, receipt, candidateLock, err := production.Activation.AlreadyCurrent(transactionID); err != nil {
 		return err
 	} else if current {
@@ -249,14 +271,33 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
 	receipt, err := production.Activation.Apply(ctx, transactionID)
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(output, "Managed plugins: status=INSTALLED catalog=%s candidateLock=%s readiness=%s generation=%s\n", command.digest, result.CandidateLockDigest, receipt, status.ActiveGenerationID)
 	return err
+}
+
+// managedPluginMutationLockPath deliberately returns the same installation-wide
+// lifecycle lease used by the bootstrap update and rollback routes. It is
+// acquired before any installed-state inspection and retained through durable
+// journal convergence, stage, activation, and finalization.
+func managedPluginMutationLockPath(profile model.Profile) (string, error) {
+	if profile == model.ProfileHosting {
+		if runtime.GOOS != "linux" {
+			return "", errors.New("Hosting lifecycle is supported only on Linux")
+		}
+		return "/run/lock/fased-bootstrap-hosting.lock", nil
+	}
+	if profile != model.ProfileProtectedLocal {
+		return "", errors.New("managed plugin profile is invalid")
+	}
+	return platform.BootstrapMutationLockPathForOS(runtime.GOOS), nil
+}
+
+func acquireManagedPluginMutationLock(path string, expectedUID uint32) (*hostsecurity.MutationLock, error) {
+	return hostsecurity.AcquireMutationLock(path, expectedUID)
 }
 
 func parseManagedPluginCommand(args []string) (managedPluginCommand, error) {

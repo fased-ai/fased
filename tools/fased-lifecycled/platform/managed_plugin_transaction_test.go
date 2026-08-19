@@ -166,6 +166,21 @@ func TestManagedPluginTransactionStagesImmutableCandidateWithoutLiveMutation(t *
 	}
 }
 
+func TestManagedPluginTransactionRefusesUnsafeNamespace(t *testing.T) {
+	transaction, _, _, _ := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+	t.Cleanup(func() { _ = makePluginTreeRemovable(transaction.CodeRoot) })
+	unsafe := filepath.Join(transaction.TransactionRoot, "unsafe")
+	if err := os.Symlink(transaction.CodeRoot, unsafe); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.recordIDs(); err == nil {
+		t.Fatal("symlink transaction namespace entry was accepted")
+	}
+	if err := os.Remove(unsafe); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestManagedPluginTransactionRejectsDigestMismatchTraversalSymlinkHardlinkAndBounds(t *testing.T) {
 	cases := []struct {
 		name    string
