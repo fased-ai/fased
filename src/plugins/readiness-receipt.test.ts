@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { writePluginReadinessReceipt } from "./readiness-receipt.js";
 
 const roots: string[] = [];
@@ -42,6 +42,7 @@ describe("managed plugin readiness receipt", () => {
   it("binds the exact lock, generation, digest and mandatory load outcome", () => {
     const current = fixture();
     const generationId = `sha256:${"a".repeat(64)}`;
+    const fsync = vi.spyOn(fs, "fsyncSync");
     writePluginReadinessReceipt({ ...current, generationId });
     const receipt = JSON.parse(fs.readFileSync(current.outputPath, "utf8"));
     expect(receipt).toEqual({
@@ -51,6 +52,9 @@ describe("managed plugin readiness receipt", () => {
       lockDigest: `sha256:${createHash("sha256").update(JSON.stringify(current.lock)).digest("hex")}`,
       entries: [{ ...current.lock.entries[0], status: "loaded" }],
     });
+    expect(fsync).toHaveBeenCalledTimes(2);
+    expect(fs.readdirSync(path.dirname(current.outputPath))).toEqual(["plugin-readiness.json"]);
+    fsync.mockRestore();
   });
 
   it("fails closed on unsorted lock entries", () => {

@@ -838,6 +838,18 @@ run_fixture_scenario() {
     --acquisition-evidence-class SUPPORTING >/dev/null
   printf 'branch lifecycle product receipt verified; acquisition supporting: %s\n' "$receipt"
   if [[ "$scenario" == "managed-update" ]]; then
+    plugin_receipt="$receipt.plugins"
+    run_container cp \
+      "$name:/var/lib/fased-protected-local-fixture/managed-plugin-transaction.json" \
+      "$plugin_receipt"
+    jq -e --arg commit "$COMMIT" --arg version "$VERSION" \
+      '.schemaVersion == 1 and .role == "fased-managed-plugin-transaction-acceptance" and
+       .status == "PASS" and .evidenceClass == "PASS" and .commit == $commit and
+       .version == $version and .dataPreserved == true and
+       ([.catalogDigest,.candidateLockDigest,.readinessDigest,.generationId,
+         .installedOutputDigest,.noopOutputDigest] | all(test("^sha256:[0-9a-f]{64}$")))' \
+      "$plugin_receipt" >/dev/null
+    printf 'managed plugin transaction receipt verified: %s\n' "$plugin_receipt"
     if ! run_container exec "$name" /bin/bash \
       /usr/local/bin/fased-protected-local-systemd-fixture verify-operations; then
       dump_fixture_failure "$name"

@@ -492,6 +492,29 @@ describe("lifecycle acceptance contract", () => {
     }
   });
 
+  it("proves the public managed plugin transaction and identical no-op in protected Local", () => {
+    const local = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    expect(local).toContain("run_managed_plugin_transaction_acceptance() {");
+    expect(local).toContain("/usr/local/bin/fased plugins install");
+    expect(local).toContain('--catalog "$catalog" --catalog-digest "$catalog_digest"');
+    expect(local).toContain('--archive "stable-bridge=$archive"');
+    expect(local).toContain("Managed plugins: status=INSTALLED");
+    expect(local).toContain("Managed plugins: status=ALREADY_CURRENT");
+    expect(local).toContain('role:"fased-managed-plugin-transaction-acceptance"');
+    expect(local).toContain("run_managed_plugin_transaction_acceptance");
+    expect(local).toContain('"$stable_bridge_plugin_digest" "$stable_bridge_plugin_object"');
+    expect(local).not.toContain("fased plugins install npm:");
+    const wrapper = readFileSync(
+      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    expect(wrapper).toContain('plugin_receipt="$receipt.plugins"');
+    expect(wrapper).toContain("managed plugin transaction receipt verified");
+  });
+
   it("restores the protected Local system command ancestry after Node extraction", () => {
     for (const containerfile of [
       "./docker/protected-local-systemd/Containerfile.ubuntu",

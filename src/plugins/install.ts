@@ -157,7 +157,7 @@ export type PluginNpmIntegrityDriftParams = {
 };
 
 const managedPluginMutationError =
-  "Managed installations do not install or replace third-party plugin code from the application. Bundled Fased plugins update with the signed core artifact; use a developer source runtime until the separate digest-bound plugin transaction is available.";
+  "Managed installations do not install or replace third-party plugin code from the application. Use the digest-bound `fased plugins install` or `fased plugins update` catalog command; npm and path mutation remain available only in a developer source runtime.";
 
 function rejectManagedPluginMutation(): InstallPluginResult | null {
   return isManagedLifecycleRuntime() ? { ok: false, error: managedPluginMutationError } : null;

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { PluginRegistry } from "./registry.js";
@@ -88,8 +88,32 @@ export function writePluginReadinessReceipt(params: {
       status: loaded.get(entry.id)?.status ?? "error",
     })),
   };
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true, mode: 0o700 });
-  const temporary = `${outputPath}.tmp-${process.pid}`;
-  fs.writeFileSync(temporary, `${JSON.stringify(receipt)}\n`, { mode: 0o600, flag: "wx" });
-  fs.renameSync(temporary, outputPath);
+  const outputDirectory = path.dirname(outputPath);
+  fs.mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
+  const temporary = `${outputPath}.tmp-${process.pid}-${randomUUID()}`;
+  let temporaryFd: number | undefined;
+  try {
+    temporaryFd = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(temporaryFd, `${JSON.stringify(receipt)}\n`);
+    fs.fsyncSync(temporaryFd);
+    fs.closeSync(temporaryFd);
+    temporaryFd = undefined;
+    fs.renameSync(temporary, outputPath);
+    const directoryFd = fs.openSync(outputDirectory, fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } catch (error) {
+    if (temporaryFd !== undefined) {
+      try {
+        fs.closeSync(temporaryFd);
+      } catch {}
+    }
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {}
+    throw error;
+  }
 }

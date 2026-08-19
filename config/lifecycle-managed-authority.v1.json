@@ -489,6 +489,33 @@
       "status": "implemented"
     },
     {
+      "id": "managed-third-party-plugin-transaction",
+      "boundary": "managed",
+      "profiles": ["linux-protected-local", "linux-hosting"],
+      "owner": "go-lifecycle",
+      "implementation": [
+        "tools/fased-lifecycled/cmd/fased-bootstrap/main.go",
+        "tools/fased-lifecycled/platform/managed_plugin_transaction.go",
+        "tools/fased-lifecycled/platform/managed_plugin_activation.go",
+        "tools/fased-lifecycled/platform/managed_plugin_factory.go",
+        "tools/fased-lifecycled/platform/cli_launcher.go",
+        "tools/fased-lifecycled/platform/update_authority.go",
+        "src/plugins/readiness-receipt.ts"
+      ],
+      "evidence": [
+        "tools/fased-lifecycled/cmd/fased-bootstrap/plugins_test.go",
+        "tools/fased-lifecycled/participant/managed_plugin_catalog_test.go",
+        "tools/fased-lifecycled/platform/managed_plugin_transaction_test.go",
+        "tools/fased-lifecycled/platform/managed_plugin_activation_test.go",
+        "tools/fased-lifecycled/platform/managed_plugin_factory_test.go",
+        "tools/fased-lifecycled/platform/cli_launcher_test.go",
+        "tools/fased-lifecycled/platform/update_authority_test.go",
+        "src/plugins/readiness-receipt.test.ts",
+        "scripts/lifecycle-acceptance-contract.test.ts"
+      ],
+      "status": "implemented"
+    },
+    {
       "id": "developer-source-install-and-update",
       "boundary": "separate-unprivileged",
       "profiles": ["developer-source"],

@@ -60,6 +60,76 @@ assert_public_command_projection() {
   test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"
 }
 
+run_managed_plugin_transaction_acceptance() {
+  local plugin_digest="${1:?plugin digest is required}"
+  local plugin_object="${2:?plugin object is required}"
+  local input_root=/tmp/fased-managed-plugin-acceptance
+  local archive="$input_root/stable-bridge.tar.gz"
+  local catalog="$input_root/catalog.json"
+  local archive_digest=""
+  local catalog_digest=""
+  local api_capability=""
+  local required=""
+  local data_before=""
+  local data_after=""
+  local candidate_lock=""
+  local readiness_digest=""
+  local generation_id=""
+  rm -rf "$input_root"
+  install -d -m 0700 -o testop -g testop "$input_root"
+  runuser -u testop -- tar -C "$plugin_object" -czf "$archive" \
+    fased.plugin.json index.js package.json
+  chmod 0600 "$archive"
+  archive_digest="sha256:$(sha256sum "$archive" | awk '{print $1}')"
+  api_capability="$(jq -er '.entries[] | select(.id == "stable-bridge" and .origin == "store") | .apiCapability' "$state/plugin.lock.json")"
+  required="$(jq -er '.entries[] | select(.id == "stable-bridge" and .origin == "store") | .required' "$state/plugin.lock.json")"
+  jq -cn \
+    --arg digest "$plugin_digest" \
+    --arg archiveDigest "$archive_digest" \
+    --arg apiCapability "$api_capability" \
+    --argjson required "$required" \
+    '{schemaVersion:1,type:"fased-managed-plugin-catalog",entries:[{id:"stable-bridge",digest:$digest,archiveDigest:$archiveDigest,apiCapability:$apiCapability,required:$required}]}' \
+    | tr -d '\n' >"$catalog"
+  chown testop:testop "$catalog"
+  chmod 0600 "$catalog"
+  catalog_digest="sha256:$(sha256sum "$catalog" | awk '{print $1}')"
+  data_before="sha256:$(sha256sum "$state/plugin-data/stable-bridge/state.json" | awk '{print $1}')"
+  runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash \
+    /usr/local/bin/fased plugins install \
+    --catalog "$catalog" --catalog-digest "$catalog_digest" \
+    --archive "stable-bridge=$archive" \
+    >/tmp/fased-managed-plugin-install.out
+  grep -F "Managed plugins: status=INSTALLED catalog=$catalog_digest candidateLock=" \
+    /tmp/fased-managed-plugin-install.out >/dev/null
+  runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash \
+    /usr/local/bin/fased plugins install \
+    --catalog "$catalog" --catalog-digest "$catalog_digest" \
+    --archive "stable-bridge=$archive" \
+    >/tmp/fased-managed-plugin-noop.out
+  grep -F "Managed plugins: status=ALREADY_CURRENT catalog=$catalog_digest candidateLock=" \
+    /tmp/fased-managed-plugin-noop.out >/dev/null
+  candidate_lock="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=\([^ ]*\) readiness=.*$/\1/p' /tmp/fased-managed-plugin-install.out)"
+  readiness_digest="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=[^ ]* readiness=\([^ ]*\) generation=.*$/\1/p' /tmp/fased-managed-plugin-install.out)"
+  generation_id="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=[^ ]* readiness=[^ ]* generation=\([^ ]*\)$/\1/p' /tmp/fased-managed-plugin-install.out)"
+  grep -F "candidateLock=$candidate_lock readiness=$readiness_digest generation=$generation_id" \
+    /tmp/fased-managed-plugin-noop.out >/dev/null
+  data_after="sha256:$(sha256sum "$state/plugin-data/stable-bridge/state.json" | awk '{print $1}')"
+  test "$data_before" = "$data_after"
+  jq -cn \
+    --arg commit "$commit" \
+    --arg version "$version" \
+    --arg catalogDigest "$catalog_digest" \
+    --arg candidateLockDigest "$candidate_lock" \
+    --arg readinessDigest "$readiness_digest" \
+    --arg generationId "$generation_id" \
+    --arg installedOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-install.out | awk '{print $1}')" \
+    --arg noopOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-noop.out | awk '{print $1}')" \
+    '{schemaVersion:1,role:"fased-managed-plugin-transaction-acceptance",status:"PASS",evidenceClass:"PASS",commit:$commit,version:$version,catalogDigest:$catalogDigest,candidateLockDigest:$candidateLockDigest,readinessDigest:$readinessDigest,generationId:$generationId,installedOutputDigest:$installedOutputDigest,noopOutputDigest:$noopOutputDigest,dataPreserved:true}' \
+    >/var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
+  chmod 0600 /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
+  rm -rf "$input_root"
+}
+
 acceptance_mark() {
   local predicate="$1"
   local evidence_file="${2:?acceptance evidence file is required}"
@@ -1847,6 +1917,9 @@ EOF_STABLE_BRIDGE_DROPIN
     jq -e --arg digest "$stable_bridge_plugin_digest" \
       '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .digest == $digest and .status == "loaded")' \
       "$state/cache/plugin-readiness.json" >/dev/null
+    run_managed_plugin_transaction_acceptance \
+      "$stable_bridge_plugin_digest" "$stable_bridge_plugin_object"
+    sha256sum --check "$stable_bridge_manifest"
     verify_canonical_lifecycle_supervisor "$instance"
     acceptance_mark canonical-lifecycle "/var/lib/fased-local/$instance/lifecycle/installation-manifest.json"
     verify_three_services "$instance"

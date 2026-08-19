@@ -111,6 +111,9 @@ describe("managed lifecycle authority contract", () => {
     const managedPlugin = value.capabilities.find(
       ({ id }: { id: string }) => id === "managed-third-party-plugin-mutation-fence",
     );
+    const managedPluginTransaction = value.capabilities.find(
+      ({ id }: { id: string }) => id === "managed-third-party-plugin-transaction",
+    );
 
     expect(developerPlugin).toMatchObject({
       boundary: "separate-unprivileged",
@@ -120,6 +123,12 @@ describe("managed lifecycle authority contract", () => {
     expect(managedPlugin).toMatchObject({
       boundary: "managed",
       profiles: ["*"],
+      status: "implemented",
+    });
+    expect(managedPluginTransaction).toMatchObject({
+      boundary: "managed",
+      profiles: ["linux-protected-local", "linux-hosting"],
+      owner: "go-lifecycle",
       status: "implemented",
     });
   });
