@@ -58,32 +58,39 @@ vi.mock("../../src/agents/pi-embedded-runner/model.js", () => ({
   })),
 }));
 
-vi.mock("../../src/wallet/wallet-provider-registry.js", () => ({
-  readWalletProviderRegistry: vi.fn(() => ({
-    defaultWalletId: "wallet-a",
-    wallets: [
-      {
-        id: "wallet-a",
-        name: "Wallet A",
-        providerId: "embedded-keystore",
-        addresses: { solana: "miner-wallet-1" },
-        metadata: { role: "mining", purpose: "mining" },
-      },
-      {
-        id: "wallet-b",
-        name: "Wallet B",
-        providerId: "embedded-keystore",
-        addresses: { solana: "miner-wallet-2" },
-        metadata: { role: "mining", purpose: "mining" },
-      },
-    ],
-  })),
-  resolveWalletUserRole: vi.fn((wallet?: { metadata?: { purpose?: string; role?: string } }) => {
-    const purpose = wallet?.metadata?.purpose ?? wallet?.metadata?.role;
-    return purpose === "agent" || purpose === "vault" || purpose === "mining" ? purpose : undefined;
-  }),
-  upsertNamedWallet: vi.fn(),
-}));
+vi.mock("../../src/wallet/wallet-provider-registry.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/wallet/wallet-provider-registry.js")>();
+  return {
+    ...actual,
+    readWalletProviderRegistry: vi.fn(() => ({
+      defaultWalletId: "wallet-a",
+      wallets: [
+        {
+          id: "wallet-a",
+          name: "Wallet A",
+          providerId: "embedded-keystore",
+          addresses: { solana: "miner-wallet-1" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+        {
+          id: "wallet-b",
+          name: "Wallet B",
+          providerId: "embedded-keystore",
+          addresses: { solana: "miner-wallet-2" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+      ],
+    })),
+    resolveWalletUserRole: vi.fn((wallet?: { metadata?: { purpose?: string; role?: string } }) => {
+      const purpose = wallet?.metadata?.purpose ?? wallet?.metadata?.role;
+      return purpose === "agent" || purpose === "vault" || purpose === "mining"
+        ? purpose
+        : undefined;
+    }),
+    upsertNamedWallet: vi.fn(),
+  };
+});
 
 vi.mock("../../src/wallet/wallet-provider-resolver.js", async (importOriginal) => {
   const actual =

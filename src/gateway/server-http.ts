@@ -8082,45 +8082,14 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
-        try {
-          const status = await gatewayMiningFacade.readStatusPayload();
-          const epochId = Number(status.currentEpochId ?? 0);
-          const microRoundId = Number(status.currentMicroRoundId ?? 0);
-          const bucketHash =
-            typeof status.currentBucketHash === "string" ? status.currentBucketHash.trim() : "";
-          if (!epochId || !microRoundId || !bucketHash) {
-            sendLoginResponse(409, {
-              ok: false,
-              error: {
-                code: "mining_action_blocked",
-                message: "No active SAT round is available yet.",
-              },
-            });
-            return;
-          }
-          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
-            "sat.submitParticipation",
-            {
-              epochId,
-              microRoundId,
-              bucketHash,
-            },
-          );
-          const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
-          sendLoginResponse(200, {
-            ok: true,
-            result: result.payload ?? null,
-            status: refreshedStatus,
-          });
-        } catch (error) {
-          sendLoginResponse(409, {
-            ok: false,
-            error: {
-              code: "mining_action_blocked",
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
-        }
+        sendLoginResponse(410, {
+          ok: false,
+          error: {
+            code: "mining_action_retired",
+            message:
+              "SAT participation is retired from this HTTP route; use protected Mining automation.",
+          },
+        });
         return;
       }
       if (requestPath === "/api/mining/action/crank") {
@@ -8136,39 +8105,13 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
-        try {
-          const status = await gatewayMiningFacade.readStatusPayload();
-          const epochId = Number(status.currentEpochId ?? 0);
-          const microRoundId = Number(status.currentMicroRoundId ?? 0);
-          if (!epochId || !microRoundId) {
-            sendLoginResponse(409, {
-              ok: false,
-              error: {
-                code: "mining_action_blocked",
-                message: "No active SAT round is available for crank.",
-              },
-            });
-            return;
-          }
-          const result = await gatewayMiningFacade.call<{ payload?: unknown }>("sat.miningCrank", {
-            epochId,
-            microRoundId,
-          });
-          const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
-          sendLoginResponse(200, {
-            ok: true,
-            result: result.payload ?? null,
-            status: refreshedStatus,
-          });
-        } catch (error) {
-          sendLoginResponse(409, {
-            ok: false,
-            error: {
-              code: "mining_action_blocked",
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
-        }
+        sendLoginResponse(410, {
+          ok: false,
+          error: {
+            code: "mining_action_retired",
+            message: "SAT crank is retired from this HTTP route; use the managed keeper.",
+          },
+        });
         return;
       }
       if (requestPath === "/api/mining/action/finalize-epoch") {
@@ -8184,46 +8127,14 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           });
           return;
         }
-        try {
-          const status = await gatewayMiningFacade.readStatusPayload();
-          const epochId = Number(status.currentEpochId ?? 0);
-          const bucketRoot =
-            typeof status.currentBucketRoot === "string" ? status.currentBucketRoot.trim() : "";
-          const scoreRoot =
-            typeof status.currentScoreRoot === "string" ? status.currentScoreRoot.trim() : "";
-          if (!epochId || !bucketRoot || !scoreRoot) {
-            sendLoginResponse(409, {
-              ok: false,
-              error: {
-                code: "mining_action_blocked",
-                message: "Epoch roots are not ready to finalize.",
-              },
-            });
-            return;
-          }
-          const result = await gatewayMiningFacade.call<{ payload?: unknown }>(
-            "sat.finalizeEpoch",
-            {
-              epochId,
-              bucketRoot,
-              scoreRoot,
-            },
-          );
-          const refreshedStatus = await gatewayMiningFacade.readStatusPayload().catch(() => null);
-          sendLoginResponse(200, {
-            ok: true,
-            result: result.payload ?? null,
-            status: refreshedStatus,
-          });
-        } catch (error) {
-          sendLoginResponse(409, {
-            ok: false,
-            error: {
-              code: "mining_action_blocked",
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
-        }
+        sendLoginResponse(410, {
+          ok: false,
+          error: {
+            code: "mining_action_retired",
+            message:
+              "SAT epoch finalization is retired from this HTTP route; use the managed keeper.",
+          },
+        });
         return;
       }
       if (requestPath === "/api/mining/action/claim") {

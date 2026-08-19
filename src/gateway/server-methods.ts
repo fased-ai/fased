@@ -1,10 +1,15 @@
 import {
+  buildGatewayMiningChangedEventPayload,
+  GATEWAY_EVENT_MINING_CHANGED,
+  isSatMiningMutationMethod,
+  SAT_MINING_MUTATION_METHODS,
+} from "../mining/mining-facade.js";
+import {
   shouldMirrorMiningGatewayTask,
   syncMiningGatewayTask,
 } from "../mining/mining-task-ledger.js";
 import { formatControlPlaneActor, resolveControlPlaneActor } from "./control-plane-audit.js";
 import { consumeControlPlaneWriteBudget } from "./control-plane-rate-limit.js";
-import { GATEWAY_EVENT_MINING_CHANGED } from "./events.js";
 import { ADMIN_SCOPE, authorizeOperatorScopesForMethod } from "./method-scopes.js";
 import { consumeMutatingAdminRpcBudget } from "./mutating-admin-rpc-rate-limit.js";
 import { ErrorCodes, errorShape } from "./protocol/index.js";
@@ -55,61 +60,6 @@ const CONTROL_PLANE_WRITE_METHODS = new Set([
   "hooks.setEnabled",
   "update.run",
 ]);
-const SAT_MINING_MUTATION_METHODS = new Set([
-  "sat.openCycle",
-  "sat.topUpRegistryReserve",
-  "sat.refillRegistryReserveFromTreasury",
-  "sat.runProtocolMaintenanceOnce",
-  "sat.claimProtocolTreasury",
-  "sat.claimProtocolDistributorSat",
-  "sat.initMinerCapital",
-  "sat.depositMinerCapital",
-  "sat.withdrawMinerCapital",
-  "sat.setActiveCommit",
-  "sat.submitCycle",
-  "sat.settleCyclePage",
-  "sat.finalizeCycleSettlement",
-  "sat.scoreCyclePage",
-  "sat.distributeCyclePage",
-  "sat.runKeeperOnce",
-  "sat.claimCycleRewards",
-  "sat.claimCycleRewardsBatch",
-  "sat.claimBacklog",
-  "sat.retargetUnlock",
-  "sat.closeResolvedCycleAccounts",
-  "sat.compactPendingCycleRange",
-  "sat.setMinerProfile",
-  "sat.syncMainnet",
-  "sat.startMining",
-  "sat.stopMining",
-  "sat.clearMiningHistory",
-  "sat.resolveDispute",
-  "sat.republishEpochRoots",
-  "sat.submitValidatorAttestation",
-  "sat.openDispute",
-]);
-
-function readRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function buildMiningChangedPayload(method: string, responsePayload: unknown) {
-  const responseRecord = readRecord(responsePayload);
-  const payloadRecord = readRecord(responseRecord?.payload);
-  const status = payloadRecord?.status ?? responseRecord?.status;
-  return {
-    method,
-    atMs: Date.now(),
-    ...(status ? { status } : {}),
-    ...(typeof payloadRecord?.started === "boolean" ? { started: payloadRecord.started } : {}),
-    ...(typeof payloadRecord?.stopped === "boolean" ? { stopped: payloadRecord.stopped } : {}),
-    ...("submitted" in (payloadRecord ?? {}) ? { submitted: payloadRecord?.submitted } : {}),
-  };
-}
-
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
   if (!client?.connect) {
     return null;
@@ -300,10 +250,10 @@ export async function handleGatewayRequest(
       }
     }
   }
-  if (responseOk === true && SAT_MINING_MUTATION_METHODS.has(req.method)) {
+  if (responseOk === true && isSatMiningMutationMethod(req.method)) {
     context.broadcast(
       GATEWAY_EVENT_MINING_CHANGED,
-      buildMiningChangedPayload(req.method, responsePayload),
+      buildGatewayMiningChangedEventPayload(req.method, responsePayload),
       { dropIfSlow: true },
     );
   }
