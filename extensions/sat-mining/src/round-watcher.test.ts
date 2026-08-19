@@ -122,7 +122,7 @@ const inspectSatCycleRegistryMeta = vi.fn(
 const inspectSatMinerCapital = vi.fn(
   async (..._args: unknown[]): Promise<unknown> => ({
     address: "capital",
-    authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+    authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW", // pragma: allowlist secret
     fundedLamports: "3000000000",
     lockedLamports: "0",
     freeLamports: "3000000000",
@@ -244,7 +244,7 @@ describe("createSatRoundWatcherService", () => {
     });
     process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
     process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
-    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
     process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
     inspectSatCycle.mockReset();
     inspectSatCycle.mockImplementation(async (config, args) =>
