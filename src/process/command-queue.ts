@@ -322,3 +322,28 @@ export function waitForActiveTasks(timeoutMs: number): Promise<{ drained: boolea
     check();
   });
 }
+
+/**
+ * Wait for the live queue after `markGatewayDraining()`: unlike the historic
+ * active-task snapshot, this observes both queued and running work across all
+ * lanes until no accepted task remains. New enqueue attempts are rejected by
+ * the draining gate, so a successful result is a durable quiescence boundary.
+ */
+export function waitForAllTasks(timeoutMs: number): Promise<{ drained: boolean }> {
+  const POLL_INTERVAL_MS = 50;
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const check = () => {
+      if (getTotalQueueSize() === 0) {
+        resolve({ drained: true });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve({ drained: false });
+        return;
+      }
+      setTimeout(check, POLL_INTERVAL_MS);
+    };
+    check();
+  });
+}

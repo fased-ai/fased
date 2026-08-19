@@ -930,6 +930,10 @@ export function armTimer(state: CronServiceState) {
     clearTimeout(state.timer);
   }
   state.timer = null;
+  if (state.lifecycleStopping) {
+    state.deps.log.debug({}, "cron: armTimer skipped - lifecycle stopping");
+    return;
+  }
   if (!state.deps.cronEnabled) {
     state.deps.log.debug({}, "cron: armTimer skipped - scheduler disabled");
     return;
@@ -969,6 +973,9 @@ export function armTimer(state: CronServiceState) {
 function armRunningRecheckTimer(state: CronServiceState) {
   if (state.timer) {
     clearTimeout(state.timer);
+  }
+  if (state.lifecycleStopping) {
+    return;
   }
   state.timer = setTimeout(() => {
     void onTimer(state).catch((err) => {
@@ -3292,6 +3299,9 @@ export async function processAndApplyQueuedCronTaskRuns(
 }
 
 export async function onTimer(state: CronServiceState) {
+  if (state.lifecycleStopping) {
+    return;
+  }
   if (state.running) {
     // Re-arm the timer so the scheduler keeps ticking even when a job is
     // still executing.  Without this, a long-running job (e.g. an agentTurn
@@ -3307,6 +3317,11 @@ export async function onTimer(state: CronServiceState) {
     return;
   }
   state.running = true;
+  state.activeTimerFailure = null;
+  let resolveDrain!: () => void;
+  state.activeTimerDrain = new Promise<void>((resolve) => {
+    resolveDrain = resolve;
+  });
   // Keep a watchdog timer armed while a tick is executing. If execution hangs
   // (for example in a provider call), the scheduler still wakes to re-check.
   armRunningRecheckTimer(state);
@@ -3394,9 +3409,16 @@ export async function onTimer(state: CronServiceState) {
         }
       }
     }
+  } catch (error) {
+    state.activeTimerFailure = error instanceof Error ? error : new Error(String(error));
+    throw error;
   } finally {
     state.running = false;
-    armTimer(state);
+    state.activeTimerDrain = null;
+    resolveDrain();
+    if (!state.lifecycleStopping) {
+      armTimer(state);
+    }
   }
 }
 

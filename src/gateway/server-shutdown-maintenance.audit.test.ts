@@ -44,19 +44,26 @@ describe("gateway shutdown maintenance audit", () => {
     const serverClose = readGatewaySource("server-close.ts");
     const channelStop = serverClose.indexOf("for (const plugin of listChannelPlugins())");
     const pluginStop = serverClose.indexOf("params.pluginServices.stop()", channelStop);
-    const cronStop = serverClose.indexOf("params.cron.stop()", pluginStop);
+    const reloadStop = serverClose.indexOf("await params.configReloader.stop()", pluginStop);
+    const cronStop = serverClose.indexOf("params.cron.stopAndDrainForLifecycle()", reloadStop);
     const heartbeatStop = serverClose.indexOf("params.heartbeatRunner.stop()", cronStop);
     const clearTick = serverClose.indexOf("clearInterval(params.tickInterval)", heartbeatStop);
     const websocketClose = serverClose.indexOf("params.wss.close", clearTick);
     const httpClose = serverClose.indexOf("httpServer.close", websocketClose);
+    const ledgerFenceAndCheckpoint = serverClose.indexOf(
+      "checkpointAndCloseTaskLedgersForLifecycle({ managedStop: restartExpectedMs === null })",
+      httpClose,
+    );
 
     expect(channelStop).toBeGreaterThan(-1);
     expect(pluginStop).toBeGreaterThan(channelStop);
-    expect(cronStop).toBeGreaterThan(pluginStop);
+    expect(reloadStop).toBeGreaterThan(pluginStop);
+    expect(cronStop).toBeGreaterThan(reloadStop);
     expect(heartbeatStop).toBeGreaterThan(cronStop);
     expect(clearTick).toBeGreaterThan(heartbeatStop);
     expect(websocketClose).toBeGreaterThan(clearTick);
     expect(httpClose).toBeGreaterThan(websocketClose);
+    expect(ledgerFenceAndCheckpoint).toBeGreaterThan(httpClose);
   });
 
   it("documents the current Promise<void> close contract before timeout import", () => {

@@ -8,9 +8,8 @@ const acquireGatewayLock = vi.fn(async (_opts?: { port?: number }) => ({
 const consumeGatewaySigusr1RestartAuthorization = vi.fn(() => true);
 const isGatewaySigusr1RestartExternallyAllowed = vi.fn(() => false);
 const markGatewaySigusr1RestartHandled = vi.fn();
-const getActiveTaskCount = vi.fn(() => 0);
 const markGatewayDraining = vi.fn();
-const waitForActiveTasks = vi.fn(async (_timeoutMs: number) => ({ drained: true }));
+const waitForAllTasks = vi.fn(async (_timeoutMs: number) => ({ drained: true }));
 const resetAllLanes = vi.fn();
 const restartGatewayProcessWithFreshPid = vi.fn<
   () => { mode: "spawned" | "supervised" | "disabled" | "failed"; pid?: number; detail?: string }
@@ -37,9 +36,8 @@ vi.mock("../../infra/process-respawn.js", () => ({
 }));
 
 vi.mock("../../process/command-queue.js", () => ({
-  getActiveTaskCount: () => getActiveTaskCount(),
   markGatewayDraining: () => markGatewayDraining(),
-  waitForActiveTasks: (timeoutMs: number) => waitForActiveTasks(timeoutMs),
+  waitForAllTasks: (timeoutMs: number) => waitForAllTasks(timeoutMs),
   resetAllLanes: () => resetAllLanes(),
 }));
 
@@ -158,12 +156,117 @@ describe("runGatewayLoop", () => {
     });
   });
 
+  it("exits 1 and suppresses restart when durable server close rejects", async () => {
+    vi.clearAllMocks();
+
+    await withIsolatedSignals(async () => {
+      const lockRelease = vi.fn(async () => {});
+      const closeFailure = new Error("task ledger WAL checkpoint did not complete");
+      acquireGatewayLock.mockResolvedValueOnce({ release: lockRelease });
+      const close = vi.fn(async () => {
+        throw closeFailure;
+      });
+      const { start, started } = createSignaledStart(close);
+      const { runtime, exited } = createRuntimeWithExitSignal();
+      await runLoopWithStart({ start, runtime });
+      await waitForStart(started);
+
+      process.emit("SIGTERM");
+
+      await expect(exited).resolves.toBe(1);
+      expect(runtime.exit).toHaveBeenCalledWith(1);
+      expect(lockRelease).toHaveBeenCalledTimes(1);
+      expect(restartGatewayProcessWithFreshPid).not.toHaveBeenCalled();
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(gatewayLog.error).toHaveBeenCalledWith(expect.stringContaining(closeFailure.message));
+    });
+  });
+
+  it("drains before SIGTERM close and exits 0 after a successful stop", async () => {
+    vi.clearAllMocks();
+
+    await withIsolatedSignals(async () => {
+      const events: string[] = [];
+      waitForAllTasks.mockImplementation(async () => {
+        events.push("drain");
+        return { drained: true };
+      });
+      const close = vi.fn(async () => {
+        events.push("close");
+      });
+      const { start, started } = createSignaledStart(close);
+      const { runtime, exited } = createRuntimeWithExitSignal();
+      await runLoopWithStart({ start, runtime });
+      await waitForStart(started);
+
+      process.emit("SIGTERM");
+
+      await expect(exited).resolves.toBe(0);
+      expect(markGatewayDraining).toHaveBeenCalledTimes(1);
+      expect(waitForAllTasks).toHaveBeenCalledWith(30_000);
+      expect(events).toEqual(["drain", "close"]);
+    });
+  });
+
+  it("fails SIGTERM without close or restart when the drain deadline expires", async () => {
+    vi.clearAllMocks();
+
+    await withIsolatedSignals(async () => {
+      const lockRelease = vi.fn(async () => {});
+      acquireGatewayLock.mockResolvedValueOnce({ release: lockRelease });
+      waitForAllTasks.mockResolvedValueOnce({ drained: false });
+      const { close, start, runtime, exited } = await createSignaledLoopHarness();
+
+      process.emit("SIGTERM");
+
+      await expect(exited).resolves.toBe(1);
+      expect(markGatewayDraining).toHaveBeenCalledTimes(1);
+      expect(waitForAllTasks).toHaveBeenCalledWith(30_000);
+      expect(close).not.toHaveBeenCalled();
+      expect(restartGatewayProcessWithFreshPid).not.toHaveBeenCalled();
+      expect(lockRelease).toHaveBeenCalledTimes(1);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(runtime.exit).toHaveBeenCalledWith(1);
+    });
+  });
+
+  it("uses the full drain plus shutdown deadline before failing a stuck stop", async () => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+
+    try {
+      await withIsolatedSignals(async () => {
+        const lockRelease = vi.fn(async () => {});
+        acquireGatewayLock.mockResolvedValueOnce({ release: lockRelease });
+        const close = vi.fn(() => new Promise<void>(() => {}));
+        const { start, started } = createSignaledStart(close);
+        const { runtime, exited } = createRuntimeWithExitSignal();
+        await runLoopWithStart({ start, runtime });
+        await started;
+
+        process.emit("SIGTERM");
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(runtime.exit).not.toHaveBeenCalled();
+        expect(lockRelease).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        await expect(exited).resolves.toBe(1);
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(lockRelease).toHaveBeenCalledTimes(1);
+        expect(runtime.exit).toHaveBeenCalledWith(1);
+        expect(restartGatewayProcessWithFreshPid).not.toHaveBeenCalled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restarts after SIGUSR1 even when drain times out, and resets lanes for the new iteration", async () => {
     vi.clearAllMocks();
 
     await withIsolatedSignals(async () => {
-      getActiveTaskCount.mockReturnValueOnce(2).mockReturnValueOnce(0);
-      waitForActiveTasks.mockResolvedValueOnce({ drained: false });
+      waitForAllTasks.mockResolvedValueOnce({ drained: false });
 
       type StartServer = () => Promise<{
         close: (opts: { reason: string; restartExpectedMs: number | null }) => Promise<void>;
@@ -214,7 +317,7 @@ describe("runGatewayLoop", () => {
       expect(start).toHaveBeenCalledTimes(2);
       await new Promise<void>((resolve) => setImmediate(resolve));
 
-      expect(waitForActiveTasks).toHaveBeenCalledWith(30_000);
+      expect(waitForAllTasks).toHaveBeenCalledWith(30_000);
       expect(markGatewayDraining).toHaveBeenCalledTimes(1);
       expect(gatewayLog.warn).toHaveBeenCalledWith(DRAIN_TIMEOUT_LOG);
       expect(closeFirst).toHaveBeenCalledWith({

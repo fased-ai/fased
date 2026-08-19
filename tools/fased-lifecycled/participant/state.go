@@ -22,14 +22,23 @@ type StateSpec struct {
 	SignerOwned     bool
 	ProjectionOwned bool
 	SQLite          bool
+	// SQLiteMains declares exact database mains inside an otherwise ordinary
+	// recursive participant. It keeps a single application-state directory
+	// from accidentally treating every *.sqlite file as a lifecycle database.
+	SQLiteMains []string
 }
 
 func CanonicalStateSpecs(ownerStateRoot, signerStateRoot string) []StateSpec {
 	var specs []StateSpec
-	for _, name := range []string{"agents", "channels", "cron", "delivery-queue", "devices", "identity", "memory", "schedules", "secrets", "sessions", "tasks", "workspace"} {
+	for _, name := range []string{"agents", "channels", "cron", "delivery-queue", "devices", "identity", "memory", "schedules", "secrets", "sessions", "workspace"} {
 		specs = append(specs, StateSpec{Kind: ApplicationState, Path: filepath.Join(ownerStateRoot, name)})
 	}
 	specs = append(specs,
+		// The task directory otherwise remains ordinary application state, but
+		// the managed ledger and any WAL/SHM/journal members are one durable
+		// SQLite family. JSON-only predecessor installs remain valid because
+		// this declaration is inert until the exact main database exists.
+		StateSpec{Kind: ApplicationState, Path: filepath.Join(ownerStateRoot, "tasks"), SQLiteMains: []string{filepath.Join(ownerStateRoot, "tasks", "task-ledger.sqlite")}},
 		StateSpec{Kind: Configuration, Path: filepath.Join(ownerStateRoot, "fased.json"), RootOnly: true, ProjectionOwned: true},
 		StateSpec{Kind: Configuration, Path: filepath.Join(ownerStateRoot, "install.json"), RootOnly: true, ProjectionOwned: true},
 		StateSpec{Kind: Configuration, Path: filepath.Join(ownerStateRoot, "lifecycle.json"), RootOnly: true, ProjectionOwned: true},

@@ -22,6 +22,11 @@ type CronQueueStoredRow = {
   completed_at: number | null;
   run_json: string;
 };
+type WalCheckpointRow = {
+  busy?: unknown;
+  log?: unknown;
+  checkpointed?: unknown;
+};
 
 const CRON_QUEUE_IMPORT_MARKER = "cron_task_run_queue_import";
 const CRON_QUEUE_TERMINAL_STATUSES = new Set([
@@ -33,6 +38,25 @@ const CRON_QUEUE_TERMINAL_STATUSES = new Set([
   "recovered",
 ]);
 const CRON_QUEUE_TERMINAL_HISTORY_LIMIT = 500;
+
+// A managed Gateway stop captures this process-local ledger only after all
+// ingress drained. Once set, no late async completion may reopen or mutate it.
+let lifecycleWriterFence = false;
+
+export function fenceTaskLedgerWritersForLifecycle(): void {
+  lifecycleWriterFence = true;
+}
+
+/** Test-only reset; production process lifetime intentionally has no reopen. */
+export function resetTaskLedgerWriterFenceForTests(): void {
+  lifecycleWriterFence = false;
+}
+
+function assertTaskLedgerWriterAvailable(): void {
+  if (lifecycleWriterFence) {
+    throw new Error("Task ledger writes are fenced for managed lifecycle stop");
+  }
+}
 
 export type TaskDefinitionCollection = "task_flow" | "standing_order" | "workflow_definition";
 
@@ -421,6 +445,7 @@ function parseRow(row: TaskRow | undefined): TaskRecord | undefined {
 
 export class TaskLedgerStore {
   private readonly db: DatabaseSync;
+  private closed = false;
   readonly databasePath: string;
 
   constructor(databasePath: string) {
@@ -444,7 +469,65 @@ export class TaskLedgerStore {
   }
 
   close(): void {
+    if (this.closed) {
+      return;
+    }
+    this.closeDatabase();
+  }
+
+  /**
+   * Lifecycle-only durable close. Ordinary callers only need to relinquish a
+   * local handle; the managed Gateway shutdown invokes this stronger boundary
+   * after ingress has fully stopped and before Go captures application state.
+   */
+  checkpointAndCloseForLifecycle(): void {
+    if (this.closed) {
+      return;
+    }
+    // The lifecycle controller snapshots this database only after Gateway
+    // quiescence. Flush every durable transaction into the main database
+    // before releasing our last cached handle, so capture cannot observe a
+    // detached WAL family. Do not swallow an error: systemd shutdown must
+    // fail rather than claiming that lifecycle capture is durable.
+    let checkpointFailure: unknown;
+    try {
+      const result = this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as
+        | WalCheckpointRow
+        | undefined;
+      if (
+        !result ||
+        result.busy !== 0 ||
+        typeof result.log !== "number" ||
+        typeof result.checkpointed !== "number" ||
+        !Number.isSafeInteger(result.log) ||
+        !Number.isSafeInteger(result.checkpointed) ||
+        result.log < 0 ||
+        result.checkpointed < 0 ||
+        result.log !== result.checkpointed
+      ) {
+        throw new Error("Task ledger WAL checkpoint did not complete");
+      }
+    } catch (error) {
+      checkpointFailure = error;
+    }
+
+    let closeFailure: unknown;
+    try {
+      this.closeDatabase();
+    } catch (error) {
+      closeFailure = error;
+    }
+    if (checkpointFailure !== undefined) {
+      throw checkpointFailure;
+    }
+    if (closeFailure !== undefined) {
+      throw closeFailure;
+    }
+  }
+
+  private closeDatabase(): void {
     this.db.close();
+    this.closed = true;
   }
 
   list(): TaskRecord[] {
@@ -661,6 +744,7 @@ export class TaskLedgerStore {
   }
 
   private withWriteTransaction<T>(operation: () => T): T {
+    assertTaskLedgerWriterAvailable();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const result = operation();
@@ -856,11 +940,13 @@ export class TaskLedgerStore {
 }
 
 export function openTaskLedgerStore(databasePath: string): TaskLedgerStore {
+  assertTaskLedgerWriterAvailable();
   return new TaskLedgerStore(databasePath);
 }
 
 /** Create and atomically publish the first ledger; existing ledgers are never rewritten here. */
 export function initializeTaskLedger(input: TaskLedgerInitialization): void {
+  assertTaskLedgerWriterAvailable();
   const databasePath = input.databasePath;
   if (fs.existsSync(databasePath)) {
     return;

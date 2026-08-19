@@ -305,6 +305,7 @@ export function startGatewayConfigReloader(opts: {
   let running = false;
   let stopped = false;
   let missingConfigRetries = 0;
+  let activeRun: Promise<void> | null = null;
 
   const scheduleAfter = (wait: number) => {
     if (stopped) {
@@ -402,41 +403,50 @@ export function startGatewayConfigReloader(opts: {
     commitBaseline();
   };
 
-  const runReload = async () => {
+  const runReload = (): Promise<void> => {
     if (stopped) {
-      return;
+      return Promise.resolve();
     }
     if (running) {
       pending = true;
-      return;
+      return activeRun ?? Promise.resolve();
     }
-    running = true;
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
-    }
-    try {
-      const snapshot = await opts.readSnapshot();
-      // A newly observed source revision supersedes any decision made for the
-      // previous one, even when this revision is missing, invalid, unchanged,
-      // disabled, or cannot be applied in the configured reload mode.
-      opts.onSourceRevision?.(snapshot);
-      if (handleMissingSnapshot(snapshot)) {
-        return;
+    const run = (async () => {
+      running = true;
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
       }
-      if (handleInvalidSnapshot(snapshot)) {
-        return;
+      try {
+        const snapshot = await opts.readSnapshot();
+        // A newly observed source revision supersedes any decision made for the
+        // previous one, even when this revision is missing, invalid, unchanged,
+        // disabled, or cannot be applied in the configured reload mode.
+        opts.onSourceRevision?.(snapshot);
+        if (handleMissingSnapshot(snapshot)) {
+          return;
+        }
+        if (handleInvalidSnapshot(snapshot)) {
+          return;
+        }
+        await applySnapshot(snapshot);
+      } catch {
+        opts.log.error("config reload failed; keeping last-known-good configuration");
+      } finally {
+        running = false;
+        if (pending) {
+          pending = false;
+          schedule();
+        }
       }
-      await applySnapshot(snapshot);
-    } catch {
-      opts.log.error("config reload failed; keeping last-known-good configuration");
-    } finally {
-      running = false;
-      if (pending) {
-        pending = false;
-        schedule();
+    })();
+    activeRun = run;
+    void run.finally(() => {
+      if (activeRun === run) {
+        activeRun = null;
       }
-    }
+    });
+    return run;
   };
 
   const watcher = chokidar.watch(opts.watchPath, {
@@ -467,6 +477,7 @@ export function startGatewayConfigReloader(opts: {
       }
       stopPromise = (async () => {
         stopped = true;
+        pending = false;
         try {
           opts.onStop?.();
         } catch {
@@ -478,6 +489,7 @@ export function startGatewayConfigReloader(opts: {
         debounceTimer = null;
         watcherClosed = true;
         await watcher.close().catch(() => {});
+        await activeRun;
       })();
       return stopPromise;
     },

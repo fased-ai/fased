@@ -7,6 +7,7 @@ import { createGatewayCloseHandler } from "./server-close.js";
 const mocks = vi.hoisted(() => ({
   listChannelPlugins: vi.fn(() => [{ id: "telegram" }, { id: "discord" }]),
   stopGmailWatcher: vi.fn(async () => {}),
+  checkpointAndCloseTaskLedgersForLifecycle: vi.fn(),
 }));
 
 vi.mock("../channels/plugins/index.js", () => ({
@@ -15,6 +16,10 @@ vi.mock("../channels/plugins/index.js", () => ({
 
 vi.mock("../hooks/gmail-watcher.js", () => ({
   stopGmailWatcher: mocks.stopGmailWatcher,
+}));
+
+vi.mock("../tasks/task-ledger-lifecycle.js", () => ({
+  checkpointAndCloseTaskLedgersForLifecycle: mocks.checkpointAndCloseTaskLedgersForLifecycle,
 }));
 
 type CloseHandlerParams = Parameters<typeof createGatewayCloseHandler>[0];
@@ -35,6 +40,9 @@ function createCloseFixture(overrides: Partial<CloseHandlerParams> = {}, events:
     cron: {
       stop: () => {
         events.push("cron.stop");
+      },
+      stopAndDrainForLifecycle: async () => {
+        events.push("cron.lifecycle.stopDrain");
       },
     },
     heartbeatRunner: {
@@ -93,6 +101,7 @@ describe("createGatewayCloseHandler", () => {
   beforeEach(() => {
     mocks.listChannelPlugins.mockReturnValue([{ id: "telegram" }, { id: "discord" }]);
     mocks.stopGmailWatcher.mockReset();
+    mocks.checkpointAndCloseTaskLedgersForLifecycle.mockReset();
   });
 
   afterEach(() => {
@@ -103,6 +112,9 @@ describe("createGatewayCloseHandler", () => {
     const events: string[] = [];
     mocks.stopGmailWatcher.mockImplementation(async () => {
       events.push("gmail.stop");
+    });
+    mocks.checkpointAndCloseTaskLedgersForLifecycle.mockImplementation(() => {
+      events.push("taskLedger.checkpoint.close");
     });
     const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
     const tickInterval = setInterval(() => {}, 60_000);
@@ -162,6 +174,9 @@ describe("createGatewayCloseHandler", () => {
         stop: () => {
           events.push("cron.stop");
         },
+        stopAndDrainForLifecycle: async () => {
+          events.push("cron.lifecycle.stopDrain");
+        },
       },
       heartbeatRunner: {
         stop: () => {
@@ -219,24 +234,109 @@ describe("createGatewayCloseHandler", () => {
       "stopChannel:discord",
       "pluginServices.stop",
       "gmail.stop",
-      "cron.stop",
+      "configReloader.stop",
+      "cron.lifecycle.stopDrain",
       "heartbeat.stop",
       'broadcast:shutdown:{"reason":"test shutdown","restartExpectedMs":250}',
       "agent.unsub",
       "heartbeat.unsub",
       "chat.clear",
       "client.close:1012:service restart",
-      "configReloader.stop",
       "browserControl.stop",
       "wss.close",
       "http.closeIdleConnections",
       "http.close",
+      "taskLedger.checkpoint.close",
     ]);
     expect(clearIntervalSpy).toHaveBeenCalledWith(tickInterval);
     expect(clearIntervalSpy).toHaveBeenCalledWith(healthInterval);
     expect(clearIntervalSpy).toHaveBeenCalledWith(dedupeCleanup);
     expect(clearIntervalSpy).toHaveBeenCalledWith(presenceTimer);
     expect(clients.size).toBe(0);
+  });
+
+  it("propagates task-ledger checkpoint failure only after websocket and HTTP ingress close", async () => {
+    const events: string[] = [];
+    const checkpointFailure = new Error("task ledger checkpoint failed");
+    mocks.stopGmailWatcher.mockImplementation(async () => {
+      events.push("gmail.stop");
+    });
+    mocks.checkpointAndCloseTaskLedgersForLifecycle.mockImplementation(() => {
+      events.push("taskLedger.checkpoint.close");
+      throw checkpointFailure;
+    });
+    const { close } = createCloseFixture(
+      {
+        cron: {
+          stop: () => events.push("cron.stop"),
+          stopAndDrainForLifecycle: async () => {
+            events.push("cron.lifecycle.stopDrain");
+          },
+        },
+        heartbeatRunner: { stop: () => events.push("heartbeat.stop"), updateConfig: () => {} },
+      },
+      events,
+    );
+
+    await expect(close()).rejects.toBe(checkpointFailure);
+    expect(events).toEqual([
+      "stopChannel:telegram",
+      "stopChannel:discord",
+      "gmail.stop",
+      "configReloader.stop",
+      "cron.lifecycle.stopDrain",
+      "heartbeat.stop",
+      'broadcast:shutdown:{"reason":"gateway stopping","restartExpectedMs":null}',
+      "chat.clear",
+      "wss.close",
+      "http.closeIdleConnections",
+      "http.close",
+      "taskLedger.checkpoint.close",
+    ]);
+  });
+
+  it("rejects before HTTP close and task-ledger ACK/checkpoint when cron lifecycle drain fails", async () => {
+    const events: string[] = [];
+    const drainFailure = new Error("cron lifecycle drain timed out");
+    mocks.stopGmailWatcher.mockImplementation(async () => {
+      events.push("gmail.stop");
+    });
+    const { close } = createCloseFixture(
+      {
+        cron: {
+          stop: () => events.push("cron.stop"),
+          stopAndDrainForLifecycle: async () => {
+            events.push("cron.lifecycle.stopDrain");
+            throw drainFailure;
+          },
+        },
+      },
+      events,
+    );
+
+    await expect(close()).rejects.toBe(drainFailure);
+    expect(events).toEqual([
+      "stopChannel:telegram",
+      "stopChannel:discord",
+      "gmail.stop",
+      "configReloader.stop",
+      "cron.lifecycle.stopDrain",
+    ]);
+    expect(mocks.checkpointAndCloseTaskLedgersForLifecycle).not.toHaveBeenCalled();
+  });
+
+  it("uses the writer fence only for managed stop, not in-process restart", async () => {
+    const { close } = createCloseFixture();
+
+    await close({ reason: "restart", restartExpectedMs: 100 });
+    expect(mocks.checkpointAndCloseTaskLedgersForLifecycle).toHaveBeenLastCalledWith({
+      managedStop: false,
+    });
+
+    await close({ reason: "stop", restartExpectedMs: null });
+    expect(mocks.checkpointAndCloseTaskLedgersForLifecycle).toHaveBeenLastCalledWith({
+      managedStop: true,
+    });
   });
 
   it("resolves with undefined under the current Promise<void> close contract", async () => {

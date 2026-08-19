@@ -563,6 +563,44 @@ describe("startGatewayConfigReloader", () => {
     await reloader.stop();
   });
 
+  it("awaits a suspended hot reload before stop resolves and prevents another schedule", async () => {
+    const candidate = makeSnapshot({
+      config: {
+        gateway: { reload: { debounceMs: 0 } },
+        hooks: { enabled: true },
+      },
+      hash: "suspended-hot-reload",
+    });
+    const readSnapshot = vi.fn<() => Promise<ConfigFileSnapshot>>().mockResolvedValue(candidate);
+    const { watcher, onHotReload, reloader } = createReloaderHarness(readSnapshot);
+    let resolveHotReload!: () => void;
+    onHotReload.mockImplementation(
+      async () =>
+        await new Promise<void>((resolve) => {
+          resolveHotReload = resolve;
+        }),
+    );
+
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+    expect(onHotReload).toHaveBeenCalledTimes(1);
+
+    const stop = reloader.stop();
+    let stopped = false;
+    void stop.then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    watcher.emit("change");
+    await vi.runOnlyPendingTimersAsync();
+    expect(onHotReload).toHaveBeenCalledTimes(1);
+
+    resolveHotReload();
+    await stop;
+    expect(stopped).toBe(true);
+  });
+
   it("runs restart cancellation cleanup when the reloader stops", async () => {
     const readSnapshot = vi
       .fn<() => Promise<ConfigFileSnapshot>>()
