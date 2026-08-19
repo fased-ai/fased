@@ -535,7 +535,7 @@ type SatListFilters = {
 };
 
 let solanaModulePromise: Promise<SolanaModuleLike> | null = null;
-const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"; // pragma: allowlist secret
 
 async function loadSolanaWeb3(): Promise<SolanaModuleLike> {
   solanaModulePromise ??= (async () => require("@solana/web3.js") as SolanaModuleLike)();

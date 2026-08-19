@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createMiningReadConnection,
@@ -35,6 +36,16 @@ function fakeSolana(calls: Map<string, () => Promise<unknown>>): {
 }
 
 describe("Mining RPC read service", () => {
+  it("keeps low-level transport ownership outside the stable facade", async () => {
+    const source = await readFile(new URL("./rpc-read.ts", import.meta.url), "utf8");
+
+    expect(source).toContain('from "./rpc-read-service.js"');
+    expect(source).not.toContain('from "node:http"');
+    expect(source).not.toContain('from "node:https"');
+    expect(source).not.toContain("transport.request(");
+    expect(source).not.toContain("fetchWithSsrFGuard");
+  });
+
   it("uses the primary connection and records the method request", async () => {
     const primaryUrl = "http://service-primary-success.invalid";
     const calls = new Map([[primaryUrl, async () => "primary-result"]]);
