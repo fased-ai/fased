@@ -8,6 +8,8 @@ import {
   clearSatActionHistory,
   clearSatPlannerHistory,
   filterSatPlannerHistoryByCycleEra,
+  parseSatAuditArtifactsBytes,
+  parseSatRuntimeSummaryBytes,
   querySatPlannerHistory,
   readSatActionHistory,
   readSatActionHistoryTail,
@@ -108,6 +110,32 @@ describe("sat audit store", () => {
     const loaded = await readSatAuditArtifacts(filePath);
 
     expect(loaded).toEqual(artifacts);
+  });
+
+  it("parses descriptor-pinned migration bytes without rewriting their legacy path", () => {
+    const archivedFailure = {
+      action: "recoverLockedCapital",
+      txHash: null,
+      status: "failure" as const,
+      message: "capital remains locked",
+      at: "2026-08-19T00:00:00.000Z",
+    };
+    const summary = parseSatRuntimeSummaryBytes(
+      Buffer.from(
+        JSON.stringify({
+          version: 12,
+          recentActions: [],
+          archivedFailures: [archivedFailure, { action: 1 }],
+          enabledWanted: true,
+        }),
+      ),
+    );
+
+    expect(summary).toMatchObject({
+      enabledWanted: true,
+      archivedFailures: [archivedFailure],
+    });
+    expect(parseSatAuditArtifactsBytes(Buffer.from('{"version":1,"artifacts":[]}'))).toEqual([]);
   });
 
   it("separates SAT persistence paths per wallet attachment", async () => {

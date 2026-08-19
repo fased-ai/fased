@@ -169,6 +169,9 @@ describe("createGatewayCloseHandler", () => {
         stop: async () => {
           events.push("pluginServices.stop");
         },
+        checkpointForLifecycle: async () => {
+          events.push("pluginServices.checkpoint");
+        },
       },
       cron: {
         stop: () => {
@@ -246,6 +249,7 @@ describe("createGatewayCloseHandler", () => {
       "wss.close",
       "http.closeIdleConnections",
       "http.close",
+      "pluginServices.checkpoint",
       "taskLedger.checkpoint.close",
     ]);
     expect(clearIntervalSpy).toHaveBeenCalledWith(tickInterval);
@@ -291,6 +295,70 @@ describe("createGatewayCloseHandler", () => {
       "wss.close",
       "http.closeIdleConnections",
       "http.close",
+      "taskLedger.checkpoint.close",
+    ]);
+  });
+
+  it("drains and checkpoints every managed store after plugin stop failure, then propagates it", async () => {
+    const events: string[] = [];
+    const stopFailure = new Error("mining stop failed");
+    mocks.checkpointAndCloseTaskLedgersForLifecycle.mockImplementation(() => {
+      events.push("taskLedger.checkpoint.close");
+    });
+    const { close } = createCloseFixture(
+      {
+        pluginServices: {
+          stop: async () => {
+            events.push("plugin.stop");
+            throw stopFailure;
+          },
+          checkpointForLifecycle: async () => events.push("plugin.checkpoint"),
+        },
+      },
+      events,
+    );
+
+    await expect(close()).rejects.toBe(stopFailure);
+    expect(events).toEqual([
+      "stopChannel:telegram",
+      "stopChannel:discord",
+      "plugin.stop",
+      "configReloader.stop",
+      "cron.lifecycle.stopDrain",
+      "heartbeat.stop",
+      'broadcast:shutdown:{"reason":"gateway stopping","restartExpectedMs":null}',
+      "chat.clear",
+      "wss.close",
+      "http.closeIdleConnections",
+      "http.close",
+      "plugin.checkpoint",
+      "taskLedger.checkpoint.close",
+    ]);
+  });
+
+  it("still checkpoints task ledgers after plugin checkpoint failure", async () => {
+    const events: string[] = [];
+    const checkpointFailure = new Error("mining checkpoint failed");
+    mocks.checkpointAndCloseTaskLedgersForLifecycle.mockImplementation(() => {
+      events.push("taskLedger.checkpoint.close");
+    });
+    const { close } = createCloseFixture(
+      {
+        pluginServices: {
+          stop: async () => events.push("plugin.stop"),
+          checkpointForLifecycle: async () => {
+            events.push("plugin.checkpoint");
+            throw checkpointFailure;
+          },
+        },
+      },
+      events,
+    );
+
+    await expect(close()).rejects.toBe(checkpointFailure);
+    expect(events.slice(-3)).toEqual([
+      "http.close",
+      "plugin.checkpoint",
       "taskLedger.checkpoint.close",
     ]);
   });

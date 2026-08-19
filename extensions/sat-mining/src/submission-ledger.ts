@@ -233,27 +233,45 @@ export function normalizeSatSubmissionRecord(value: unknown): SatSubmissionRecor
 
 async function readLedger(filePath: string): Promise<SatSubmissionLedgerFile> {
   try {
-    const parsed = JSON.parse(
-      await fs.readFile(filePath, "utf8"),
-    ) as Partial<SatSubmissionLedgerFile>;
-    if (parsed.version !== 1 || !parsed.records || typeof parsed.records !== "object") {
-      throw new Error(`invalid SAT submission ledger format at ${filePath}`);
-    }
-    const records: Record<string, SatSubmissionRecord> = {};
-    for (const [requestId, raw] of Object.entries(parsed.records)) {
-      const record = normalizeSatSubmissionRecord(raw);
-      if (!record || record.requestId !== requestId) {
-        throw new Error(`invalid SAT submission ledger record ${requestId}`);
-      }
-      records[requestId] = record;
-    }
-    return { version: 1, records };
+    return parseSatSubmissionLedgerBytes(await fs.readFile(filePath, "utf8"), filePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return emptyLedger();
     }
     throw error;
   }
+}
+
+/** Pure parser for migration archive bytes. It neither opens nor writes a
+ * pathname, so archive and imported submission records share exact bytes. */
+export function parseSatSubmissionLedgerBytes(
+  raw: string | Buffer,
+  label = "submission ledger",
+): SatSubmissionLedgerFile {
+  const parsed = JSON.parse(
+    Buffer.isBuffer(raw) ? raw.toString("utf8") : raw,
+  ) as Partial<SatSubmissionLedgerFile>;
+  if (parsed.version !== 1 || !parsed.records || typeof parsed.records !== "object") {
+    throw new Error(`invalid SAT submission ledger format at ${label}`);
+  }
+  const records: Record<string, SatSubmissionRecord> = {};
+  for (const [requestId, value] of Object.entries(parsed.records)) {
+    const record = normalizeSatSubmissionRecord(value);
+    if (!record || record.requestId !== requestId) {
+      throw new Error(`invalid SAT submission ledger record ${requestId}`);
+    }
+    records[requestId] = record;
+  }
+  return { version: 1, records };
+}
+
+export function parseSatSubmissionRecordsBytes(
+  raw: string | Buffer,
+  label?: string,
+): SatSubmissionRecord[] {
+  return Object.values(parseSatSubmissionLedgerBytes(raw, label).records).toSorted((left, right) =>
+    left.requestId.localeCompare(right.requestId),
+  );
 }
 
 async function writeLedger(filePath: string, ledger: SatSubmissionLedgerFile): Promise<void> {

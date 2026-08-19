@@ -9,6 +9,7 @@ import {
   buildSatSubmissionOperationKey,
   buildSatSubmissionRequestId,
   claimSatSubmission,
+  parseSatSubmissionRecordsBytes,
   readSatSubmission,
   resolveSatSubmissionLedgerPath,
   updateSatSubmission,
@@ -47,6 +48,32 @@ describe("SAT durable submission ledger", () => {
         lookupTable: { address: "table", addresses: ["a", "b"] },
       }),
     );
+  });
+
+  it("parses descriptor-pinned migration bytes without reopening a ledger path", () => {
+    expect(
+      parseSatSubmissionRecordsBytes(
+        Buffer.from(
+          JSON.stringify({
+            version: 1,
+            records: {
+              "request-b": {
+                requestId: "request-b",
+                workflowId: "cycle:2",
+                operationKey: "commit:2",
+                intentDigest: DIGEST_B,
+                walletId: "mining-1",
+                action: "commitCycle",
+                state: "prepared",
+                attempts: 1,
+                createdAt: "2026-08-19T00:00:00.000Z",
+                updatedAt: "2026-08-19T00:00:00.000Z",
+              },
+            },
+          }),
+        ),
+      ),
+    ).toMatchObject([{ requestId: "request-b", intentDigest: DIGEST_B }]);
   });
 
   it("serializes concurrent workers and lets the waiter claim after the exact owner releases", async () => {

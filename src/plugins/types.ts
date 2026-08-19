@@ -411,6 +411,11 @@ export type FasedAgentPluginService = {
   id: string;
   start: (ctx: FasedAgentPluginServiceContext) => void | Promise<void>;
   stop?: (ctx: FasedAgentPluginServiceContext) => void | Promise<void>;
+  /**
+   * Runs only after Gateway ingress has drained. Services with durable local
+   * state use this for the final lifecycle fence/checkpoint/close operation.
+   */
+  checkpointForLifecycle?: (ctx: FasedAgentPluginServiceContext) => void | Promise<void>;
 };
 
 export type FasedAgentPluginChannelRegistration = {

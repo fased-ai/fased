@@ -50,9 +50,13 @@ describe("gateway shutdown maintenance audit", () => {
     const clearTick = serverClose.indexOf("clearInterval(params.tickInterval)", heartbeatStop);
     const websocketClose = serverClose.indexOf("params.wss.close", clearTick);
     const httpClose = serverClose.indexOf("httpServer.close", websocketClose);
+    const pluginCheckpoint = serverClose.indexOf(
+      "params.pluginServices.checkpointForLifecycle()",
+      httpClose,
+    );
     const ledgerFenceAndCheckpoint = serverClose.indexOf(
       "checkpointAndCloseTaskLedgersForLifecycle({ managedStop: restartExpectedMs === null })",
-      httpClose,
+      pluginCheckpoint,
     );
 
     expect(channelStop).toBeGreaterThan(-1);
@@ -63,6 +67,8 @@ describe("gateway shutdown maintenance audit", () => {
     expect(clearTick).toBeGreaterThan(heartbeatStop);
     expect(websocketClose).toBeGreaterThan(clearTick);
     expect(httpClose).toBeGreaterThan(websocketClose);
+    expect(pluginCheckpoint).toBeGreaterThan(httpClose);
+    expect(ledgerFenceAndCheckpoint).toBeGreaterThan(pluginCheckpoint);
     expect(ledgerFenceAndCheckpoint).toBeGreaterThan(httpClose);
   });
 
