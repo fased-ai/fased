@@ -73,6 +73,10 @@ export {
   resolveWalletUserRole,
   upsertNamedWallet,
 } from "../wallet/wallet-provider-registry.js";
+export {
+  walletRegistryFacade,
+  type WalletRegistryFacade,
+} from "../wallet/wallet-registry-facade.js";
 export type {
   WalletNamedWallet,
   WalletProviderRegistry,
@@ -82,6 +86,10 @@ export {
   createWalletProviderAdapter,
   resolveWalletProviderId,
 } from "../wallet/wallet-provider-resolver.js";
+export {
+  walletProviderFacade,
+  type WalletProviderFacade,
+} from "../wallet/wallet-provider-facade.js";
 export { LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE } from "../wallet/legacy-embedded-keystore.js";
 export {
   resolveLocalSignerSocketPath,
@@ -98,6 +106,10 @@ export {
 } from "../wallet/wallet-send-approvals.js";
 export type { WalletProviderJupiterReviewV2 } from "../wallet/wallet-provider-adapter.js";
 export { readWalletStatusSnapshot } from "../wallet/wallet-status.js";
+export {
+  walletReadinessFacade,
+  type WalletReadinessFacade,
+} from "../wallet/wallet-readiness-facade.js";
 
 export async function fetchWithSsrFGuard(
   params: Parameters<typeof import("../infra/net/fetch-guard.js").fetchWithSsrFGuard>[0],

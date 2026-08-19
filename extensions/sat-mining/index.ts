@@ -4,20 +4,17 @@ import { Type } from "@sinclair/typebox";
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import {
   ErrorCodes,
-  createWalletProviderAdapter,
   errorShape,
   fetchWithSsrFGuard,
   getSatMainnetSyncStatus,
   loadConfig,
   probeLocalSocketSignerHealth,
-  readWalletProviderRegistry,
-  readWalletStatusSnapshot,
   registerSatMiningGatewayMethods,
   resolveLocalSignerSocketPath,
-  resolveWalletRuntimeConfig,
-  resolveWalletUserRole,
   syncSatMainnetRuntimeIds,
-  upsertNamedWallet,
+  walletProviderFacade,
+  walletReadinessFacade,
+  walletRegistryFacade,
   type ErrorCode,
   type RespondFn,
   type SatMiningGatewayMethodHandlerRegistration,
@@ -197,6 +194,15 @@ import {
   findSatValidatorArtifact,
   writeSatValidatorArtifact,
 } from "./src/validator-artifacts.js";
+
+const { createAdapter: createWalletProviderAdapter } = walletProviderFacade;
+const {
+  read: readWalletProviderRegistry,
+  resolveRole: resolveWalletUserRole,
+  upsert: upsertNamedWallet,
+} = walletRegistryFacade;
+const { read: readWalletStatusSnapshot, resolveRuntimeConfig: resolveWalletRuntimeConfig } =
+  walletReadinessFacade;
 
 type SatGatewayMethodHandler = Parameters<FasedAgentPluginApi["registerGatewayMethod"]>[1];
 
