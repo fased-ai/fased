@@ -418,6 +418,127 @@ func TestManagedPluginActivationStartFailureAndCrashResume(t *testing.T) {
 	})
 }
 
+func TestManagedPluginActivationResetsOnlyExactRolledBackTransactionForRetry(t *testing.T) {
+	activation, request, service, previous, _, _ := managedPluginActivationFixture(t)
+	if _, err := activation.Transaction.Stage(request); err != nil {
+		t.Fatal(err)
+	}
+	service.startErrAt = 1
+	if _, err := applyManagedPluginFixture(t, activation, request.TransactionID); err == nil {
+		t.Fatal("candidate failure was accepted")
+	}
+	guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: activation.Config.Operator.GID}
+	if reset, err := activation.resetRolledBackBound(request.TransactionID, request.ExpectedCatalogDigest, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err != nil || !reset {
+		t.Fatalf("exact rolled-back transaction was not reset: reset=%v err=%v", reset, err)
+	}
+	if _, err := os.Lstat(activation.journalPath(request.TransactionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retry reset retained a terminal journal: %v", err)
+	}
+	if data, err := os.ReadFile(CanonicalPluginLockPath(activation.Config)); err != nil || string(data) != string(previous) {
+		t.Fatalf("retry reset changed restored live lock: %q %v", data, err)
+	}
+	if _, err := activation.Transaction.Stage(request); err != nil {
+		t.Fatalf("exact retry could not reuse staged candidate: %v", err)
+	}
+	if _, err := applyManagedPluginFixture(t, activation, request.TransactionID); err != nil {
+		t.Fatalf("exact retry did not apply after terminal reset: %v", err)
+	}
+	if reset, err := activation.resetRolledBackBound(request.TransactionID, request.ExpectedCatalogDigest, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err == nil || reset {
+		t.Fatalf("committed transaction was incorrectly reset: reset=%v err=%v", reset, err)
+	}
+}
+
+func TestManagedPluginActivationPreflightBoundsMaximumJournalShape(t *testing.T) {
+	var prepared, maximum managedPluginActivationJournal
+	low, high := 0, 500_000
+	for low < high {
+		size := (low + high + 1) / 2
+		prepared = managedPluginActivationJournal{Phase: managedPluginPrepared, PreviousLock: make([]byte, size), CandidateLock: make([]byte, size)}
+		preparedData, err := json.Marshal(prepared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(preparedData) <= maxManagedPluginRecordBytes {
+			low = size
+		} else {
+			high = size - 1
+		}
+	}
+	found := false
+	for size := low - 8; size <= low; size++ {
+		prepared = managedPluginActivationJournal{Phase: managedPluginPrepared, PreviousLock: make([]byte, size), CandidateLock: make([]byte, size)}
+		maximum = maximumManagedPluginActivationJournal(prepared)
+		preparedData, preparedErr := json.Marshal(prepared)
+		maximumData, maximumErr := json.Marshal(maximum)
+		if preparedErr == nil && maximumErr == nil && len(preparedData) <= maxManagedPluginRecordBytes && len(maximumData) > maxManagedPluginRecordBytes {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("could not construct prepared-fit/max-overflow journal boundary")
+	}
+	if _, err := marshalManagedPluginActivationJournal(prepared); err != nil {
+		t.Fatalf("prepared journal should fit: %v", err)
+	}
+	if _, err := marshalManagedPluginActivationJournal(maximum); err == nil || !strings.Contains(err.Error(), "byte budget") {
+		t.Fatalf("maximum activation journal was accepted: %v", err)
+	}
+}
+
+func TestManagedPluginActivationPreflightRejectsMaximumJournalBeforeRoots(t *testing.T) {
+	activation, request, _, _, _, _ := managedPluginActivationFixture(t)
+	entries := make([]stateparticipant.PluginLockEntry, 0, 4095)
+	for index := 0; index < 4095; index++ {
+		entries = append(entries, stateparticipant.PluginLockEntry{ID: fmt.Sprintf("base-%04d", index), Origin: "bundled", Digest: "sha256:" + strings.Repeat("a", 64), APICapability: "fased.plugin.v1", Required: true})
+	}
+	base := stateparticipant.PluginLock{SchemaVersion: stateparticipant.PluginLockSchemaVersion, Type: "fased-plugin-lock", Entries: entries}
+	baseData, err := json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(baseData) >= maxManagedPluginRecordBytes {
+		t.Fatalf("fixture base lock unexpectedly exceeds readable bound: %d", len(baseData))
+	}
+	if err := activation.writeLiveLock(baseData, 0o640, activation.Config.Operator.UID, activation.Config.Operator.GID); err != nil {
+		t.Fatal(err)
+	}
+	request.BaseLock = base
+	guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: activation.Config.Operator.GID}
+	if err := activation.preflightBound(request, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err == nil || !strings.Contains(err.Error(), "byte budget") {
+		t.Fatalf("maximum activation journal was accepted before stage: %v", err)
+	}
+	if _, err := os.Lstat(activation.Transaction.recordRoot(request.TransactionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("maximum journal preflight created record root: %v", err)
+	}
+	if _, err := os.Lstat(activation.Transaction.stagingRoot(request.TransactionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("maximum journal preflight created staging root: %v", err)
+	}
+}
+
+func TestManagedPluginActivationConvergesDifferentPreRecordResidue(t *testing.T) {
+	activation, first, _, _, _, _ := managedPluginActivationFixture(t)
+	managedPluginPreRecordInterruption = func() error { return errors.New("injected pre-record interruption") }
+	t.Cleanup(func() { managedPluginPreRecordInterruption = nil })
+	if _, err := activation.Transaction.Stage(first); err == nil {
+		t.Fatal("pre-record interruption was accepted")
+	}
+	managedPluginPreRecordInterruption = nil
+	guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: activation.Config.Operator.GID}
+	if err := activation.convergeOtherUnfinishedBound(context.Background(), "plugin-transaction-2", guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err != nil {
+		t.Fatalf("different transaction did not remove exact pre-record residue: %v", err)
+	}
+	if _, err := os.Lstat(activation.Transaction.recordRoot(first.TransactionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("convergence retained pre-record directory: %v", err)
+	}
+	second := first
+	second.TransactionID = "plugin-transaction-2"
+	if _, err := activation.Transaction.Stage(second); err != nil {
+		t.Fatalf("new transaction remained blocked after residue recovery: %v", err)
+	}
+	t.Cleanup(func() { _ = activation.Transaction.Discard(second.TransactionID) })
+}
+
 func TestManagedPluginActivationStopFailureDoesNotMutate(t *testing.T) {
 	activation, request, service, previous, _, _ := managedPluginActivationFixture(t)
 	if _, err := activation.Transaction.Stage(request); err != nil {

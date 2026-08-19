@@ -28,6 +28,13 @@ const (
 )
 
 var managedPluginTransactionID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+var managedPluginObjectDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// Test seams model interruption immediately before a durable transaction
+// record and failure to durably publish a newly-created root.  They are never
+// set by production callers.
+var managedPluginPreRecordInterruption func() error
+var managedPluginCreatedRootSync = syncPluginDirectory
 
 // ManagedPluginTransaction owns only the root-owned immutable code store and
 // its durable transaction records. It deliberately has no owner-state or live
@@ -81,12 +88,12 @@ func (transaction ManagedPluginTransaction) Stage(request ManagedPluginStageRequ
 	if err := transaction.validate(); err != nil {
 		return ManagedPluginStageResult{}, err
 	}
-	catalog, catalogDigest, candidate, candidateDigest, err := transaction.validateRequest(request)
+	record, err := transaction.preflightRecord(request)
 	if err != nil {
 		return ManagedPluginStageResult{}, err
 	}
 	if existing, err := transaction.readRecord(request.TransactionID); err == nil {
-		if existing.CatalogDigest != catalogDigest || existing.CandidateLockDigest != candidateDigest {
+		if existing.CatalogDigest != record.CatalogDigest || existing.CandidateLockDigest != record.CandidateLockDigest {
 			return ManagedPluginStageResult{}, errors.New("managed plugin transaction conflicts with durable record")
 		}
 		if err := transaction.verifyStaged(existing); err != nil {
@@ -94,6 +101,13 @@ func (transaction ManagedPluginTransaction) Stage(request ManagedPluginStageRequ
 		}
 		return stageResult(existing)
 	} else if !errors.Is(err, os.ErrNotExist) {
+		return ManagedPluginStageResult{}, err
+	}
+	if _, err := transaction.recoverPreRecordResidue(request.TransactionID); err != nil {
+		return ManagedPluginStageResult{}, err
+	}
+	catalog, _, _, _, err := transaction.validateRequest(request)
+	if err != nil {
 		return ManagedPluginStageResult{}, err
 	}
 	archives, err := bindManagedPluginArchives(catalog, request.Archives)
@@ -109,7 +123,6 @@ func (transaction ManagedPluginTransaction) Stage(request ManagedPluginStageRequ
 			_ = transaction.removeTransactionRoots(request.TransactionID)
 		}
 	}()
-	record := managedPluginTransactionRecord{Version: managedPluginTransactionVersion, TransactionID: request.TransactionID, CatalogDigest: catalogDigest, CatalogData: append(json.RawMessage(nil), request.CatalogData...), CandidateLock: candidate, CandidateLockDigest: candidateDigest}
 	for _, entry := range catalog.Entries {
 		archive, archiveErr := transaction.stageVerifiedArchive(request.TransactionID, archives[entry.ID])
 		if archiveErr != nil {
@@ -119,13 +132,49 @@ func (transaction ManagedPluginTransaction) Stage(request ManagedPluginStageRequ
 		if err := transaction.extractArchive(archive, destination, entry.Digest); err != nil {
 			return ManagedPluginStageResult{}, fmt.Errorf("stage managed plugin %s: %w", entry.ID, err)
 		}
-		record.Entries = append(record.Entries, managedPluginTransactionEntry{ID: entry.ID, Digest: entry.Digest})
+	}
+	if managedPluginPreRecordInterruption != nil {
+		if err := managedPluginPreRecordInterruption(); err != nil {
+			// This models process loss after staging and before record publication:
+			// retain only the exact-owned residue for the next leased invocation.
+			cleanup = false
+			return ManagedPluginStageResult{}, err
+		}
 	}
 	if err := transaction.writeRecord(record); err != nil {
 		return ManagedPluginStageResult{}, err
 	}
 	cleanup = false
 	return stageResult(record)
+}
+
+// Preflight validates the exact durable stage record without creating a root
+// or copying an archive. Activation uses it to additionally bound its journal
+// before any plugin mutation.
+func (transaction ManagedPluginTransaction) Preflight(request ManagedPluginStageRequest) (ManagedPluginStageResult, error) {
+	if err := transaction.validate(); err != nil {
+		return ManagedPluginStageResult{}, err
+	}
+	record, err := transaction.preflightRecord(request)
+	if err != nil {
+		return ManagedPluginStageResult{}, err
+	}
+	return stageResult(record)
+}
+
+func (transaction ManagedPluginTransaction) preflightRecord(request ManagedPluginStageRequest) (managedPluginTransactionRecord, error) {
+	catalog, catalogDigest, candidate, candidateDigest, err := transaction.validateRequest(request)
+	if err != nil {
+		return managedPluginTransactionRecord{}, err
+	}
+	record := managedPluginTransactionRecord{Version: managedPluginTransactionVersion, TransactionID: request.TransactionID, CatalogDigest: catalogDigest, CatalogData: append(json.RawMessage(nil), request.CatalogData...), CandidateLock: candidate, CandidateLockDigest: candidateDigest}
+	for _, entry := range catalog.Entries {
+		record.Entries = append(record.Entries, managedPluginTransactionEntry{ID: entry.ID, Digest: entry.Digest})
+	}
+	if _, err := marshalManagedPluginRecord(record); err != nil {
+		return managedPluginTransactionRecord{}, err
+	}
+	return record, nil
 }
 
 // Activate copies already verified staging content into its one
@@ -323,6 +372,98 @@ func (transaction ManagedPluginTransaction) createTransactionRoots(transactionID
 		return err
 	}
 	return secureMkdir(filepath.Join(transaction.stagingRoot(transactionID), "archives"), transaction.CodeOwnerUID, transaction.CodeOwnerGID, 0o700)
+}
+
+// RecoverPreRecordResidue removes only root-owned, non-activated staging for
+// one transaction. Callers hold the shared lifecycle lease. A durable record
+// is never removed by this method.
+func (transaction ManagedPluginTransaction) RecoverPreRecordResidue(transactionID string) (bool, error) {
+	if err := transaction.validate(); err != nil || !managedPluginTransactionID.MatchString(transactionID) {
+		if err != nil {
+			return false, err
+		}
+		return false, errors.New("managed plugin transaction ID is invalid")
+	}
+	if _, err := transaction.readRecord(transactionID); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	return transaction.recoverPreRecordResidue(transactionID)
+}
+
+// recoverPreRecordResidue removes only root-owned, non-activated staging for
+// this transaction. Anything with a durable record/journal or unsafe shape is
+// ambiguous and remains fail-closed.
+func (transaction ManagedPluginTransaction) recoverPreRecordResidue(transactionID string) (bool, error) {
+	recordRoot := transaction.recordRoot(transactionID)
+	stagingRoot := transaction.stagingRoot(transactionID)
+	recordExists, err := transaction.safePreRecordDirectory(recordRoot)
+	if err != nil {
+		return false, err
+	}
+	stagingExists, err := transaction.safePreRecordStaging(stagingRoot)
+	if err != nil {
+		return false, err
+	}
+	if !recordExists && !stagingExists {
+		return false, nil
+	}
+	if recordExists {
+		entries, err := os.ReadDir(recordRoot)
+		if err != nil || len(entries) != 0 {
+			return false, errors.New("managed plugin pre-record residue is ambiguous")
+		}
+	}
+	if err := transaction.removeTransactionRoots(transactionID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (transaction ManagedPluginTransaction) safePreRecordDirectory(root string) (bool, error) {
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil || !transaction.safeRecordDirectory(info) {
+		return false, errors.New("managed plugin pre-record residue is unsafe")
+	}
+	return true, nil
+}
+
+func (transaction ManagedPluginTransaction) safePreRecordStaging(root string) (bool, error) {
+	exists, err := transaction.safePreRecordDirectory(root)
+	if err != nil || !exists {
+		return exists, err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.Name() != "archives" && !managedPluginObjectDigest.MatchString(entry.Name()) {
+			return false, errors.New("managed plugin pre-record residue is ambiguous")
+		}
+	}
+	err = filepath.WalkDir(root, func(item string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(item)
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || info.Mode()&os.ModeSymlink != 0 || stat.Uid != transaction.CodeOwnerUID || stat.Gid != transaction.CodeOwnerGID || (!info.IsDir() && !info.Mode().IsRegular()) || (info.Mode().IsRegular() && stat.Nlink != 1) {
+			return errors.New("managed plugin pre-record residue is unsafe")
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (transaction ManagedPluginTransaction) extractArchive(archivePath, destination, expectedDigest string) error {
@@ -694,7 +835,7 @@ func (transaction ManagedPluginTransaction) safeRecordInfo(info os.FileInfo) boo
 
 func (transaction ManagedPluginTransaction) writeRecord(record managedPluginTransactionRecord) error {
 	sort.Slice(record.Entries, func(left, right int) bool { return record.Entries[left].ID < record.Entries[right].ID })
-	data, err := json.Marshal(record)
+	data, err := marshalManagedPluginRecord(record)
 	if err != nil {
 		return err
 	}
@@ -702,6 +843,17 @@ func (transaction ManagedPluginTransaction) writeRecord(record managedPluginTran
 		return err
 	}
 	return syncPluginDirectory(transaction.recordRoot(record.TransactionID))
+}
+
+func marshalManagedPluginRecord(record managedPluginTransactionRecord) ([]byte, error) {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 || len(data) > maxManagedPluginRecordBytes {
+		return nil, errors.New("managed plugin transaction record exceeds byte budget")
+	}
+	return data, nil
 }
 
 func (transaction ManagedPluginTransaction) verifyStaged(record managedPluginTransactionRecord) error {
@@ -761,7 +913,10 @@ func secureMkdir(directory string, uid, gid uint32, mode os.FileMode) error {
 	if err := os.Chown(directory, int(uid), int(gid)); err != nil {
 		return err
 	}
-	return os.Chmod(directory, mode)
+	if err := os.Chmod(directory, mode); err != nil {
+		return err
+	}
+	return managedPluginCreatedRootSync(filepath.Dir(directory))
 }
 
 func strictManagedPluginJSON(data []byte, target any) error {

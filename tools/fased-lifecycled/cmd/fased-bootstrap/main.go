@@ -267,7 +267,16 @@ func runManagedPlugins(args []string, output io.Writer) error {
 		_, err = fmt.Fprintf(output, "Managed plugins: status=ALREADY_CURRENT catalog=%s candidateLock=%s readiness=%s generation=%s\n", command.digest, candidateLock, receipt, status.ActiveGenerationID)
 		return err
 	}
-	result, err := production.Transaction.Stage(platform.ManagedPluginStageRequest{TransactionID: transactionID, CatalogData: data, ExpectedCatalogDigest: command.digest, BaseLock: production.BaseLock, Archives: sources})
+	stageRequest := platform.ManagedPluginStageRequest{TransactionID: transactionID, CatalogData: data, ExpectedCatalogDigest: command.digest, BaseLock: production.BaseLock, Archives: sources}
+	if _, err := production.Activation.ResetRolledBack(transactionID, command.digest); err != nil {
+		return err
+	}
+	// Both the staged record and the worst-case activation journal must fit the
+	// same durable readable bound before Stage creates any plugin root.
+	if err := production.Activation.Preflight(stageRequest); err != nil {
+		return err
+	}
+	result, err := production.Transaction.Stage(stageRequest)
 	if err != nil {
 		return err
 	}

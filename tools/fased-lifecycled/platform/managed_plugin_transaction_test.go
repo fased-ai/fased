@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -349,5 +350,87 @@ func TestManagedPluginTransactionReplayCollisionRollbackAndDiscard(t *testing.T)
 	}
 	if _, err := os.Lstat(transaction.stagingRoot(request.TransactionID)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("discard left transaction staging: %v", err)
+	}
+}
+
+func TestManagedPluginTransactionRecoversExactPreRecordResidue(t *testing.T) {
+	transaction, request, _, _ := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+	managedPluginPreRecordInterruption = func() error { return errors.New("injected pre-record interruption") }
+	t.Cleanup(func() { managedPluginPreRecordInterruption = nil })
+	if _, err := transaction.Stage(request); err == nil {
+		t.Fatal("pre-record interruption was accepted")
+	}
+	if _, err := os.Lstat(transaction.stagingRoot(request.TransactionID)); err != nil {
+		t.Fatalf("pre-record residue was not retained for recovery: %v", err)
+	}
+	managedPluginPreRecordInterruption = nil
+	if _, err := transaction.Stage(request); err != nil {
+		t.Fatalf("exact pre-record residue did not recover on retry: %v", err)
+	}
+	t.Cleanup(func() { _ = transaction.Discard(request.TransactionID) })
+}
+
+func TestManagedPluginTransactionRefusesHardlinkedPreRecordResidue(t *testing.T) {
+	transaction, request, _, digest := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+	managedPluginPreRecordInterruption = func() error { return errors.New("injected pre-record interruption") }
+	t.Cleanup(func() { managedPluginPreRecordInterruption = nil })
+	if _, err := transaction.Stage(request); err == nil {
+		t.Fatal("pre-record interruption was accepted")
+	}
+	managedPluginPreRecordInterruption = nil
+	object := transaction.stagingObjectPath(request.TransactionID, digest)
+	if err := makePluginTreeRemovable(object); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(object, "index.js"), filepath.Join(object, "index-copy.js")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Stage(request); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("hardlinked pre-record residue was accepted: %v", err)
+	}
+	t.Cleanup(func() { _ = transaction.removeTransactionRoots(request.TransactionID) })
+}
+
+func TestManagedPluginTransactionFailsBeforeMutationWhenCreatedRootCannotSync(t *testing.T) {
+	transaction, request, _, _ := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+	managedPluginCreatedRootSync = func(parent string) error {
+		if parent == transaction.TransactionRoot {
+			return errors.New("injected parent fsync failure")
+		}
+		return syncPluginDirectory(parent)
+	}
+	t.Cleanup(func() { managedPluginCreatedRootSync = syncPluginDirectory })
+	if _, err := transaction.Stage(request); err == nil {
+		t.Fatal("root creation fsync failure was accepted")
+	}
+	if _, err := os.Lstat(transaction.recordPath(request.TransactionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed root creation published a durable record: %v", err)
+	}
+}
+
+func TestManagedPluginTransactionRejectsOversizeDurableRecordBeforeRoots(t *testing.T) {
+	transaction, request, _, _ := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+	entries := make([]stateparticipant.ManagedPluginCatalogEntry, 0, 4096)
+	for index := 0; index < 4096; index++ {
+		entries = append(entries, stateparticipant.ManagedPluginCatalogEntry{ID: fmt.Sprintf("plugin-%04d", index), Digest: "sha256:" + strings.Repeat("a", 64), ArchiveDigest: "sha256:" + strings.Repeat("b", 64), APICapability: "fased.plugin.v1", Required: true})
+	}
+	catalog := stateparticipant.ManagedPluginCatalog{SchemaVersion: stateparticipant.ManagedPluginCatalogSchemaVersion, Type: "fased-managed-plugin-catalog", Entries: entries}
+	data, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := stateparticipant.ManagedPluginCatalogDigest(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.CatalogData, request.ExpectedCatalogDigest, request.Archives = data, digest, nil
+	if _, err := transaction.Stage(request); err == nil || !strings.Contains(err.Error(), "byte budget") {
+		t.Fatalf("oversize durable record was accepted before roots: %v", err)
+	}
+	if _, err := os.Lstat(transaction.recordRoot(request.TransactionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversize record created a transaction root: %v", err)
+	}
+	if _, err := os.Lstat(transaction.stagingRoot(request.TransactionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversize record created staging: %v", err)
 	}
 }

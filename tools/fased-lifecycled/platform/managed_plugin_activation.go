@@ -93,6 +93,56 @@ type managedPluginActivationJournal struct {
 	ReadinessDigest     string                       `json:"readinessDigest,omitempty"`
 }
 
+// Preflight binds the requested catalog to the current installed lock and
+// proves that both durable records fit the same readable 1 MiB boundary before
+// Stage can create a staging root. The caller holds the installation lease.
+func (activation ManagedPluginActivation) Preflight(request ManagedPluginStageRequest) error {
+	guard, configGID, unit, err := activation.validate(request.TransactionID)
+	if err != nil {
+		return err
+	}
+	return activation.preflightBound(request, guard, configGID, unit)
+}
+
+func (activation ManagedPluginActivation) preflightBound(request ManagedPluginStageRequest, guard stateparticipant.PluginBoundary, configGID uint32, unit string) error {
+	result, err := activation.Transaction.Preflight(request)
+	if err != nil {
+		return err
+	}
+	previous, previousDigest, err := activation.readLiveLock(configGID)
+	if err != nil {
+		return err
+	}
+	journal := managedPluginActivationJournal{
+		SchemaVersion:       managedPluginActivationSchemaVersion,
+		TransactionID:       request.TransactionID,
+		GenerationID:        activation.GenerationID,
+		GatewayUnit:         unit,
+		Phase:               managedPluginPrepared,
+		PreviousLock:        previous.data,
+		PreviousLockDigest:  previousDigest,
+		PreviousLockMode:    uint32(previous.mode.Perm()),
+		PreviousLockUID:     previous.uid,
+		PreviousLockGID:     previous.gid,
+		CandidateLock:       result.CandidateLockData,
+		CandidateLockDigest: result.CandidateLockDigest,
+	}
+	if err := activation.validateJournalPreflight(journal, guard); err != nil {
+		return err
+	}
+	_, err = marshalManagedPluginActivationJournal(maximumManagedPluginActivationJournal(journal))
+	return err
+}
+
+// Later journal transitions only replace Phase and add a canonical readiness
+// digest. Bound the largest serialized shape up front so no later durable
+// write can cross the reader limit.
+func maximumManagedPluginActivationJournal(journal managedPluginActivationJournal) managedPluginActivationJournal {
+	journal.Phase = managedPluginCandidateLockWritten
+	journal.ReadinessDigest = "sha256:" + strings.Repeat("f", 64)
+	return journal
+}
+
 // Apply creates or resumes the exact activation journal. It is intentionally
 // platform-internal: callers must supply a previously staged transaction ID.
 func (activation ManagedPluginActivation) Apply(ctx context.Context, transactionID string) (string, error) {
@@ -139,6 +189,72 @@ func (activation ManagedPluginActivation) AlreadyCurrent(transactionID string) (
 	return true, journal.ReadinessDigest, journal.CandidateLockDigest, nil
 }
 
+// ResetRolledBack removes only an exact terminal rollback journal. It is safe
+// to call repeatedly while holding the shared lifecycle lease: a missing
+// journal is already reset, while committed or in-progress journals stay
+// untouched. The staging record remains as immutable retry input.
+func (activation ManagedPluginActivation) ResetRolledBack(transactionID, catalogDigest string) (bool, error) {
+	guard, configGID, unit, err := activation.validate(transactionID)
+	if err != nil {
+		return false, err
+	}
+	return activation.resetRolledBackBound(transactionID, catalogDigest, guard, configGID, unit)
+}
+
+func (activation ManagedPluginActivation) resetRolledBackBound(transactionID, catalogDigest string, guard stateparticipant.PluginBoundary, configGID uint32, unit string) (bool, error) {
+	record, err := activation.Transaction.readRecord(transactionID)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if record.CatalogDigest != catalogDigest {
+		return false, errors.New("managed plugin rolled-back transaction catalog conflicts with retry")
+	}
+	for _, entry := range record.Entries {
+		if entry.Created {
+			return false, errors.New("managed plugin rolled-back transaction retains created objects")
+		}
+	}
+	data, err := activation.Transaction.readStableRecord(activation.journalPath(transactionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var journal managedPluginActivationJournal
+	if err := strictManagedPluginJSON(data, &journal); err != nil {
+		return false, err
+	}
+	if err := activation.validateJournal(journal, transactionID, unit, guard); err != nil {
+		return false, err
+	}
+	if journal.Phase != managedPluginRolledBack {
+		return false, errors.New("managed plugin transaction is not a terminal rollback")
+	}
+	if err := activation.Transaction.verifyStaged(record); err != nil {
+		return false, err
+	}
+	if _, liveDigest, err := activation.readLiveLock(configGID); err != nil || liveDigest != journal.PreviousLockDigest {
+		if err != nil {
+			return false, err
+		}
+		return false, errors.New("managed plugin rolled-back transaction live lock is ambiguous")
+	}
+	if _, err := guard.VerifyReadiness(journal.PreviousLockDigest, activation.GenerationID); err != nil {
+		return false, fmt.Errorf("managed plugin rolled-back transaction previous readiness is invalid: %w", err)
+	}
+	if err := os.Remove(activation.journalPath(transactionID)); err != nil {
+		return false, err
+	}
+	if err := syncPluginDirectory(activation.Transaction.recordRoot(transactionID)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ConvergeOtherUnfinished restores the one-engine transaction rule for the
 // dedicated plugin namespace. The caller must hold the installation-wide core
 // lifecycle mutation lease. Records with a committed (or rolled-back) journal
@@ -159,6 +275,11 @@ func (activation ManagedPluginActivation) convergeOtherUnfinishedBound(ctx conte
 	}
 	for _, id := range ids {
 		if id == transactionID {
+			continue
+		}
+		if recovered, residueErr := activation.Transaction.RecoverPreRecordResidue(id); residueErr != nil {
+			return fmt.Errorf("recover pre-record managed plugin transaction %s: %w", id, residueErr)
+		} else if recovered {
 			continue
 		}
 		journal, journalErr := activation.openJournal(id, guard, configGID, unit)
@@ -494,6 +615,9 @@ func (activation ManagedPluginActivation) safeLiveLockInfo(info os.FileInfo, con
 }
 
 func (activation ManagedPluginActivation) writeLiveLock(data []byte, mode os.FileMode, uid, gid uint32) error {
+	if len(data) == 0 || len(data) > maxManagedPluginRecordBytes {
+		return errors.New("live managed plugin lock exceeds byte budget")
+	}
 	lock, err := stateparticipant.DecodePluginLock(data)
 	if err != nil {
 		return err
@@ -606,7 +730,7 @@ func (activation ManagedPluginActivation) validateJournal(j managedPluginActivat
 }
 
 func (activation ManagedPluginActivation) writeJournal(j managedPluginActivationJournal) error {
-	data, err := json.Marshal(j)
+	data, err := marshalManagedPluginActivationJournal(j)
 	if err != nil {
 		return err
 	}
@@ -621,6 +745,30 @@ func (activation ManagedPluginActivation) writeJournal(j managedPluginActivation
 		return err
 	}
 	return syncPluginDirectory(filepath.Dir(path))
+}
+
+func marshalManagedPluginActivationJournal(journal managedPluginActivationJournal) ([]byte, error) {
+	data, err := json.Marshal(journal)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 || len(data) > maxManagedPluginRecordBytes {
+		return nil, errors.New("managed plugin activation journal exceeds byte budget")
+	}
+	return data, nil
+}
+
+func (activation ManagedPluginActivation) validateJournalPreflight(journal managedPluginActivationJournal, guard stateparticipant.PluginBoundary) error {
+	if journal.PreviousLockMode != 0o640 || journal.PreviousLockUID != activation.Config.Operator.UID || journal.PreviousLockGID != guard.ConfigGID || len(journal.PreviousLock) == 0 || len(journal.CandidateLock) == 0 {
+		return errors.New("managed plugin activation journal is invalid")
+	}
+	if _, err := stateparticipant.DecodePluginLock(journal.PreviousLock); err != nil {
+		return err
+	}
+	if _, err := stateparticipant.DecodePluginLock(journal.CandidateLock); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (activation ManagedPluginActivation) journalPath(transactionID string) string {
