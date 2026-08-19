@@ -733,6 +733,8 @@ export function createSatEpochService(params: {
   let timer: ReturnType<typeof setInterval> | null = null;
   let initialRunTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
+  let stopping = false;
+  let activeTick: Promise<void> | null = null;
   const targetCycleCache = new Map<number, SatEpochTargetCycleCache>();
   const canAttempt = async (request: {
     authority: string | null;
@@ -783,7 +785,7 @@ export function createSatEpochService(params: {
   };
 
   const tick = async () => {
-    if (inFlight) {
+    if (stopping || inFlight) {
       markWorkerOverlap(state, "epoch", "previous settlement tick still running");
       return;
     }
@@ -1327,15 +1329,31 @@ export function createSatEpochService(params: {
       await persistRuntimeState?.();
     }
   };
+  const runTick = () => {
+    if (activeTick) {
+      void tick();
+      return activeTick;
+    }
+    const tickPromise = tick();
+    activeTick = tickPromise;
+    const clearActiveTick = () => {
+      if (activeTick === tickPromise) {
+        activeTick = null;
+      }
+    };
+    void tickPromise.then(clearActiveTick, clearActiveTick);
+    return tickPromise;
+  };
 
   return {
     id: "sat-mining-epoch",
     runOnce: async () => {
-      await tick();
+      await runTick();
     },
     start: async () => {
       if (!state.activeConfig.enabled) return;
       if (timer) return;
+      stopping = false;
       api.logger.info("[sat-mining] cycle settlement service start");
       const initialDelayMs = Math.max(0, Math.floor(params.deferInitialActiveRunMs ?? 0));
       scheduleWorkerNextRun(
@@ -1347,23 +1365,24 @@ export function createSatEpochService(params: {
         if (!isWorkerDue(state, "epoch")) {
           return;
         }
-        void tick();
+        void runTick();
       };
       if (initialDelayMs > 0) {
         initialRunTimer = setTimeout(runInitialTick, initialDelayMs);
       } else if (params.backgroundInitialRun === true) {
-        void tick();
+        void runTick();
       } else {
-        await tick();
+        await runTick();
       }
       timer = setInterval(() => {
         if (!isWorkerDue(state, "epoch")) {
           return;
         }
-        void tick();
+        void runTick();
       }, satEpochActiveIntervalMs());
     },
-    stop: async () => {
+    stop: async (opts?: { persistRuntimeState?: boolean }) => {
+      stopping = true;
       markWorkerIdle(state, "epoch");
       if (initialRunTimer) {
         clearTimeout(initialRunTimer);
@@ -1371,7 +1390,10 @@ export function createSatEpochService(params: {
       }
       if (timer) clearInterval(timer);
       timer = null;
-      await persistRuntimeState?.();
+      await activeTick;
+      if (opts?.persistRuntimeState !== false) {
+        await persistRuntimeState?.();
+      }
     },
   };
 }

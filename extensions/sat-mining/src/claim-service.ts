@@ -722,9 +722,11 @@ export function createSatClaimService(params: {
   const { api, state, persistRuntimeState } = params;
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight = false;
+  let stopping = false;
+  let activeTick: Promise<void> | null = null;
 
   const tick = async () => {
-    if (inFlight || !state.activeConfig.automation?.autoClaim) {
+    if (stopping || inFlight || !state.activeConfig.automation?.autoClaim) {
       markWorkerIdle(state, "claim");
       scheduleWorkerNextRun(state, "claim", SAT_CLAIM_IDLE_INTERVAL_MS);
       return;
@@ -920,12 +922,27 @@ export function createSatClaimService(params: {
       await persistRuntimeState?.();
     }
   };
+  const runTick = () => {
+    if (activeTick) {
+      return activeTick;
+    }
+    const tickPromise = tick();
+    activeTick = tickPromise;
+    const clearActiveTick = () => {
+      if (activeTick === tickPromise) {
+        activeTick = null;
+      }
+    };
+    void tickPromise.then(clearActiveTick, clearActiveTick);
+    return tickPromise;
+  };
 
   return {
     id: "sat-mining-claim",
     start: async () => {
       if (!state.activeConfig.enabled) return;
       if (timer) return;
+      stopping = false;
       api.logger.info("[sat-mining] cycle claim service start");
       const initialDelayMs =
         state.activeConfig.drainOnly === true
@@ -937,20 +954,24 @@ export function createSatClaimService(params: {
         initialDelayMs > 0 ? initialDelayMs : SAT_CLAIM_ACTIVE_INTERVAL_MS,
       );
       if (initialDelayMs <= 0) {
-        await tick();
+        await runTick();
       }
       timer = setInterval(() => {
         if (!isWorkerDue(state, "claim")) {
           return;
         }
-        void tick();
+        void runTick();
       }, SAT_CLAIM_ACTIVE_INTERVAL_MS);
     },
-    stop: async () => {
+    stop: async (opts?: { persistRuntimeState?: boolean }) => {
+      stopping = true;
       markWorkerIdle(state, "claim");
       if (timer) clearInterval(timer);
       timer = null;
-      await persistRuntimeState?.();
+      await activeTick;
+      if (opts?.persistRuntimeState !== false) {
+        await persistRuntimeState?.();
+      }
     },
   };
 }

@@ -349,9 +349,16 @@ describe("createSatRoundWatcherService", () => {
     expect(state.workers.roundWatcher.waitingReason).toBe("previous cycle tick still running");
     expect(state.workers.roundWatcher.lastDetail).toBe(`cycle ${cycleId}`);
 
+    let stopped = false;
+    const stopPromise = service.stop?.().then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stopped).toBe(false);
     (releaseFirstCall as (() => void) | null)?.();
     await vi.advanceTimersByTimeAsync(0);
-    await service.stop?.();
+    await stopPromise;
+    expect(stopped).toBe(true);
   });
 
   it("recovers when a chain read hangs instead of wedging the watcher forever", async () => {

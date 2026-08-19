@@ -29,27 +29,14 @@ import {
   type SatPlannerCycleRecord,
   type SatPlannerOutcomeMemory,
   type SatRuntimeSummary,
-  appendSatActionHistoryEntries,
-  appendSatPlannerHistoryOutcome,
-  clearSatActionHistory,
-  clearSatPlannerHistory,
   filterSatPlannerHistoryByCycleEra,
   querySatActionHistory,
   querySatPlannerHistory,
-  readSatActionHistory,
-  readSatPlannerHistory,
-  resolveSatActionHistoryMirrorStorePath,
-  resolveSatActionHistoryStorePath,
-  resolveSatAuditStorePath,
-  resolveSatPlannerHistoryStorePath,
-  resolveSatRuntimeStorePath,
   resolveSatWalletStateDir,
   SAT_ACTION_HISTORY_RECENT_TAIL_LIMIT,
   SAT_RUNTIME_ARCHIVED_FAILURE_LIMIT,
   SAT_SQLITE_ARCHIVED_FAILURE_LIMIT,
   SAT_PLANNER_HISTORY_CHART_POINT_LIMIT,
-  writeSatAuditArtifacts,
-  writeSatRecentActions,
 } from "./src/audit-store.js";
 import { refreshSatChainTime, resolveStatusSatChainTime } from "./src/chain-time.js";
 import { createSatClaimService } from "./src/claim-service.js";
@@ -79,26 +66,10 @@ import {
   summarizeSatMaintenanceCleanupResults,
   type SatMaintenanceCleanupResultSummary,
 } from "./src/maintenance-output.js";
-import {
-  resolveSatMiningHistoryDatabasePath,
-  SatMiningHistoryStore,
-  type SatMiningHistoryScope,
-} from "./src/mining-history-store.js";
+import { SatMiningHistoryStore, type SatMiningHistoryScope } from "./src/mining-history-store.js";
+import { createSatMiningStrategyService } from "./src/mining-strategy-service.js";
 import { generateSatRoundPlan } from "./src/payloads.js";
-import {
-  classifyPlannerRegime,
-  classifyPlannerTimeWindow,
-  computePlannerAnalytics,
-} from "./src/planner-analytics.js";
 import { mergeSatPlannerOutcome } from "./src/planner-outcomes.js";
-import { computePlannerPolicyEvaluation } from "./src/planner-policy-eval.js";
-import {
-  buildCounterfactualScores,
-  classifyPlannerCapitalTier,
-  deriveCommitBand,
-  plannerPolicyVersion,
-  scorePlannerOutcome,
-} from "./src/planner-policy.js";
 import { SAT_PROTOCOL_CONSTANTS } from "./src/protocol-contract.js";
 import { createSatRecoveryService } from "./src/recovery-service.js";
 import { readSatValidatorArtifact, recomputeSatValidatorArtifact } from "./src/replay.js";
@@ -182,7 +153,6 @@ import {
   submitSatValidatorAttestation,
   runWithSatSubmissionWorkflow,
 } from "./src/solana-submit.js";
-import { computeMiningStrategy } from "./src/strategy-engine.js";
 import {
   digestSatSubmissionIntent,
   resolveSatSubmissionLedgerPath,
@@ -700,6 +670,54 @@ const satMiningPlugin = {
     const config = parseSatMiningConfig(api.pluginConfig);
     const state = createSatMiningRuntimeState(config);
     let miningHistoryStore: SatMiningHistoryStore | null = null;
+    let miningHistoryTransitionInFlight = false;
+    let miningHistoryTransitionFailed = false;
+    let transitionPersistenceStore: SatMiningHistoryStore | null = null;
+    const resolveMiningWalletStateDir = (stateDir: string, walletId?: string) => {
+      const walletsRoot = path.join(stateDir, "sat-mining", "wallets");
+      const walletStateDir = resolveSatWalletStateDir(stateDir, walletId);
+      const relative = path.relative(walletsRoot, walletStateDir);
+      if (
+        !relative ||
+        path.isAbsolute(relative) ||
+        relative === ".." ||
+        relative.startsWith(`..${path.sep}`)
+      ) {
+        throw new Error("Mining wallet state path is outside the wallet state root");
+      }
+      return walletStateDir;
+    };
+    const resolveMiningHistoryDatabasePath = (stateDir: string, walletId?: string) =>
+      path.join(resolveMiningWalletStateDir(stateDir, walletId), "mining.sqlite");
+    const requireMiningHistoryStore = (): SatMiningHistoryStore => {
+      const activeWalletId = state.activeConfig.walletId?.trim();
+      if (
+        miningHistoryTransitionInFlight ||
+        miningHistoryTransitionFailed ||
+        !miningHistoryStore ||
+        !activeWalletId ||
+        miningHistoryStore.walletId !== activeWalletId
+      ) {
+        throw new Error("Mining history service is not ready");
+      }
+      return miningHistoryStore;
+    };
+    const requireInternalMiningHistoryStore = (): SatMiningHistoryStore => {
+      if (transitionPersistenceStore) {
+        return transitionPersistenceStore;
+      }
+      const activeWalletId = state.activeConfig.walletId?.trim() || "unattached";
+      if (!miningHistoryStore || miningHistoryStore.walletId !== activeWalletId) {
+        throw new Error("Mining history service is not ready");
+      }
+      return miningHistoryStore;
+    };
+    const closePublishedMiningHistoryStore = () => {
+      const publishedHistoryStore = miningHistoryStore;
+      miningHistoryStore = null;
+      publishedHistoryStore?.close();
+    };
+    const miningStrategyService = createSatMiningStrategyService();
     const resolveWalletRuntimeContext = () => {
       const cfg = loadConfig();
       const effectiveEnv = {
@@ -724,6 +742,26 @@ const satMiningPlugin = {
         plugins?: { entries?: Record<string, { enabled?: boolean; config?: unknown }> };
       };
       return current.plugins?.entries?.[api.id];
+    };
+    const capturePersistedSatMiningEntry = () => structuredClone(readPersistedSatMiningEntry());
+    const restorePersistedSatMiningEntry = async (
+      entry: ReturnType<typeof capturePersistedSatMiningEntry>,
+    ) => {
+      const current = api.runtime.config.loadConfig();
+      const next = structuredClone(current) as Record<string, unknown> & {
+        plugins?: {
+          entries?: Record<string, { enabled?: boolean; config?: unknown }>;
+        };
+      };
+      next.plugins ??= {};
+      next.plugins.entries ??= {};
+      if (entry === undefined) {
+        delete next.plugins.entries[api.id];
+      } else {
+        next.plugins.entries[api.id] = structuredClone(entry);
+      }
+      await api.runtime.config.writeConfigFile(next as never);
+      runtimeDrainRecoveryActive = false;
     };
     const readPersistedSatMiningEnabledFlag = (value?: unknown): boolean | undefined => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -907,21 +945,14 @@ const satMiningPlugin = {
       await ensureSatCapitalActionSignerReady();
       return selection;
     };
-    const persistAuditArtifacts = async () => {
-      if (!state.auditStorePath) {
-        return;
-      }
+    const persistAuditArtifacts = async (historyStore = requireInternalMiningHistoryStore()) => {
       const artifacts = [...state.auditArtifacts.values()];
-      if (miningHistoryStore) {
-        await miningHistoryStore.replaceAuditArtifacts(artifacts);
-        await miningHistoryStore.enforceDefaultRetentionIfNeeded();
-        const retainedArtifacts = miningHistoryStore.readAuditArtifacts() as SatAuditArtifact[];
-        state.auditArtifacts = new Map(
-          retainedArtifacts.map((artifact) => [artifact.roundKey, artifact]),
-        );
-        return;
-      }
-      await writeSatAuditArtifacts(state.auditStorePath, artifacts);
+      await historyStore.replaceAuditArtifacts(artifacts);
+      await historyStore.enforceDefaultRetentionIfNeeded();
+      const retainedArtifacts = historyStore.readAuditArtifacts() as SatAuditArtifact[];
+      state.auditArtifacts = new Map(
+        retainedArtifacts.map((artifact) => [artifact.roundKey, artifact]),
+      );
     };
     const buildAuditDetails = (epochId?: number, microRoundId?: number): SatAuditArtifact => {
       const key =
@@ -1026,7 +1057,7 @@ const satMiningPlugin = {
       validatorAuthority?: string;
       kind: "round-review" | "epoch-review";
     }) => {
-      if (!state.auditStorePath) {
+      if (!serviceContext) {
         throw new Error("SAT audit store path is not initialized");
       }
       const details = await recordAuditArtifact(params.epochId, params.microRoundId);
@@ -1046,7 +1077,10 @@ const satMiningPlugin = {
         validatorAuthority,
         kind: params.kind,
       });
-      const stateDir = path.dirname(state.auditStorePath);
+      const stateDir = resolveMiningWalletStateDir(
+        serviceContext.stateDir,
+        state.activeConfig.walletId,
+      );
       const filePath = await writeSatValidatorArtifact(stateDir, artifact);
       return { artifact, filePath };
     };
@@ -1056,10 +1090,13 @@ const satMiningPlugin = {
       validatorAuthority?: string;
       targetAuthority?: string;
     }) => {
-      if (!state.auditStorePath) {
+      if (!serviceContext) {
         return null;
       }
-      const stateDir = path.dirname(state.auditStorePath);
+      const stateDir = resolveMiningWalletStateDir(
+        serviceContext.stateDir,
+        state.activeConfig.walletId,
+      );
       const match = await findSatValidatorArtifact(stateDir, {
         roundKey: satRoundKey(params.epochId, params.microRoundId),
         targetAuthority: params.targetAuthority,
@@ -2339,77 +2376,24 @@ const satMiningPlugin = {
       },
     });
     const ensureMiningDiskCapacityForOptionalCommitment = async () => {
-      if (!miningHistoryStore) {
-        return;
-      }
-      const disk = await miningHistoryStore.diskStatus();
+      const historyStore = requireMiningHistoryStore();
+      const disk = await historyStore.diskStatus();
       if (!disk.optionalCapitalCommitmentsAllowed) {
         throw new Error(
           "Mining history storage is critically low. Export or free disk space before adding new capital; reveal, claim, unlock, settlement, stop, and recovery remain available.",
         );
       }
     };
-    const persistRecentActions = async () => {
-      if (miningHistoryStore) {
-        await miningHistoryStore.appendActions(state.recentActions, "runtime");
-        await miningHistoryStore.replaceOperationalState(buildMiningOperationalState());
-        await miningHistoryStore.enforceDefaultRetentionIfNeeded();
-        return;
-      } else if (state.actionHistoryStorePath) {
-        const seen = new Set(state.actionHistoryEntryKeys);
-        const pendingActionHistoryEntries: typeof state.recentActions = [];
-        for (const entry of state.recentActions.toReversed()) {
-          const key = satRecentActionKey(entry);
-          if (seen.has(key)) {
-            continue;
-          }
-          seen.add(key);
-          pendingActionHistoryEntries.push(entry);
-        }
-        if (pendingActionHistoryEntries.length > 0) {
-          await appendSatActionHistoryEntries(
-            state.actionHistoryStorePath,
-            pendingActionHistoryEntries,
-          );
-          for (const entry of pendingActionHistoryEntries) {
-            state.actionHistoryEntryKeys.add(satRecentActionKey(entry));
-          }
-        }
-      }
-      if (!state.runtimeStorePath) {
-        return;
-      }
-      await writeSatRecentActions(state.runtimeStorePath, state.recentActions, {
-        archivedFailures: state.archivedFailures.filter((entry) =>
-          isCurrentSatAction(entry.action),
-        ),
-        plannerHistory: miningHistoryStore ? [] : state.plannerHistory,
-        plannerCycles: miningHistoryStore ? [] : state.plannerCycles,
-        pendingPlannerCycles: Array.from(state.pendingPlannerCycles.values()),
-        roundExecution: Array.from(state.roundExecution.entries()).map(([roundKey, execution]) => ({
-          roundKey,
-          execution,
-        })),
-        claimBacklog: Array.from(state.claimBacklog.values()),
-        settlementPageParticipants: Array.from(state.settlementPageParticipants.entries()).map(
-          ([cacheKey, participants]) => ({
-            cacheKey,
-            participants,
-          }),
-        ),
-        settlementPageLookupTables: Array.from(state.settlementPageLookupTables.entries()).map(
-          ([cacheKey, lookupTableAddress]) => ({ cacheKey, lookupTableAddress }),
-        ),
-        workers: state.workers,
-        lastKnownStatus: state.lastKnownStatus,
-        chainTime: state.chainTime,
-        currentRunStartedAt: state.currentRunStartedAt,
-        runStartSolBalanceLamports: state.runStartSolBalanceLamports,
-        runStartSatBalanceRaw: state.runStartSatBalanceRaw,
-        enabledWanted: state.activeConfig.enabled,
-        lastAction: state.lastAction,
-        lastActionTxHash: state.lastActionTxHash,
-        lastFailure: state.lastFailure,
+    const persistRecentActions = async (historyStore = requireInternalMiningHistoryStore()) => {
+      await historyStore.appendActions(state.recentActions, "runtime");
+      await historyStore.replaceOperationalState(buildMiningOperationalState());
+      await historyStore.enforceDefaultRetentionIfNeeded();
+    };
+    const queuePersistRecentActions = () => {
+      void persistRecentActions().catch((error) => {
+        api.logger.error(
+          `[sat-mining] permanent runtime history write failed: ${toGatewayErrorMessage(error)}`,
+        );
       });
     };
     const resetWalletScopedRuntimeMemory = () => {
@@ -2426,8 +2410,6 @@ const satMiningPlugin = {
       state.archivedFailures = [];
       state.plannerHistory = [];
       state.plannerCycles = [];
-      state.plannerHistoryStorePath = null;
-      state.actionHistoryStorePath = null;
       state.actionHistoryEntryKeys.clear();
       state.pendingPlannerCycles.clear();
       state.currentRunStartedAt = null;
@@ -2450,34 +2432,26 @@ const satMiningPlugin = {
       if (!serviceContext) {
         return null;
       }
-      if (miningHistoryStore) {
-        miningHistoryStore.checkpoint();
-        miningHistoryStore.close();
-        miningHistoryStore = null;
-      }
-      const nextAuditStorePath = resolveSatAuditStorePath(serviceContext.stateDir, walletId);
-      const nextRuntimeStorePath = resolveSatRuntimeStorePath(serviceContext.stateDir, walletId);
-      const nextPlannerHistoryStorePath = resolveSatPlannerHistoryStorePath(
+      const nextMiningWalletStateDir = resolveMiningWalletStateDir(
         serviceContext.stateDir,
         walletId,
       );
-      const nextActionHistoryStorePath = resolveSatActionHistoryStorePath(
-        serviceContext.stateDir,
-        walletId,
+      const nextAuditStorePath = path.join(nextMiningWalletStateDir, "audit-store.json");
+      const nextRuntimeStorePath = path.join(nextMiningWalletStateDir, "runtime-store.json");
+      const nextPlannerHistoryStorePath = path.join(
+        nextMiningWalletStateDir,
+        "planner-history.ndjson",
       );
-      const nextActionHistoryMirrorStorePath = resolveSatActionHistoryMirrorStorePath(
-        serviceContext.stateDir,
-        walletId,
+      const nextActionHistoryStorePath = path.join(
+        nextMiningWalletStateDir,
+        "action-history.ndjson",
       );
-      const nextMiningHistoryDatabasePath = path.join(
-        resolveSatWalletStateDir(serviceContext.stateDir, walletId),
-        "mining.sqlite",
+      const nextActionHistoryMirrorStorePath = path.join(
+        nextMiningWalletStateDir,
+        "action-history.mirror.ndjson",
       );
+      const nextMiningHistoryDatabasePath = path.join(nextMiningWalletStateDir, "mining.sqlite");
       resetWalletScopedRuntimeMemory();
-      state.auditStorePath = nextAuditStorePath;
-      state.runtimeStorePath = nextRuntimeStorePath;
-      state.plannerHistoryStorePath = nextPlannerHistoryStorePath;
-      state.actionHistoryStorePath = nextActionHistoryStorePath;
       const { effectiveEnv } = resolveWalletRuntimeContext();
       const canonicalWalletId = String(walletId ?? "").trim() || "unattached";
       const submissionLedgerPath = resolveSatSubmissionLedgerPath({
@@ -2535,133 +2509,202 @@ const satMiningPlugin = {
           },
         };
       };
-      const openedHistory = await SatMiningHistoryStore.open({
-        databasePath: nextMiningHistoryDatabasePath,
-        scope: resolveMiningHistoryScope(walletId),
-        migrationFactory,
-      });
-      miningHistoryStore = openedHistory.store;
-      runtimeSummary = miningHistoryStore.readRuntimeSummary();
-      state.archivedFailures = runtimeSummary.archivedFailures;
-      if (openedHistory.migration) {
-        api.logger.info(
-          `[sat-mining] permanent history ledger ready (wallet=${openedHistory.store.getScope().walletId}, importedActions=${openedHistory.migration.importedActions}, importedOutcomes=${openedHistory.migration.importedOutcomes}, malformed=${openedHistory.migration.malformedRecords})`,
+      let nextHistoryStore: SatMiningHistoryStore | null = null;
+      try {
+        const openedHistory = await SatMiningHistoryStore.open({
+          databasePath: nextMiningHistoryDatabasePath,
+          scope: resolveMiningHistoryScope(walletId),
+          migrationFactory,
+        });
+        nextHistoryStore = openedHistory.store;
+        runtimeSummary = nextHistoryStore.readRuntimeSummary();
+        state.archivedFailures = runtimeSummary.archivedFailures;
+        if (openedHistory.migration) {
+          api.logger.info(
+            `[sat-mining] permanent history ledger ready (wallet=${openedHistory.store.getScope().walletId}, importedActions=${openedHistory.migration.importedActions}, importedOutcomes=${openedHistory.migration.importedOutcomes}, malformed=${openedHistory.migration.malformedRecords})`,
+          );
+        }
+        const ledgerAuditArtifacts = nextHistoryStore.readAuditArtifacts() as SatAuditArtifact[];
+        state.auditArtifacts = new Map(
+          ledgerAuditArtifacts.map((artifact) => [artifact.roundKey, artifact]),
         );
-      }
-      const ledgerAuditArtifacts = miningHistoryStore.readAuditArtifacts() as SatAuditArtifact[];
-      state.auditArtifacts = new Map(
-        ledgerAuditArtifacts.map((artifact) => [artifact.roundKey, artifact]),
-      );
-      const operational = miningHistoryStore.readOperationalState();
-      state.archivedFailures =
-        (operational.archivedFailures as typeof state.archivedFailures) ?? [];
-      state.pendingPlannerCycles = new Map(
-        (operational.pendingPlannerCycles as typeof runtimeSummary.pendingPlannerCycles).map(
-          (entry) => [entry.cycleId, entry],
-        ),
-      );
-      state.roundExecution = new Map(
-        (operational.roundExecution as typeof runtimeSummary.roundExecution).map((entry) => [
-          entry.roundKey,
-          entry.execution,
-        ]),
-      );
-      state.claimBacklog = new Map(
-        (operational.claimBacklog as typeof runtimeSummary.claimBacklog).map((entry) => [
-          entry.cycleId,
-          entry,
-        ]),
-      );
-      state.settlementPageParticipants = new Map(
-        (
-          operational.settlementPageParticipants as typeof runtimeSummary.settlementPageParticipants
-        ).map((entry) => [entry.cacheKey, [...entry.participants]]),
-      );
-      state.settlementPageLookupTables = new Map(
-        (
-          operational.settlementPageLookupTables as typeof runtimeSummary.settlementPageLookupTables
-        ).map((entry) => [entry.cacheKey, entry.lookupTableAddress]),
-      );
-      const operationalWorkers = operational.workers ?? {};
-      for (const workerKey of ["roundWatcher", "epoch", "claim", "recovery"] as const) {
-        const selected = operationalWorkers[workerKey] as
-          | (typeof state.workers)[typeof workerKey]
-          | undefined;
-        if (selected) {
-          state.workers[workerKey] = selected;
+        const operational = nextHistoryStore.readOperationalState();
+        state.archivedFailures =
+          (operational.archivedFailures as typeof state.archivedFailures) ?? [];
+        state.pendingPlannerCycles = new Map(
+          (operational.pendingPlannerCycles as typeof runtimeSummary.pendingPlannerCycles).map(
+            (entry) => [entry.cycleId, entry],
+          ),
+        );
+        state.roundExecution = new Map(
+          (operational.roundExecution as typeof runtimeSummary.roundExecution).map((entry) => [
+            entry.roundKey,
+            entry.execution,
+          ]),
+        );
+        state.claimBacklog = new Map(
+          (operational.claimBacklog as typeof runtimeSummary.claimBacklog).map((entry) => [
+            entry.cycleId,
+            entry,
+          ]),
+        );
+        state.settlementPageParticipants = new Map(
+          (
+            operational.settlementPageParticipants as typeof runtimeSummary.settlementPageParticipants
+          ).map((entry) => [entry.cacheKey, [...entry.participants]]),
+        );
+        state.settlementPageLookupTables = new Map(
+          (
+            operational.settlementPageLookupTables as typeof runtimeSummary.settlementPageLookupTables
+          ).map((entry) => [entry.cacheKey, entry.lookupTableAddress]),
+        );
+        const operationalWorkers = operational.workers ?? {};
+        for (const workerKey of ["roundWatcher", "epoch", "claim", "recovery"] as const) {
+          const selected = operationalWorkers[workerKey] as
+            | (typeof state.workers)[typeof workerKey]
+            | undefined;
+          if (selected) {
+            state.workers[workerKey] = selected;
+          }
         }
-      }
-      const runtimeMeta = operational.runtimeMeta ?? {};
-      state.lastKnownStatus =
-        (runtimeMeta.lastKnownStatus as typeof state.lastKnownStatus) ?? state.lastKnownStatus;
-      state.chainTime = (runtimeMeta.chainTime as typeof state.chainTime) ?? state.chainTime;
-      state.recentActions = miningHistoryStore.readRecentActions(
-        SAT_ACTION_HISTORY_RECENT_TAIL_LIMIT,
-      );
-      state.plannerHistory = miningHistoryStore.readRecentPlannerOutcomes(4096);
-      state.plannerCycles = miningHistoryStore.readRecentPlannerCycles(4096);
-      state.actionHistoryEntryKeys = new Set(
-        state.recentActions.map((entry) => satRecentActionKey(entry)),
-      );
-      const claimedCycleIds = new Set<number>();
-      for (const outcome of state.plannerHistory) {
-        if (Number.isFinite(outcome.cycleId) && outcome.cycleId >= 0) {
-          claimedCycleIds.add(outcome.cycleId);
+        const runtimeMeta = operational.runtimeMeta ?? {};
+        state.lastKnownStatus =
+          (runtimeMeta.lastKnownStatus as typeof state.lastKnownStatus) ?? state.lastKnownStatus;
+        state.chainTime = (runtimeMeta.chainTime as typeof state.chainTime) ?? state.chainTime;
+        state.recentActions = nextHistoryStore.readRecentActions(
+          SAT_ACTION_HISTORY_RECENT_TAIL_LIMIT,
+        );
+        state.plannerHistory = nextHistoryStore.readRecentPlannerOutcomes(4096);
+        state.plannerCycles = nextHistoryStore.readRecentPlannerCycles(4096);
+        state.actionHistoryEntryKeys = new Set(
+          state.recentActions.map((entry) => satRecentActionKey(entry)),
+        );
+        const claimedCycleIds = new Set<number>();
+        for (const outcome of state.plannerHistory) {
+          if (Number.isFinite(outcome.cycleId) && outcome.cycleId >= 0) {
+            claimedCycleIds.add(outcome.cycleId);
+          }
         }
-      }
-      const indexedClaimCycleIds = miningHistoryStore.readCompletedCycleIds([
-        "claimCycleRewards",
-        "claimCycleRewardsBatch",
-      ]);
-      for (const cycleId of indexedClaimCycleIds) {
-        claimedCycleIds.add(cycleId);
-      }
-      for (const action of state.recentActions) {
-        if (
-          action.status === "success" &&
-          (action.action === "claimCycleRewards" ||
-            action.action === "claimCycleRewardsBatch" ||
-            ((action.action === "closeResolvedCycleAccounts" ||
-              action.action === "closeResolvedCycleArtifacts") &&
-              typeof action.cycleId === "number" &&
-              hasAuthoritativeCloseRecord(state, action.cycleId))) &&
-          typeof action.cycleId === "number" &&
-          Number.isFinite(action.cycleId) &&
-          action.cycleId >= 0
-        ) {
-          claimedCycleIds.add(action.cycleId);
+        const indexedClaimCycleIds = nextHistoryStore.readCompletedCycleIds([
+          "claimCycleRewards",
+          "claimCycleRewardsBatch",
+        ]);
+        for (const cycleId of indexedClaimCycleIds) {
+          claimedCycleIds.add(cycleId);
         }
+        for (const action of state.recentActions) {
+          if (
+            action.status === "success" &&
+            (action.action === "claimCycleRewards" ||
+              action.action === "claimCycleRewardsBatch" ||
+              ((action.action === "closeResolvedCycleAccounts" ||
+                action.action === "closeResolvedCycleArtifacts") &&
+                typeof action.cycleId === "number" &&
+                hasAuthoritativeCloseRecord(state, action.cycleId))) &&
+            typeof action.cycleId === "number" &&
+            Number.isFinite(action.cycleId) &&
+            action.cycleId >= 0
+          ) {
+            claimedCycleIds.add(action.cycleId);
+          }
+        }
+        for (const cycleId of claimedCycleIds) {
+          const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
+          execution.openRoundSubmitted = true;
+          execution.participationSubmitted = true;
+          execution.crankSubmitted = true;
+          execution.epochFinalized = true;
+          execution.claimSubmitted = true;
+        }
+        state.currentRunStartedAt =
+          (runtimeMeta.currentRunStartedAt as typeof state.currentRunStartedAt) ??
+          runtimeSummary.currentRunStartedAt;
+        state.runStartSolBalanceLamports =
+          (runtimeMeta.runStartSolBalanceLamports as typeof state.runStartSolBalanceLamports) ??
+          runtimeSummary.runStartSolBalanceLamports;
+        state.runStartSatBalanceRaw =
+          (runtimeMeta.runStartSatBalanceRaw as typeof state.runStartSatBalanceRaw) ??
+          runtimeSummary.runStartSatBalanceRaw;
+        state.lastAction =
+          (runtimeMeta.lastAction as typeof state.lastAction) ?? runtimeSummary.lastAction;
+        state.lastActionTxHash =
+          (runtimeMeta.lastActionTxHash as typeof state.lastActionTxHash) ??
+          runtimeSummary.lastActionTxHash;
+        state.lastFailure =
+          (runtimeMeta.lastFailure as typeof state.lastFailure) ?? runtimeSummary.lastFailure;
+        miningHistoryStore = nextHistoryStore;
+        return runtimeSummary;
+      } catch (error) {
+        nextHistoryStore?.close();
+        throw error;
       }
-      for (const cycleId of claimedCycleIds) {
-        const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
-        execution.openRoundSubmitted = true;
-        execution.participationSubmitted = true;
-        execution.crankSubmitted = true;
-        execution.epochFinalized = true;
-        execution.claimSubmitted = true;
-      }
-      state.currentRunStartedAt =
-        (runtimeMeta.currentRunStartedAt as typeof state.currentRunStartedAt) ??
-        runtimeSummary.currentRunStartedAt;
-      state.runStartSolBalanceLamports =
-        (runtimeMeta.runStartSolBalanceLamports as typeof state.runStartSolBalanceLamports) ??
-        runtimeSummary.runStartSolBalanceLamports;
-      state.runStartSatBalanceRaw =
-        (runtimeMeta.runStartSatBalanceRaw as typeof state.runStartSatBalanceRaw) ??
-        runtimeSummary.runStartSatBalanceRaw;
-      state.lastAction =
-        (runtimeMeta.lastAction as typeof state.lastAction) ?? runtimeSummary.lastAction;
-      state.lastActionTxHash =
-        (runtimeMeta.lastActionTxHash as typeof state.lastActionTxHash) ??
-        runtimeSummary.lastActionTxHash;
-      state.lastFailure =
-        (runtimeMeta.lastFailure as typeof state.lastFailure) ?? runtimeSummary.lastFailure;
-      return runtimeSummary;
     };
-    const switchWalletScopedPersistence = async (walletId?: string) => {
-      await persistAuditArtifacts();
-      await persistRecentActions();
+    const switchWalletScopedPersistence = async (
+      walletId: string | undefined,
+      previousHistoryStore: SatMiningHistoryStore | null,
+    ) => {
+      if (previousHistoryStore) {
+        await persistAuditArtifacts(previousHistoryStore);
+        await persistRecentActions(previousHistoryStore);
+        previousHistoryStore.checkpoint();
+        previousHistoryStore.close();
+        transitionPersistenceStore = null;
+      }
       return await loadWalletScopedPersistence(walletId);
+    };
+    const beginWalletScopedPersistenceTransition = (): SatMiningHistoryStore | null => {
+      if (miningHistoryTransitionInFlight || miningHistoryTransitionFailed) {
+        throw new Error("Mining history service is not ready");
+      }
+      const previousHistoryStore = miningHistoryStore;
+      miningHistoryTransitionInFlight = true;
+      miningHistoryStore = null;
+      transitionPersistenceStore = previousHistoryStore;
+      return previousHistoryStore;
+    };
+    const finishWalletScopedPersistenceTransition = async <T>(
+      previousHistoryStore: SatMiningHistoryStore | null,
+      operation: (previousHistoryStore: SatMiningHistoryStore | null) => Promise<T>,
+      rollback?: () => Promise<void>,
+    ): Promise<T> => {
+      try {
+        return await operation(previousHistoryStore);
+      } catch (error) {
+        closePublishedMiningHistoryStore();
+        previousHistoryStore?.close();
+        if (rollback) {
+          try {
+            await rollback();
+          } catch (rollbackError) {
+            closePublishedMiningHistoryStore();
+            miningHistoryTransitionFailed = true;
+            await cleanupAfterFailedWalletTransition();
+            throw new Error(
+              `Mining wallet transition failed: ${error instanceof Error ? error.message : String(error)}; rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+            );
+          }
+        }
+        throw error;
+      } finally {
+        transitionPersistenceStore = null;
+        if (!miningHistoryTransitionFailed) {
+          miningHistoryTransitionInFlight = false;
+        }
+      }
+    };
+    const runWalletScopedPersistenceTransition = async <T>(
+      operation: (previousHistoryStore: SatMiningHistoryStore | null) => Promise<T>,
+      rollback?: () => Promise<void>,
+    ): Promise<T> =>
+      await finishWalletScopedPersistenceTransition(
+        beginWalletScopedPersistenceTransition(),
+        operation,
+        rollback,
+      );
+    const completeMiningHistoryRecovery = () => {
+      miningHistoryTransitionFailed = false;
+      miningHistoryTransitionInFlight = false;
+      transitionPersistenceStore = null;
     };
     const runtimeSummaryHasLockedCapital = (
       runtimeSummary: SatRuntimeSummary | null | undefined,
@@ -2755,10 +2798,8 @@ const satMiningPlugin = {
             `[sat-mining] permanent planner history write failed: ${toGatewayErrorMessage(error)}`,
           );
         });
-      } else if (state.plannerHistoryStorePath) {
-        void appendSatPlannerHistoryOutcome(state.plannerHistoryStorePath, merged);
       }
-      void persistRecentActions();
+      queuePersistRecentActions();
     };
     const upsertPlannerCycle = (record: SatPlannerCycleRecord) => {
       state.plannerCycles = [
@@ -2772,7 +2813,7 @@ const satMiningPlugin = {
           );
         });
       }
-      void persistRecentActions();
+      queuePersistRecentActions();
     };
     const plannerOutcomeRepairInFlight = new Set<number>();
     const capturePlannerOutcomesForCycles = async (
@@ -2943,53 +2984,6 @@ const satMiningPlugin = {
               totalRebateLamports -
               keeperBountyLamports
             ).toString();
-            const score = scorePlannerOutcome({
-              totalSatEarnedRaw: totalSatEarnedRaw.toString(),
-              netLiveCostLamports,
-              validParticipation,
-            });
-            const counterfactuals = buildCounterfactualScores({
-              cycle: {
-                committedLamports: committedLamportsLabel,
-                strategyPreset: pendingPlannerCycle?.strategyPreset,
-                totalSatEarnedRaw: totalSatEarnedRaw.toString(),
-                totalRebateLamports: totalRebateLamports.toString(),
-                txFeeLamports: txFeeLamports.toString(),
-                netLiveCostLamports,
-                validParticipation,
-              },
-              maxCommitLamports:
-                pendingPlannerCycle?.strategyExecution === "auto"
-                  ? (committedLamports * 2n).toString()
-                  : committedLamports.toString(),
-            });
-            const baselineCommitLamports =
-              pendingPlannerCycle?.capitalFreeLamports ??
-              pendingPlannerCycle?.capitalFundedLamports ??
-              committedLamportsLabel;
-            const chosenActionKey =
-              pendingPlannerCycle?.experiment?.chosenActionKey ??
-              `${pendingPlannerCycle?.strategyPreset ?? "balanced"}:${deriveCommitBand(
-                committedLamportsLabel,
-                pendingPlannerCycle?.capitalFreeLamports ?? committedLamportsLabel,
-              )}`;
-            const baselineActionKey =
-              pendingPlannerCycle?.experiment?.baselineActionKey ??
-              `${pendingPlannerCycle?.strategyPreset ?? "balanced"}:${deriveCommitBand(
-                committedLamportsLabel,
-                baselineCommitLamports,
-              )}`;
-            const chosenCounterfactual =
-              counterfactuals.find((entry) => entry.actionKey === chosenActionKey) ?? null;
-            const baselineCounterfactual =
-              counterfactuals.find((entry) => entry.actionKey === baselineActionKey) ?? null;
-            const bestCounterfactual = counterfactuals.reduce<
-              null | (typeof counterfactuals)[number]
-            >(
-              (best, entry) =>
-                !best || BigInt(entry.estimatedScore) > BigInt(best.estimatedScore) ? entry : best,
-              null,
-            );
             const committedMinerCount = (() => {
               const raw = cycleState?.validMinerCount;
               if (raw == null) {
@@ -3000,74 +2994,8 @@ const satMiningPlugin = {
                 ? parsed
                 : pendingPlannerCycle?.participantCount;
             })();
-            upsertPlannerOutcome(
-              {
-                cycleId,
-                committedLamports: committedLamportsLabel,
-                totalSatEarnedRaw: totalSatEarnedRaw.toString(),
-                totalRebateLamports: totalRebateLamports.toString(),
-                deterministicRebateLamports: deterministicRebateLamports.toString(),
-                performanceRebateLamports: performanceRebateLamports.toString(),
-                claimableDetRebateLamports: minerCycle?.claimableDetRebateLamports,
-                claimablePerfRebateLamports: minerCycle?.claimablePerfRebateLamports,
-                claimedDetRebateLamports: minerCycle?.claimedDetRebateLamports,
-                claimedPerfRebateLamports: minerCycle?.claimedPerfRebateLamports,
-                deterministicRebatePoolLamports: cycleState?.deterministicRebatePoolLamports,
-                performanceRebatePoolLamports: cycleState?.performanceRebatePoolLamports,
-                placementReturnFp: minerCycle?.placementReturnFp,
-                benchmarkReturnFp: minerCycle?.benchmarkReturnFp,
-                skillScoreFp: minerCycle?.skillScoreFp,
-                rewardWeightFp: minerCycle?.rewardWeightFp,
-                powerWeightFp: minerCycle?.powerWeightFp,
-                txFeeLamports: txFeeLamports.toString(),
-                netLiveCostLamports,
-                erosionLamports: erosionLamports.toString(),
-                submitFeeLamports: submitFeeLamports.toString(),
-                keeperFeeLamports: keeperFeeLamports.toString(),
-                claimFeeLamports: claimFeeLamports.toString(),
-                otherFeeLamports: otherFeeLamports.toString(),
-                keeperBountyLamports: keeperBountyLamports.toString(),
-                cycleKeeperBountyPaidLamports: cycleKeeperBountyPaidLamports.toString(),
-                validParticipation,
-                riskMode: pendingPlannerCycle?.riskMode,
-                strategyPreset: pendingPlannerCycle?.strategyPreset,
-                strategyExecution: pendingPlannerCycle?.strategyExecution,
-                strategySource: pendingPlannerCycle?.strategySource,
-                strategyFallbackUsed: pendingPlannerCycle?.strategyFallbackUsed,
-                modelId: pendingPlannerCycle?.modelId,
-                committedMinerCount,
-                participantCount: pendingPlannerCycle?.participantCount,
-                pageCount: pendingPlannerCycle?.pageCount,
-                crowdingRatioFp: pendingPlannerCycle?.crowdingRatioFp,
-                plannerRationale: pendingPlannerCycle?.plannerRationale,
-                strategyRationale: pendingPlannerCycle?.strategyRationale,
-                decidedAt: pendingPlannerCycle?.decidedAt,
-                recordedAt,
-              },
-              erosionPpm,
-            );
-            upsertPlannerCycle({
+            const plannerOutcome: SatPlannerOutcomeMemory = {
               cycleId,
-              decidedAt: pendingPlannerCycle?.decidedAt ?? recordedAt,
-              recordedAt,
-              regimeKey: classifyPlannerRegime({
-                participantCount: pendingPlannerCycle?.participantCount,
-                pageCount: pendingPlannerCycle?.pageCount,
-                crowdingRatioFp: pendingPlannerCycle?.crowdingRatioFp,
-              }),
-              timeWindowKey: classifyPlannerTimeWindow(recordedAt),
-              riskMode: pendingPlannerCycle?.riskMode,
-              strategyPreset: pendingPlannerCycle?.strategyPreset,
-              strategyExecution: pendingPlannerCycle?.strategyExecution,
-              strategySource: pendingPlannerCycle?.strategySource,
-              strategyFallbackUsed: pendingPlannerCycle?.strategyFallbackUsed,
-              modelId: pendingPlannerCycle?.modelId,
-              committedMinerCount,
-              participantCount: pendingPlannerCycle?.participantCount,
-              pageCount: pendingPlannerCycle?.pageCount,
-              crowdingRatioFp: pendingPlannerCycle?.crowdingRatioFp,
-              plannerRationale: pendingPlannerCycle?.plannerRationale,
-              strategyRationale: pendingPlannerCycle?.strategyRationale,
               committedLamports: committedLamportsLabel,
               totalSatEarnedRaw: totalSatEarnedRaw.toString(),
               totalRebateLamports: totalRebateLamports.toString(),
@@ -3093,51 +3021,33 @@ const satMiningPlugin = {
               otherFeeLamports: otherFeeLamports.toString(),
               keeperBountyLamports: keeperBountyLamports.toString(),
               cycleKeeperBountyPaidLamports: cycleKeeperBountyPaidLamports.toString(),
-              score,
               validParticipation,
-              counterfactuals,
-              experiment: {
-                schemaVersion: 1,
-                policyVersion:
-                  pendingPlannerCycle?.experiment?.policyVersion ?? plannerPolicyVersion(),
-                decisionEngine: pendingPlannerCycle?.experiment?.decisionEngine ?? "rule",
-                explorationPolicy: pendingPlannerCycle?.experiment?.explorationPolicy ?? "none",
-                explorationRatePpm: pendingPlannerCycle?.experiment?.explorationRatePpm ?? "0",
-                explorationTaken: pendingPlannerCycle?.experiment?.explorationTaken === true,
-                capitalTier:
-                  pendingPlannerCycle?.experiment?.capitalTier ??
-                  classifyPlannerCapitalTier(
-                    pendingPlannerCycle?.capitalFundedLamports ??
-                      pendingPlannerCycle?.capitalFreeLamports ??
-                      committedLamportsLabel,
-                  ),
-                contextKey:
-                  pendingPlannerCycle?.experiment?.contextKey ??
-                  `${classifyPlannerRegime({
-                    participantCount: pendingPlannerCycle?.participantCount,
-                    pageCount: pendingPlannerCycle?.pageCount,
-                    crowdingRatioFp: pendingPlannerCycle?.crowdingRatioFp,
-                  })}/${classifyPlannerTimeWindow(recordedAt)}`,
-                chosenActionKey,
-                baselineActionKey,
-                chosenEstimatedScore: chosenCounterfactual?.estimatedScore ?? null,
-                baselineEstimatedScore: baselineCounterfactual?.estimatedScore ?? null,
-                estimatedRegret:
-                  bestCounterfactual && chosenCounterfactual
-                    ? (
-                        BigInt(bestCounterfactual.estimatedScore) -
-                        BigInt(chosenCounterfactual.estimatedScore)
-                      ).toString()
-                    : null,
-                confidenceRadius:
-                  typeof pendingPlannerCycle?.experiment?.confidenceRadius === "string"
-                    ? pendingPlannerCycle.experiment.confidenceRadius
-                    : null,
-              },
-            });
+              riskMode: pendingPlannerCycle?.riskMode,
+              strategyPreset: pendingPlannerCycle?.strategyPreset,
+              strategyExecution: pendingPlannerCycle?.strategyExecution,
+              strategySource: pendingPlannerCycle?.strategySource,
+              strategyFallbackUsed: pendingPlannerCycle?.strategyFallbackUsed,
+              modelId: pendingPlannerCycle?.modelId,
+              committedMinerCount,
+              participantCount: pendingPlannerCycle?.participantCount,
+              pageCount: pendingPlannerCycle?.pageCount,
+              crowdingRatioFp: pendingPlannerCycle?.crowdingRatioFp,
+              plannerRationale: pendingPlannerCycle?.plannerRationale,
+              strategyRationale: pendingPlannerCycle?.strategyRationale,
+              decidedAt: pendingPlannerCycle?.decidedAt,
+              recordedAt,
+            };
+            upsertPlannerOutcome(plannerOutcome, erosionPpm);
+            upsertPlannerCycle(
+              miningStrategyService.buildPlannerCycleRecord({
+                outcome: plannerOutcome,
+                pendingPlannerCycle,
+                committedMinerCount,
+              }),
+            );
             if (pendingPlannerCycle) {
               state.pendingPlannerCycles.delete(cycleId);
-              void persistRecentActions();
+              queuePersistRecentActions();
             }
             const receiptsResolved = actionReceipts.every((entry) => entry.receipt !== null);
             const claimResolved = !claimTxHash || claimReceipt !== null;
@@ -3215,7 +3125,7 @@ const satMiningPlugin = {
           at: new Date().toISOString(),
         },
       ]);
-      void persistRecentActions();
+      queuePersistRecentActions();
     };
     const markActionSuccess = (action: string, txHash?: string | null, cycleId?: number | null) => {
       const chainMutatingAction = action !== "startMining" && action !== "stopMining";
@@ -3251,7 +3161,7 @@ const satMiningPlugin = {
             at: actionAt,
           },
         ]);
-        void persistRecentActions();
+        queuePersistRecentActions();
         return;
       }
       mergeRecentActionTail(
@@ -3263,7 +3173,7 @@ const satMiningPlugin = {
           at: actionAt,
         })),
       );
-      void persistRecentActions();
+      queuePersistRecentActions();
     };
     const markClaimActionResult = (params: {
       action: "claimCycleRewards" | "claimCycleRewardsBatch";
@@ -3570,7 +3480,7 @@ const satMiningPlugin = {
           new Date().toISOString(),
       };
       state.pendingPlannerCycles.set(cycleId, pending);
-      void persistRecentActions();
+      queuePersistRecentActions();
     };
     const hasUnresolvedRuntimeBacklog = () => {
       if (state.lastKnownStatus) {
@@ -3621,7 +3531,7 @@ const satMiningPlugin = {
         );
       }
       state.lastFailure = null;
-      void persistRecentActions();
+      queuePersistRecentActions();
     };
     const resetLiveRoundContext = (opts?: { preserveBacklog?: boolean }) => {
       if (opts?.preserveBacklog) {
@@ -3712,6 +3622,9 @@ const satMiningPlugin = {
           );
         }
       }
+      const transitionSnapshot = captureWalletTransitionState();
+      const transitionHistoryStore =
+        previousWalletId !== requestedWalletId ? beginWalletScopedPersistenceTransition() : null;
       state.activeConfig.walletId = requestedWalletId;
       state.activeConfig.role =
         profile.role === "validator" || profile.role === "admin" || profile.role === "miner"
@@ -3911,33 +3824,63 @@ const satMiningPlugin = {
           : state.activeConfig.coordinationGroup;
       state.client = new SatMiningClient(state.activeConfig);
       if (previousWalletId !== state.activeConfig.walletId) {
-        state.running = false;
-        await roundWatcherService.stop?.();
-        await epochService.stop?.();
-        await claimService.stop?.();
-        await recoveryService.stop?.();
-        const nextWallet = state.activeConfig.walletId
-          ? await readMiningWalletById(state.activeConfig.walletId)
-          : undefined;
-        state.activeWalletAddress = nextWallet?.address ?? null;
-        const runtimeSummary = await switchWalletScopedPersistence(state.activeConfig.walletId);
-        if (runtimeSummary) {
-          const restoredDrain = await restoreDrainModeForLockedCapital(
-            runtimeSummary,
-            "profile wallet switch",
-          );
-          if (!restoredDrain) {
-            state.activeConfig.enabled = resolveSatMiningEnabledWanted(
-              runtimeSummary.enabledWanted,
+        const targetConfig = state.activeConfig;
+        const targetClient = state.client;
+        let targetServicesStarted = false;
+        await finishWalletScopedPersistenceTransition(
+          transitionHistoryStore,
+          async (previousHistoryStore) => {
+            state.activeConfig = transitionSnapshot.activeConfig;
+            state.activeWalletAddress = transitionSnapshot.activeWalletAddress;
+            state.client = transitionSnapshot.client;
+            state.running = false;
+            stopSatWorkerBootstrapLoop();
+            await stopSatWorkerServices();
+            state.activeConfig = targetConfig;
+            state.client = targetClient;
+            const nextWallet = state.activeConfig.walletId
+              ? await readMiningWalletById(state.activeConfig.walletId)
+              : undefined;
+            state.activeWalletAddress = nextWallet?.address ?? null;
+            const runtimeSummary = await switchWalletScopedPersistence(
+              state.activeConfig.walletId,
+              previousHistoryStore,
             );
-          }
-        } else if (!(await restoreDrainModeForLockedCapitalFromChain("profile wallet switch"))) {
-          state.activeConfig.enabled = false;
-        }
+            if (runtimeSummary) {
+              const restoredDrain = await restoreDrainModeForLockedCapital(
+                runtimeSummary,
+                "profile wallet switch",
+              );
+              if (!restoredDrain) {
+                state.activeConfig.enabled = resolveSatMiningEnabledWanted(
+                  runtimeSummary.enabledWanted,
+                );
+              }
+            } else if (
+              !(await restoreDrainModeForLockedCapitalFromChain("profile wallet switch"))
+            ) {
+              state.activeConfig.enabled = false;
+            }
+            await persistActiveConfig({ includeEnabled: false });
+            if (serviceContext && state.activeConfig.enabled) {
+              targetServicesStarted = true;
+              startSatWorkerBootstrapLoop();
+              if (!(await ensureSatWorkerServicesReady({ warnOnFailure: true }))) {
+                throw new Error("Mining wallet transition could not restore worker services");
+              }
+            }
+          },
+          async () => {
+            if (targetServicesStarted) {
+              stopSatWorkerBootstrapLoop();
+              await stopSatWorkerServices().catch(() => {});
+            }
+            await restoreWalletTransitionState(transitionSnapshot, previousWalletId);
+          },
+        );
+      } else {
+        await persistActiveConfig({ includeEnabled: true });
       }
-      await persistActiveConfig({
-        includeEnabled: previousWalletId === state.activeConfig.walletId,
-      });
       const freezeCommitMs =
         typeof options?.freezeCommitMs === "number" && Number.isFinite(options.freezeCommitMs)
           ? Math.max(0, Math.floor(options.freezeCommitMs))
@@ -4184,46 +4127,72 @@ const satMiningPlugin = {
       if (!nextWalletId) {
         throw new Error("walletId is required");
       }
-      const activeWallet = await readMiningWalletById(nextWalletId);
-      if (!activeWallet) {
-        throw new Error(`walletId not found: ${nextWalletId}`);
-      }
-      if (activeWallet.role !== "mining") {
-        throw new Error(
-          `walletId ${nextWalletId} is not the dedicated Mining wallet; create or import @wallet:mining and use that wallet for SAT mining`,
-        );
-      }
-      if (previousWalletId !== nextWalletId) {
-        state.running = false;
-        stopSatWorkerBootstrapLoop();
-        await stopSatWorkerServices();
-      }
-      state.activeConfig.walletId = nextWalletId;
-      state.activeWalletAddress = activeWallet.address;
-      if (previousWalletId !== nextWalletId) {
-        const runtimeSummary = await switchWalletScopedPersistence(nextWalletId);
-        if (runtimeSummary) {
-          const restoredDrain = await restoreDrainModeForLockedCapital(
-            runtimeSummary,
-            "wallet attach",
+      const resolveNextMiningWallet = async () => {
+        const activeWallet = await readMiningWalletById(nextWalletId);
+        if (!activeWallet) {
+          throw new Error(`walletId not found: ${nextWalletId}`);
+        }
+        if (activeWallet.role !== "mining") {
+          throw new Error(
+            `walletId ${nextWalletId} is not the dedicated Mining wallet; create or import @wallet:mining and use that wallet for SAT mining`,
           );
-          if (!restoredDrain) {
-            state.activeConfig.enabled = resolveSatMiningEnabledWanted(
-              runtimeSummary.enabledWanted,
-            );
-          }
-        } else if (!(await restoreDrainModeForLockedCapitalFromChain("wallet attach"))) {
-          state.activeConfig.enabled = false;
         }
-      }
-      await persistActiveConfig({ includeEnabled: false });
+        return activeWallet;
+      };
+      const transitionSnapshot = captureWalletTransitionState();
       if (previousWalletId !== nextWalletId) {
-        if (serviceContext && state.activeConfig.enabled) {
-          startSatWorkerBootstrapLoop();
-          await ensureSatWorkerServicesReady({ warnOnFailure: true });
-        } else {
-          state.running = false;
+        let targetServicesStarted = false;
+        try {
+          await runWalletScopedPersistenceTransition(
+            async (previousHistoryStore) => {
+              const activeWallet = await resolveNextMiningWallet();
+              state.running = false;
+              stopSatWorkerBootstrapLoop();
+              await stopSatWorkerServices();
+              const runtimeSummary = await switchWalletScopedPersistence(
+                nextWalletId,
+                previousHistoryStore,
+              );
+              state.activeConfig.walletId = nextWalletId;
+              state.activeWalletAddress = activeWallet.address;
+              if (runtimeSummary) {
+                const restoredDrain = await restoreDrainModeForLockedCapital(
+                  runtimeSummary,
+                  "wallet attach",
+                );
+                if (!restoredDrain) {
+                  state.activeConfig.enabled = resolveSatMiningEnabledWanted(
+                    runtimeSummary.enabledWanted,
+                  );
+                }
+              } else if (!(await restoreDrainModeForLockedCapitalFromChain("wallet attach"))) {
+                state.activeConfig.enabled = false;
+              }
+              await persistActiveConfig({ includeEnabled: false });
+              if (serviceContext && state.activeConfig.enabled) {
+                targetServicesStarted = true;
+                startSatWorkerBootstrapLoop();
+                if (!(await ensureSatWorkerServicesReady({ warnOnFailure: true }))) {
+                  throw new Error("Mining wallet transition could not restore worker services");
+                }
+              }
+            },
+            async () => {
+              if (targetServicesStarted) {
+                stopSatWorkerBootstrapLoop();
+                await stopSatWorkerServices().catch(() => {});
+              }
+              await restoreWalletTransitionState(transitionSnapshot, previousWalletId);
+            },
+          );
+        } catch (error) {
+          throw error;
         }
+      } else {
+        const activeWallet = await resolveNextMiningWallet();
+        state.activeConfig.walletId = nextWalletId;
+        state.activeWalletAddress = activeWallet.address;
+        await persistActiveConfig({ includeEnabled: false });
       }
       return readWalletAttachment();
     };
@@ -5224,24 +5193,13 @@ const satMiningPlugin = {
         BigInt(liveCycleFeeLamports) -
         BigInt(liveTotalRebateLamports)
       ).toString();
-      const persistedPlannerHistory =
-        !miningHistoryStore && state.plannerHistoryStorePath
-          ? await readSatPlannerHistory(state.plannerHistoryStorePath)
-          : [];
-      const mergedPlannerHistory = new Map<number, SatPlannerOutcomeMemory>();
-      for (const outcome of persistedPlannerHistory) {
-        mergedPlannerHistory.set(outcome.cycleId, outcome);
-      }
-      for (const outcome of state.plannerHistory) {
-        mergedPlannerHistory.set(outcome.cycleId, outcome);
-      }
-      const recentPlannerOutcomes = filterSatPlannerHistoryByCycleEra(
-        [...mergedPlannerHistory.values()].toSorted((left, right) => right.cycleId - left.cycleId),
-        {
+      const { recentPlannerOutcomes, plannerAnalytics, plannerPolicyEvaluation } =
+        miningStrategyService.summarizePlannerHistory({
+          plannerHistory: state.plannerHistory,
+          plannerCycles: state.plannerCycles,
           currentCycleId,
           maxCycleGap: plannerHistoryCycleGapLimit("all"),
-        },
-      ).slice(0, 240);
+        });
       const settledHistory = recentPlannerOutcomes;
       const latestSettledCycleId = settledHistory[0]?.cycleId ?? null;
       const latestSubmittedCycleId = (() => {
@@ -5298,8 +5256,6 @@ const satMiningPlugin = {
         settledHistory,
         recentActions: publicRecentActions,
       });
-      const plannerAnalytics = computePlannerAnalytics(state.plannerCycles);
-      const plannerPolicyEvaluation = computePlannerPolicyEvaluation(state.plannerCycles);
       const plannerMemorySummary =
         state.plannerCycles.length > 0
           ? {
@@ -5784,29 +5740,13 @@ const satMiningPlugin = {
           updatedAt: new Date().toISOString(),
         };
       }
-      const persistedActionHistory = state.actionHistoryStorePath
-        ? await readSatActionHistory(state.actionHistoryStorePath)
-        : [];
-      const repairActionHistory = dedupeRecentActionsNewestFirst([
-        ...state.recentActions,
-        ...persistedActionHistory,
-      ]);
+      const repairActionHistory = dedupeRecentActionsNewestFirst(state.recentActions);
       if (repairActionHistory.length <= SAT_HISTORY_INLINE_REPAIR_ACTION_LIMIT) {
         await repairMissingPlannerOutcomesFromActions(repairActionHistory);
       }
-      const persistedPlannerHistory = state.plannerHistoryStorePath
-        ? await readSatPlannerHistory(state.plannerHistoryStorePath)
-        : [];
       const currentCycleId = resolveCurrentSatCycleId();
-      const mergedPlannerHistory = new Map<number, SatPlannerOutcomeMemory>();
-      for (const outcome of persistedPlannerHistory) {
-        mergedPlannerHistory.set(outcome.cycleId, outcome);
-      }
-      for (const outcome of state.plannerHistory) {
-        mergedPlannerHistory.set(outcome.cycleId, outcome);
-      }
       const allOutcomes = filterSatPlannerHistoryByCycleEra(
-        [...mergedPlannerHistory.values()].toSorted((left, right) => right.cycleId - left.cycleId),
+        [...state.plannerHistory].toSorted((left, right) => right.cycleId - left.cycleId),
         {
           currentCycleId,
           maxCycleGap: plannerHistoryCycleGapLimit(window),
@@ -5820,10 +5760,7 @@ const satMiningPlugin = {
         window: activityWindow,
         maxPoints,
       });
-      const allActions = dedupeRecentActionsNewestFirst([
-        ...state.recentActions,
-        ...persistedActionHistory,
-      ]);
+      const allActions = dedupeRecentActionsNewestFirst(state.recentActions);
       const actionHistory = querySatActionHistory(allActions, { window: activityWindow });
       return {
         window,
@@ -7107,7 +7044,7 @@ const satMiningPlugin = {
         params?.context,
       );
       const strategyDecision = roundContext
-        ? await computeMiningStrategy({
+        ? await miningStrategyService.computeRoundStrategy({
             config: state.activeConfig,
             round: {
               ...roundContext,
@@ -7140,13 +7077,26 @@ const satMiningPlugin = {
       registeredSatGatewayMethods.push({ method, kind, handler });
     };
     const registerSatReadMethod = (method: SatMiningReadMethod, handler: SatGatewayHandler) => {
-      registerSatGatewayMethod(method, "read", handler);
+      registerSatGatewayMethod(method, "read", async (context) => {
+        if (miningHistoryTransitionInFlight || miningHistoryTransitionFailed) {
+          respondGatewayError(context.respond, new Error("Mining history service is not ready"));
+          return;
+        }
+        await handler(context);
+      });
     };
     const registerSatMutationMethod = (
       method: SatMiningMutationMethod,
       handler: SatGatewayHandler,
     ) => {
-      registerSatGatewayMethod(method, "mutation", handler);
+      registerSatGatewayMethod(method, "mutation", async (context) => {
+        try {
+          requireMiningHistoryStore();
+          await handler(context);
+        } catch (error) {
+          respondGatewayError(context.respond, error);
+        }
+      });
     };
     const registerSatSubmissionMethod = (
       method: SatMiningMutationMethod,
@@ -8602,8 +8552,29 @@ const satMiningPlugin = {
       }
       const requestedScopeKey =
         typeof input.scopeId === "string" && input.scopeId.trim() ? input.scopeId.trim() : null;
+      const requireRequestedWalletHistoryScope = (store: SatMiningHistoryStore) => {
+        const selectedScope =
+          !requestedScopeKey || requestedScopeKey === store.getScopeKey()
+            ? store.getScope()
+            : (() => {
+                if (!/^[a-f0-9]{64}$/u.test(requestedScopeKey)) {
+                  throw new Error("Mining history scope key is invalid");
+                }
+                const selected = store
+                  .listScopes()
+                  .find((candidate) => candidate.scopeKey === requestedScopeKey);
+                if (!selected) {
+                  throw new Error("Mining history scope is not registered for this Wallet");
+                }
+                return selected.scope;
+              })();
+        if (selectedScope.walletId !== requestedWalletId) {
+          throw new Error("Mining history scope does not match the requested Wallet ID");
+        }
+      };
       const currentWalletId = resolveConfiguredWalletId();
       if (requestedWalletId === currentWalletId && miningHistoryStore) {
+        requireRequestedWalletHistoryScope(miningHistoryStore);
         return await query(miningHistoryStore, requestedScopeKey);
       }
       if (!serviceContext) {
@@ -8617,13 +8588,11 @@ const satMiningPlugin = {
         throw new Error(`Mining Wallet ${requestedWalletId} is not registered`);
       }
       const queryStore = await SatMiningHistoryStore.openReadOnly({
-        databasePath: resolveSatMiningHistoryDatabasePath(
-          serviceContext.stateDir,
-          requestedWalletId,
-        ),
+        databasePath: resolveMiningHistoryDatabasePath(serviceContext.stateDir, requestedWalletId),
         scopeKey: requestedScopeKey,
       });
       try {
+        requireRequestedWalletHistoryScope(queryStore);
         return await query(queryStore, requestedScopeKey);
       } finally {
         queryStore.close();
@@ -8873,11 +8842,54 @@ const satMiningPlugin = {
     const stopSatRoundWatcherService = async () => {
       await roundWatcherService.stop?.();
     };
-    const stopSatWorkerServices = async () => {
-      await roundWatcherService.stop?.();
-      await epochService.stop?.();
-      await claimService.stop?.();
-      await recoveryService.stop?.();
+    const stopSatWorkerServices = async (opts?: { persistRuntimeState?: boolean }) => {
+      await roundWatcherService.stop?.(opts);
+      await epochService.stop?.(opts);
+      await claimService.stop?.(opts);
+      await recoveryService.stop?.(opts);
+    };
+    const captureWalletTransitionState = () => ({
+      activeConfig: structuredClone(state.activeConfig),
+      persistedEntry: capturePersistedSatMiningEntry(),
+      activeWalletAddress: state.activeWalletAddress,
+      client: state.client,
+      running: state.running,
+      workers: structuredClone(state.workers),
+      bootstrapActive: satWorkerBootstrapTimer !== null,
+      bootstrapState: satWorkerBootstrapState,
+      bootstrapReason: satWorkerBootstrapReason,
+      bootstrapCheckedAt: satWorkerBootstrapCheckedAt,
+      bootstrapReadyAt: satWorkerBootstrapReadyAt,
+      bootstrapWalletId: satWorkerBootstrapWalletId,
+      bootstrapChainTimeFreshness: satWorkerBootstrapChainTimeFreshness,
+    });
+    const restoreWalletTransitionState = async (
+      snapshot: ReturnType<typeof captureWalletTransitionState>,
+      walletId: string | undefined,
+    ) => {
+      state.activeConfig = snapshot.activeConfig;
+      state.activeWalletAddress = snapshot.activeWalletAddress;
+      state.client = snapshot.client;
+      await restorePersistedSatMiningEntry(snapshot.persistedEntry);
+      await loadWalletScopedPersistence(walletId);
+      if (
+        (snapshot.running || snapshot.bootstrapActive) &&
+        serviceContext &&
+        state.activeConfig.enabled
+      ) {
+        startSatWorkerBootstrapLoop();
+        if (!(await ensureSatWorkerServicesReady({ warnOnFailure: true }))) {
+          throw new Error("Mining wallet rollback could not restore worker services");
+        }
+      }
+      state.workers = snapshot.workers;
+      state.running = snapshot.running;
+      satWorkerBootstrapState = snapshot.bootstrapState;
+      satWorkerBootstrapReason = snapshot.bootstrapReason;
+      satWorkerBootstrapCheckedAt = snapshot.bootstrapCheckedAt;
+      satWorkerBootstrapReadyAt = snapshot.bootstrapReadyAt;
+      satWorkerBootstrapWalletId = snapshot.bootstrapWalletId;
+      satWorkerBootstrapChainTimeFreshness = snapshot.bootstrapChainTimeFreshness;
     };
     const stopSatWorkerBootstrapLoop = () => {
       if (satWorkerBootstrapTimer) {
@@ -8885,7 +8897,31 @@ const satMiningPlugin = {
         satWorkerBootstrapTimer = null;
       }
     };
-    const ensureSatWorkerServicesReady = async (opts?: { warnOnFailure?: boolean }) => {
+    const cleanupAfterFailedWalletTransition = async () => {
+      stopSatWorkerBootstrapLoop();
+      state.running = false;
+      const stopped = await Promise.allSettled([
+        roundWatcherService.stop?.({ persistRuntimeState: false }),
+        epochService.stop?.({ persistRuntimeState: false }),
+        claimService.stop?.({ persistRuntimeState: false }),
+        recoveryService.stop?.({ persistRuntimeState: false }),
+      ]);
+      for (const [index, result] of stopped.entries()) {
+        if (result.status === "rejected") {
+          const service = ["round watcher", "epoch", "claim", "recovery"][index]!;
+          api.logger.error(
+            `[sat-mining] terminal wallet-transition cleanup failed for ${service}: ${toGatewayErrorMessage(result.reason)}`,
+          );
+        }
+      }
+    };
+    const ensureSatWorkerServicesReady = async (opts?: {
+      warnOnFailure?: boolean;
+      allowTerminalRecovery?: boolean;
+    }) => {
+      if (miningHistoryTransitionFailed && !opts?.allowTerminalRecovery) {
+        return false;
+      }
       if (satWorkerBootstrapInFlight) {
         return false;
       }
@@ -8962,6 +8998,7 @@ const satMiningPlugin = {
     };
 
     registerSatSubmissionMethod("sat.startMining", async ({ params, respond }) => {
+      let attachWalletFailed = false;
       try {
         if (state.activeConfig.network === "mainnet-beta") {
           const syncStatus = await getSatMainnetSyncStatus();
@@ -8975,7 +9012,12 @@ const satMiningPlugin = {
             : undefined;
         if (walletId) {
           if (walletId !== resolveConfiguredWalletId()) {
-            await attachWallet(walletId);
+            try {
+              await attachWallet(walletId);
+            } catch (error) {
+              attachWalletFailed = true;
+              throw error;
+            }
           } else {
             await resolveMiningWalletSelection({ walletId, requireResolvedWallet: true });
           }
@@ -9082,11 +9124,13 @@ const satMiningPlugin = {
         respond(true, jsonOk({ started, status }));
       } catch (error) {
         markActionFailure("startMining", error);
-        state.activeConfig.enabled = false;
-        state.running = false;
-        stopSatWorkerBootstrapLoop();
-        recordSatWorkerBootstrapIdle();
-        await persistActiveConfig().catch(() => {});
+        if (!attachWalletFailed) {
+          state.activeConfig.enabled = false;
+          state.running = false;
+          stopSatWorkerBootstrapLoop();
+          recordSatWorkerBootstrapIdle();
+          await persistActiveConfig().catch(() => {});
+        }
         respondGatewayError(respond, error);
       }
     });
@@ -9177,19 +9221,13 @@ const satMiningPlugin = {
         if (confirmation !== "clear-mining-history") {
           throw new Error("Explicit Mining history deletion confirmation is required");
         }
+        const historyStore = requireMiningHistoryStore();
         state.recentActions = [];
         state.archivedFailures = [];
         state.plannerHistory = [];
         state.plannerCycles = [];
         state.actionHistoryEntryKeys.clear();
-        if (miningHistoryStore) {
-          await miningHistoryStore.clearHistory();
-        } else if (state.plannerHistoryStorePath) {
-          await clearSatPlannerHistory(state.plannerHistoryStorePath);
-          if (state.actionHistoryStorePath) {
-            await clearSatActionHistory(state.actionHistoryStorePath);
-          }
-        }
+        await historyStore.clearHistory();
         await persistRecentActions();
         respond(true, jsonOk({ cleared: true, status: await getMiningStatus() }));
       } catch (error) {
@@ -9432,63 +9470,97 @@ const satMiningPlugin = {
     api.registerService({
       id: "sat-mining",
       start: async (ctx) => {
+        const recoveringTerminalFence = miningHistoryTransitionFailed;
         serviceContext = ctx;
-        setSatSubmissionLedgerAdapterResolver((walletId) =>
-          miningHistoryStore?.walletId === walletId ? miningHistoryStore : null,
-        );
-        const walletRuntimeSummary = await loadWalletScopedPersistence(state.activeConfig.walletId);
-        const runtimeSummary = state.runtimeStorePath ? walletRuntimeSummary : null;
-        const restoredDrain = await restoreDrainModeForLockedCapital(
-          runtimeSummary,
-          "service startup",
-        );
-        const resolvedEnabled =
-          restoredDrain || resolveSatMiningEnabledWanted(runtimeSummary?.enabledWanted === true);
-        if (!restoredDrain) {
-          state.activeConfig.enabled = resolvedEnabled;
-        }
-        if (
-          (runtimeSummary !== null && runtimeSummary.enabledWanted !== resolvedEnabled) ||
-          restoredDrain
-        ) {
-          await persistRecentActions();
-        }
-        if (
-          !state.activeConfig.enabled &&
-          !(await restoreDrainModeForLockedCapitalFromChain("service startup"))
-        ) {
-          api.logger.info("[sat-mining] SAT mining scaffold disabled by config");
-          state.running = false;
-          stopSatWorkerBootstrapLoop();
-          recordSatWorkerBootstrapIdle();
-          return;
-        }
-        const configuredWalletId = resolveConfiguredWalletId();
-        if (!configuredWalletId) {
-          api.logger.info(
-            "[sat-mining] SAT mining is enabled but no mining wallet is attached yet",
+        try {
+          setSatSubmissionLedgerAdapterResolver((walletId) =>
+            miningHistoryStore?.walletId === walletId ? miningHistoryStore : null,
           );
-          state.running = false;
-          stopSatWorkerBootstrapLoop();
-          recordSatWorkerBootstrapWaiting("No SAT mining wallet is attached yet.");
-          return;
-        }
-        startSatWorkerBootstrapLoop();
-        const workersReady = await ensureSatWorkerServicesReady({ warnOnFailure: true });
-        if (workersReady) {
-          api.logger.info(
-            `[sat-mining] round watcher scaffold ready (network=${state.activeConfig.network}, riskMode=${state.activeConfig.riskMode}, wallet=${configuredWalletId})`,
+          const walletRuntimeSummary = await loadWalletScopedPersistence(
+            state.activeConfig.walletId,
           );
-          api.logger.info("[sat-mining] heartbeat service scaffold ready");
+          const runtimeSummary = walletRuntimeSummary;
+          const restoredDrain = await restoreDrainModeForLockedCapital(
+            runtimeSummary,
+            "service startup",
+          );
+          const resolvedEnabled =
+            restoredDrain || resolveSatMiningEnabledWanted(runtimeSummary?.enabledWanted === true);
+          if (!restoredDrain) {
+            state.activeConfig.enabled = resolvedEnabled;
+          }
+          if (
+            (runtimeSummary !== null && runtimeSummary.enabledWanted !== resolvedEnabled) ||
+            restoredDrain
+          ) {
+            await persistRecentActions();
+          }
+          if (
+            !state.activeConfig.enabled &&
+            !(await restoreDrainModeForLockedCapitalFromChain("service startup"))
+          ) {
+            api.logger.info("[sat-mining] SAT mining scaffold disabled by config");
+            state.running = false;
+            stopSatWorkerBootstrapLoop();
+            recordSatWorkerBootstrapIdle();
+            if (recoveringTerminalFence) {
+              throw new Error("Mining history recovery requires ready worker services");
+            }
+            completeMiningHistoryRecovery();
+            return;
+          }
+          const configuredWalletId = resolveConfiguredWalletId();
+          if (!configuredWalletId) {
+            api.logger.info(
+              "[sat-mining] SAT mining is enabled but no mining wallet is attached yet",
+            );
+            state.running = false;
+            stopSatWorkerBootstrapLoop();
+            recordSatWorkerBootstrapWaiting("No SAT mining wallet is attached yet.");
+            if (recoveringTerminalFence) {
+              throw new Error("Mining history recovery requires ready worker services");
+            }
+            completeMiningHistoryRecovery();
+            return;
+          }
+          startSatWorkerBootstrapLoop();
+          const workersReady = await ensureSatWorkerServicesReady({
+            warnOnFailure: true,
+            allowTerminalRecovery: recoveringTerminalFence,
+          });
+          if (workersReady) {
+            api.logger.info(
+              `[sat-mining] round watcher scaffold ready (network=${state.activeConfig.network}, riskMode=${state.activeConfig.riskMode}, wallet=${configuredWalletId})`,
+            );
+            api.logger.info("[sat-mining] heartbeat service scaffold ready");
+          }
+          if (recoveringTerminalFence && !workersReady) {
+            throw new Error("Mining history recovery requires ready worker services");
+          }
+          completeMiningHistoryRecovery();
+        } catch (error) {
+          setSatSubmissionLedgerAdapterResolver(null);
+          await cleanupAfterFailedWalletTransition();
+          if (miningHistoryStore) {
+            miningHistoryStore.close();
+            miningHistoryStore = null;
+          }
+          serviceContext = null;
+          throw error;
         }
       },
       stop: async (ctx) => {
+        const terminalHistoryFailure = miningHistoryTransitionFailed;
         state.running = false;
         setSatSubmissionLedgerAdapterResolver(null);
         stopSatWorkerBootstrapLoop();
         recordSatWorkerBootstrapIdle();
-        await stopSatWorkerServices();
-        await persistRecentActions();
+        await stopSatWorkerServices(
+          terminalHistoryFailure ? { persistRuntimeState: false } : undefined,
+        );
+        if (!terminalHistoryFailure) {
+          await persistRecentActions();
+        }
         api.logger.info("[sat-mining] SAT mining scaffold service stopped");
       },
       checkpointForLifecycle: async () => {
