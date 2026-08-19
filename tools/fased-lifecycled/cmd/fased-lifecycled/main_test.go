@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fased-lifecycled/hostsecurity"
 	"fmt"
@@ -236,6 +237,84 @@ func TestInitializationLockRejectsInheritedDescriptorForWrongPath(t *testing.T) 
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "differs from the expected lock") {
 		t.Fatalf("wrong inherited descriptor path was accepted: err=%v output=%s", err, output)
+	}
+}
+
+func TestStoppedSupervisorPendingRecoveryAdoptsStartupLeaseBeforeSocket(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fsl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := platform.Config{LifecycleRoot: root}
+	lockPath := filepath.Join(root, "lifecycle.lock")
+	initializationLease, err := hostsecurity.AcquireMutationLock(lockPath, uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialization := &initializationMutationLock{handoff: initializationLease}
+	broker, err := startSupervisorStartupLeaseBroker(config, initialization)
+	if err != nil {
+		_ = initialization.Release()
+		t.Fatal(err)
+	}
+	recovered := false
+	err = recoverStoppedSupervisorPending(context.Background(), config, lockPath,
+		func() (model.Transaction, error) { return model.Transaction{}, nil },
+		func(context.Context) error {
+			if contender, contenderErr := hostsecurity.AcquireMutationLock(lockPath, uint32(os.Geteuid())); contenderErr == nil {
+				_ = contender.Release()
+				return errors.New("pending recovery did not retain the shared lifecycle lease")
+			}
+			recovered = true
+			return nil
+		})
+	if err != nil {
+		_ = broker.Close()
+		_ = initialization.Release()
+		t.Fatalf("stopped supervisor pending recovery self-deadlocked or released its lease: %v", err)
+	}
+	if !recovered {
+		t.Fatal("stopped supervisor did not replay the pending transaction")
+	}
+	// Only after terminal pending recovery may the stopped supervisor expose its
+	// public socket; the initialize lease continues through its first request.
+	if err := broker.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := initialization.Release(); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(root, "supervisor.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatalf("supervisor socket did not start after pending recovery: %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStandaloneSupervisorPendingRecoveryAcquiresSharedLease(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fsl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	config := platform.Config{LifecycleRoot: root}
+	lockPath := filepath.Join(config.LifecycleRoot, "lifecycle.lock")
+	lease, err := acquireSupervisorStartupLease(config, lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hostsecurity.AcquireMutationLock(lockPath, uint32(os.Geteuid())); err == nil {
+		t.Fatal("standalone supervisor did not acquire the shared lifecycle lease")
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
 	}
 }
 

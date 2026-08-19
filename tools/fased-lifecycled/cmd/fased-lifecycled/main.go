@@ -943,6 +943,14 @@ func applyVerifiedArchiveWithLease(args []string, output io.Writer, lifecycleLea
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	if err := serviceManager.IsActive(ctx, identity.Services["supervisor"]); err != nil {
+		var startupLeaseBroker *supervisorStartupLeaseBroker
+		if lifecycleLease != nil {
+			startupLeaseBroker, err = startSupervisorStartupLeaseBroker(config, lifecycleLease)
+			if err != nil {
+				return err
+			}
+			defer startupLeaseBroker.Close()
+		}
 		if err := serviceManager.Start(ctx, identity.Services["supervisor"]); err != nil {
 			return err
 		}
@@ -1010,6 +1018,146 @@ func waitForSocket(ctx context.Context, path string) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+const supervisorStartupLeaseHandshake = "fased-supervisor-startup-lease-v1\n"
+
+// supervisorStartupLeaseBroker is a one-shot root-peer capability handoff.
+// It exists only while initialize starts a previously inactive supervisor.
+// The supervisor adopts the same open-file-description lock before replaying a
+// pending transaction, so systemd startup cannot create an unlock/relock gap.
+type supervisorStartupLeaseBroker struct {
+	listener *net.UnixListener
+	path     string
+	done     chan struct{}
+}
+
+func startupLeaseSocketPath(config platform.Config) string {
+	return filepath.Join(config.LifecycleRoot, "supervisor-startup-lease.sock")
+}
+
+func startSupervisorStartupLeaseBroker(config platform.Config, lease *initializationMutationLock) (*supervisorStartupLeaseBroker, error) {
+	if lease == nil {
+		return nil, errors.New("lifecycle mutation lease is unavailable")
+	}
+	path := startupLeaseSocketPath(config)
+	if err := prepareStartupLeaseSocket(path, uint32(os.Geteuid())); err != nil {
+		return nil, err
+	}
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = listener.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	broker := &supervisorStartupLeaseBroker{listener: listener, path: path, done: make(chan struct{})}
+	go func() {
+		defer close(broker.done)
+		defer os.Remove(path)
+		connection, acceptErr := listener.AcceptUnix()
+		if acceptErr != nil {
+			return
+		}
+		defer connection.Close()
+		peer, peerErr := daemon.UnixPeer(connection)
+		if peerErr != nil || peer.UID != uint32(os.Geteuid()) {
+			return
+		}
+		request := make([]byte, len(supervisorStartupLeaseHandshake))
+		n, readErr := io.ReadFull(connection, request)
+		if readErr != nil || n != len(request) || string(request) != supervisorStartupLeaseHandshake {
+			return
+		}
+		duplicate, duplicateErr := lease.DupForSupervisor()
+		if duplicateErr != nil {
+			return
+		}
+		defer duplicate.Close()
+		_, _, _ = connection.WriteMsgUnix([]byte(supervisorStartupLeaseHandshake), unix.UnixRights(int(duplicate.Fd())), nil)
+	}()
+	return broker, nil
+}
+
+func (broker *supervisorStartupLeaseBroker) Close() error {
+	if broker == nil {
+		return nil
+	}
+	err := broker.listener.Close()
+	if errors.Is(err, net.ErrClosed) {
+		err = nil
+	}
+	<-broker.done
+	removeErr := os.Remove(broker.path)
+	if errors.Is(removeErr, os.ErrNotExist) {
+		removeErr = nil
+	}
+	return errors.Join(err, removeErr)
+}
+
+func prepareStartupLeaseSocket(path string, expectedUID uint32) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return errors.New("supervisor startup lease socket path is unsafe")
+	}
+	parent := filepath.Dir(path)
+	info, err := os.Lstat(parent)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Uid != expectedUID || info.Mode().Perm()&0o022 != 0 {
+		return errors.New("supervisor startup lease socket directory is unsafe")
+	}
+	if existing, existingErr := os.Lstat(path); existingErr == nil {
+		existingStat, existingOK := existing.Sys().(*syscall.Stat_t)
+		if existing.Mode()&os.ModeSocket == 0 || existing.Mode()&os.ModeSymlink != 0 || !existingOK || existingStat.Uid != expectedUID {
+			return errors.New("supervisor startup lease socket is unsafe")
+		}
+		return os.Remove(path)
+	} else if !errors.Is(existingErr, os.ErrNotExist) {
+		return existingErr
+	}
+	return nil
+}
+
+func acquireSupervisorStartupLease(config platform.Config, lockPath string) (*hostsecurity.MutationLock, error) {
+	path := startupLeaseSocketPath(config)
+	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
+			return hostsecurity.AcquireMutationLock(lockPath, uint32(os.Geteuid()))
+		}
+		return nil, err
+	}
+	defer connection.Close()
+	if _, err := connection.Write([]byte(supervisorStartupLeaseHandshake)); err != nil {
+		return nil, err
+	}
+	data := make([]byte, len(supervisorStartupLeaseHandshake))
+	oob := make([]byte, unix.CmsgSpace(4*4))
+	n, oobn, flags, _, err := connection.ReadMsgUnix(data, oob)
+	if err != nil || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n != len(data) || string(data) != supervisorStartupLeaseHandshake {
+		return nil, errors.New("supervisor startup lease handoff is invalid")
+	}
+	messages, err := unix.ParseSocketControlMessage(oob[:oobn])
+	if err != nil || len(messages) != 1 {
+		return nil, errors.New("supervisor startup lease handoff is invalid")
+	}
+	descriptors, err := unix.ParseUnixRights(&messages[0])
+	if err != nil || len(descriptors) != 1 {
+		for _, descriptor := range descriptors {
+			_ = unix.Close(descriptor)
+		}
+		return nil, errors.New("supervisor startup lease handoff is invalid")
+	}
+	lock, adoptErr := hostsecurity.AdoptReceivedMutationLock(descriptors[0], lockPath, uint32(os.Geteuid()))
+	_ = unix.Close(descriptors[0])
+	if adoptErr != nil {
+		return nil, adoptErr
+	}
+	return lock, nil
 }
 
 func randomRequestID() (string, error) {
@@ -1116,18 +1264,8 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	if err != nil {
 		return err
 	}
-	if _, pendingErr := state.PendingSupervisorTransaction(); pendingErr == nil {
-		startupLease, leaseErr := hostsecurity.AcquireMutationLock(mutationLockPath, 0)
-		if leaseErr != nil {
-			return leaseErr
-		}
-		recoveryErr := service.RecoverPending(ctx)
-		releaseErr := startupLease.Release()
-		if recoveryErr != nil || releaseErr != nil {
-			return fmt.Errorf("startup lifecycle recovery: %w", errors.Join(recoveryErr, releaseErr))
-		}
-	} else if !errors.Is(pendingErr, os.ErrNotExist) {
-		return pendingErr
+	if err := recoverStoppedSupervisorPending(ctx, config, mutationLockPath, state.PendingSupervisorTransaction, service.RecoverPending); err != nil {
+		return fmt.Errorf("startup lifecycle recovery: %w", err)
 	}
 	listener, err := listenBound(socketPath, 0o660, int(config.Operator.GID))
 	if err != nil {
@@ -1155,6 +1293,21 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 		return lease.Release, nil
 	}
 	return server.Serve(ctx, listener)
+}
+
+func recoverStoppedSupervisorPending(ctx context.Context, config platform.Config, lockPath string, pending func() (model.Transaction, error), recover func(context.Context) error) error {
+	if _, pendingErr := pending(); errors.Is(pendingErr, os.ErrNotExist) {
+		return nil
+	} else if pendingErr != nil {
+		return pendingErr
+	}
+	startupLease, leaseErr := acquireSupervisorStartupLease(config, lockPath)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	recoveryErr := recover(ctx)
+	releaseErr := startupLease.Release()
+	return errors.Join(recoveryErr, releaseErr)
 }
 
 func installedTargetRuntime(config platform.Config, identity model.PlatformIdentity, state *store.Store, serviceManager platform.Systemd) (*engine.TargetEngine, *platform.TargetAdapter, error) {
