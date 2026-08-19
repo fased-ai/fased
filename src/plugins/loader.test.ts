@@ -34,7 +34,7 @@ const BUNDLED_TELEGRAM_PLUGIN_BODY = `export default { id: "telegram", register(
   });
 } };`;
 
-it("keeps signed mandatory bundled plugins enabled with an explicit managed allowlist", () => {
+it("keeps every signed mandatory managed plugin enabled with an explicit allowlist", () => {
   const root = makeTempDir();
   const lockPath = path.join(root, "plugin.lock.json");
   fs.writeFileSync(
@@ -43,6 +43,13 @@ it("keeps signed mandatory bundled plugins enabled with an explicit managed allo
       schemaVersion: 1,
       type: "fased-plugin-lock",
       entries: [
+        {
+          id: "fixture-transaction-plugin",
+          origin: "store",
+          digest: `sha256:${"d".repeat(64)}`,
+          apiCapability: "fased.plugin.v1",
+          required: true,
+        },
         {
           id: "optional-core",
           origin: "bundled",
@@ -67,7 +74,7 @@ it("keeps signed mandatory bundled plugins enabled with an explicit managed allo
       ],
     })}\n`,
   );
-  const normalized = __testing.applyManagedRequiredBundledAllowlist(
+  const normalized = __testing.applyManagedRequiredAllowlist(
     {
       enabled: true,
       allow: ["stable-bridge"],
@@ -78,7 +85,7 @@ it("keeps signed mandatory bundled plugins enabled with an explicit managed allo
     },
     { FASED_PLUGIN_LOCK_PATH: lockPath },
   );
-  expect(normalized.allow).toEqual(["sat-mining", "stable-bridge"]);
+  expect(normalized.allow).toEqual(["fixture-transaction-plugin", "sat-mining", "stable-bridge"]);
 });
 
 function makeTempDir() {

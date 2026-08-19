@@ -53,7 +53,7 @@ export function clearPluginLoaderCache(): void {
 
 const defaultLogger = () => createSubsystemLogger("plugins");
 
-function applyManagedRequiredBundledAllowlist(
+function applyManagedRequiredAllowlist(
   config: NormalizedPluginsConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): NormalizedPluginsConfig {
@@ -61,15 +61,15 @@ function applyManagedRequiredBundledAllowlist(
   if (!lockPath || config.allow.length === 0) {
     return config;
   }
-  const requiredBundled = readCanonicalPluginLock(lockPath)
-    .entries.filter((entry) => entry.origin === "bundled" && entry.required)
+  const requiredManaged = readCanonicalPluginLock(lockPath)
+    .entries.filter((entry) => entry.required)
     .map((entry) => entry.id);
-  if (requiredBundled.length === 0) {
+  if (requiredManaged.length === 0) {
     return config;
   }
   return {
     ...config,
-    allow: [...new Set([...config.allow, ...requiredBundled])].toSorted(),
+    allow: [...new Set([...config.allow, ...requiredManaged])].toSorted(),
   };
 }
 
@@ -263,7 +263,7 @@ export async function preloadNativePluginModules(
 ): Promise<Map<string, FasedAgentPluginModule>> {
   const cfg = applyTestPluginDefaults(options.config ?? {}, process.env);
   const logger = options.logger ?? defaultLogger();
-  const normalized = applyManagedRequiredBundledAllowlist(normalizePluginsConfig(cfg.plugins));
+  const normalized = applyManagedRequiredAllowlist(normalizePluginsConfig(cfg.plugins));
   const discovery = discoverFasedAgentPlugins({
     workspaceDir: options.workspaceDir,
     extraPaths: normalized.loadPaths,
@@ -323,7 +323,7 @@ export async function preloadNativePluginModules(
 }
 
 export const __testing = {
-  applyManagedRequiredBundledAllowlist,
+  applyManagedRequiredAllowlist,
   repairOfficialChannelRuntimeDependencies,
   resolvePluginSdkAliasFile,
   resolvePluginSdkAliases,
@@ -650,7 +650,7 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
   const cfg = applyTestPluginDefaults(options.config ?? {}, process.env);
   const logger = options.logger ?? defaultLogger();
   const validateOnly = options.mode === "validate";
-  const normalized = applyManagedRequiredBundledAllowlist(normalizePluginsConfig(cfg.plugins));
+  const normalized = applyManagedRequiredAllowlist(normalizePluginsConfig(cfg.plugins));
   const cacheKey = buildCacheKey({
     workspaceDir: options.workspaceDir,
     plugins: normalized,
