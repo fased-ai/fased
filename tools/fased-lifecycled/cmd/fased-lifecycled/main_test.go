@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fased-lifecycled/hostsecurity"
+	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -16,6 +19,22 @@ import (
 	"fased-lifecycled/protocol"
 	"fased-lifecycled/store"
 )
+
+func init() {
+	if os.Getenv("FASED_TEST_INITIALIZATION_LEASE_HANDOFF") != "1" {
+		return
+	}
+	path := os.Getenv("FASED_TEST_INITIALIZATION_LEASE_PATH")
+	lock, err := acquireInheritedInitializationLockAt(3, path, uint32(os.Getuid()))
+	if err == nil {
+		err = lock.Release()
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(3)
+	}
+	os.Exit(0)
+}
 
 type missingCandidateAuthority struct{ err error }
 
@@ -172,6 +191,30 @@ func TestInitializationLockSerializesAndReleases(t *testing.T) {
 	}
 	if err := second.Release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitializationLockAdoptsBootstrapHandoffWithoutUnlockingParent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap.lock")
+	parent, err := hostsecurity.AcquireMutationLock(path, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Release()
+	childLease, err := parent.DupForChild()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer childLease.Close()
+	command := exec.Command(os.Args[0], "-test.run=^$")
+	command.ExtraFiles = []*os.File{childLease}
+	command.Env = append(os.Environ(), "FASED_TEST_INITIALIZATION_LEASE_HANDOFF=1", "FASED_TEST_INITIALIZATION_LEASE_PATH="+path)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("inherited initialization lease failed: %v: %s", err, output)
+	}
+	if contender, err := hostsecurity.AcquireMutationLock(path, uint32(os.Getuid())); err == nil {
+		_ = contender.Release()
+		t.Fatal("child initialization unlocked the bootstrap parent lease")
 	}
 }
 

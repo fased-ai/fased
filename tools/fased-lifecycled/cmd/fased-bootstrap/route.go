@@ -530,6 +530,9 @@ func runPublicRollback(args []string, output io.Writer) error {
 	if err != nil || manifestPlatformErr != nil || configuredDigest != manifestPlatformDigest {
 		return errors.New("installed rollback platform identity is inconsistent")
 	}
+	if err := convergeManagedPluginsBeforeCoreGeneration(ctx, config, installedLifecycleStatus{Profile: selectedProfile, ActiveGenerationID: manifest.ActiveGeneration.ID}); err != nil {
+		return err
+	}
 	_, previous, err := state.ReadGenerationContract(manifest.PreviousGeneration.ID)
 	if err != nil || previous != *manifest.PreviousGeneration {
 		return errors.Join(err, errors.New("committed previous generation is unavailable or inconsistent"))
@@ -822,7 +825,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	}
 	applyStarted := time.Now()
 	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
-	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result)
+	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result, lock)
 	applyProgress.Stop()
 	performance.ApplyMillis = durationMillis(applyStarted)
 	performance.Transaction = convergence.Performance
@@ -1467,7 +1470,7 @@ func resolveOperator(name string, profile model.Profile) (publicOperator, error)
 	return publicOperator{Name: name, Home: record.HomeDir, UID: uint32(uid), GID: uint32(gid)}, nil
 }
 
-func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult) (protocol.Response, []byte, error) {
+func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, lifecycleLease *hostsecurity.MutationLock) (protocol.Response, []byte, error) {
 	args := []string{"initialize", "--profile", string(request.Profile), "--operator-user", operator.Name,
 		"--owner-state", filepath.Join(operator.Home, ".fased"), "--gateway-port", strconv.Itoa(int(request.GatewayPort)),
 		"--update-channel", request.Channel,
@@ -1479,7 +1482,17 @@ func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, op
 	if request.Operation == "repair" {
 		args = append(args, "--repair-current")
 	}
+	if lifecycleLease == nil {
+		return protocol.Response{}, nil, errors.New("lifecycle mutation lease is unavailable")
+	}
+	leaseFile, err := lifecycleLease.DupForChild()
+	if err != nil {
+		return protocol.Response{}, nil, err
+	}
+	defer leaseFile.Close()
+	args = append(args, "--lifecycle-lease-fd", "3")
 	command := exec.CommandContext(ctx, result.HostPath, args...)
+	command.ExtraFiles = []*os.File{leaseFile}
 	data, err := command.Output()
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {

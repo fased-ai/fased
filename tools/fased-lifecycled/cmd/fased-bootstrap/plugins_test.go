@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fased-lifecycled/hostsecurity"
 	"fased-lifecycled/model"
 	"fased-lifecycled/participant"
+	"fased-lifecycled/protocol"
+	"fmt"
 	"io"
 	"os"
 	"os/user"
@@ -13,6 +16,28 @@ import (
 	"strings"
 	"testing"
 )
+
+func init() {
+	if os.Getenv("FASED_TEST_INITIALIZE_LEASE_HANDOFF") != "1" {
+		return
+	}
+	path := os.Getenv("FASED_TEST_INITIALIZE_LEASE_PATH")
+	lease, err := hostsecurity.AdoptMutationLock(3, path, uint32(os.Getuid()))
+	if err == nil {
+		defer lease.Release()
+		if contender, contenderErr := hostsecurity.AcquireMutationLock(path, uint32(os.Getuid())); contenderErr == nil {
+			_ = contender.Release()
+			err = errors.New("plugin acquired inherited lifecycle lease")
+		}
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(3)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	_ = json.NewEncoder(os.Stdout).Encode(protocol.Response{SchemaVersion: protocol.CurrentSchemaVersion, Outcome: "UPDATED", ActiveGenerationID: digest, ConvergenceReceiptDigest: digest})
+	os.Exit(0)
+}
 
 func TestManagedPluginTransactionIdentityBindsCatalogGenerationAndBase(t *testing.T) {
 	base := participant.PluginLock{SchemaVersion: participant.PluginLockSchemaVersion, Type: "fased-plugin-lock"}
@@ -120,6 +145,30 @@ func TestPublicLifecycleRouteHoldsSharedLeaseBeforeVerifiedAcquisition(t *testin
 	}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), stoppedAfterLease) {
 		t.Fatalf("public lifecycle route did not retain the shared lease through verified acquisition: %v", err)
+	}
+}
+
+func TestInvokeLifecycleHostHandsSharedLeaseToInitialize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lifecycle.lock")
+	lease, err := hostsecurity.AcquireMutationLock(path, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	hostPath, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FASED_TEST_INITIALIZE_LEASE_HANDOFF", "1")
+	t.Setenv("FASED_TEST_INITIALIZE_LEASE_PATH", path)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	response, _, err := invokeLifecycleHost(context.Background(), publicLifecycleRequest{Profile: model.ProfileProtectedLocal, Channel: "beta"}, publicOperator{Name: "owner", Home: t.TempDir()}, bootstrapResult{HostPath: hostPath, ApplicationPath: "/tmp/application", ReleaseSequence: 1, SecurityEpoch: 1, ManifestProtocolMin: 1, ManifestProtocolMax: 1, ReleaseIndexDigest: digest, ReleaseAuthorityDigest: digest, PluginLockDigest: digest}, lease)
+	if err != nil || response.Outcome != "UPDATED" {
+		t.Fatalf("initialize lease handoff did not converge: response=%+v err=%v", response, err)
+	}
+	if contender, lockErr := acquireManagedPluginMutationLock(path, uint32(os.Getuid())); lockErr == nil {
+		_ = contender.Release()
+		t.Fatal("child initialize released the parent lifecycle lease")
 	}
 }
 

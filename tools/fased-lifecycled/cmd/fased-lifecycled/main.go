@@ -22,6 +22,7 @@ import (
 	"fased-lifecycled/bundle"
 	"fased-lifecycled/daemon"
 	"fased-lifecycled/engine"
+	"fased-lifecycled/hostsecurity"
 	"fased-lifecycled/migrator"
 	"fased-lifecycled/model"
 	"fased-lifecycled/participant"
@@ -229,6 +230,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	var manifestProtocolMin, manifestProtocolMax uint64
 	var releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest string
 	var repairCurrent bool
+	var lifecycleLeaseFD int
 	flags.StringVar(&profileRaw, "profile", "", "")
 	flags.StringVar(&instanceID, "instance", "", "")
 	flags.StringVar(&ownerStateRoot, "owner-state", "", "")
@@ -246,6 +248,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	flags.StringVar(&releaseAuthorityDigest, "release-authority-digest", "", "")
 	flags.StringVar(&pluginLockDigest, "plugin-lock-digest", "", "")
 	flags.BoolVar(&repairCurrent, "repair-current", false, "")
+	flags.IntVar(&lifecycleLeaseFD, "lifecycle-lease-fd", 0, "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || gatewayPort == 0 || gatewayPort > 65535 ||
 		(updateChannel != "stable" && updateChannel != "beta") {
 		return errors.New("invalid lifecycle initialization arguments")
@@ -257,7 +260,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	if operatorUser == "" {
 		return errors.New("lifecycle initialization requires an operator user")
 	}
-	initializationLock, err := acquireInitializationLockForOS(runtime.GOOS, profile)
+	initializationLock, err := acquireInitializationLockForOS(runtime.GOOS, profile, lifecycleLeaseFD)
 	if err != nil {
 		return err
 	}
@@ -291,6 +294,13 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	}
 	if repairCurrent && discovered.Installation.Kind != planner.InstallationManaged {
 		return errors.New("managed repair requires an existing canonical installation")
+	}
+	if discovered.Installation.Kind == planner.InstallationManaged {
+		convergenceCtx, convergenceCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer convergenceCancel()
+		if err := convergeManagedPluginsBeforeCoreGeneration(convergenceCtx, profile, *discovered.Installation.Manifest); err != nil {
+			return err
+		}
 	}
 	applyArguments, err := initializationApplyArguments("", generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion, releaseSequence, securityEpoch, uint32(manifestProtocolMin), uint32(manifestProtocolMax), releaseIndexDigest, releaseAuthorityDigest, pluginLockDigest)
 	if err != nil {
@@ -412,6 +422,37 @@ func managedInitializationFastPath(
 	return configPath, fast, err
 }
 
+// convergeManagedPluginsBeforeCoreGeneration runs while initialize still holds
+// the inherited/bootstrap lifecycle lease. It applies to installer reuse,
+// update, and repair alike: a plugin journal is bound to the installed active
+// generation and must become terminal before applyVerifiedArchive can change
+// that generation.
+func convergeManagedPluginsBeforeCoreGeneration(ctx context.Context, profile model.Profile, manifest model.Manifest) error {
+	if manifest.ActiveGeneration == nil || manifest.Profile != profile {
+		return errors.New("managed plugin convergence requires the installed active generation")
+	}
+	configPath := platform.LocalPlatformConfigPathForOS(runtime.GOOS, manifest.Platform.InstanceID)
+	if profile == model.ProfileHosting {
+		configPath = "/var/lib/fased-lifecycled/platform.json"
+	}
+	config, err := loadConfig(configPath, 0)
+	if err != nil {
+		return err
+	}
+	service, err := platform.NewSystemServiceManager()
+	if err != nil {
+		return err
+	}
+	production, err := platform.NewManagedPluginProduction(config, manifest.ActiveGeneration.ID, service)
+	if err != nil {
+		return fmt.Errorf("inspect managed plugin transaction before core generation transition: %w", err)
+	}
+	if err := production.Activation.ConvergeBeforeCoreGeneration(ctx); err != nil {
+		return fmt.Errorf("converge managed plugin transaction before core generation transition: %w", err)
+	}
+	return nil
+}
+
 type candidateAuthorityReader interface {
 	ReadCandidateAuthority(string) (store.CandidateAuthority, error)
 }
@@ -468,13 +509,16 @@ func managedInitializationInputsMatch(
 		authority.PluginLockDigest == pluginLockDigest, nil
 }
 
-type initializationMutationLock struct{ file *os.File }
-
-func acquireInitializationLock(profile model.Profile) (*initializationMutationLock, error) {
-	return acquireInitializationLockForOS(runtime.GOOS, profile)
+type initializationMutationLock struct {
+	file    *os.File
+	handoff *hostsecurity.MutationLock
 }
 
-func acquireInitializationLockForOS(operatingSystem string, profile model.Profile) (*initializationMutationLock, error) {
+func acquireInitializationLock(profile model.Profile) (*initializationMutationLock, error) {
+	return acquireInitializationLockForOS(runtime.GOOS, profile, 0)
+}
+
+func acquireInitializationLockForOS(operatingSystem string, profile model.Profile, inheritedFD int) (*initializationMutationLock, error) {
 	var path string
 	switch profile {
 	case model.ProfileProtectedLocal:
@@ -486,6 +530,12 @@ func acquireInitializationLockForOS(operatingSystem string, profile model.Profil
 		path = "/run/lock/fased-bootstrap-hosting.lock"
 	default:
 		return nil, errors.New("lifecycle initialization profile is unsupported")
+	}
+	if inheritedFD != 0 {
+		if (operatingSystem != "linux" && operatingSystem != "darwin") || inheritedFD != 3 {
+			return nil, errors.New("lifecycle initialization lease handoff is invalid")
+		}
+		return acquireInheritedInitializationLockAt(inheritedFD, path, 0)
 	}
 	return acquireInitializationLockAt(path, 0)
 }
@@ -519,9 +569,22 @@ func acquireInitializationLockAt(path string, expectedUID uint32) (*initializati
 	return &initializationMutationLock{file: file}, nil
 }
 
+func acquireInheritedInitializationLockAt(descriptor int, path string, expectedUID uint32) (*initializationMutationLock, error) {
+	lock, err := hostsecurity.AdoptMutationLock(descriptor, path, expectedUID)
+	if err != nil {
+		return nil, err
+	}
+	return &initializationMutationLock{handoff: lock}, nil
+}
+
 func (lock *initializationMutationLock) Release() error {
 	if lock == nil || lock.file == nil {
-		return nil
+		if lock == nil || lock.handoff == nil {
+			return nil
+		}
+		handoff := lock.handoff
+		lock.handoff = nil
+		return handoff.Release()
 	}
 	file := lock.file
 	lock.file = nil
