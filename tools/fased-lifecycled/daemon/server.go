@@ -138,12 +138,14 @@ func readRequestFrame(connection net.Conn) ([]byte, *os.File, error) {
 		chunk := make([]byte, maxRequestBytes+1-len(frame))
 		n, oobn, flags, _, err := unixConnection.ReadMsgUnix(chunk, oob)
 		if err != nil {
+			closeReceivedDescriptors(oob[:oobn])
 			if lease != nil {
 				_ = lease.Close()
 			}
 			return nil, nil, fmt.Errorf("read lifecycle request frame: %w", err)
 		}
 		if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n <= 0 || n > len(chunk) {
+			closeReceivedDescriptors(oob[:oobn])
 			if lease != nil {
 				_ = lease.Close()
 			}
@@ -187,6 +189,26 @@ func readRequestFrame(connection net.Conn) ([]byte, *os.File, error) {
 				_ = lease.Close()
 			}
 			return nil, nil, errors.New("lifecycle request exceeds size limit")
+		}
+	}
+}
+
+// closeReceivedDescriptors closes every descriptor that can be recovered from
+// an ancillary buffer, including the prefix retained by the kernel when it
+// reports MSG_CTRUNC. It is intentionally best-effort because the caller is
+// already rejecting the frame; no parsed descriptor may survive that error.
+func closeReceivedDescriptors(oob []byte) {
+	messages, err := unix.ParseSocketControlMessage(oob)
+	if err != nil {
+		return
+	}
+	for _, message := range messages {
+		descriptors, rightsErr := unix.ParseUnixRights(&message)
+		if rightsErr != nil {
+			continue
+		}
+		for _, descriptor := range descriptors {
+			_ = unix.Close(descriptor)
 		}
 	}
 }

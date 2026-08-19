@@ -142,6 +142,35 @@ func TestReadRequestFrameClosesInvalidReceivedDescriptors(t *testing.T) {
 	}
 }
 
+func TestReadRequestFrameClosesTruncatedReceivedDescriptors(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("descriptor accounting is Linux-specific")
+	}
+	client, server := unixFramePair(t)
+	lease := temporaryLeaseFile(t)
+	before, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptors := make([]int, 9)
+	for index := range descriptors {
+		descriptors[index] = int(lease.Fd())
+	}
+	if _, _, err := client.WriteMsgUnix(strictFrame(t), unix.UnixRights(descriptors...), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, received, err := readRequestFrame(server); err == nil || received != nil {
+		t.Fatalf("truncated received descriptors accepted: lease=%v err=%v", received != nil, err)
+	}
+	after, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("truncated SCM_RIGHTS path leaked descriptors: before=%d after=%d", len(before), len(after))
+	}
+}
+
 type shortLeaseWriter struct {
 	firstWrite []byte
 	following  []byte
