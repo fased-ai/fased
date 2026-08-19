@@ -863,15 +863,15 @@ describe("sat audit store", () => {
       {
         cacheKey: "9862959:0",
         participants: [
-          "AJweQ2hieUY1wvyRvdyqCdrQEjqd3WbuxwYoeRSG9em6",
-          "3CiND9t4YyDi3rHEKAfBETzxmZesyA81ACYFAqYiUwq1",
+          "AJweQ2hieUY1wvyRvdyqCdrQEjqd3WbuxwYoeRSG9em6", // pragma: allowlist secret
+          "3CiND9t4YyDi3rHEKAfBETzxmZesyA81ACYFAqYiUwq1", // pragma: allowlist secret
         ],
       },
     ]);
     expect(loaded.settlementPageLookupTables).toEqual([
       {
         cacheKey: "9862959:0",
-        lookupTableAddress: "9xQeWvG816bUx9EPfEZ9arFRr1CtwkLrM7d4mNQyRr7u",
+        lookupTableAddress: "9xQeWvG816bUx9EPfEZ9arFRr1CtwkLrM7d4mNQyRr7u", // pragma: allowlist secret
       },
     ]);
   });
