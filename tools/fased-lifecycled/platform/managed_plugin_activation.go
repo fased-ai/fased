@@ -68,6 +68,7 @@ const (
 	managedPluginGatewayStopped       managedPluginActivationPhase = "GATEWAY_STOPPED"
 	managedPluginCodeActivated        managedPluginActivationPhase = "CODE_ACTIVATED"
 	managedPluginCandidateLockWritten managedPluginActivationPhase = "CANDIDATE_LOCK_WRITTEN"
+	managedPluginCandidateStarting    managedPluginActivationPhase = "CANDIDATE_STARTING"
 	managedPluginCandidateStarted     managedPluginActivationPhase = "CANDIDATE_STARTED"
 	managedPluginCandidateReady       managedPluginActivationPhase = "CANDIDATE_READY"
 	managedPluginCommitted            managedPluginActivationPhase = "COMMITTED"
@@ -431,8 +432,17 @@ func (activation ManagedPluginActivation) applyBound(ctx context.Context, transa
 		}
 	}
 	if j.Phase == managedPluginCandidateLockWritten {
+		// Fence and remove any stale pre-start readiness before durably recording
+		// the only phase in which an exact candidate receipt can be adopted.
+		if err := activation.Gateway.Stop(ctx, unit); err != nil {
+			return "", activation.failAndRollback(ctx, guard, j, fmt.Errorf("stop Gateway before managed plugin candidate start: %w", err))
+		}
 		if err := activation.clearReadiness(); err != nil {
 			return "", activation.failAndRollback(ctx, guard, j, err)
+		}
+		j.Phase = managedPluginCandidateStarting
+		if err := activation.writeJournal(j); err != nil {
+			return "", err
 		}
 		if err := activation.Gateway.Start(ctx, unit); err != nil {
 			return "", activation.failAndRollback(ctx, guard, j, err)
@@ -440,6 +450,35 @@ func (activation ManagedPluginActivation) applyBound(ctx context.Context, transa
 		j.Phase = managedPluginCandidateStarted
 		if err := activation.writeJournal(j); err != nil {
 			return "", err
+		}
+	}
+	if j.Phase == managedPluginCandidateStarting {
+		// A crash after Start but before CANDIDATE_STARTED leaves this durable
+		// phase. Adopt exact readiness; otherwise stop before clear/start so an
+		// already-running service cannot race the receipt reset.
+		if receipt, err := guard.VerifyReadiness(j.CandidateLockDigest, activation.GenerationID); err == nil {
+			j.ReadinessDigest = receipt
+			j.Phase = managedPluginCandidateReady
+			if err := activation.writeJournal(j); err != nil {
+				return "", err
+			}
+		} else {
+			if !managedPluginReadinessRetryable(err) {
+				return "", activation.failAndRollback(ctx, guard, j, fmt.Errorf("verify candidate managed plugin readiness before start: %w", err))
+			}
+			if err := activation.Gateway.Stop(ctx, unit); err != nil {
+				return "", activation.failAndRollback(ctx, guard, j, fmt.Errorf("stop Gateway before managed plugin candidate start: %w", err))
+			}
+			if err := activation.clearReadiness(); err != nil {
+				return "", activation.failAndRollback(ctx, guard, j, err)
+			}
+			if err := activation.Gateway.Start(ctx, unit); err != nil {
+				return "", activation.failAndRollback(ctx, guard, j, err)
+			}
+			j.Phase = managedPluginCandidateStarted
+			if err := activation.writeJournal(j); err != nil {
+				return "", err
+			}
 		}
 	}
 	if j.Phase == managedPluginCandidateStarted {
@@ -514,6 +553,9 @@ func (activation ManagedPluginActivation) rollback(ctx context.Context, guard st
 		} else {
 			if !managedPluginReadinessRetryable(err) {
 				return fmt.Errorf("verify previous managed plugin readiness before restart: %w", err)
+			}
+			if err := activation.Gateway.Stop(ctx, journal.GatewayUnit); err != nil {
+				return fmt.Errorf("stop Gateway before previous managed plugin restart: %w", err)
 			}
 			if err := activation.clearReadiness(); err != nil {
 				return err
@@ -895,7 +937,7 @@ func (activation ManagedPluginActivation) isRollbackPhase(phase managedPluginAct
 }
 func (activation ManagedPluginActivation) validPhase(phase managedPluginActivationPhase) bool {
 	switch phase {
-	case managedPluginPrepared, managedPluginGatewayStopped, managedPluginCodeActivated, managedPluginCandidateLockWritten, managedPluginCandidateStarted, managedPluginCandidateReady, managedPluginCommitted, managedPluginRollbackStarted, managedPluginPreviousLockWritten, managedPluginPreviousStarted, managedPluginPreviousReady, managedPluginRolledBack:
+	case managedPluginPrepared, managedPluginGatewayStopped, managedPluginCodeActivated, managedPluginCandidateLockWritten, managedPluginCandidateStarting, managedPluginCandidateStarted, managedPluginCandidateReady, managedPluginCommitted, managedPluginRollbackStarted, managedPluginPreviousLockWritten, managedPluginPreviousStarted, managedPluginPreviousReady, managedPluginRolledBack:
 		return true
 	default:
 		return false

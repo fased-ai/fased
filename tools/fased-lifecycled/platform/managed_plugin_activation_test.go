@@ -150,7 +150,7 @@ func TestManagedPluginActivationCommitsAndIsIdempotent(t *testing.T) {
 	if err != nil || receipt == "" {
 		t.Fatalf("activation did not commit: %q %v", receipt, err)
 	}
-	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service"; got != want {
+	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service"; got != want {
 		t.Fatalf("activation service order = %q, want %q", got, want)
 	}
 	if data, err := os.ReadFile(CanonicalPluginLockPath(activation.Config)); err != nil || string(data) != string(result.CandidateLockData) {
@@ -170,7 +170,7 @@ func TestManagedPluginActivationCommitsAndIsIdempotent(t *testing.T) {
 	if _, err := applyManagedPluginFixture(t, activation, request.TransactionID); err != nil {
 		t.Fatalf("completed activation was not idempotent: %v", err)
 	}
-	if got := len(service.calls); got != 2 {
+	if got := len(service.calls); got != 3 {
 		t.Fatalf("completed activation restarted Gateway: %v", service.calls)
 	}
 }
@@ -202,7 +202,7 @@ func TestManagedPluginActivationConvergesDifferentUnfinishedBeforeNewStage(t *te
 	if len(result.CandidateLock.Entries) != 2 || result.CandidateLock.Entries[0].ID != "demo" || result.CandidateLock.Entries[1].ID != "extra" {
 		t.Fatalf("new candidate did not retain converged catalog: %+v", result.CandidateLock.Entries)
 	}
-	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service"; got != want {
+	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service"; got != want {
 		t.Fatalf("convergence service order = %q, want %q", got, want)
 	}
 }
@@ -319,7 +319,7 @@ func TestManagedPluginActivationCommittedJournalDoesNotBlockLaterCatalogWork(t *
 	if _, err := activation.Transaction.Stage(second); err != nil {
 		t.Fatalf("committed provenance blocked new stage: %v", err)
 	}
-	if got := len(service.calls); got != 2 {
+	if got := len(service.calls); got != 3 {
 		t.Fatalf("committed provenance was replayed: %v", service.calls)
 	}
 }
@@ -413,7 +413,7 @@ func TestManagedPluginActivationSurvivesCoreGenerationTransition(t *testing.T) {
 	if _, err := applyManagedPluginFixture(t, activationB, secondID); err != nil {
 		t.Fatalf("different catalog could not commit after core transition: %v", err)
 	}
-	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service"; got != want {
+	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service"; got != want {
 		t.Fatalf("new catalog service order = %q, want %q", got, want)
 	}
 }
@@ -469,7 +469,7 @@ func TestManagedPluginActivationReadinessFailureRestoresPreviousLockAndCode(t *t
 	if data, err := os.ReadFile(dataPath); err != nil || string(data) != "plugin data" {
 		t.Fatalf("plugin data changed during rollback: %q %v", data, err)
 	}
-	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service"; got != want {
+	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service,stop:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service"; got != want {
 		t.Fatalf("rollback service order = %q, want %q", got, want)
 	}
 }
@@ -513,8 +513,43 @@ func TestManagedPluginActivationStartFailureAndCrashResume(t *testing.T) {
 		if _, err := activation.applyBound(context.Background(), request.TransactionID, guard, gid, unit); err != nil {
 			t.Fatalf("crash-resume at candidate-lock boundary failed: %v", err)
 		}
-		if got, want := strings.Join(service.calls, ","), "start:fased-gateway.service"; got != want {
+		if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service"; got != want {
 			t.Fatalf("resume service order = %q, want %q", got, want)
+		}
+	})
+	t.Run("candidate start boundary", func(t *testing.T) {
+		activation, request, service, _, _, _ := managedPluginActivationFixture(t)
+		if _, err := activation.Transaction.Stage(request); err != nil {
+			t.Fatal(err)
+		}
+		gid, unit := activation.Config.Operator.GID, activation.Identity.Services["gateway"]
+		guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: gid}
+		journal, err := activation.openJournal(request.TransactionID, guard, gid, unit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := activation.Transaction.Activate(request.TransactionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := activation.writeLiveLock(result.CandidateLockData, 0o640, activation.Config.Operator.UID, gid); err != nil {
+			t.Fatal(err)
+		}
+		journal.Phase = managedPluginCandidateStarting
+		if err := activation.writeJournal(journal); err != nil {
+			t.Fatal(err)
+		}
+		writeManagedPluginReadiness(t, filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), result.CandidateLock, activation.GenerationID)
+		service.calls = nil
+		if _, err := activation.applyBound(context.Background(), request.TransactionID, guard, gid, unit); err != nil {
+			t.Fatalf("crash-resume after candidate start/readiness failed: %v", err)
+		}
+		if len(service.calls) != 0 {
+			t.Fatalf("candidate-start crash resume restarted an already-ready Gateway: %v", service.calls)
+		}
+		journal, err = activation.openJournal(request.TransactionID, guard, gid, unit)
+		if err != nil || journal.Phase != managedPluginCommitted {
+			t.Fatalf("candidate-start crash resume phase=%s err=%v", journal.Phase, err)
 		}
 	})
 	t.Run("previous start boundary", func(t *testing.T) {
@@ -808,7 +843,7 @@ func TestManagedPluginActivationCancellationReservesRollbackContext(t *testing.T
 	if err != nil || journal.Phase != managedPluginRolledBack {
 		t.Fatalf("canceled candidate did not durably complete rollback: phase=%s err=%v", journal.Phase, err)
 	}
-	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service"; got != want {
+	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service,stop:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service"; got != want {
 		t.Fatalf("canceled candidate rollback service order = %q, want %q", got, want)
 	}
 }
