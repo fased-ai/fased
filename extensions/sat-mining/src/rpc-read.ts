@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
-import http from "node:http";
-import https from "node:https";
 import { createRequire } from "node:module";
-import { fetchWithSsrFGuard, redactSensitiveUrlLikeString } from "fased/plugin-sdk";
+import { redactSensitiveUrlLikeString } from "fased/plugin-sdk";
 import {
   loadConfig,
   loadWalletProviderSecret,
@@ -15,6 +13,18 @@ import {
 } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import { resolveSatGenesisProfileContract, SAT_PROTOCOL_CONSTANTS } from "./protocol-contract.js";
+import {
+  createMiningReadConnection,
+  inspectMiningRpcDiagnostics,
+  miningRpcRequest,
+  normalizeMiningReadRpcConfig,
+  recordMiningRpcAccountRead,
+  resolveDefaultSolanaPublicReadFallbackUrl,
+  type MiningReadRpcConfig,
+  type MiningSolanaModuleLike,
+} from "./rpc-read-service.js";
+
+export { resolveDefaultSolanaPublicReadFallbackUrl } from "./rpc-read-service.js";
 import {
   loadSatBondLayout,
   loadSatBondPolicyLayout,
@@ -525,7 +535,7 @@ type SatListFilters = {
 };
 
 let solanaModulePromise: Promise<SolanaModuleLike> | null = null;
-const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"; // pragma: allowlist secret
 
 async function loadSolanaWeb3(): Promise<SolanaModuleLike> {
   solanaModulePromise ??= (async () => require("@solana/web3.js") as SolanaModuleLike)();
@@ -1384,67 +1394,7 @@ function walletEnvValue(env: NodeJS.ProcessEnv, baseKey: string, walletId?: stri
   return String(env[baseKey] ?? "").trim();
 }
 
-type SatReadRpcConfig = {
-  primaryUrl: string;
-  secondaryUrl: string | null;
-};
-
-type SatReadRpcRuntimeState = {
-  lastMode: "primary" | "fallback" | "unavailable";
-  fallbackCount: number;
-  lastError: string | null;
-  lastFailureAt: string | null;
-  lastSuccessAt: string | null;
-  lastRpcUrl: string | null;
-  quotaLikely: boolean;
-};
-
-type SatReadRpcEndpointState = {
-  consecutiveFailures: number;
-  backoffUntilMs: number;
-  quotaLikely: boolean;
-  lastError: string | null;
-  lastFailureAt: string | null;
-  lastSuccessAt: string | null;
-};
-
-type SatRpcMethodBucket = {
-  requests: number;
-  successes: number;
-  failures: number;
-};
-
-type SatRpcMethodMetricState = {
-  requestsSinceStart: number;
-  successesSinceStart: number;
-  failuresSinceStart: number;
-  lastRequestAt: string | null;
-  lastSuccessAt: string | null;
-  lastFailureAt: string | null;
-  buckets: Map<number, SatRpcMethodBucket>;
-};
-
-type SatRpcAccountReadMetricState = {
-  requestsSinceStart: number;
-  successesSinceStart: number;
-  nullsSinceStart: number;
-  failuresSinceStart: number;
-  lastRequestAt: string | null;
-  lastSuccessAt: string | null;
-  lastNullAt: string | null;
-  lastFailureAt: string | null;
-};
-
-const satReadRpcRuntimeState: SatReadRpcRuntimeState = {
-  lastMode: "unavailable",
-  fallbackCount: 0,
-  lastError: null,
-  lastFailureAt: null,
-  lastSuccessAt: null,
-  lastRpcUrl: null,
-  quotaLikely: false,
-};
-const satReadRpcEndpointStates = new Map<string, SatReadRpcEndpointState>();
+type SatReadRpcConfig = MiningReadRpcConfig;
 
 type SatReadConnectionLike = {
   rpcEndpoint: string;
@@ -1455,11 +1405,6 @@ type SatReadConnectionLike = {
     SolanaModuleLike["Connection"]
   >["getMinimumBalanceForRentExemption"];
 };
-
-type SatReadMethodName = keyof Pick<
-  SatReadConnectionLike,
-  "getAccountInfo" | "getProgramAccounts" | "getMinimumBalanceForRentExemption"
->;
 
 type SatRpcAccountRecord = {
   owner: string | null;
@@ -1486,286 +1431,10 @@ const SAT_RPC_LIVE_VIEW_CACHE_TTL_MS = readPositiveIntEnv(
 );
 const SAT_RPC_STABLE_VIEW_CACHE_TTL_MS = 60_000;
 const SAT_RPC_RENT_EXEMPTION_CACHE_TTL_MS = 5 * 60_000;
-const SAT_RPC_METHOD_METRIC_BUCKET_MS = 60 * 60_000;
-const SAT_RPC_METHOD_METRIC_RETENTION_MS = 24 * 60 * 60_000;
-const SAT_RPC_QUOTA_BACKOFF_MS = 30_000;
-const SAT_RPC_FAILURE_BACKOFF_THRESHOLD = 2;
-const SAT_RPC_FAILURE_BACKOFF_BASE_MS = 5_000;
-const SAT_RPC_FAILURE_BACKOFF_MAX_MS = 30_000;
-const SAT_RPC_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
-
-function satRpcRequestTimeoutMs(): number {
-  return readPositiveIntEnv("FASED_SAT_RPC_REQUEST_TIMEOUT_MS", 10_000);
-}
 
 const satRpcReadCache = new Map<string, { expiresAt: number; value: unknown }>();
 const satRpcReadInFlight = new Map<string, Promise<unknown>>();
-const satRpcMethodMetrics = new Map<string, SatRpcMethodMetricState>();
-const satRpcAccountReadMetrics = new Map<string, SatRpcAccountReadMetricState>();
 let satRpcReadCacheGeneration = 0;
-
-function normalizeAccountReadLabel(label: string | undefined): string {
-  return String(label ?? "").trim() || "unlabeled";
-}
-
-function getOrCreateSatRpcAccountReadMetric(label: string): SatRpcAccountReadMetricState {
-  const normalized = normalizeAccountReadLabel(label);
-  const existing = satRpcAccountReadMetrics.get(normalized);
-  if (existing) {
-    return existing;
-  }
-  const created: SatRpcAccountReadMetricState = {
-    requestsSinceStart: 0,
-    successesSinceStart: 0,
-    nullsSinceStart: 0,
-    failuresSinceStart: 0,
-    lastRequestAt: null,
-    lastSuccessAt: null,
-    lastNullAt: null,
-    lastFailureAt: null,
-  };
-  satRpcAccountReadMetrics.set(normalized, created);
-  return created;
-}
-
-function updateSatRpcAccountReadMetric(
-  label: string | undefined,
-  outcome: "request" | "success" | "null" | "failure",
-  nowMs = Date.now(),
-) {
-  const entry = getOrCreateSatRpcAccountReadMetric(normalizeAccountReadLabel(label));
-  const at = new Date(nowMs).toISOString();
-  if (outcome === "request") {
-    entry.requestsSinceStart += 1;
-    entry.lastRequestAt = at;
-  } else if (outcome === "success") {
-    entry.successesSinceStart += 1;
-    entry.lastSuccessAt = at;
-  } else if (outcome === "null") {
-    entry.nullsSinceStart += 1;
-    entry.lastNullAt = at;
-  } else {
-    entry.failuresSinceStart += 1;
-    entry.lastFailureAt = at;
-  }
-}
-
-function getOrCreateSatRpcMethodMetric(method: string): SatRpcMethodMetricState {
-  const trimmedMethod = String(method ?? "").trim() || "unknown";
-  const existing = satRpcMethodMetrics.get(trimmedMethod);
-  if (existing) {
-    return existing;
-  }
-  const created: SatRpcMethodMetricState = {
-    requestsSinceStart: 0,
-    successesSinceStart: 0,
-    failuresSinceStart: 0,
-    lastRequestAt: null,
-    lastSuccessAt: null,
-    lastFailureAt: null,
-    buckets: new Map<number, SatRpcMethodBucket>(),
-  };
-  satRpcMethodMetrics.set(trimmedMethod, created);
-  return created;
-}
-
-function pruneSatRpcMethodMetricBuckets(entry: SatRpcMethodMetricState, nowMs: number) {
-  const retentionStartMs = nowMs - SAT_RPC_METHOD_METRIC_RETENTION_MS;
-  for (const bucketStartMs of [...entry.buckets.keys()]) {
-    if (bucketStartMs < retentionStartMs) {
-      entry.buckets.delete(bucketStartMs);
-    }
-  }
-}
-
-function updateSatRpcMethodMetric(
-  method: string,
-  outcome: "request" | "success" | "failure",
-  nowMs = Date.now(),
-) {
-  const entry = getOrCreateSatRpcMethodMetric(method);
-  const bucketStartMs = nowMs - (nowMs % SAT_RPC_METHOD_METRIC_BUCKET_MS);
-  const bucket = entry.buckets.get(bucketStartMs) ?? {
-    requests: 0,
-    successes: 0,
-    failures: 0,
-  };
-  const at = new Date(nowMs).toISOString();
-  if (outcome === "request") {
-    entry.requestsSinceStart += 1;
-    entry.lastRequestAt = at;
-    bucket.requests += 1;
-  } else if (outcome === "success") {
-    entry.successesSinceStart += 1;
-    entry.lastSuccessAt = at;
-    bucket.successes += 1;
-  } else {
-    entry.failuresSinceStart += 1;
-    entry.lastFailureAt = at;
-    bucket.failures += 1;
-  }
-  entry.buckets.set(bucketStartMs, bucket);
-  pruneSatRpcMethodMetricBuckets(entry, nowMs);
-}
-
-function summarizeSatRpcMethodMetrics(nowMs = Date.now()) {
-  const lastHourStartMs = nowMs - 60 * 60_000;
-  const last24HoursStartMs = nowMs - SAT_RPC_METHOD_METRIC_RETENTION_MS;
-  const methods = [...satRpcMethodMetrics.entries()]
-    .map(([method, entry]) => {
-      pruneSatRpcMethodMetricBuckets(entry, nowMs);
-      let requestsLastHour = 0;
-      let successesLastHour = 0;
-      let failuresLastHour = 0;
-      let requestsLast24Hours = 0;
-      let successesLast24Hours = 0;
-      let failuresLast24Hours = 0;
-      for (const [bucketStartMs, bucket] of entry.buckets.entries()) {
-        if (bucketStartMs >= last24HoursStartMs) {
-          requestsLast24Hours += bucket.requests;
-          successesLast24Hours += bucket.successes;
-          failuresLast24Hours += bucket.failures;
-        }
-        if (bucketStartMs >= lastHourStartMs) {
-          requestsLastHour += bucket.requests;
-          successesLastHour += bucket.successes;
-          failuresLastHour += bucket.failures;
-        }
-      }
-      return {
-        method,
-        requestsSinceStart: entry.requestsSinceStart,
-        successesSinceStart: entry.successesSinceStart,
-        failuresSinceStart: entry.failuresSinceStart,
-        requestsLastHour,
-        successesLastHour,
-        failuresLastHour,
-        requestsLast24Hours,
-        successesLast24Hours,
-        failuresLast24Hours,
-        lastRequestAt: entry.lastRequestAt,
-        lastSuccessAt: entry.lastSuccessAt,
-        lastFailureAt: entry.lastFailureAt,
-      };
-    })
-    .sort((left, right) => right.requestsLast24Hours - left.requestsLast24Hours);
-  return {
-    windowLastHourMs: 60 * 60_000,
-    windowLast24HoursMs: SAT_RPC_METHOD_METRIC_RETENTION_MS,
-    methods,
-    accountReads: [...satRpcAccountReadMetrics.entries()]
-      .map(([label, entry]) => ({
-        label,
-        requestsSinceStart: entry.requestsSinceStart,
-        successesSinceStart: entry.successesSinceStart,
-        nullsSinceStart: entry.nullsSinceStart,
-        failuresSinceStart: entry.failuresSinceStart,
-        lastRequestAt: entry.lastRequestAt,
-        lastSuccessAt: entry.lastSuccessAt,
-        lastNullAt: entry.lastNullAt,
-        lastFailureAt: entry.lastFailureAt,
-      }))
-      .sort((left, right) => right.requestsSinceStart - left.requestsSinceStart),
-  };
-}
-
-function looksLikeRpcQuotaFailure(value: unknown): boolean {
-  const message = String(value ?? "").toLowerCase();
-  if (!message.trim()) {
-    return false;
-  }
-  return (
-    message.includes("429") ||
-    message.includes("rate limit") ||
-    message.includes("too many requests") ||
-    message.includes("quota") ||
-    message.includes("credit") ||
-    message.includes("credits exhausted") ||
-    message.includes("resource exhausted")
-  );
-}
-
-function getOrCreateReadRpcEndpointState(rpcUrl: string): SatReadRpcEndpointState {
-  const key = normalizeRpcUrlForComparison(rpcUrl);
-  const existing = satReadRpcEndpointStates.get(key);
-  if (existing) {
-    return existing;
-  }
-  const created: SatReadRpcEndpointState = {
-    consecutiveFailures: 0,
-    backoffUntilMs: 0,
-    quotaLikely: false,
-    lastError: null,
-    lastFailureAt: null,
-    lastSuccessAt: null,
-  };
-  satReadRpcEndpointStates.set(key, created);
-  return created;
-}
-
-function currentReadRpcBackoffMs(rpcUrl: string, nowMs = Date.now()): number {
-  const state = satReadRpcEndpointStates.get(normalizeRpcUrlForComparison(rpcUrl));
-  if (!state) {
-    return 0;
-  }
-  return Math.max(0, state.backoffUntilMs - nowMs);
-}
-
-function makeReadRpcBackoffError(method: string, remainingMs: number): Error {
-  return new Error(
-    `rpc ${method} skipped during endpoint circuit backoff; retry in ${Math.ceil(remainingMs / 1000)}s`,
-  );
-}
-
-function markReadRpcEndpointSuccess(rpcUrl: string) {
-  const state = getOrCreateReadRpcEndpointState(rpcUrl);
-  state.consecutiveFailures = 0;
-  state.backoffUntilMs = 0;
-  state.quotaLikely = false;
-  state.lastError = null;
-  state.lastSuccessAt = new Date().toISOString();
-}
-
-function markReadRpcEndpointFailure(rpcUrl: string, error: unknown) {
-  const state = getOrCreateReadRpcEndpointState(rpcUrl);
-  const message = error instanceof Error ? error.message : String(error);
-  const quotaLikely = looksLikeRpcQuotaFailure(message);
-  state.consecutiveFailures += 1;
-  state.quotaLikely = quotaLikely;
-  state.lastError = message;
-  state.lastFailureAt = new Date().toISOString();
-  if (quotaLikely) {
-    state.backoffUntilMs = Date.now() + SAT_RPC_QUOTA_BACKOFF_MS;
-  } else if (state.consecutiveFailures >= SAT_RPC_FAILURE_BACKOFF_THRESHOLD) {
-    const exponent = state.consecutiveFailures - SAT_RPC_FAILURE_BACKOFF_THRESHOLD;
-    state.backoffUntilMs =
-      Date.now() +
-      Math.min(SAT_RPC_FAILURE_BACKOFF_MAX_MS, SAT_RPC_FAILURE_BACKOFF_BASE_MS * 2 ** exponent);
-  }
-}
-
-function markReadRpcSuccess(mode: "primary" | "fallback", rpcUrl: string) {
-  markReadRpcEndpointSuccess(rpcUrl);
-  satReadRpcRuntimeState.lastMode = mode;
-  satReadRpcRuntimeState.lastRpcUrl = rpcUrl;
-  satReadRpcRuntimeState.lastSuccessAt = new Date().toISOString();
-  if (mode === "primary") {
-    satReadRpcRuntimeState.lastError = null;
-    satReadRpcRuntimeState.quotaLikely = false;
-  } else {
-    satReadRpcRuntimeState.fallbackCount += 1;
-  }
-}
-
-function markReadRpcFailure(error: unknown, rpcUrl: string) {
-  const message = error instanceof Error ? error.message : String(error);
-  markReadRpcEndpointFailure(rpcUrl, error);
-  satReadRpcRuntimeState.lastMode = "unavailable";
-  satReadRpcRuntimeState.lastError = message;
-  satReadRpcRuntimeState.lastFailureAt = new Date().toISOString();
-  satReadRpcRuntimeState.quotaLikely =
-    satReadRpcRuntimeState.quotaLikely || looksLikeRpcQuotaFailure(message);
-}
 
 function firstNonEmpty(...values: Array<string | null | undefined>): string {
   for (const value of values) {
@@ -1785,43 +1454,8 @@ function normalizeSecondaryRpcUrl(primaryUrl: string, secondaryUrl: string): str
   return trimmed;
 }
 
-function normalizeRpcUrlForComparison(url: string): string {
-  try {
-    const parsed = new URL(url.trim());
-    parsed.search = "";
-    parsed.hash = "";
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return url.trim().replace(/\/$/, "");
-  }
-}
-
-export function resolveDefaultSolanaPublicReadFallbackUrl(params: {
-  network?: string;
-  primaryUrl?: string;
-}): string {
-  const network = String(params.network ?? "").trim();
-  const primaryUrl = String(params.primaryUrl ?? "").trim();
-  const fallbackUrl =
-    network === "devnet"
-      ? "https://api.devnet.solana.com"
-      : network === "mainnet-beta"
-        ? "https://api.mainnet-beta.solana.com"
-        : "";
-  if (!fallbackUrl) {
-    return "";
-  }
-  if (
-    primaryUrl &&
-    normalizeRpcUrlForComparison(primaryUrl) === normalizeRpcUrlForComparison(fallbackUrl)
-  ) {
-    return "";
-  }
-  return fallbackUrl;
-}
-
 function rpcCacheScope(rpc: string | SatReadRpcConfig): string {
-  const normalized = normalizeReadRpcConfig(rpc);
+  const normalized = normalizeMiningReadRpcConfig(rpc);
   return `${normalized.primaryUrl}::${normalized.secondaryUrl ?? ""}`;
 }
 
@@ -2013,158 +1647,14 @@ export function resolveEffectiveReadRpcConfig(): SatReadRpcConfig {
   return resolveReadRpcConfig(cfg, mergedEnv);
 }
 
-function createAbortableReadRpcFetch(): typeof globalThis.fetch {
-  return (async (input, init) => {
-    const timeoutMs = satRpcRequestTimeoutMs();
-    const requestUrl =
-      typeof input === "string" || input instanceof URL ? input.toString() : input.url;
-    let guardedFetch: Awaited<ReturnType<typeof fetchWithSsrFGuard>>;
-    try {
-      guardedFetch = await fetchWithSsrFGuard({
-        url: requestUrl,
-        init,
-        timeoutMs,
-        signal: init?.signal ?? (input instanceof Request ? input.signal : undefined),
-        policy: { allowPrivateNetwork: true },
-        auditContext: "sat-mining-read-rpc",
-      });
-    } catch (error) {
-      const reason = redactSensitiveUrlLikeString(
-        error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-      );
-      throw new Error(
-        `rpc fetch failed after at most ${timeoutMs}ms (${redactSensitiveUrlLikeString(requestUrl)}): ${reason}`,
-      );
-    }
-    const { response, release } = guardedFetch;
-    try {
-      const body = await response.arrayBuffer();
-      return new Response(body, {
-        headers: response.headers,
-        status: response.status,
-        statusText: response.statusText,
-      });
-    } finally {
-      await release();
-    }
-  }) as typeof globalThis.fetch;
-}
-
-async function withReadRpcTimeout<T>(task: Promise<T>, method: string, rpcUrl: string): Promise<T> {
-  const timeoutMs = satRpcRequestTimeoutMs();
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      task,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new Error(
-                `rpc ${method} timed out after ${timeoutMs}ms (${redactSensitiveUrlLikeString(rpcUrl)})`,
-              ),
-            ),
-          timeoutMs,
-        );
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-}
-
 export function createReadConnection(
   solana: SolanaModuleLike,
   rpc: SatReadRpcConfig,
 ): SatReadConnectionLike {
-  const primary = new solana.Connection(rpc.primaryUrl, {
-    disableRetryOnRateLimit: true,
-    fetch: createAbortableReadRpcFetch(),
-  });
-  const secondary = rpc.secondaryUrl
-    ? new solana.Connection(rpc.secondaryUrl, {
-        disableRetryOnRateLimit: true,
-        fetch: createAbortableReadRpcFetch(),
-      })
-    : null;
-
-  const withFallback = <TMethod extends SatReadMethodName>(
-    method: TMethod,
-  ): SatReadConnectionLike[TMethod] => {
-    return (async (...args: unknown[]): Promise<unknown> => {
-      const primaryBackoffMs = currentReadRpcBackoffMs(rpc.primaryUrl);
-      const secondaryBackoffMs = rpc.secondaryUrl ? currentReadRpcBackoffMs(rpc.secondaryUrl) : 0;
-      const callEndpoint = async (
-        connection: InstanceType<SolanaModuleLike["Connection"]>,
-        mode: "primary" | "fallback",
-        rpcUrl: string,
-      ) => {
-        updateSatRpcMethodMetric(method, "request");
-        try {
-          const task = (connection[method] as unknown as (...inner: unknown[]) => Promise<unknown>)(
-            ...args,
-          );
-          const result = await withReadRpcTimeout(task, method, rpcUrl);
-          updateSatRpcMethodMetric(method, "success");
-          markReadRpcSuccess(mode, rpcUrl);
-          return result;
-        } catch (error) {
-          updateSatRpcMethodMetric(method, "failure");
-          markReadRpcFailure(error, rpcUrl);
-          throw error;
-        }
-      };
-      if (primaryBackoffMs > 0) {
-        if (!secondary || !rpc.secondaryUrl || secondaryBackoffMs > 0) {
-          throw makeReadRpcBackoffError(
-            method,
-            Math.min(
-              primaryBackoffMs,
-              secondaryBackoffMs > 0 ? secondaryBackoffMs : primaryBackoffMs,
-            ),
-          );
-        }
-        return await callEndpoint(secondary, "fallback", rpc.secondaryUrl);
-      }
-      try {
-        return await callEndpoint(primary, "primary", rpc.primaryUrl);
-      } catch (primaryError) {
-        if (!secondary || !rpc.secondaryUrl) {
-          throw primaryError;
-        }
-        const fallbackBackoffMs = currentReadRpcBackoffMs(rpc.secondaryUrl);
-        if (fallbackBackoffMs > 0) {
-          throw makeReadRpcBackoffError(method, fallbackBackoffMs);
-        }
-        try {
-          return await callEndpoint(secondary, "fallback", rpc.secondaryUrl);
-        } catch (secondaryError) {
-          throw new Error(
-            `rpc ${method} failed on primary (${String(
-              redactSensitiveUrlLikeString(
-                primaryError instanceof Error ? primaryError.message : String(primaryError),
-              ),
-            )}) and fallback (${String(
-              redactSensitiveUrlLikeString(
-                secondaryError instanceof Error ? secondaryError.message : String(secondaryError),
-              ),
-            )})`,
-          );
-        }
-      }
-    }) as unknown as SatReadConnectionLike[TMethod];
-  };
-
-  return {
-    rpcEndpoint: rpc.primaryUrl,
-    secondaryRpcEndpoint: rpc.secondaryUrl,
-    getAccountInfo: withFallback("getAccountInfo"),
-    getProgramAccounts: withFallback("getProgramAccounts"),
-    getMinimumBalanceForRentExemption: withFallback("getMinimumBalanceForRentExemption"),
-  };
+  return createMiningReadConnection(
+    solana as unknown as MiningSolanaModuleLike,
+    rpc,
+  ) as SatReadConnectionLike;
 }
 
 async function resolveConnection(env: NodeJS.ProcessEnv) {
@@ -2222,143 +1712,6 @@ export function calculateSatRevealSharedRentLamports(params: {
   );
 }
 
-function normalizeReadRpcConfig(rpc: string | SatReadRpcConfig): SatReadRpcConfig {
-  return typeof rpc === "string" ? { primaryUrl: rpc, secondaryUrl: null } : rpc;
-}
-
-async function rpcRequestOnce<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
-  updateSatRpcMethodMetric(method, "request");
-  try {
-    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
-    const target = new URL(rpcUrl);
-    const transport = target.protocol === "https:" ? https : http;
-    const payload = await new Promise<string>((resolve, reject) => {
-      let settled = false;
-      const finishReject = (error: Error) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        reject(error);
-      };
-      const req = transport.request(
-        target,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "content-length": Buffer.byteLength(body),
-          },
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
-          let responseBytes = 0;
-          res.on("data", (chunk) => {
-            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-            responseBytes += buffer.length;
-            if (responseBytes > SAT_RPC_MAX_RESPONSE_BYTES) {
-              req.destroy(new Error(`rpc ${method} response exceeded size limit`));
-              return;
-            }
-            chunks.push(buffer);
-          });
-          res.on("end", () => {
-            if (settled) {
-              return;
-            }
-            const text = Buffer.concat(chunks).toString("utf8");
-            if ((res.statusCode ?? 500) >= 400) {
-              finishReject(new Error(text || `rpc ${method} failed`));
-              return;
-            }
-            settled = true;
-            resolve(text);
-          });
-        },
-      );
-      req.setTimeout(satRpcRequestTimeoutMs(), () => {
-        req.destroy(
-          new Error(
-            `rpc ${method} timed out after ${satRpcRequestTimeoutMs()}ms (${redactSensitiveUrlLikeString(rpcUrl)})`,
-          ),
-        );
-      });
-      req.on("error", (error) => finishReject(error));
-      req.write(body);
-      req.end();
-    });
-    const parsed = JSON.parse(payload) as { result?: T; error?: { message?: string } };
-    if (parsed.error) {
-      throw new Error(parsed.error.message || `rpc ${method} failed`);
-    }
-    updateSatRpcMethodMetric(method, "success");
-    return parsed.result as T;
-  } catch (error) {
-    updateSatRpcMethodMetric(method, "failure");
-    throw error;
-  }
-}
-
-async function rpcRequest<T>(
-  rpc: string | SatReadRpcConfig,
-  method: string,
-  params: unknown[],
-): Promise<T> {
-  const normalized = normalizeReadRpcConfig(rpc);
-  const primaryBackoffMs = currentReadRpcBackoffMs(normalized.primaryUrl);
-  const secondaryBackoffMs = normalized.secondaryUrl
-    ? currentReadRpcBackoffMs(normalized.secondaryUrl)
-    : 0;
-  if (primaryBackoffMs > 0 && (!normalized.secondaryUrl || secondaryBackoffMs > 0)) {
-    throw makeReadRpcBackoffError(
-      method,
-      Math.min(primaryBackoffMs, secondaryBackoffMs > 0 ? secondaryBackoffMs : primaryBackoffMs),
-    );
-  }
-  const useFallbackDueToBackoff = primaryBackoffMs > 0 && Boolean(normalized.secondaryUrl);
-  try {
-    const rpcUrl =
-      useFallbackDueToBackoff && normalized.secondaryUrl
-        ? normalized.secondaryUrl
-        : normalized.primaryUrl;
-    const result = await rpcRequestOnce<T>(rpcUrl, method, params);
-    markReadRpcSuccess(
-      useFallbackDueToBackoff && normalized.secondaryUrl ? "fallback" : "primary",
-      rpcUrl,
-    );
-    return result;
-  } catch (primaryError) {
-    const failedRpcUrl =
-      useFallbackDueToBackoff && normalized.secondaryUrl
-        ? normalized.secondaryUrl
-        : normalized.primaryUrl;
-    markReadRpcFailure(primaryError, failedRpcUrl);
-    if (!normalized.secondaryUrl || useFallbackDueToBackoff) {
-      throw primaryError;
-    }
-    const fallbackBackoffMs = currentReadRpcBackoffMs(normalized.secondaryUrl);
-    if (fallbackBackoffMs > 0) {
-      throw makeReadRpcBackoffError(method, fallbackBackoffMs);
-    }
-    try {
-      const result = await rpcRequestOnce<T>(normalized.secondaryUrl, method, params);
-      markReadRpcSuccess("fallback", normalized.secondaryUrl);
-      return result;
-    } catch (secondaryError) {
-      markReadRpcFailure(secondaryError, normalized.secondaryUrl);
-      const primaryMessage = redactSensitiveUrlLikeString(
-        primaryError instanceof Error ? primaryError.message : String(primaryError),
-      );
-      const secondaryMessage = redactSensitiveUrlLikeString(
-        secondaryError instanceof Error ? secondaryError.message : String(secondaryError),
-      );
-      throw new Error(
-        `rpc ${method} failed on primary (${primaryMessage}) and fallback (${secondaryMessage})`,
-      );
-    }
-  }
-}
-
 async function fetchAccountInfoRaw(
   rpc: string | SatReadRpcConfig,
   address: string,
@@ -2373,7 +1726,7 @@ async function fetchAccountRecordRaw(
   address: string,
   label?: string,
 ): Promise<SatRpcAccountRecord> {
-  const normalized = normalizeReadRpcConfig(rpc);
+  const normalized = normalizeMiningReadRpcConfig(rpc);
   const trimmedAddress = String(address ?? "").trim();
   if (!trimmedAddress) {
     return null;
@@ -2382,23 +1735,23 @@ async function fetchAccountRecordRaw(
     accountRpcCacheKey(normalized, trimmedAddress),
     SAT_RPC_ACCOUNT_RECORD_CACHE_TTL_MS,
     async () => {
-      updateSatRpcAccountReadMetric(label, "request");
+      recordMiningRpcAccountRead(label, "request");
       try {
-        const result = await rpcRequest<{
+        const result = await miningRpcRequest<{
           value?: { data?: [string, string] | null; owner?: string | null } | null;
         }>(normalized, "getAccountInfo", [trimmedAddress, { encoding: "base64" }]);
         const encoded = Array.isArray(result.value?.data) ? result.value?.data[0] : null;
         if (!encoded) {
-          updateSatRpcAccountReadMetric(label, "null");
+          recordMiningRpcAccountRead(label, "null");
           return null;
         }
-        updateSatRpcAccountReadMetric(label, "success");
+        recordMiningRpcAccountRead(label, "success");
         return {
           owner: String(result.value?.owner ?? "").trim() || null,
           data: Buffer.from(encoded, "base64"),
         };
       } catch (error) {
-        updateSatRpcAccountReadMetric(label, "failure");
+        recordMiningRpcAccountRead(label, "failure");
         throw error;
       }
     },
@@ -2411,7 +1764,7 @@ async function fetchMultipleAccountRecordsRaw(
   label?: string,
   options?: { ttlMs?: number },
 ): Promise<SatRpcAccountRecord[]> {
-  const normalized = normalizeReadRpcConfig(rpc);
+  const normalized = normalizeMiningReadRpcConfig(rpc);
   const ttlMs = options?.ttlMs ?? SAT_RPC_ACCOUNT_RECORD_CACHE_TTL_MS;
   const uniqueAddresses: string[] = [];
   const addressIndex = new Map<string, number>();
@@ -2444,10 +1797,10 @@ async function fetchMultipleAccountRecordsRaw(
       ttlMs,
       async () => {
         for (const _address of missingAddresses) {
-          updateSatRpcAccountReadMetric(label, "request");
+          recordMiningRpcAccountRead(label, "request");
         }
         try {
-          const result = await rpcRequest<{
+          const result = await miningRpcRequest<{
             value?: Array<{ data?: [string, string] | null; owner?: string | null } | null>;
           }>(normalized, "getMultipleAccounts", [missingAddresses, { encoding: "base64" }]);
           return missingAddresses.map((address, index) => {
@@ -2459,13 +1812,13 @@ async function fetchMultipleAccountRecordsRaw(
                   data: Buffer.from(encoded, "base64"),
                 }
               : null;
-            updateSatRpcAccountReadMetric(label, record ? "success" : "null");
+            recordMiningRpcAccountRead(label, record ? "success" : "null");
             writeRpcCacheValue(accountRpcCacheKey(normalized, address), ttlMs, record);
             return record;
           });
         } catch (error) {
           for (const _address of missingAddresses) {
-            updateSatRpcAccountReadMetric(label, "failure");
+            recordMiningRpcAccountRead(label, "failure");
           }
           throw error;
         }
@@ -2492,7 +1845,7 @@ async function fetchTokenBalanceRaw(
   rpc: string | SatReadRpcConfig,
   address: string,
 ): Promise<string | null> {
-  const normalized = normalizeReadRpcConfig(rpc);
+  const normalized = normalizeMiningReadRpcConfig(rpc);
   const trimmedAddress = String(address ?? "").trim();
   if (!trimmedAddress) {
     return null;
@@ -2501,7 +1854,7 @@ async function fetchTokenBalanceRaw(
     `token-balance:${rpcCacheScope(normalized)}:${trimmedAddress}`,
     SAT_RPC_BALANCE_CACHE_TTL_MS,
     async () => {
-      const result = await rpcRequest<{ value?: { amount?: string } }>(
+      const result = await miningRpcRequest<{ value?: { amount?: string } }>(
         normalized,
         "getTokenAccountBalance",
         [trimmedAddress],
@@ -2515,7 +1868,7 @@ async function fetchLamportBalanceRaw(
   rpc: string | SatReadRpcConfig,
   address: string,
 ): Promise<string | null> {
-  const normalized = normalizeReadRpcConfig(rpc);
+  const normalized = normalizeMiningReadRpcConfig(rpc);
   const trimmedAddress = String(address ?? "").trim();
   if (!trimmedAddress) {
     return null;
@@ -2524,7 +1877,7 @@ async function fetchLamportBalanceRaw(
     `lamport-balance:${rpcCacheScope(normalized)}:${trimmedAddress}`,
     SAT_RPC_BALANCE_CACHE_TTL_MS,
     async () => {
-      const result = await rpcRequest<{ value?: number | null }>(normalized, "getBalance", [
+      const result = await miningRpcRequest<{ value?: number | null }>(normalized, "getBalance", [
         trimmedAddress,
       ]);
       return typeof result.value === "number" && Number.isFinite(result.value)
@@ -2547,8 +1900,8 @@ function decodeSplTokenAccountAmount(record: SatRpcAccountRecord): string | unde
 
 export async function inspectSatChainUnixTime(_config: SatMiningConfig): Promise<number> {
   const rpc = resolveEffectiveReadRpcConfig();
-  const slot = await rpcRequest<number>(rpc, "getSlot", []);
-  const blockTime = await rpcRequest<number | null>(rpc, "getBlockTime", [slot]);
+  const slot = await miningRpcRequest<number>(rpc, "getSlot", []);
+  const blockTime = await miningRpcRequest<number | null>(rpc, "getBlockTime", [slot]);
   return typeof blockTime === "number" && Number.isFinite(blockTime)
     ? blockTime
     : Math.floor(Date.now() / 1000);
@@ -2556,7 +1909,7 @@ export async function inspectSatChainUnixTime(_config: SatMiningConfig): Promise
 
 export async function inspectSatChainSlot(_config: SatMiningConfig): Promise<number> {
   const rpc = resolveEffectiveReadRpcConfig();
-  return await rpcRequest<number>(rpc, "getSlot", []);
+  return await miningRpcRequest<number>(rpc, "getSlot", []);
 }
 
 export type SatAddressLookupTableView = {
@@ -3314,7 +2667,7 @@ export async function inspectSatClaimReceipt(
   }
   const { solana, programId } = await resolveConnection(process.env);
   const rpc = resolveEffectiveReadRpcConfig();
-  const result = await rpcRequest<{
+  const result = await miningRpcRequest<{
     meta?: {
       fee?: number;
       preBalances?: number[];
@@ -3426,7 +2779,7 @@ export async function inspectSatTxReceipt(
     return null;
   }
   const rpc = resolveEffectiveReadRpcConfig();
-  const result = await rpcRequest<{
+  const result = await miningRpcRequest<{
     slot?: number;
     blockTime?: number | null;
     meta?: { fee?: number; logMessages?: string[] | null } | null;
@@ -3902,39 +3255,13 @@ export async function inspectSatRoundState(
 
 export function inspectSatConnectionDetails() {
   const rpc = resolveEffectiveReadRpcConfig();
-  const endpointStates = [rpc.primaryUrl, rpc.secondaryUrl]
-    .filter((rpcUrl): rpcUrl is string => Boolean(rpcUrl))
-    .map((rpcUrl) => {
-      const state = satReadRpcEndpointStates.get(normalizeRpcUrlForComparison(rpcUrl));
-      return {
-        rpcUrl: redactSensitiveUrlLikeString(rpcUrl),
-        consecutiveFailures: state?.consecutiveFailures ?? 0,
-        backoffRemainingMs: currentReadRpcBackoffMs(rpcUrl),
-        quotaLikely: state?.quotaLikely ?? false,
-        lastError: state?.lastError ? redactSensitiveUrlLikeString(state.lastError) : null,
-        lastFailureAt: state?.lastFailureAt ?? null,
-        lastSuccessAt: state?.lastSuccessAt ?? null,
-      };
-    });
+  const diagnostics = inspectMiningRpcDiagnostics(rpc);
   return {
     programId: SAT_PROGRAM_ID(),
     bondProgramId: SAT_BOND_PROGRAM_ID(),
     rpcUrl: redactSensitiveUrlLikeString(rpc.primaryUrl),
     readRpcFallbackUrl: rpc.secondaryUrl ? redactSensitiveUrlLikeString(rpc.secondaryUrl) : null,
-    rpcState: {
-      ...satReadRpcRuntimeState,
-      lastError: satReadRpcRuntimeState.lastError
-        ? redactSensitiveUrlLikeString(satReadRpcRuntimeState.lastError)
-        : null,
-      lastRpcUrl: satReadRpcRuntimeState.lastRpcUrl
-        ? redactSensitiveUrlLikeString(satReadRpcRuntimeState.lastRpcUrl)
-        : null,
-      quotaLikely:
-        satReadRpcRuntimeState.quotaLikely ||
-        looksLikeRpcQuotaFailure(satReadRpcRuntimeState.lastError),
-      endpoints: endpointStates,
-    },
-    rpcMetrics: summarizeSatRpcMethodMetrics(),
+    ...diagnostics,
   };
 }
 
