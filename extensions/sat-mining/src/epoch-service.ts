@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { refreshSatChainTime } from "./chain-time.js";
 import type { SatMiningConfig } from "./config.js";
@@ -7,6 +6,20 @@ import {
   hasAuthoritativeCloseRecord,
   hasSuccessfulClaimCloseOrSettledRecord,
 } from "./cycle-progress.js";
+import {
+  canAttemptKeeperStep,
+  preferredFinalizePageIndex,
+  preferredKeeperMinerCycleAddress,
+  SAT_KEEPER_PHASE,
+} from "./epoch-keeper.js";
+import {
+  advanceDistributionPage,
+  advanceScoringPage,
+  advanceSettlementFinalization,
+  advanceSettlementPage,
+  createSyntheticSettlementProgress,
+  epochPhase,
+} from "./epoch-runtime.js";
 import { runSatGatewayMethod } from "./gateway-runner.js";
 import {
   inspectSatChainSlot,
@@ -48,13 +61,8 @@ const SAT_MINER_CYCLE_SLOT_COUNT = 8;
 const SAT_EPOCH_BACKLOG_WINDOW = SAT_MINER_CYCLE_SLOT_COUNT - 1;
 const SAT_EXACT_PENDING_SCAN_LIMIT = 64;
 const SAT_CYCLE_REGISTRY_PAGE_CAPACITY = 64;
-const SAT_SETTLEMENT_CHUNK_TARGET = 16;
 const SAT_EPOCH_IDLE_INTERVAL_MS = 60_000;
 const SAT_EPOCH_ACTIVE_INTERVAL_MS = 10_000;
-const KEEPER_PHASE_SETTLE = 1;
-const KEEPER_PHASE_FINALIZE = 2;
-const KEEPER_PHASE_SCORE = 3;
-const KEEPER_PHASE_DISTRIBUTE = 4;
 
 function satEpochActiveIntervalMs() {
   return process.env.FASED_SAT_EPOCH_FAST_TEST_TICK === "1" ? 3_000 : SAT_EPOCH_ACTIVE_INTERVAL_MS;
@@ -62,103 +70,6 @@ function satEpochActiveIntervalMs() {
 
 async function withEpochReadTimeout<T>(label: string, task: () => Promise<T>): Promise<T> {
   return await withSatServiceReadTimeout("epoch service", label, task);
-}
-
-function encodeU64Le(value: number) {
-  const buffer = Buffer.alloc(8);
-  buffer.writeBigUInt64LE(BigInt(Math.max(0, Math.floor(value))));
-  return buffer;
-}
-
-function hash256Hex(input: Buffer): string {
-  return `0x${createHash("sha3-256").update(input).digest("hex")}`;
-}
-
-function createSyntheticSettlementProgress(params: {
-  cycleId: number;
-  expectedPageCount: number;
-  processedPageCount: number;
-  settleChunkIndex: number;
-  scoredPageCount: number;
-  scoreChunkIndex: number;
-  distributedPageCount: number;
-  distributeChunkIndex: number;
-  finalized: boolean;
-  scored: boolean;
-}): SatCycleSettlementProgressV2View {
-  return {
-    address: "",
-    cycleId: params.cycleId,
-    expectedPageCount: params.expectedPageCount,
-    processedPageCount: params.processedPageCount,
-    settleChunkIndex: params.settleChunkIndex,
-    scoredPageCount: params.scoredPageCount,
-    scoreChunkIndex: params.scoreChunkIndex,
-    distributedPageCount: params.distributedPageCount,
-    distributeChunkIndex: params.distributeChunkIndex,
-    finalized: params.finalized,
-    scored: params.scored,
-  };
-}
-
-function keeperIndex(
-  cycleId: number,
-  phaseTag: number,
-  pageIndex: number,
-  chunkIndex: number,
-  participantCount: number,
-) {
-  const digest = Buffer.from(
-    hash256Hex(
-      Buffer.concat([
-        Buffer.from("sat-keeper"),
-        encodeU64Le(cycleId),
-        Buffer.from([phaseTag]),
-        encodeU64Le(pageIndex),
-        encodeU64Le(chunkIndex),
-      ]),
-    ).slice(2),
-    "hex",
-  );
-  const raw = digest.readBigUInt64LE(0);
-  return Number(raw % BigInt(participantCount));
-}
-
-function preferredKeeperMinerCycleAddress(params: {
-  cycleId: number;
-  phaseTag: number;
-  pageIndex: number;
-  chunkIndex: number;
-  participantAddresses: string[];
-}) {
-  if (params.participantAddresses.length === 0) {
-    return null;
-  }
-  return (
-    params.participantAddresses[
-      keeperIndex(
-        params.cycleId,
-        params.phaseTag,
-        params.pageIndex,
-        params.chunkIndex,
-        params.participantAddresses.length,
-      )
-    ] ?? null
-  );
-}
-
-function preferredFinalizePageIndex(cycleId: number, pageCount: number) {
-  if (pageCount <= 0) {
-    return 0;
-  }
-  const digest = Buffer.from(
-    hash256Hex(
-      Buffer.concat([Buffer.from("sat-keeper-finalize-page"), encodeU64Le(cycleId)]),
-    ).slice(2),
-    "hex",
-  );
-  const raw = digest.readBigUInt64LE(0);
-  return Number(raw % BigInt(pageCount));
 }
 
 function parseRoundKey(roundKey: string): { epochId: number; microRoundId: number } | null {
@@ -810,39 +721,6 @@ async function resolveSettlementMinerCycleAccounts(params: {
   return fallbackMinerCycleAddress ? [fallbackMinerCycleAddress] : [];
 }
 
-async function canAttemptKeeperStep(params: {
-  config: SatMiningConfig;
-  authority: string | null;
-  cycleId: number;
-  preferredMinerCycleAddress: string | null;
-  exclusiveUntilSlot?: number;
-}) {
-  if (!params.authority) {
-    return false;
-  }
-  if (!params.preferredMinerCycleAddress || (params.exclusiveUntilSlot ?? 0) <= 0) {
-    return true;
-  }
-  const ownMinerCycleAddress = await deriveSatMinerCycleAddress(params.config, {
-    authority: params.authority,
-    cycleId: params.cycleId,
-  }).catch(swallowSatReadErrorUnlessTimeout);
-  if (!ownMinerCycleAddress) {
-    return false;
-  }
-  if (ownMinerCycleAddress === params.preferredMinerCycleAddress) {
-    return true;
-  }
-  const currentSlot = await withEpochReadTimeout("chain slot", () =>
-    inspectSatChainSlot(params.config),
-  ).catch(swallowSatReadErrorUnlessTimeout);
-  return (
-    typeof currentSlot === "number" &&
-    Number.isFinite(currentSlot) &&
-    currentSlot > Number(params.exclusiveUntilSlot ?? 0)
-  );
-}
-
 export function createSatEpochService(params: {
   api: FasedAgentPluginApi;
   config: SatMiningConfig;
@@ -856,6 +734,28 @@ export function createSatEpochService(params: {
   let initialRunTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
   const targetCycleCache = new Map<number, SatEpochTargetCycleCache>();
+  const canAttempt = async (request: {
+    authority: string | null;
+    cycleId: number;
+    preferredMinerCycleAddress: string | null;
+    exclusiveUntilSlot?: number;
+  }) =>
+    await canAttemptKeeperStep({
+      authority: request.authority,
+      preferredMinerCycleAddress: request.preferredMinerCycleAddress,
+      exclusiveUntilSlot: request.exclusiveUntilSlot,
+      deriveOwnMinerCycleAddress: async () => {
+        if (!request.authority) return null;
+        return await deriveSatMinerCycleAddress(state.activeConfig, {
+          authority: request.authority,
+          cycleId: request.cycleId,
+        }).catch(swallowSatReadErrorUnlessTimeout);
+      },
+      inspectCurrentSlot: async () =>
+        await withEpochReadTimeout("chain slot", () =>
+          inspectSatChainSlot(state.activeConfig),
+        ).catch(swallowSatReadErrorUnlessTimeout),
+    });
   const rememberTargetProgress = (
     cycleId: number,
     progress: Awaited<ReturnType<typeof inspectSatCycleSettlementProgressV2>> | null,
@@ -968,8 +868,7 @@ export function createSatEpochService(params: {
         execution.crankSubmitted = true;
         execution.epochFinalized = true;
       }
-      const currentSettleComplete = (progress?.processedPageCount ?? 0) >= localExpectedPageCount;
-      if (!currentSettleComplete) {
+      if (epochPhase(progress, localExpectedPageCount) === "settle") {
         const pageIndex = progress?.processedPageCount ?? 0;
         const chunkIndex = progress?.settleChunkIndex ?? 0;
         activeTargetPageIndex = pageIndex;
@@ -1003,14 +902,13 @@ export function createSatEpochService(params: {
         });
         const preferredMinerCycleAddress = preferredKeeperMinerCycleAddress({
           cycleId: targetCycleId,
-          phaseTag: KEEPER_PHASE_SETTLE,
+          phaseTag: SAT_KEEPER_PHASE.settle,
           pageIndex,
           chunkIndex,
           participantAddresses: minerCycleAccounts,
         });
         if (
-          !(await canAttemptKeeperStep({
-            config: state.activeConfig,
+          !(await canAttempt({
             authority,
             cycleId: targetCycleId,
             preferredMinerCycleAddress,
@@ -1036,10 +934,9 @@ export function createSatEpochService(params: {
           },
         });
         submittedStep = true;
-        const pageSettled =
-          (chunkIndex + 1) * SAT_SETTLEMENT_CHUNK_TARGET >= minerCycleAccounts.length;
-        progress = {
-          ...(progress ??
+        progress = advanceSettlementPage({
+          progress:
+            progress ??
             createSyntheticSettlementProgress({
               cycleId: targetCycleId,
               expectedPageCount: localExpectedPageCount,
@@ -1051,24 +948,18 @@ export function createSatEpochService(params: {
               distributeChunkIndex: 0,
               finalized: false,
               scored: false,
-            })),
-          processedPageCount: pageSettled ? pageIndex + 1 : pageIndex,
-          settleChunkIndex: pageSettled ? 0 : chunkIndex + 1,
-          settleExclusiveUntilSlot: Number.MAX_SAFE_INTEGER,
-          finalizeExclusiveUntilSlot:
-            pageSettled && pageIndex + 1 >= localExpectedPageCount
-              ? Number.MAX_SAFE_INTEGER
-              : progress?.finalizeExclusiveUntilSlot,
-        };
+            }),
+          pageIndex,
+          chunkIndex,
+          participantCount: minerCycleAccounts.length,
+          expectedPageCount: localExpectedPageCount,
+        });
         rememberTargetProgress(targetCycleId, progress, localExpectedPageCount, participantCount);
         markWorkerSuccess(state, "epoch", `cycle ${targetCycleId} settlement advanced`);
         scheduleWorkerNextRun(state, "epoch", satEpochActiveIntervalMs());
         return;
       }
-      if (
-        (progress?.processedPageCount ?? 0) >= localExpectedPageCount &&
-        !(progress?.finalized ?? false)
-      ) {
+      if (epochPhase(progress, localExpectedPageCount) === "finalize") {
         const finalizePageCount = localExpectedPageCount;
         const finalizePageIndex = preferredFinalizePageIndex(targetCycleId, finalizePageCount);
         const finalizeMinerCycleAccounts = await resolveSettlementMinerCycleAccounts({
@@ -1082,14 +973,13 @@ export function createSatEpochService(params: {
         });
         const preferredMinerCycleAddress = preferredKeeperMinerCycleAddress({
           cycleId: targetCycleId,
-          phaseTag: KEEPER_PHASE_FINALIZE,
+          phaseTag: SAT_KEEPER_PHASE.finalize,
           pageIndex: finalizePageIndex,
           chunkIndex: 0,
           participantAddresses: finalizeMinerCycleAccounts,
         });
         if (
-          !(await canAttemptKeeperStep({
-            config: state.activeConfig,
+          !(await canAttempt({
             authority,
             cycleId: targetCycleId,
             preferredMinerCycleAddress,
@@ -1110,8 +1000,8 @@ export function createSatEpochService(params: {
           payload: { cycleId: targetCycleId, pageCount: finalizePageCount },
         });
         submittedStep = true;
-        progress = {
-          ...(progress ??
+        progress = advanceSettlementFinalization(
+          progress ??
             createSyntheticSettlementProgress({
               cycleId: targetCycleId,
               expectedPageCount: localExpectedPageCount,
@@ -1123,17 +1013,14 @@ export function createSatEpochService(params: {
               distributeChunkIndex: 0,
               finalized: false,
               scored: false,
-            })),
-          finalized: true,
-          scoreExclusiveUntilSlot: Number.MAX_SAFE_INTEGER,
-        };
+            }),
+        );
         rememberTargetProgress(targetCycleId, progress, localExpectedPageCount, participantCount);
         markWorkerSuccess(state, "epoch", `cycle ${targetCycleId} settlement advanced`);
         scheduleWorkerNextRun(state, "epoch", satEpochActiveIntervalMs());
         return;
       }
-      const currentScoreComplete = (progress?.scoredPageCount ?? 0) >= localExpectedPageCount;
-      if ((progress?.finalized ?? false) && !currentScoreComplete) {
+      if (epochPhase(progress, localExpectedPageCount) === "score") {
         const pageIndex = progress?.scoredPageCount ?? 0;
         const chunkIndex = progress?.scoreChunkIndex ?? 0;
         activeTargetPageIndex = pageIndex;
@@ -1167,14 +1054,13 @@ export function createSatEpochService(params: {
         });
         const preferredMinerCycleAddress = preferredKeeperMinerCycleAddress({
           cycleId: targetCycleId,
-          phaseTag: KEEPER_PHASE_SCORE,
+          phaseTag: SAT_KEEPER_PHASE.score,
           pageIndex,
           chunkIndex,
           participantAddresses: minerCycleAccounts,
         });
         if (
-          !(await canAttemptKeeperStep({
-            config: state.activeConfig,
+          !(await canAttempt({
             authority,
             cycleId: targetCycleId,
             preferredMinerCycleAddress,
@@ -1200,10 +1086,9 @@ export function createSatEpochService(params: {
           },
         });
         submittedStep = true;
-        const pageScored =
-          (chunkIndex + 1) * SAT_SETTLEMENT_CHUNK_TARGET >= minerCycleAccounts.length;
-        progress = {
-          ...(progress ??
+        progress = advanceScoringPage({
+          progress:
+            progress ??
             createSyntheticSettlementProgress({
               cycleId: targetCycleId,
               expectedPageCount: localExpectedPageCount,
@@ -1215,27 +1100,18 @@ export function createSatEpochService(params: {
               distributeChunkIndex: 0,
               finalized: true,
               scored: false,
-            })),
-          scoredPageCount: pageScored ? pageIndex + 1 : pageIndex,
-          scoreChunkIndex: pageScored ? 0 : chunkIndex + 1,
-          scoreExclusiveUntilSlot: Number.MAX_SAFE_INTEGER,
-          distributeExclusiveUntilSlot:
-            pageScored && pageIndex + 1 >= localExpectedPageCount
-              ? Number.MAX_SAFE_INTEGER
-              : progress?.distributeExclusiveUntilSlot,
-        };
+            }),
+          pageIndex,
+          chunkIndex,
+          participantCount: minerCycleAccounts.length,
+          expectedPageCount: localExpectedPageCount,
+        });
         rememberTargetProgress(targetCycleId, progress, localExpectedPageCount, participantCount);
         markWorkerSuccess(state, "epoch", `cycle ${targetCycleId} settlement advanced`);
         scheduleWorkerNextRun(state, "epoch", satEpochActiveIntervalMs());
         return;
       }
-      const currentDistributeComplete =
-        (progress?.distributedPageCount ?? 0) >= localExpectedPageCount;
-      if (
-        (progress?.finalized ?? false) &&
-        (progress?.scoredPageCount ?? 0) >= localExpectedPageCount &&
-        !currentDistributeComplete
-      ) {
+      if (epochPhase(progress, localExpectedPageCount) === "distribute") {
         const pageIndex = progress?.distributedPageCount ?? 0;
         const chunkIndex = progress?.distributeChunkIndex ?? 0;
         activeTargetPageIndex = pageIndex;
@@ -1269,14 +1145,13 @@ export function createSatEpochService(params: {
         });
         const preferredMinerCycleAddress = preferredKeeperMinerCycleAddress({
           cycleId: targetCycleId,
-          phaseTag: KEEPER_PHASE_DISTRIBUTE,
+          phaseTag: SAT_KEEPER_PHASE.distribute,
           pageIndex,
           chunkIndex,
           participantAddresses: minerCycleAccounts,
         });
         if (
-          !(await canAttemptKeeperStep({
-            config: state.activeConfig,
+          !(await canAttempt({
             authority,
             cycleId: targetCycleId,
             preferredMinerCycleAddress,
@@ -1302,10 +1177,9 @@ export function createSatEpochService(params: {
           },
         });
         submittedStep = true;
-        const pageDistributed =
-          (chunkIndex + 1) * SAT_SETTLEMENT_CHUNK_TARGET >= minerCycleAccounts.length;
-        progress = {
-          ...(progress ??
+        progress = advanceDistributionPage({
+          progress:
+            progress ??
             createSyntheticSettlementProgress({
               cycleId: targetCycleId,
               expectedPageCount: localExpectedPageCount,
@@ -1317,11 +1191,11 @@ export function createSatEpochService(params: {
               distributeChunkIndex: 0,
               finalized: true,
               scored: true,
-            })),
-          distributedPageCount: pageDistributed ? pageIndex + 1 : pageIndex,
-          distributeChunkIndex: pageDistributed ? 0 : chunkIndex + 1,
-          distributeExclusiveUntilSlot: Number.MAX_SAFE_INTEGER,
-        };
+            }),
+          pageIndex,
+          chunkIndex,
+          participantCount: minerCycleAccounts.length,
+        });
         rememberTargetProgress(targetCycleId, progress, localExpectedPageCount, participantCount);
       }
       const localDistributeComplete =
