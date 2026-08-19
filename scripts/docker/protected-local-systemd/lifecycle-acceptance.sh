@@ -159,7 +159,7 @@ run_managed_plugin_transaction_acceptance() {
   cat >"$v2_fault_script" <<EOF_FIXTURE_V2_GATEWAY_FAILURE
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ ! -e "$v2_ready_marker" ]] && jq -e --arg digest "$v2_digest" '.entries[] | select(.id == "$plugin_id" and .origin == "store" and .digest == $digest)' "$state/plugin.lock.json" >/dev/null; then
+if [[ ! -e "$v2_ready_marker" ]] && jq -e --arg digest "$v2_digest" '.entries[] | select(.id == "$plugin_id" and .origin == "store" and .digest == \$digest)' "$state/plugin.lock.json" >/dev/null; then
   exit 1
 fi
 EOF_FIXTURE_V2_GATEWAY_FAILURE

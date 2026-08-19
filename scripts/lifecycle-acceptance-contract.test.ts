@@ -517,6 +517,7 @@ describe("lifecycle acceptance contract", () => {
       'local v2_fault_dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"',
     );
     expect(local).toContain("ExecStartPre=$v2_fault_script");
+    expect(local).toContain(".digest == \\$digest)");
     expect(local).toContain("systemctl daemon-reload");
     expect(local).toContain('rm -f "$v2_fault_dropin"');
     expect(local).toContain("fixture v2 activation failure was accepted");
