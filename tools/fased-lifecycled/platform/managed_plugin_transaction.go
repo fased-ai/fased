@@ -640,17 +640,67 @@ func safeArchivePath(name string) bool {
 
 func (transaction ManagedPluginTransaction) copyStagedObject(transactionID, digest, destination string) error {
 	temporary := destination + ".staging-" + transactionID
-	if _, err := os.Lstat(temporary); err == nil {
-		return errors.New("managed plugin destination staging collision")
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := transaction.removeCopyResidue(temporary); err != nil {
 		return err
 	}
 	if err := copyImmutablePluginTree(transaction.stagingObjectPath(transactionID, digest), temporary, transaction.CodeOwnerUID, transaction.CodeOwnerGID); err != nil {
-		return err
+		return errors.Join(err, transaction.removeCopyResidue(temporary))
 	}
 	if err := os.Rename(temporary, destination); err != nil {
 		_ = makePluginTreeRemovable(temporary)
 		_ = os.RemoveAll(temporary)
+		return err
+	}
+	return syncPluginDirectory(transaction.CodeRoot)
+}
+
+// removeCopyResidue recovers only the exact root-owned partial tree for this
+// content-addressed transaction copy. Any symlink, hard link, ownership drift,
+// unexpected mode, or special file remains a fail-closed collision.
+func (transaction ManagedPluginTransaction) removeCopyResidue(temporary string) error {
+	if _, err := os.Lstat(temporary); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	entries := 0
+	err := filepath.WalkDir(temporary, func(item string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		entries++
+		if entries > maxManagedPluginArchiveEntries {
+			return errors.New("managed plugin destination staging residue exceeds entry budget")
+		}
+		info, err := os.Lstat(item)
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || info.Mode()&os.ModeSymlink != 0 || stat.Uid != transaction.CodeOwnerUID || stat.Gid != transaction.CodeOwnerGID {
+			return errors.New("managed plugin destination staging residue is unsafe")
+		}
+		if info.IsDir() {
+			if mode := info.Mode().Perm(); mode != 0o755 && mode != 0o555 {
+				return errors.New("managed plugin destination staging residue directory mode is unsafe")
+			}
+			return nil
+		}
+		if !info.Mode().IsRegular() || stat.Nlink != 1 {
+			return errors.New("managed plugin destination staging residue entry is unsafe")
+		}
+		if mode := info.Mode().Perm(); mode != 0o444 && mode != 0o555 {
+			return errors.New("managed plugin destination staging residue file mode is unsafe")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := makePluginTreeRemovable(temporary); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(temporary); err != nil {
 		return err
 	}
 	return syncPluginDirectory(transaction.CodeRoot)

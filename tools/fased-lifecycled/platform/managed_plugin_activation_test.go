@@ -19,11 +19,12 @@ import (
 )
 
 type fakeManagedPluginGateway struct {
-	calls      []string
-	stopErr    error
-	startErrAt int
-	starts     int
-	onStart    func(int) error
+	calls              []string
+	stopErr            error
+	startErrAt         int
+	starts             int
+	onStart            func(int) error
+	requireLiveContext bool
 }
 
 type fakeManagedPluginReadinessClock struct {
@@ -32,21 +33,27 @@ type fakeManagedPluginReadinessClock struct {
 }
 
 func (clock *fakeManagedPluginReadinessClock) Now() time.Time { return clock.now }
-func (clock *fakeManagedPluginReadinessClock) Wait(_ context.Context, delay time.Duration) error {
+func (clock *fakeManagedPluginReadinessClock) Wait(ctx context.Context, delay time.Duration) error {
 	clock.now = clock.now.Add(delay)
 	if clock.onWait != nil {
 		clock.onWait()
 	}
-	return nil
+	return ctx.Err()
 }
 
-func (gateway *fakeManagedPluginGateway) Stop(_ context.Context, unit string) error {
+func (gateway *fakeManagedPluginGateway) Stop(ctx context.Context, unit string) error {
 	gateway.calls = append(gateway.calls, "stop:"+unit)
+	if gateway.requireLiveContext && ctx.Err() != nil {
+		return fmt.Errorf("Gateway stop received canceled context: %w", ctx.Err())
+	}
 	return gateway.stopErr
 }
 
-func (gateway *fakeManagedPluginGateway) Start(_ context.Context, unit string) error {
+func (gateway *fakeManagedPluginGateway) Start(ctx context.Context, unit string) error {
 	gateway.calls = append(gateway.calls, "start:"+unit)
+	if gateway.requireLiveContext && ctx.Err() != nil {
+		return fmt.Errorf("Gateway start received canceled context: %w", ctx.Err())
+	}
 	gateway.starts++
 	if gateway.startErrAt == gateway.starts {
 		return errors.New("injected Gateway start failure")
@@ -371,6 +378,16 @@ func TestManagedPluginActivationSurvivesCoreGenerationTransition(t *testing.T) {
 	}
 	if len(service.calls) != 0 {
 		t.Fatalf("same catalog restarted Gateway after core transition: %v", service.calls)
+	}
+	differentProvenance := catalog
+	differentProvenance.Entries = append([]stateparticipant.ManagedPluginCatalogEntry(nil), catalog.Entries...)
+	differentProvenance.Entries[0].ArchiveDigest = "sha256:" + strings.Repeat("f", 64)
+	current, _, _, err = activationB.catalogAlreadyCurrentBound(differentProvenance, guard, activation.Config.Operator.GID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current {
+		t.Fatal("different archive provenance was collapsed into ALREADY_CURRENT")
 	}
 
 	const secondID = "plugin-generation-b-different"
@@ -711,6 +728,46 @@ func TestManagedPluginActivationWaitsForDelayedReadinessAndBoundsDeadline(t *tes
 			t.Fatalf("deadline rollback did not restore previous lock: %q %v", data, err)
 		}
 	})
+}
+
+func TestManagedPluginActivationCancellationReservesRollbackContext(t *testing.T) {
+	activation, request, service, previous, _, _ := managedPluginActivationFixture(t)
+	if _, err := activation.Transaction.Stage(request); err != nil {
+		t.Fatal(err)
+	}
+	service.requireLiveContext = true
+	service.onStart = func(start int) error {
+		if start == 1 {
+			return nil
+		}
+		data, err := os.ReadFile(CanonicalPluginLockPath(activation.Config))
+		if err != nil {
+			return err
+		}
+		lock, err := stateparticipant.DecodePluginLock(data)
+		if err != nil {
+			return err
+		}
+		writeManagedPluginReadiness(t, filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), lock, activation.GenerationID)
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	clock := activation.ReadinessClock.(*fakeManagedPluginReadinessClock)
+	clock.onWait = cancel
+	guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: activation.Config.Operator.GID}
+	if _, err := activation.applyBound(ctx, request.TransactionID, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); !errors.Is(err, context.Canceled) {
+		t.Fatalf("candidate cancellation did not propagate after rollback: %v", err)
+	}
+	if data, err := os.ReadFile(CanonicalPluginLockPath(activation.Config)); err != nil || string(data) != string(previous) {
+		t.Fatalf("canceled candidate did not restore previous lock: %q %v", data, err)
+	}
+	journal, err := activation.openJournal(request.TransactionID, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"])
+	if err != nil || journal.Phase != managedPluginRolledBack {
+		t.Fatalf("canceled candidate did not durably complete rollback: phase=%s err=%v", journal.Phase, err)
+	}
+	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service,stop:fased-gateway.service,start:fased-gateway.service"; got != want {
+		t.Fatalf("canceled candidate rollback service order = %q, want %q", got, want)
+	}
 }
 
 func TestManagedPluginActivationUsesDedicatedTransactionNamespace(t *testing.T) {

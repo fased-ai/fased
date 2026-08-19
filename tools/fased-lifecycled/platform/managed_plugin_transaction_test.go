@@ -353,6 +353,51 @@ func TestManagedPluginTransactionReplayCollisionRollbackAndDiscard(t *testing.T)
 	}
 }
 
+func TestManagedPluginTransactionRecoversExactInterruptedCopyResidue(t *testing.T) {
+	transaction, request, _, digest := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+	t.Cleanup(func() { _ = makePluginTreeRemovable(transaction.CodeRoot) })
+	if _, err := transaction.Stage(request); err != nil {
+		t.Fatal(err)
+	}
+	temporary := transaction.objectPath(digest) + ".staging-" + request.TransactionID
+	if err := os.Mkdir(temporary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(temporary, "partial.js"), []byte("partial"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Activate(request.TransactionID); err != nil {
+		t.Fatalf("exact interrupted copy residue was not recovered: %v", err)
+	}
+	if _, err := os.Lstat(temporary); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("interrupted copy residue remains after retry: %v", err)
+	}
+	if actual, err := stateparticipant.ImmutablePluginTreeDigest(transaction.objectPath(digest), transaction.CodeOwnerUID); err != nil || actual != digest {
+		t.Fatalf("retry did not publish exact immutable object: %s %v", actual, err)
+	}
+}
+
+func TestManagedPluginTransactionRejectsUnsafeInterruptedCopyResidue(t *testing.T) {
+	transaction, request, _, digest := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+	t.Cleanup(func() { _ = makePluginTreeRemovable(transaction.CodeRoot) })
+	if _, err := transaction.Stage(request); err != nil {
+		t.Fatal(err)
+	}
+	temporary := transaction.objectPath(digest) + ".staging-" + request.TransactionID
+	if err := os.Mkdir(temporary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(transaction.stagingObjectPath(request.TransactionID, digest), filepath.Join(temporary, "substitution")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Activate(request.TransactionID); err == nil || !strings.Contains(err.Error(), "residue is unsafe") {
+		t.Fatalf("unsafe interrupted copy residue was not rejected: %v", err)
+	}
+	if _, err := os.Lstat(temporary); err != nil {
+		t.Fatalf("unsafe residue was destructively removed: %v", err)
+	}
+}
+
 func TestManagedPluginTransactionRecoversExactPreRecordResidue(t *testing.T) {
 	transaction, request, _, _ := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
 	managedPluginPreRecordInterruption = func() error { return errors.New("injected pre-record interruption") }

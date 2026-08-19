@@ -23,6 +23,7 @@ const managedPluginActivationSchemaVersion = 1
 const (
 	managedPluginReadinessDeadline = 60 * time.Second
 	managedPluginReadinessPoll     = time.Second
+	managedPluginRollbackDeadline  = 90 * time.Second
 )
 
 var managedPluginActivationDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -202,6 +203,10 @@ func (activation ManagedPluginActivation) CatalogAlreadyCurrent(catalog statepar
 }
 
 func (activation ManagedPluginActivation) catalogAlreadyCurrentBound(catalog stateparticipant.ManagedPluginCatalog, guard stateparticipant.PluginBoundary, configGID uint32) (bool, string, string, error) {
+	catalogDigest, err := stateparticipant.ManagedPluginCatalogDigest(catalog)
+	if err != nil {
+		return false, "", "", err
+	}
 	current, currentDigest, err := activation.readLiveLock(configGID)
 	if err != nil {
 		return false, "", "", err
@@ -219,6 +224,44 @@ func (activation ManagedPluginActivation) catalogAlreadyCurrentBound(catalog sta
 		return false, "", "", err
 	}
 	if mergedDigest != currentDigest {
+		return false, "", "", nil
+	}
+	// The live lock deliberately describes installed runtime bytes, not archive
+	// provenance. Require a durable committed record for this exact catalog so
+	// a different archive digest cannot be collapsed into ALREADY_CURRENT.
+	ids, err := activation.Transaction.recordIDs()
+	if err != nil {
+		return false, "", "", err
+	}
+	exactCommittedCatalog := false
+	for _, id := range ids {
+		record, recordErr := activation.Transaction.readRecord(id)
+		if recordErr != nil {
+			return false, "", "", recordErr
+		}
+		if record.CatalogDigest != catalogDigest || record.CandidateLockDigest != currentDigest {
+			continue
+		}
+		journalData, journalErr := activation.Transaction.readStableRecord(activation.journalPath(id))
+		if errors.Is(journalErr, os.ErrNotExist) {
+			continue
+		}
+		if journalErr != nil {
+			return false, "", "", journalErr
+		}
+		var journal managedPluginActivationJournal
+		if err := strictManagedPluginJSON(journalData, &journal); err != nil {
+			return false, "", "", err
+		}
+		if err := activation.validateJournal(journal, id, activation.Identity.Services["gateway"], guard); err != nil {
+			return false, "", "", err
+		}
+		if journal.Phase == managedPluginCommitted {
+			exactCommittedCatalog = true
+			break
+		}
+	}
+	if !exactCommittedCatalog {
 		return false, "", "", nil
 	}
 	receipt, err := guard.VerifyReadiness(currentDigest, activation.GenerationID)
@@ -358,7 +401,7 @@ func (activation ManagedPluginActivation) applyBound(ctx context.Context, transa
 		return "", errors.New("managed plugin transaction was rolled back")
 	}
 	if activation.isRollbackPhase(j.Phase) {
-		return "", activation.rollback(ctx, guard, j)
+		return "", activation.rollbackWithRecoveryContext(ctx, guard, j)
 	}
 	if j.Phase == managedPluginPrepared {
 		if err := activation.Gateway.Stop(ctx, unit); err != nil {
@@ -423,10 +466,20 @@ func (activation ManagedPluginActivation) applyBound(ctx context.Context, transa
 }
 
 func (activation ManagedPluginActivation) failAndRollback(ctx context.Context, guard stateparticipant.PluginBoundary, journal managedPluginActivationJournal, cause error) error {
-	if rollbackErr := activation.rollback(ctx, guard, journal); rollbackErr != nil {
+	if rollbackErr := activation.rollbackWithRecoveryContext(ctx, guard, journal); rollbackErr != nil {
 		return errors.Join(cause, rollbackErr)
 	}
 	return cause
+}
+
+// rollbackWithRecoveryContext reserves an independent bounded window for
+// restoring the previous Gateway after the candidate operation is canceled or
+// exhausts its own deadline. Values are retained, but caller cancellation is
+// intentionally not inherited by the recovery transaction.
+func (activation ManagedPluginActivation) rollbackWithRecoveryContext(ctx context.Context, guard stateparticipant.PluginBoundary, journal managedPluginActivationJournal) error {
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), managedPluginRollbackDeadline)
+	defer cancel()
+	return activation.rollback(recoveryCtx, guard, journal)
 }
 
 func (activation ManagedPluginActivation) rollback(ctx context.Context, guard stateparticipant.PluginBoundary, journal managedPluginActivationJournal) error {
