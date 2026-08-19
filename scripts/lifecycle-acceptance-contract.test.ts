@@ -501,6 +501,7 @@ describe("lifecycle acceptance contract", () => {
     expect(local).toContain("/usr/local/bin/fased plugins install");
     expect(local).toContain('--catalog "$v1_catalog" --catalog-digest "$v1_catalog_digest"');
     expect(local).toContain("local plugin_id=fixture-transaction-plugin");
+    expect(local).toContain('jq -cjn --arg id "$plugin_id"');
     expect(local).toContain('local v1_root="$input_root/v1" v2_root="$input_root/v2"');
     expect(local).toContain("managed_plugin_tree_digest()");
     expect(local).toContain('plugins install --catalog "$v1_catalog"');

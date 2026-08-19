@@ -129,7 +129,7 @@ run_managed_plugin_transaction_acceptance() {
   required=true
   for fixture in v1 v2; do
     local digest_var="${fixture}_digest" archive_digest_var="${fixture}_archive_digest" catalog_var="${fixture}_catalog"
-    jq -cn --arg id "$plugin_id" --arg digest "${!digest_var}" --arg archiveDigest "${!archive_digest_var}" --arg apiCapability "$api_capability" --argjson required "$required" \
+    jq -cjn --arg id "$plugin_id" --arg digest "${!digest_var}" --arg archiveDigest "${!archive_digest_var}" --arg apiCapability "$api_capability" --argjson required "$required" \
       '{schemaVersion:1,type:"fased-managed-plugin-catalog",entries:[{id:$id,digest:$digest,archiveDigest:$archiveDigest,apiCapability:$apiCapability,required:$required}]}' \
       >"${!catalog_var}"
     chown testop:testop "${!catalog_var}"
