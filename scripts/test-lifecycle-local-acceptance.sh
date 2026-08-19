@@ -846,6 +846,9 @@ run_fixture_scenario() {
       '.schemaVersion == 1 and .role == "fased-managed-plugin-transaction-acceptance" and
        .status == "PASS" and .evidenceClass == "PASS" and .commit == $commit and
        .version == $version and .dataPreserved == true and
+       .performance.installDurationMs >= 0 and .performance.installDurationMs <= .performance.installBudgetMs and
+       .performance.noopDurationMs >= 0 and .performance.noopDurationMs <= .performance.noopBudgetMs and
+       .performance.installBudgetMs == 60000 and .performance.noopBudgetMs == 5000 and
        ([.catalogDigest,.candidateLockDigest,.readinessDigest,.generationId,
          .installedOutputDigest,.noopOutputDigest] | all(test("^sha256:[0-9a-f]{64}$")))' \
       "$plugin_receipt" >/dev/null

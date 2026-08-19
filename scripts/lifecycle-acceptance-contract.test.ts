@@ -504,6 +504,8 @@ describe("lifecycle acceptance contract", () => {
     expect(local).toContain("Managed plugins: status=INSTALLED");
     expect(local).toContain("Managed plugins: status=ALREADY_CURRENT");
     expect(local).toContain('role:"fased-managed-plugin-transaction-acceptance"');
+    expect(local).toContain('test "$install_duration_ms" -le 60000');
+    expect(local).toContain('test "$noop_duration_ms" -le 5000');
     expect(local).toContain("run_managed_plugin_transaction_acceptance");
     expect(local).toContain('"$stable_bridge_plugin_digest" "$stable_bridge_plugin_object"');
     expect(local).not.toContain("fased plugins install npm:");
@@ -512,6 +514,8 @@ describe("lifecycle acceptance contract", () => {
       "utf8",
     );
     expect(wrapper).toContain('plugin_receipt="$receipt.plugins"');
+    expect(wrapper).toContain(".performance.installBudgetMs == 60000");
+    expect(wrapper).toContain(".performance.noopBudgetMs == 5000");
     expect(wrapper).toContain("managed plugin transaction receipt verified");
   });
 

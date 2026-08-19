@@ -75,6 +75,10 @@ run_managed_plugin_transaction_acceptance() {
   local candidate_lock=""
   local readiness_digest=""
   local generation_id=""
+  local install_started_ms=""
+  local install_duration_ms=""
+  local noop_started_ms=""
+  local noop_duration_ms=""
   rm -rf "$input_root"
   install -d -m 0700 -o testop -g testop "$input_root"
   runuser -u testop -- tar -C "$plugin_object" -czf "$archive" \
@@ -94,18 +98,22 @@ run_managed_plugin_transaction_acceptance() {
   chmod 0600 "$catalog"
   catalog_digest="sha256:$(sha256sum "$catalog" | awk '{print $1}')"
   data_before="sha256:$(sha256sum "$state/plugin-data/stable-bridge/state.json" | awk '{print $1}')"
+  install_started_ms="$(date +%s%3N)"
   runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash \
     /usr/local/bin/fased plugins install \
     --catalog "$catalog" --catalog-digest "$catalog_digest" \
     --archive "stable-bridge=$archive" \
     >/tmp/fased-managed-plugin-install.out
+  install_duration_ms="$(( $(date +%s%3N) - install_started_ms ))"
   grep -F "Managed plugins: status=INSTALLED catalog=$catalog_digest candidateLock=" \
     /tmp/fased-managed-plugin-install.out >/dev/null
+  noop_started_ms="$(date +%s%3N)"
   runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash \
     /usr/local/bin/fased plugins install \
     --catalog "$catalog" --catalog-digest "$catalog_digest" \
     --archive "stable-bridge=$archive" \
     >/tmp/fased-managed-plugin-noop.out
+  noop_duration_ms="$(( $(date +%s%3N) - noop_started_ms ))"
   grep -F "Managed plugins: status=ALREADY_CURRENT catalog=$catalog_digest candidateLock=" \
     /tmp/fased-managed-plugin-noop.out >/dev/null
   candidate_lock="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=\([^ ]*\) readiness=.*$/\1/p' /tmp/fased-managed-plugin-install.out)"
@@ -115,6 +123,8 @@ run_managed_plugin_transaction_acceptance() {
     /tmp/fased-managed-plugin-noop.out >/dev/null
   data_after="sha256:$(sha256sum "$state/plugin-data/stable-bridge/state.json" | awk '{print $1}')"
   test "$data_before" = "$data_after"
+  test "$install_duration_ms" -le 60000
+  test "$noop_duration_ms" -le 5000
   jq -cn \
     --arg commit "$commit" \
     --arg version "$version" \
@@ -124,7 +134,9 @@ run_managed_plugin_transaction_acceptance() {
     --arg generationId "$generation_id" \
     --arg installedOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-install.out | awk '{print $1}')" \
     --arg noopOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-noop.out | awk '{print $1}')" \
-    '{schemaVersion:1,role:"fased-managed-plugin-transaction-acceptance",status:"PASS",evidenceClass:"PASS",commit:$commit,version:$version,catalogDigest:$catalogDigest,candidateLockDigest:$candidateLockDigest,readinessDigest:$readinessDigest,generationId:$generationId,installedOutputDigest:$installedOutputDigest,noopOutputDigest:$noopOutputDigest,dataPreserved:true}' \
+    --argjson installDurationMs "$install_duration_ms" \
+    --argjson noopDurationMs "$noop_duration_ms" \
+    '{schemaVersion:1,role:"fased-managed-plugin-transaction-acceptance",status:"PASS",evidenceClass:"PASS",commit:$commit,version:$version,catalogDigest:$catalogDigest,candidateLockDigest:$candidateLockDigest,readinessDigest:$readinessDigest,generationId:$generationId,installedOutputDigest:$installedOutputDigest,noopOutputDigest:$noopOutputDigest,dataPreserved:true,performance:{installDurationMs:$installDurationMs,noopDurationMs:$noopDurationMs,installBudgetMs:60000,noopBudgetMs:5000}}' \
     >/var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
   chmod 0600 /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
   rm -rf "$input_root"
