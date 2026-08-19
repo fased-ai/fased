@@ -112,8 +112,8 @@ run_managed_plugin_transaction_acceptance() {
     find "$fixture_root" -type f -exec chmod 0444 {} +
   done
   {
-    printf 'import { existsSync } from "node:fs";\n'
-    printf 'if (!existsSync("%s")) throw new Error("fixture v2 activation failure");\n' "$v2_ready_marker"
+    printf 'const fixtureManagedPluginVersion = "v2";\n'
+    printf 'void fixtureManagedPluginVersion;\n'
     cat "$v2_root/index.js"
   } >"$v2_root/index.js.tmp"
   mv "$v2_root/index.js.tmp" "$v2_root/index.js"

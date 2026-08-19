@@ -511,7 +511,8 @@ describe("lifecycle acceptance contract", () => {
     expect(local).toContain(
       "local v2_ready_marker=/var/lib/fased-protected-local-fixture/managed-plugin-v2-ready",
     );
-    expect(local).toContain('if (!existsSync("%s"))');
+    expect(local).toContain('const fixtureManagedPluginVersion = "v2";');
+    expect(local).not.toContain('if (!existsSync("%s"))');
     expect(local).toContain(
       'local v2_fault_dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"',
     );
