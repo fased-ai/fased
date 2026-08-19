@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { PublicKey } from "@solana/web3.js";
@@ -87,6 +88,18 @@ describe("SAT RPC diagnostic redaction", () => {
     expect(details.readRpcFallbackUrl).toBe("https://fallback.example/rpc?token=***");
     expect(JSON.stringify(details)).not.toContain("primary-secret");
     expect(JSON.stringify(details)).not.toContain("fallback-secret");
+  });
+});
+
+describe("SAT RPC read facade structure", () => {
+  it("keeps low-level transport ownership in the RPC read service", async () => {
+    const source = await readFile(new URL("./rpc-read.ts", import.meta.url), "utf8");
+
+    expect(source).toContain('from "./rpc-read-service.js"');
+    expect(source).not.toContain('from "node:http"');
+    expect(source).not.toContain('from "node:https"');
+    expect(source).not.toContain("transport.request(");
+    expect(source).not.toContain("fetchWithSsrFGuard");
   });
 });
 
