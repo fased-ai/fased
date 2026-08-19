@@ -70,14 +70,39 @@ func callUnixConnectionWithLease(ctx context.Context, connection *net.UnixConn, 
 	if len(data) > maxRequestBytes {
 		return protocol.Response{}, errors.New("lifecycle request exceeds size limit")
 	}
-	n, _, err := connection.WriteMsgUnix(data, unix.UnixRights(int(lease.Fd())), nil)
-	if err != nil {
+	if err := writeLeaseRequest(connection, data, int(lease.Fd())); err != nil {
 		return protocol.Response{}, err
 	}
-	if n != len(data) {
-		return protocol.Response{}, errors.New("lifecycle lease handoff wrote an incomplete request")
-	}
 	return readResponse(connection, request)
+}
+
+type leaseMessageWriter interface {
+	WriteMsgUnix([]byte, []byte, *net.UnixAddr) (int, int, error)
+	Write([]byte) (int, error)
+}
+
+// writeLeaseRequest sends the SCM_RIGHTS capability exactly once. Stream
+// sockets may short-write the data portion, so the remaining frame is written
+// normally without a second control message.
+func writeLeaseRequest(connection leaseMessageWriter, data []byte, descriptor int) error {
+	n, _, err := connection.WriteMsgUnix(data, unix.UnixRights(descriptor), nil)
+	if err != nil {
+		return err
+	}
+	if n <= 0 || n > len(data) {
+		return errors.New("lifecycle lease handoff wrote an incomplete request")
+	}
+	for n < len(data) {
+		written, writeErr := connection.Write(data[n:])
+		if writeErr != nil {
+			return writeErr
+		}
+		if written <= 0 || written > len(data)-n {
+			return errors.New("lifecycle lease handoff wrote an incomplete request")
+		}
+		n += written
+	}
+	return nil
 }
 
 func callConnection(ctx context.Context, connection net.Conn, request protocol.Request) (protocol.Response, error) {

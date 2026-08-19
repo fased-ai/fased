@@ -4,17 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fased-lifecycled/daemon"
 	"fased-lifecycled/hostsecurity"
 	"fased-lifecycled/model"
 	"fased-lifecycled/participant"
 	"fased-lifecycled/protocol"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func init() {
@@ -169,6 +172,89 @@ func TestInvokeLifecycleHostHandsSharedLeaseToInitialize(t *testing.T) {
 	if contender, lockErr := acquireManagedPluginMutationLock(path, uint32(os.Getuid())); lockErr == nil {
 		_ = contender.Release()
 		t.Fatal("child initialize released the parent lifecycle lease")
+	}
+}
+
+type blockingRollbackHandler struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (handler *blockingRollbackHandler) Handle(_ context.Context, request protocol.Request) (protocol.Response, error) {
+	close(handler.entered)
+	<-handler.release
+	return protocol.Response{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: request.RequestID, Outcome: "UPDATED", ActiveGenerationID: request.TargetGenerationID, ConvergenceReceiptDigest: request.TargetGenerationID}, nil
+}
+
+func TestManagedRollbackRouteTransfersHeldLeaseWithoutSelfDeadlock(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(root, "lifecycle.lock")
+	lease, err := hostsecurity.AcquireMutationLock(lockPath, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	socketPath := filepath.Join(root, "supervisor.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	handler := &blockingRollbackHandler{entered: make(chan struct{}), release: make(chan struct{})}
+	server := &daemon.Server{
+		Handler: handler, AllowedUIDs: map[uint32]struct{}{0: {}},
+		ReadTimeout: time.Second, WriteTimeout: time.Second, OperationTimeout: 5 * time.Second,
+		OperationLease: func(_ context.Context, peer daemon.Peer, received *os.File) (func() error, error) {
+			if peer.UID != 0 || received == nil {
+				return nil, errors.New("rollback route did not transfer a root lifecycle lease")
+			}
+			adopted, adoptErr := hostsecurity.AdoptReceivedMutationLock(int(received.Fd()), lockPath, uint32(os.Getuid()))
+			if adoptErr != nil {
+				return nil, adoptErr
+			}
+			return adopted.Release, nil
+		},
+	}
+	serverDone := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.AcceptUnix()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer connection.Close()
+		serverDone <- server.HandlePeer(context.Background(), connection, daemon.Peer{UID: 0})
+	}()
+	now := time.Now().UTC().Truncate(time.Second)
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: "11111111-1111-4111-8111-111111111111", Operation: protocol.OperationRollback,
+		TargetGenerationID: "sha256:" + strings.Repeat("a", 64), ExpectedManifestDigest: "sha256:" + strings.Repeat("b", 64),
+		RollbackAuthorization: &model.RollbackAuthorization{SchemaVersion: model.RollbackAuthorizationSchemaVersion,
+			CurrentGenerationID: "sha256:" + strings.Repeat("b", 64), TargetGenerationID: "sha256:" + strings.Repeat("a", 64), CurrentReleaseSequence: 2, TargetReleaseSequence: 1, SecurityEpoch: 1,
+			Operator: "release-owner", Reason: "restore verified previous generation", IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(time.Minute).Format(time.RFC3339), EnvelopeDigest: "sha256:" + strings.Repeat("c", 64)}}
+	result := make(chan error, 1)
+	go func() {
+		response, callErr := callManagedRollback(context.Background(), socketPath, request, 5*time.Second, lease)
+		if callErr != nil || response.Outcome != "UPDATED" {
+			result <- fmt.Errorf("rollback call response=%+v err=%w", response, callErr)
+			return
+		}
+		result <- nil
+	}()
+	select {
+	case <-handler.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("rollback self-deadlocked before the supervisor handler")
+	}
+	if contender, lockErr := acquireManagedPluginMutationLock(lockPath, uint32(os.Getuid())); lockErr == nil {
+		_ = contender.Release()
+		t.Fatal("plugin mutation acquired while rollback supervisor operation held the shared lease")
+	}
+	close(handler.release)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -582,10 +582,10 @@ func runPublicRollback(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	response, err := daemon.Call(ctx, config.SupervisorSocket(), protocol.Request{
+	response, err := callManagedRollback(ctx, config.SupervisorSocket(), protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationRollback,
 		TargetGenerationID: previous.ID, ExpectedManifestDigest: manifestDigest, RollbackAuthorization: &authorization,
-	}, time.Duration(timeoutSeconds)*time.Second)
+	}, time.Duration(timeoutSeconds)*time.Second, lock)
 	if err != nil {
 		return err
 	}
@@ -598,6 +598,22 @@ func runPublicRollback(args []string, output io.Writer) error {
 		_, err = fmt.Fprintf(output, "Rolled back successfully: %s\n", previous.Version)
 	}
 	return err
+}
+
+// callManagedRollback keeps the public rollback's already-acquired shared
+// lifecycle lease continuous into the persistent supervisor. It duplicates the
+// open file description rather than reopening the lock path, so the supervisor
+// can execute rollback without self-deadlocking against its caller.
+func callManagedRollback(ctx context.Context, socketPath string, request protocol.Request, timeout time.Duration, lock *hostsecurity.MutationLock) (protocol.Response, error) {
+	if lock == nil {
+		return protocol.Response{}, errors.New("lifecycle mutation lease is unavailable")
+	}
+	leaseFile, err := lock.DupForChild()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer leaseFile.Close()
+	return daemon.CallWithLease(ctx, socketPath, request, timeout, leaseFile)
 }
 
 func readSecureRollbackInput(path string, limit int64, expectedUID uint32) ([]byte, error) {

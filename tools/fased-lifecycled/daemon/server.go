@@ -131,23 +131,64 @@ func readRequestFrame(connection net.Conn) ([]byte, *os.File, error) {
 	if !isUnix {
 		return readBufferedRequestFrame(connection)
 	}
-	frame := make([]byte, maxRequestBytes+1)
+	frame := make([]byte, 0, maxRequestBytes+1)
 	oob := make([]byte, unix.CmsgSpace(4*4))
-	n, oobn, flags, _, err := unixConnection.ReadMsgUnix(frame, oob)
-	if err != nil {
-		return nil, nil, fmt.Errorf("read lifecycle request frame: %w", err)
+	var lease *os.File
+	for {
+		chunk := make([]byte, maxRequestBytes+1-len(frame))
+		n, oobn, flags, _, err := unixConnection.ReadMsgUnix(chunk, oob)
+		if err != nil {
+			if lease != nil {
+				_ = lease.Close()
+			}
+			return nil, nil, fmt.Errorf("read lifecycle request frame: %w", err)
+		}
+		if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n <= 0 || n > len(chunk) {
+			if lease != nil {
+				_ = lease.Close()
+			}
+			return nil, nil, errors.New("lifecycle request exceeds size limit")
+		}
+		incoming, rightsErr := receivedLeaseFile(oob[:oobn])
+		if rightsErr != nil {
+			if lease != nil {
+				_ = lease.Close()
+			}
+			return nil, nil, rightsErr
+		}
+		if incoming != nil {
+			if lease != nil {
+				_ = incoming.Close()
+				_ = lease.Close()
+				return nil, nil, errors.New("lifecycle lease handoff is invalid")
+			}
+			lease = incoming
+		}
+		chunk = chunk[:n]
+		if newline := bytes.IndexByte(chunk, '\n'); newline >= 0 {
+			if newline != len(chunk)-1 {
+				if lease != nil {
+					_ = lease.Close()
+				}
+				return nil, nil, errors.New("lifecycle request contains trailing frame data")
+			}
+			frame = append(frame, chunk...)
+			if len(frame) > maxRequestBytes {
+				if lease != nil {
+					_ = lease.Close()
+				}
+				return nil, nil, errors.New("lifecycle request exceeds size limit")
+			}
+			return frame, lease, nil
+		}
+		frame = append(frame, chunk...)
+		if len(frame) >= maxRequestBytes {
+			if lease != nil {
+				_ = lease.Close()
+			}
+			return nil, nil, errors.New("lifecycle request exceeds size limit")
+		}
 	}
-	if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n > maxRequestBytes {
-		return nil, nil, errors.New("lifecycle request exceeds size limit")
-	}
-	if n == 0 || frame[n-1] != '\n' {
-		return nil, nil, errors.New("lifecycle request frame is incomplete")
-	}
-	lease, err := receivedLeaseFile(oob[:oobn])
-	if err != nil {
-		return nil, nil, err
-	}
-	return frame[:n], lease, nil
 }
 
 func readBufferedRequestFrame(connection net.Conn) ([]byte, *os.File, error) {
@@ -171,14 +212,19 @@ func receivedLeaseFile(oob []byte) (*os.File, error) {
 		return nil, errors.New("lifecycle lease handoff is invalid")
 	}
 	var descriptors []int
+	rightsMessages := 0
 	for _, message := range messages {
 		rights, rightsErr := unix.ParseUnixRights(&message)
 		if rightsErr != nil {
-			continue
+			for _, descriptor := range descriptors {
+				_ = unix.Close(descriptor)
+			}
+			return nil, errors.New("lifecycle lease handoff is invalid")
 		}
+		rightsMessages++
 		descriptors = append(descriptors, rights...)
 	}
-	if len(descriptors) != 1 {
+	if rightsMessages != 1 || len(descriptors) != 1 {
 		for _, descriptor := range descriptors {
 			_ = unix.Close(descriptor)
 		}
