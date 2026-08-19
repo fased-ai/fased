@@ -258,6 +258,73 @@ func TestManagedRollbackRouteTransfersHeldLeaseWithoutSelfDeadlock(t *testing.T)
 	}
 }
 
+func TestFreshOnboardingCommitTransfersHeldLeaseWithoutSelfDeadlock(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(root, "lifecycle.lock")
+	lease, err := hostsecurity.AcquireMutationLock(lockPath, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	socketPath := filepath.Join(root, "supervisor.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	handler := &blockingRollbackHandler{entered: make(chan struct{}), release: make(chan struct{})}
+	server := &daemon.Server{
+		Handler: handler, AllowedUIDs: map[uint32]struct{}{uint32(os.Getuid()): {}},
+		ReadTimeout: time.Second, WriteTimeout: time.Second, OperationTimeout: 5 * time.Second,
+		OperationLease: func(_ context.Context, _ daemon.Peer, received *os.File) (func() error, error) {
+			if received == nil {
+				return nil, errors.New("fresh onboarding did not transfer the lifecycle lease")
+			}
+			adopted, adoptErr := hostsecurity.AdoptReceivedMutationLock(int(received.Fd()), lockPath, uint32(os.Getuid()))
+			if adoptErr != nil {
+				return nil, adoptErr
+			}
+			return adopted.Release, nil
+		},
+	}
+	serverDone := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.AcceptUnix()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer connection.Close()
+		serverDone <- server.HandlePeer(context.Background(), connection, daemon.Peer{UID: uint32(os.Getuid())})
+	}()
+	requestID := "11111111-1111-4111-8111-111111111111"
+	result := make(chan error, 1)
+	go func() {
+		response, callErr := completeOnboardingWithLease(context.Background(), socketPath, requestID, lease)
+		if callErr != nil || response.Outcome != "UPDATED" {
+			result <- fmt.Errorf("fresh onboarding response=%+v err=%v", response, callErr)
+			return
+		}
+		result <- nil
+	}()
+	select {
+	case <-handler.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fresh onboarding commit self-deadlocked before supervisor handling")
+	}
+	if contender, contenderErr := acquireManagedPluginMutationLock(lockPath, uint32(os.Getuid())); contenderErr == nil {
+		_ = contender.Release()
+		t.Fatal("plugin mutation acquired while fresh onboarding held the shared lease")
+	}
+	close(handler.release)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestManagedPluginParserRejectsLegacyAndAcceptsExactCatalog(t *testing.T) {
 	root := t.TempDir()
 	catalog := filepath.Join(root, "catalog.json")

@@ -860,7 +860,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	outcome := convergence.Outcome
 	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
 		onboardingStarted := time.Now()
-		convergence, err = runOnboarding(ctx, request, operator, result, output, os.Stderr)
+		convergence, err = runOnboarding(ctx, request, operator, result, lock, output, os.Stderr)
 		performance.OnboardingMillis = durationMillis(onboardingStarted)
 		if err != nil {
 			return err
@@ -1543,7 +1543,7 @@ func emitLifecycleHostVerbose(output io.Writer, data []byte) {
 	}
 }
 
-func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, output, diagnostics io.Writer) (protocol.Response, error) {
+func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, lifecycleLease *hostsecurity.MutationLock, output, diagnostics io.Writer) (protocol.Response, error) {
 	configPath, err := installedConfigPath(request.Profile, operator)
 	if err != nil {
 		return protocol.Response{}, err
@@ -1583,15 +1583,30 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 	if err != nil {
 		return protocol.Response{}, err
 	}
-	complete := exec.CommandContext(ctx, result.HostPath, "request", "--socket", config.SupervisorSocket(), "--operation", "COMPLETE_ONBOARDING", "--request-id", requestID)
-	data, err := complete.CombinedOutput()
+	response, err := completeOnboardingWithLease(ctx, config.SupervisorSocket(), requestID, lifecycleLease)
+	data, encodeErr := json.Marshal(response)
+	if encodeErr == nil {
+		data = append(data, '\n')
+	}
 	if request.Verbose && len(data) > 0 {
 		_, _ = onboardingVerboseOutputWriter(request, output, diagnostics).Write([]byte(tail(data, 64*1024) + "\n"))
 	}
 	if err != nil {
-		return protocol.Response{}, fmt.Errorf("onboarding commit failed: %s", tail(data, 4096))
+		return protocol.Response{}, fmt.Errorf("onboarding commit failed: %s", tail([]byte(err.Error()), 4096))
 	}
-	return decodeTerminalLifecycleResponse(data)
+	return response, nil
+}
+
+func completeOnboardingWithLease(ctx context.Context, socketPath, requestID string, lifecycleLease *hostsecurity.MutationLock) (protocol.Response, error) {
+	if lifecycleLease == nil {
+		return protocol.Response{}, errors.New("lifecycle mutation lease is unavailable")
+	}
+	leaseFile, err := lifecycleLease.DupForChild()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer leaseFile.Close()
+	return daemon.CallWithLease(ctx, socketPath, protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationCompleteOnboarding}, 5*time.Minute, leaseFile)
 }
 
 func onboardingProcessOutputWriters(request publicLifecycleRequest, output, diagnostics io.Writer) (io.Writer, io.Writer) {

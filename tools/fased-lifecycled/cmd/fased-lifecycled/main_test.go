@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
 	"fased-lifecycled/store"
+	"golang.org/x/sys/unix"
 )
 
 func init() {
@@ -315,6 +317,114 @@ func TestStandaloneSupervisorPendingRecoveryAcquiresSharedLease(t *testing.T) {
 	}
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStartupLeaseBrokerRejectsPartialRequest(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fsl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	config := platform.Config{LifecycleRoot: root}
+	lock, err := hostsecurity.AcquireMutationLock(filepath.Join(root, "lifecycle.lock"), uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	broker, err := startSupervisorStartupLeaseBroker(config, &initializationMutationLock{handoff: lock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: startupLeaseSocketPath(config), Net: "unix"})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	if _, err := connection.Write([]byte{0}); err != nil {
+		_ = connection.Close()
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	_ = connection.Close()
+	if err := broker.Close(); err == nil || !strings.Contains(err.Error(), "request is invalid") {
+		t.Fatalf("partial startup lease request was accepted: %v", err)
+	}
+}
+
+func TestStartupLeaseAdoptionClosesInvalidOrTruncatedDescriptors(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("descriptor accounting is Linux-specific")
+	}
+	for _, truncated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("truncated=%t", truncated), func(t *testing.T) {
+			root, err := os.MkdirTemp("/tmp", "fsl-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(root)
+			path := filepath.Join(root, "broker.sock")
+			listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			lease, err := os.OpenFile(filepath.Join(root, "lease.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.Close()
+			sent := make(chan error, 1)
+			go func() {
+				connection, acceptErr := listener.AcceptUnix()
+				if acceptErr != nil {
+					sent <- acceptErr
+					return
+				}
+				n, _, writeErr := connection.WriteMsgUnix([]byte{0}, unix.UnixRights(int(lease.Fd())), nil)
+				if writeErr == nil && n != 1 {
+					writeErr = errors.New("short broker test response")
+				}
+				closeErr := connection.Close()
+				if writeErr == nil {
+					writeErr = closeErr
+				}
+				sent <- writeErr
+			}()
+			client, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: path, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			data := make([]byte, 1)
+			oobSize := unix.CmsgSpace(4 * 4)
+			if truncated {
+				oobSize = 1
+			}
+			oob := make([]byte, oobSize)
+			n, oobn, flags, _, readErr := client.ReadMsgUnix(data, oob)
+			if err := <-sent; err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadDir("/proc/self/fd")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := adoptSupervisorStartupLease(data, oob[:oobn], flags, n, readErr, filepath.Join(root, "lifecycle.lock")); err == nil {
+				t.Fatal("invalid or truncated startup lease descriptor was accepted")
+			}
+			after, err := os.ReadDir("/proc/self/fd")
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := len(before)
+			if !truncated {
+				expected--
+			}
+			if len(after) != expected {
+				t.Fatalf("startup lease invalid path leaked descriptors: before=%d after=%d want=%d", len(before), len(after), expected)
+			}
+		})
 	}
 }
 

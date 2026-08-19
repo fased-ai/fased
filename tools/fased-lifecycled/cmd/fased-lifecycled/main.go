@@ -1020,7 +1020,7 @@ func waitForSocket(ctx context.Context, path string) error {
 	}
 }
 
-const supervisorStartupLeaseHandshake = "fased-supervisor-startup-lease-v1\n"
+var supervisorStartupLeaseHandshake = []byte{0xa7}
 
 // supervisorStartupLeaseBroker is a one-shot root-peer capability handoff.
 // It exists only while initialize starts a previously inactive supervisor.
@@ -1030,6 +1030,7 @@ type supervisorStartupLeaseBroker struct {
 	listener *net.UnixListener
 	path     string
 	done     chan struct{}
+	result   chan error
 }
 
 func startupLeaseSocketPath(config platform.Config) string {
@@ -1053,30 +1054,46 @@ func startSupervisorStartupLeaseBroker(config platform.Config, lease *initializa
 		_ = os.Remove(path)
 		return nil, err
 	}
-	broker := &supervisorStartupLeaseBroker{listener: listener, path: path, done: make(chan struct{})}
+	broker := &supervisorStartupLeaseBroker{listener: listener, path: path, done: make(chan struct{}), result: make(chan error, 1)}
 	go func() {
 		defer close(broker.done)
 		defer os.Remove(path)
 		connection, acceptErr := listener.AcceptUnix()
 		if acceptErr != nil {
+			if errors.Is(acceptErr, net.ErrClosed) {
+				broker.result <- nil
+			} else {
+				broker.result <- acceptErr
+			}
 			return
 		}
 		defer connection.Close()
 		peer, peerErr := daemon.UnixPeer(connection)
 		if peerErr != nil || peer.UID != uint32(os.Geteuid()) {
+			broker.result <- errors.New("supervisor startup lease peer is not authorized")
 			return
 		}
-		request := make([]byte, len(supervisorStartupLeaseHandshake))
+		request := make([]byte, 1)
 		n, readErr := io.ReadFull(connection, request)
-		if readErr != nil || n != len(request) || string(request) != supervisorStartupLeaseHandshake {
+		if readErr != nil || n != 1 || request[0] != supervisorStartupLeaseHandshake[0] {
+			broker.result <- errors.New("supervisor startup lease request is invalid")
 			return
 		}
 		duplicate, duplicateErr := lease.DupForSupervisor()
 		if duplicateErr != nil {
+			broker.result <- duplicateErr
 			return
 		}
 		defer duplicate.Close()
-		_, _, _ = connection.WriteMsgUnix([]byte(supervisorStartupLeaseHandshake), unix.UnixRights(int(duplicate.Fd())), nil)
+		n, _, writeErr := connection.WriteMsgUnix(supervisorStartupLeaseHandshake, unix.UnixRights(int(duplicate.Fd())), nil)
+		if writeErr != nil || n != len(supervisorStartupLeaseHandshake) {
+			if writeErr == nil {
+				writeErr = errors.New("supervisor startup lease handoff was short")
+			}
+			broker.result <- writeErr
+			return
+		}
+		broker.result <- nil
 	}()
 	return broker, nil
 }
@@ -1090,11 +1107,12 @@ func (broker *supervisorStartupLeaseBroker) Close() error {
 		err = nil
 	}
 	<-broker.done
+	resultErr := <-broker.result
 	removeErr := os.Remove(broker.path)
 	if errors.Is(removeErr, os.ErrNotExist) {
 		removeErr = nil
 	}
-	return errors.Join(err, removeErr)
+	return errors.Join(err, resultErr, removeErr)
 }
 
 func prepareStartupLeaseSocket(path string, expectedUID uint32) error {
@@ -1132,32 +1150,51 @@ func acquireSupervisorStartupLease(config platform.Config, lockPath string) (*ho
 		return nil, err
 	}
 	defer connection.Close()
-	if _, err := connection.Write([]byte(supervisorStartupLeaseHandshake)); err != nil {
-		return nil, err
+	if n, writeErr := connection.Write(supervisorStartupLeaseHandshake); writeErr != nil || n != len(supervisorStartupLeaseHandshake) {
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		return nil, errors.New("supervisor startup lease request was short")
 	}
-	data := make([]byte, len(supervisorStartupLeaseHandshake))
+	data := make([]byte, 1)
 	oob := make([]byte, unix.CmsgSpace(4*4))
 	n, oobn, flags, _, err := connection.ReadMsgUnix(data, oob)
-	if err != nil || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || n != len(data) || string(data) != supervisorStartupLeaseHandshake {
-		return nil, errors.New("supervisor startup lease handoff is invalid")
-	}
-	messages, err := unix.ParseSocketControlMessage(oob[:oobn])
-	if err != nil || len(messages) != 1 {
-		return nil, errors.New("supervisor startup lease handoff is invalid")
-	}
-	descriptors, err := unix.ParseUnixRights(&messages[0])
-	if err != nil || len(descriptors) != 1 {
+	return adoptSupervisorStartupLease(data, oob[:oobn], flags, n, err, lockPath)
+}
+
+func adoptSupervisorStartupLease(data, oob []byte, flags, received int, readErr error, lockPath string) (*hostsecurity.MutationLock, error) {
+	descriptors := startupLeaseDescriptors(oob)
+	closeDescriptors := func() {
 		for _, descriptor := range descriptors {
 			_ = unix.Close(descriptor)
 		}
+	}
+	if readErr != nil || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || received != 1 || len(data) != 1 || data[0] != supervisorStartupLeaseHandshake[0] {
+		closeDescriptors()
+		return nil, errors.New("supervisor startup lease handoff is invalid")
+	}
+	if len(descriptors) != 1 {
+		closeDescriptors()
 		return nil, errors.New("supervisor startup lease handoff is invalid")
 	}
 	lock, adoptErr := hostsecurity.AdoptReceivedMutationLock(descriptors[0], lockPath, uint32(os.Geteuid()))
-	_ = unix.Close(descriptors[0])
+	closeDescriptors()
 	if adoptErr != nil {
 		return nil, adoptErr
 	}
 	return lock, nil
+}
+
+func startupLeaseDescriptors(oob []byte) []int {
+	messages, err := unix.ParseSocketControlMessage(oob)
+	if err != nil || len(messages) != 1 {
+		return nil
+	}
+	descriptors, err := unix.ParseUnixRights(&messages[0])
+	if err != nil {
+		return nil
+	}
+	return descriptors
 }
 
 func randomRequestID() (string, error) {
