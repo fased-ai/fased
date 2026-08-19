@@ -344,7 +344,7 @@ type SatRuntimeStoreFile = {
   lastFailure?: string | null;
 };
 
-type SatRuntimeSummary = {
+export type SatRuntimeSummary = {
   recentActions: SatMiningRecentAction[];
   archivedFailures: SatMiningRecentAction[];
   plannerHistory: SatPlannerOutcomeMemory[];
@@ -368,6 +368,8 @@ type SatRuntimeSummary = {
 
 export const SAT_RUNTIME_RECENT_ACTION_LIMIT = 24;
 export const SAT_RUNTIME_ARCHIVED_FAILURE_LIMIT = 0;
+/** SQLite retains bounded recovery evidence after the JSON mirror has retired it. */
+export const SAT_SQLITE_ARCHIVED_FAILURE_LIMIT = 512;
 export const SAT_RUNTIME_RECENT_ACTION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const SAT_RUNTIME_ARCHIVED_FAILURE_MAX_AGE_MS = 0;
 export const SAT_ACTION_HISTORY_RECENT_TAIL_LIMIT = 128;
@@ -1086,12 +1088,20 @@ function resolveSatActionHistoryMirrorPath(filePath: string): string {
 
 export async function readSatAuditArtifacts(filePath: string): Promise<SatAuditArtifact[]> {
   try {
-    const raw = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<SatAuditStoreFile>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.artifacts)) {
-      return [];
-    }
-    return parsed.artifacts as SatAuditArtifact[];
+    return parseSatAuditArtifactsBytes(await fs.readFile(filePath, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+export function parseSatAuditArtifactsBytes(raw: string | Buffer): SatAuditArtifact[] {
+  try {
+    const parsed = JSON.parse(
+      Buffer.isBuffer(raw) ? raw.toString("utf8") : raw,
+    ) as Partial<SatAuditStoreFile>;
+    return parsed.version === 1 && Array.isArray(parsed.artifacts)
+      ? (parsed.artifacts as SatAuditArtifact[])
+      : [];
   } catch {
     return [];
   }
@@ -1226,6 +1236,69 @@ export async function readSatRuntimeSummary(filePath: string): Promise<SatRuntim
   } catch {
     return emptySatRuntimeSummary();
   }
+}
+
+/** Pure parser for a descriptor-pinned migration input. It deliberately does
+ * not normalize-write the legacy path; callers retain ownership of storage. */
+export function parseSatRuntimeSummaryBytes(raw: string | Buffer): SatRuntimeSummary {
+  try {
+    const parsed = JSON.parse(
+      Buffer.isBuffer(raw) ? raw.toString("utf8") : raw,
+    ) as Partial<SatRuntimeStoreFile>;
+    if (
+      (parsed.version !== 1 &&
+        parsed.version !== 2 &&
+        parsed.version !== 3 &&
+        parsed.version !== 4 &&
+        parsed.version !== 5 &&
+        parsed.version !== 6 &&
+        parsed.version !== 7 &&
+        parsed.version !== 8 &&
+        parsed.version !== 9 &&
+        parsed.version !== 10 &&
+        parsed.version !== 11 &&
+        parsed.version !== 12) ||
+      !Array.isArray(parsed.recentActions)
+    ) {
+      return emptySatRuntimeSummary();
+    }
+    // Normal runtime-file reads deliberately retire archived failures from the
+    // JSON mirror. Migration is different: these bytes are the one historical
+    // source of that user-visible recovery context, so retain only validated
+    // entries for the SQLite operational snapshot.
+    const normalized = normalizeSatRuntimeSummary(parsed);
+    const archivedFailures = normalizeSatMigrationArchivedFailures(parsed.archivedFailures);
+    return { ...normalized, archivedFailures };
+  } catch {
+    return emptySatRuntimeSummary();
+  }
+}
+
+/** Normalize only the SQLite migration input. Ordinary JSON reads retain their
+ * existing zero-retention mirror policy. */
+function normalizeSatMigrationArchivedFailures(value: unknown): SatMiningRecentAction[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(
+      (entry): entry is SatMiningRecentAction =>
+        Boolean(entry) &&
+        typeof entry === "object" &&
+        typeof (entry as SatMiningRecentAction).action === "string" &&
+        ["success", "failure"].includes(String((entry as SatMiningRecentAction).status)) &&
+        ((entry as SatMiningRecentAction).txHash === null ||
+          typeof (entry as SatMiningRecentAction).txHash === "string") &&
+        Number.isFinite(Date.parse(String((entry as SatMiningRecentAction).at ?? ""))),
+    )
+    .toSorted((left, right) => {
+      const byTime = Date.parse(right.at) - Date.parse(left.at);
+      if (byTime !== 0) {
+        return byTime;
+      }
+      return JSON.stringify(left).localeCompare(JSON.stringify(right));
+    })
+    .slice(0, SAT_SQLITE_ARCHIVED_FAILURE_LIMIT);
 }
 
 export async function appendSatPlannerHistoryOutcome(

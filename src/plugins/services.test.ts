@@ -84,7 +84,7 @@ describe("startPluginServices", () => {
     }
   });
 
-  it("logs start/stop failures and continues", async () => {
+  it("attempts every stop deterministically and propagates the first failure", async () => {
     const stopOk = vi.fn();
     const stopThrows = vi.fn(() => {
       throw new Error("stop failed");
@@ -113,15 +113,44 @@ describe("startPluginServices", () => {
       config: {} as Parameters<typeof startPluginServices>[0]["config"],
     });
 
-    await handle.stop();
+    await expect(handle.stop()).rejects.toThrow("stop failed");
 
     expect(mockedLogger.error).toHaveBeenCalledWith(
       expect.stringContaining("plugin service failed (service-start-fail):"),
     );
-    expect(mockedLogger.warn).toHaveBeenCalledWith(
+    expect(mockedLogger.error).toHaveBeenCalledWith(
       expect.stringContaining("plugin service stop failed (service-stop-fail):"),
     );
     expect(stopOk).toHaveBeenCalledOnce();
     expect(stopThrows).toHaveBeenCalledOnce();
+  });
+
+  it("runs lifecycle checkpoints after services stop and preserves the first failure", async () => {
+    const calls: string[] = [];
+    const failure = new Error("checkpoint failed");
+    const handle = await startPluginServices({
+      registry: createRegistry([
+        {
+          id: "first",
+          start: () => undefined,
+          checkpointForLifecycle: () => calls.push("first"),
+        },
+        {
+          id: "second",
+          start: () => undefined,
+          checkpointForLifecycle: () => {
+            calls.push("second");
+            throw failure;
+          },
+        },
+      ]),
+      config: {} as Parameters<typeof startPluginServices>[0]["config"],
+    });
+
+    await expect(handle.checkpointForLifecycle()).rejects.toBe(failure);
+    expect(calls).toEqual(["second", "first"]);
+    expect(mockedLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining("plugin lifecycle checkpoint failed (second):"),
+    );
   });
 });

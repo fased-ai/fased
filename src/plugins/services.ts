@@ -29,6 +29,7 @@ function createServiceContext(params: {
 
 export type PluginServicesHandle = {
   stop: () => Promise<void>;
+  checkpointForLifecycle: () => Promise<void>;
 };
 
 export async function startPluginServices(params: {
@@ -39,6 +40,7 @@ export async function startPluginServices(params: {
   const running: Array<{
     id: string;
     stop?: () => void | Promise<void>;
+    checkpointForLifecycle?: () => void | Promise<void>;
   }> = [];
   const serviceContext = createServiceContext({
     config: params.config,
@@ -52,6 +54,9 @@ export async function startPluginServices(params: {
       running.push({
         id: service.id,
         stop: service.stop ? () => service.stop?.(serviceContext) : undefined,
+        checkpointForLifecycle: service.checkpointForLifecycle
+          ? () => service.checkpointForLifecycle?.(serviceContext)
+          : undefined,
       });
     } catch (err) {
       log.error(`plugin service failed (${service.id}): ${String(err)}`);
@@ -60,6 +65,7 @@ export async function startPluginServices(params: {
 
   return {
     stop: async () => {
+      let firstFailure: unknown;
       for (const entry of running.toReversed()) {
         if (!entry.stop) {
           continue;
@@ -67,8 +73,29 @@ export async function startPluginServices(params: {
         try {
           await entry.stop();
         } catch (err) {
-          log.warn(`plugin service stop failed (${entry.id}): ${String(err)}`);
+          firstFailure ??= err;
+          log.error(`plugin service stop failed (${entry.id}): ${String(err)}`);
         }
+      }
+      if (firstFailure !== undefined) {
+        throw firstFailure;
+      }
+    },
+    checkpointForLifecycle: async () => {
+      let firstFailure: unknown;
+      for (const entry of running.toReversed()) {
+        if (!entry.checkpointForLifecycle) {
+          continue;
+        }
+        try {
+          await entry.checkpointForLifecycle();
+        } catch (err) {
+          firstFailure ??= err;
+          log.error(`plugin lifecycle checkpoint failed (${entry.id}): ${String(err)}`);
+        }
+      }
+      if (firstFailure !== undefined) {
+        throw firstFailure;
       }
     },
   };

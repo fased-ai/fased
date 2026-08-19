@@ -75,8 +75,13 @@ export function createGatewayCloseHandler(params: {
     for (const plugin of listChannelPlugins()) {
       await params.stopChannel(plugin.id);
     }
+    let managedStopFailure: unknown;
     if (params.pluginServices) {
-      await params.pluginServices.stop().catch(() => {});
+      try {
+        await params.pluginServices.stop();
+      } catch (error) {
+        managedStopFailure = error;
+      }
     }
     await stopGmailWatcher();
     // Freeze and await an in-flight reload before selecting the final Cron
@@ -141,6 +146,20 @@ export function createGatewayCloseHandler(params: {
     // cron, heartbeat, WebSockets, and HTTP requests precede the exact WAL
     // checkpoint. This must reject on failure so systemd cannot claim a
     // durable stop before lifecycle capture.
-    checkpointAndCloseTaskLedgersForLifecycle({ managedStop: restartExpectedMs === null });
+    if (params.pluginServices) {
+      try {
+        await params.pluginServices.checkpointForLifecycle();
+      } catch (error) {
+        managedStopFailure ??= error;
+      }
+    }
+    try {
+      checkpointAndCloseTaskLedgersForLifecycle({ managedStop: restartExpectedMs === null });
+    } catch (error) {
+      managedStopFailure ??= error;
+    }
+    if (managedStopFailure !== undefined) {
+      throw managedStopFailure;
+    }
   };
 }

@@ -8,6 +8,8 @@ import {
   clearSatActionHistory,
   clearSatPlannerHistory,
   filterSatPlannerHistoryByCycleEra,
+  parseSatAuditArtifactsBytes,
+  parseSatRuntimeSummaryBytes,
   querySatPlannerHistory,
   readSatActionHistory,
   readSatActionHistoryTail,
@@ -108,6 +110,32 @@ describe("sat audit store", () => {
     const loaded = await readSatAuditArtifacts(filePath);
 
     expect(loaded).toEqual(artifacts);
+  });
+
+  it("parses descriptor-pinned migration bytes without rewriting their legacy path", () => {
+    const archivedFailure = {
+      action: "recoverLockedCapital",
+      txHash: null,
+      status: "failure" as const,
+      message: "capital remains locked",
+      at: "2026-08-19T00:00:00.000Z",
+    };
+    const summary = parseSatRuntimeSummaryBytes(
+      Buffer.from(
+        JSON.stringify({
+          version: 12,
+          recentActions: [],
+          archivedFailures: [archivedFailure, { action: 1 }],
+          enabledWanted: true,
+        }),
+      ),
+    );
+
+    expect(summary).toMatchObject({
+      enabledWanted: true,
+      archivedFailures: [archivedFailure],
+    });
+    expect(parseSatAuditArtifactsBytes(Buffer.from('{"version":1,"artifacts":[]}'))).toEqual([]);
   });
 
   it("separates SAT persistence paths per wallet attachment", async () => {
@@ -816,15 +844,15 @@ describe("sat audit store", () => {
         {
           cacheKey: "9862959:0",
           participants: [
-            "AJweQ2hieUY1wvyRvdyqCdrQEjqd3WbuxwYoeRSG9em6",
-            "3CiND9t4YyDi3rHEKAfBETzxmZesyA81ACYFAqYiUwq1",
+            "AJweQ2hieUY1wvyRvdyqCdrQEjqd3WbuxwYoeRSG9em6", // pragma: allowlist secret
+            "3CiND9t4YyDi3rHEKAfBETzxmZesyA81ACYFAqYiUwq1", // pragma: allowlist secret
           ],
         },
       ],
       settlementPageLookupTables: [
         {
           cacheKey: "9862959:0",
-          lookupTableAddress: "9xQeWvG816bUx9EPfEZ9arFRr1CtwkLrM7d4mNQyRr7u",
+          lookupTableAddress: "9xQeWvG816bUx9EPfEZ9arFRr1CtwkLrM7d4mNQyRr7u", // pragma: allowlist secret
         },
       ],
     });
@@ -835,15 +863,15 @@ describe("sat audit store", () => {
       {
         cacheKey: "9862959:0",
         participants: [
-          "AJweQ2hieUY1wvyRvdyqCdrQEjqd3WbuxwYoeRSG9em6",
-          "3CiND9t4YyDi3rHEKAfBETzxmZesyA81ACYFAqYiUwq1",
+          "AJweQ2hieUY1wvyRvdyqCdrQEjqd3WbuxwYoeRSG9em6", // pragma: allowlist secret
+          "3CiND9t4YyDi3rHEKAfBETzxmZesyA81ACYFAqYiUwq1", // pragma: allowlist secret
         ],
       },
     ]);
     expect(loaded.settlementPageLookupTables).toEqual([
       {
         cacheKey: "9862959:0",
-        lookupTableAddress: "9xQeWvG816bUx9EPfEZ9arFRr1CtwkLrM7d4mNQyRr7u",
+        lookupTableAddress: "9xQeWvG816bUx9EPfEZ9arFRr1CtwkLrM7d4mNQyRr7u", // pragma: allowlist secret
       },
     ]);
   });

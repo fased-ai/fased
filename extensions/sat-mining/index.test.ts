@@ -8,6 +8,10 @@ import {
   resolveSatRuntimeStorePath,
   writeSatRecentActions,
 } from "./src/audit-store.js";
+import {
+  resolveSatMiningHistoryDatabasePath,
+  SatMiningHistoryStore,
+} from "./src/mining-history-store.js";
 
 const SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
 const SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
@@ -4528,6 +4532,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("resolves mining status against the refreshed local-signer wallet address", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-refreshed-wallet-address-"));
     const { default: satMiningPlugin } = await import("./index.js");
     const { satOps } = await import("./src/sat-ops.js");
     const walletRegistry = await import("../../src/wallet/wallet-provider-registry.js");
@@ -4667,7 +4672,7 @@ describe("sat-mining plugin config persistence", () => {
       const mainService = services.find((service) => service.id === "sat-mining");
       await mainService?.start?.({
         config: {},
-        stateDir: "/tmp",
+        stateDir,
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
       });
 
@@ -4775,6 +4780,7 @@ describe("sat-mining plugin config persistence", () => {
               recipientBalanceRaw: "100000000000",
             }) as never),
       );
+      await fs.rm(stateDir, { recursive: true, force: true });
     }
   });
 
@@ -5263,29 +5269,25 @@ describe("sat-mining plugin config persistence", () => {
         respond: () => {},
       });
 
-      const runtimeStorePath = resolveSatRuntimeStorePath(tempDir, "wallet-a");
-      const persisted = JSON.parse(await fs.readFile(runtimeStorePath, "utf8")) as {
-        roundExecution?: Array<{
-          roundKey: string;
-          execution: {
-            openRoundSubmitted: boolean;
-            commitSubmitted: boolean;
-            participationSubmitted: boolean;
-          };
-        }>;
-      };
-      expect(persisted.roundExecution).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            roundKey: "123:0",
-            execution: expect.objectContaining({
-              openRoundSubmitted: true,
-              commitSubmitted: true,
-              participationSubmitted: false,
+      const persisted = await SatMiningHistoryStore.openReadOnly({
+        databasePath: resolveSatMiningHistoryDatabasePath(tempDir, "wallet-a"),
+      });
+      try {
+        expect(persisted.readOperationalState().roundExecution).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              roundKey: "123:0",
+              execution: expect.objectContaining({
+                openRoundSubmitted: true,
+                commitSubmitted: true,
+                participationSubmitted: false,
+              }),
             }),
-          }),
-        ]),
-      );
+          ]),
+        );
+      } finally {
+        persisted.close();
+      }
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -5370,23 +5372,25 @@ describe("sat-mining plugin config persistence", () => {
         },
       });
 
-      const runtimeStorePath = resolveSatRuntimeStorePath(tempDir, "wallet-a");
-      const persisted = JSON.parse(await fs.readFile(runtimeStorePath, "utf8")) as {
-        recentActions?: Array<{
-          action: string;
-          cycleId?: number | null;
-          status: string;
-          message?: string | null;
-        }>;
-      };
+      const persisted = await SatMiningHistoryStore.openReadOnly({
+        databasePath: resolveSatMiningHistoryDatabasePath(tempDir, "wallet-a"),
+      });
 
       expect((response as { ok: boolean } | null)?.ok).toBe(false);
-      expect(
-        (persisted.recentActions ?? []).some(
-          (entry) =>
-            entry.action === "commitCycle" && entry.cycleId === 123 && entry.status === "failure",
-        ),
-      ).toBe(false);
+      try {
+        expect(
+          persisted
+            .queryActions({ window: "all" })
+            .actions.some(
+              (entry) =>
+                entry.action === "commitCycle" &&
+                entry.cycleId === 123 &&
+                entry.status === "failure",
+            ),
+        ).toBe(false);
+      } finally {
+        persisted.close();
+      }
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -5932,6 +5936,231 @@ describe("sat-mining plugin config persistence", () => {
     } finally {
       await mainService?.stop?.({});
       await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("hydrates activated SQLite runtime intent and locked-capital recovery without legacy readers", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-activated-runtime-restart-"));
+    let mainService:
+      | {
+          id: string;
+          start?: (ctx?: unknown) => Promise<void>;
+          stop?: (ctx?: unknown) => Promise<void>;
+        }
+      | undefined;
+    const runtimeStorePath = resolveSatRuntimeStorePath(stateDir, "wallet-a");
+    const auditStorePath = path.join(
+      stateDir,
+      "sat-mining",
+      "wallets",
+      "wallet-a",
+      "audit-store.json",
+    );
+    const plannerHistoryStorePath = resolveSatPlannerHistoryStorePath(stateDir, "wallet-a");
+    const submissionStorePath = path.join(
+      stateDir,
+      "sat-mining",
+      "wallets",
+      "wallet-a",
+      "submission-ledger.json",
+    );
+    try {
+      const seeded = await SatMiningHistoryStore.open({
+        databasePath: resolveSatMiningHistoryDatabasePath(stateDir, "wallet-a"),
+        scope: {
+          walletId: "wallet-a",
+          authority: "miner-wallet-1",
+          providerId: "embedded-keystore",
+          network: "devnet",
+          programId: SAT_PROGRAM_ID,
+          mintAddress: SAT_MINT_ADDRESS,
+          mintProgramId: SAT_MINT_PROGRAM_ID,
+          protocolVersion: "sat-v2",
+        },
+      });
+      await seeded.store.replaceOperationalState({
+        archivedFailures: [
+          {
+            action: "withdrawMinerCapital",
+            txHash: null,
+            status: "failure",
+            message: "restart recovery remains required",
+            at: "2026-08-19T00:00:00.000Z",
+          },
+        ],
+        workers: {
+          recovery: {
+            enabled: true,
+            running: false,
+            retryCount: 2,
+            rpcTimeoutCount: 0,
+            waitingReason: "locked capital recovery",
+            nextScheduledAt: null,
+            lastRunAt: null,
+            lastSuccessAt: null,
+            lastFailureAt: "2026-08-19T00:00:00.000Z",
+            lastError: "pending recovery",
+            lastDetail: "capital is still locked",
+            lastSelectedCycleId: 91,
+            lastSelectedStage: "claim",
+            lastSkipReason: null,
+          },
+        },
+        runtimeMeta: {
+          enabledWanted: true,
+          lastKnownStatus: {
+            walletId: "wallet-a",
+            currentSolBalanceLamports: "1000000000",
+            currentSatBalanceRaw: "0",
+            registryReserveLamports: "0",
+            currentCapitalAddress: "capital-a",
+            currentCapitalFundedLamports: "5000000000",
+            currentCapitalLockedLamports: "250000000",
+            currentCapitalFreeLamports: "4750000000",
+            currentCapitalFirstPendingCycleId: 91,
+            currentCapitalLastPendingCycleId: 91,
+            currentCapitalPendingCycleCount: 1,
+            activeCommitLamports: "250000000",
+            exactPendingCycleId: 91,
+            exactPendingStage: "submitted",
+            exactPendingReason: "locked recovery",
+            chainTime: null,
+            updatedAt: "2026-08-19T00:00:00.000Z",
+          },
+        },
+      });
+      seeded.store.close();
+
+      // The activated marker must prevent all three legacy JSON readers from
+      // reopening these hostile pathnames during the plugin restart.
+      for (const legacyPath of [
+        runtimeStorePath,
+        auditStorePath,
+        plannerHistoryStorePath,
+        submissionStorePath,
+      ]) {
+        await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+        const replacement = `${legacyPath}.replacement`;
+        await fs.writeFile(
+          replacement,
+          legacyPath === plannerHistoryStorePath
+            ? `${JSON.stringify({
+                cycleId: 999_999,
+                committedLamports: "1",
+                totalSatEarnedRaw: "1",
+                totalRebateLamports: "0",
+                txFeeLamports: "0",
+                netLiveCostLamports: "1",
+                validParticipation: true,
+                recordedAt: "2026-08-19T00:00:00.000Z",
+              })}\n`
+            : "legacy reader must remain unused\n",
+          "utf8",
+        );
+        await fs.symlink(replacement, legacyPath);
+      }
+      const guardedLegacyPaths = new Set([
+        runtimeStorePath,
+        auditStorePath,
+        plannerHistoryStorePath,
+        submissionStorePath,
+      ]);
+      const readFile = fs.readFile.bind(fs);
+      const legacyRead = vi.spyOn(fs, "readFile").mockImplementation(async (file, ...args) => {
+        if (guardedLegacyPaths.has(String(file))) {
+          throw new Error(`legacy reader was invoked for ${String(file)}`);
+        }
+        return await readFile(file, ...args);
+      });
+      const { default: satMiningPlugin } = await import("./index.js");
+      const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
+      const services: Array<{
+        id: string;
+        start?: (ctx?: unknown) => Promise<void>;
+        stop?: (ctx?: unknown) => Promise<void>;
+      }> = [];
+      const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+      satMiningPlugin.register({
+        id: "sat-mining",
+        name: "SAT Mining",
+        source: "test",
+        config: {} as never,
+        pluginConfig: {
+          enabled: false,
+          network: "devnet",
+          riskMode: "balanced",
+          walletId: "wallet-a",
+        },
+        runtime: {
+          version: "test",
+          config: {
+            loadConfig: vi.fn(() => ({ plugins: { entries: {} } })),
+            writeConfigFile: vi.fn(async () => {}),
+          },
+        },
+        logger,
+        registerTool: vi.fn(),
+        registerHook: vi.fn(),
+        registerHttpHandler: vi.fn(),
+        registerHttpRoute: vi.fn(),
+        registerChannel: vi.fn(),
+        registerGatewayMethod: vi.fn(
+          (name: string, handler: RegisteredGatewayMethod["handler"]) => {
+            gatewayMethods.set(name, { handler });
+          },
+        ),
+        registerCli: vi.fn(),
+        registerService: vi.fn((service) => {
+          services.push(service);
+        }),
+        registerProvider: vi.fn(),
+        registerCommand: vi.fn(),
+        resolvePath: vi.fn((input: string) => input),
+        on: vi.fn(),
+      } as never);
+
+      mainService = services.find((service) => service.id === "sat-mining");
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger,
+      });
+      expect(
+        legacyRead.mock.calls.filter(([file]) => guardedLegacyPaths.has(String(file))),
+      ).toEqual([]);
+      let response: { ok: boolean; payload: unknown } | null = null;
+      await gatewayMethods.get("sat.getMiningStatus")!.handler({
+        params: { responsive: true },
+        respond: (ok, payload) => {
+          response = { ok, payload };
+        },
+      });
+      expect(response).toMatchObject({
+        ok: true,
+        payload: {
+          ok: true,
+          payload: expect.objectContaining({
+            enabledWanted: true,
+            archivedFailures: [expect.objectContaining({ action: "withdrawMinerCapital" })],
+            workers: expect.objectContaining({
+              recovery: expect.objectContaining({
+                retryCount: 2,
+                waitingReason: "locked capital recovery",
+                lastSelectedCycleId: 91,
+              }),
+            }),
+            settledHistory: expect.not.arrayContaining([
+              expect.objectContaining({ cycleId: 999_999 }),
+            ]),
+          }),
+        },
+      });
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("preserved active mining mode for locked miner capital"),
+      );
+    } finally {
+      await mainService?.stop?.({});
+      await fs.rm(stateDir, { recursive: true, force: true });
     }
   });
 

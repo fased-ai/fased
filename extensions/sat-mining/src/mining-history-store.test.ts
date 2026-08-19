@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   SatMiningRecentAction,
   SatPlannerCycleRecord,
@@ -121,7 +121,17 @@ describe("per-wallet Mining history ledger", () => {
     return result;
   }
 
+  function removeActivationMarker(databasePath: string): void {
+    const db = new DatabaseSync(databasePath);
+    try {
+      db.prepare("DELETE FROM mining_meta WHERE key LIKE 'migration-activation:%'").run();
+    } finally {
+      db.close();
+    }
+  }
+
   afterEach(async () => {
+    vi.restoreAllMocks();
     setSatSubmissionLedgerAdapterResolver(null);
     for (const store of stores.splice(0)) {
       store.close();
@@ -294,8 +304,8 @@ describe("per-wallet Mining history ledger", () => {
         sources: [{ kind: "action", path: primary, label: "actions-primary" }],
       },
     });
-    expect(converged.migration).toMatchObject({ importedActions: 1, integrity: "ok" });
-    expect(converged.store.queryActions({ window: "all" }).totalStoredCount).toBe(3);
+    expect(converged.migration).toBeNull();
+    expect(converged.store.queryActions({ window: "all" }).totalStoredCount).toBe(2);
   });
 
   it("keeps wallet and network histories isolated and supports keyset pagination", async () => {
@@ -363,7 +373,9 @@ describe("per-wallet Mining history ledger", () => {
       runtimeMeta: { enabledWanted: true, lastAction: "commitCycle" },
     };
     await store.replaceOperationalState(operationalState);
-    await store.replaceAuditArtifacts([{ roundKey: "9:0", txHash: "tx-9" }]);
+    await store.replaceAuditArtifacts([
+      { roundKey: "9:0", txHash: "tx-9", updatedAt: "2026-01-01T00:00:00.000Z" },
+    ]);
     await store.upsertSubmissionRecords([
       {
         requestId: "request-9",
@@ -381,7 +393,9 @@ describe("per-wallet Mining history ledger", () => {
     expect(store.queryOutcomes().totalStoredCount).toBe(0);
     expect(store.readRecentPlannerCycles()).toEqual([]);
     expect(store.readOperationalState()).toMatchObject(operationalState);
-    expect(store.readAuditArtifacts()).toEqual([{ roundKey: "9:0", txHash: "tx-9" }]);
+    expect(store.readAuditArtifacts()).toEqual([
+      { roundKey: "9:0", txHash: "tx-9", updatedAt: "2026-01-01T00:00:00.000Z" },
+    ]);
     expect(await fs.readFile(runtimePath, "utf8")).toBe('{"enabledWanted":true}\n');
     expect(store.integrityCheck()).toBe("ok");
   });
@@ -642,6 +656,169 @@ describe("per-wallet Mining history ledger", () => {
     );
   });
 
+  it("fences late writes, drains prior writes, checkpoints and closes for lifecycle capture", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir });
+    await store.appendActions([action(1, new Date().toISOString())]);
+    await store.checkpointAndCloseForLifecycle();
+
+    await expect(store.flush()).resolves.toBeUndefined();
+    await expect(store.appendActions([action(2, new Date().toISOString())])).rejects.toThrow(
+      /fenced for lifecycle checkpoint/u,
+    );
+
+    const inspection = new DatabaseSync(store.databasePath, { readOnly: true });
+    try {
+      expect(inspection.prepare("SELECT COUNT(*) AS count FROM mining_event").get()).toMatchObject({
+        count: 1,
+      });
+    } finally {
+      inspection.close();
+    }
+  });
+
+  it("retains a contiguous chain prefix only and stops at an active recovery cycle", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir });
+    const now = Date.now();
+    await store.appendActions([
+      action(1, new Date(now - 3_000).toISOString()),
+      action(2, new Date(now - 2_000).toISOString()),
+      action(3, new Date(now - 1_000).toISOString()),
+      action(4, new Date(now).toISOString()),
+    ]);
+    await store.replaceOperationalState({ pendingPlannerCycles: [{ cycleId: 2 }] });
+    const before = new DatabaseSync(store.databasePath, { readOnly: true });
+    let retiredDigest = "";
+    let protectedPreviousDigest = "";
+    try {
+      retiredDigest = String(
+        (
+          before.prepare("SELECT event_digest FROM mining_event WHERE cycle_id=1").get() as {
+            event_digest: string;
+          }
+        ).event_digest,
+      );
+      protectedPreviousDigest = String(
+        (
+          before.prepare("SELECT previous_digest FROM mining_event WHERE cycle_id=2").get() as {
+            previous_digest: string;
+          }
+        ).previous_digest,
+      );
+    } finally {
+      before.close();
+    }
+
+    const receipt = await store.enforceRetention({ maxActions: 1 });
+
+    expect(receipt).toMatchObject({ prunedActions: 1, protectedCycleCount: 1 });
+    expect(store.queryActions({ window: "all" }).actions.map((entry) => entry.cycleId)).toEqual([
+      4, 3, 2,
+    ]);
+    const inspection = new DatabaseSync(store.databasePath, { readOnly: true });
+    try {
+      const anchor = inspection
+        .prepare("SELECT value FROM mining_meta WHERE key LIKE 'retention-anchor:%:actions'")
+        .get() as { value: string };
+      expect(anchor.value).toContain(retiredDigest);
+      expect(
+        inspection.prepare("SELECT previous_digest FROM mining_event WHERE cycle_id=2").get(),
+      ).toMatchObject({ previous_digest: protectedPreviousDigest });
+    } finally {
+      inspection.close();
+    }
+  });
+
+  it("bounds audit artifacts deterministically while preserving unresolved-cycle evidence", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir });
+    await store.replaceAuditArtifacts([
+      { roundKey: "1:0", context: { cycleId: 1 }, updatedAt: "2026-01-01T00:00:00.000Z" },
+      { roundKey: "2:0", context: { cycleId: 2 }, updatedAt: "2026-01-02T00:00:00.000Z" },
+      { roundKey: "3:0", context: { cycleId: 3 }, updatedAt: "2026-01-03T00:00:00.000Z" },
+      { roundKey: "4:0", context: { cycleId: 4 }, updatedAt: "2026-01-04T00:00:00.000Z" },
+      { roundKey: "5:0", context: { cycleId: 5 }, updatedAt: "2026-01-05T00:00:00.000Z" },
+    ]);
+    await store.replaceOperationalState({ pendingPlannerCycles: [{ cycleId: 2 }] });
+
+    const receipt = await store.enforceRetention({ maxAuditArtifacts: 2 });
+
+    expect(receipt).toMatchObject({ prunedAuditArtifacts: 3, protectedCycleCount: 1 });
+    expect(
+      (store.readAuditArtifacts() as Array<{ roundKey: string }>).map((entry) => entry.roundKey),
+    ).toEqual(["2:0", "5:0"]);
+    // Rewriting from the retained reader cannot resurrect rows the policy removed.
+    await store.replaceAuditArtifacts(store.readAuditArtifacts());
+    expect(store.readAuditArtifacts()).toEqual([
+      { roundKey: "2:0", context: { cycleId: 2 }, updatedAt: "2026-01-02T00:00:00.000Z" },
+      { roundKey: "5:0", context: { cycleId: 5 }, updatedAt: "2026-01-05T00:00:00.000Z" },
+    ]);
+  });
+
+  it("protects history and audit evidence for a live submission without operational state", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir });
+    const now = Date.now();
+    await store.upsertSubmissionRecords([
+      {
+        requestId: "live-42",
+        workflowId: "cycle:42:commit",
+        operationKey: "commitCycle:42",
+        intentDigest: `sha256:${"a".repeat(64)}`,
+        walletId: "agent",
+        action: "commitCycle",
+        state: "broadcast",
+        attempts: 1,
+        createdAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      },
+    ]);
+    await store.appendActions([
+      action(41, new Date(now - 2_000).toISOString()),
+      action(42, new Date(now - 1_000).toISOString()),
+      action(43, new Date(now).toISOString()),
+    ]);
+    await store.replaceAuditArtifacts([
+      { roundKey: "41:0", context: { cycleId: 41 }, updatedAt: "2026-01-01T00:00:00.000Z" },
+      { roundKey: "42:0", context: { cycleId: 42 }, updatedAt: "2026-01-02T00:00:00.000Z" },
+      { roundKey: "43:0", context: { cycleId: 43 }, updatedAt: "2026-01-03T00:00:00.000Z" },
+    ]);
+
+    const receipt = await store.enforceRetention({ maxActions: 1, maxAuditArtifacts: 1 });
+
+    expect(receipt.protectedCycleCount).toBe(1);
+    expect(store.queryActions({ window: "all" }).actions.map((entry) => entry.cycleId)).toContain(
+      42,
+    );
+    expect(
+      (store.readAuditArtifacts() as Array<{ roundKey: string }>).map((entry) => entry.roundKey),
+    ).toContain("42:0");
+  });
+
+  it("uses durable audit timestamps rather than artifact keys for replacement and retention order", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir });
+    await store.replaceAuditArtifacts([
+      { roundKey: "z-old", updatedAt: "2026-01-01T00:00:00.000Z" },
+      { roundKey: "a-new", updatedAt: "2026-01-03T00:00:00.000Z" },
+      { roundKey: "m-mid", updatedAt: "2026-01-02T00:00:00.000Z" },
+    ]);
+    await store.replaceAuditArtifacts([
+      { roundKey: "z-old", updatedAt: "2026-01-04T00:00:00.000Z" },
+      { roundKey: "a-new", updatedAt: "2026-01-03T00:00:00.000Z" },
+      { roundKey: "m-mid", updatedAt: "2026-01-02T00:00:00.000Z" },
+    ]);
+    await store.enforceRetention({ maxAuditArtifacts: 2 });
+
+    expect(
+      (store.readAuditArtifacts() as Array<{ roundKey: string }>).map((entry) => entry.roundKey),
+    ).toEqual(["a-new", "z-old"]);
+    await expect(store.replaceAuditArtifacts([{ roundKey: "bad" }])).rejects.toThrow(
+      /updatedAt is invalid/u,
+    );
+  });
+
   it("quarantines only exact stale Mining temp files", async () => {
     const stateDir = await tempState();
     const databasePath = resolveSatMiningHistoryDatabasePath(stateDir, "agent");
@@ -679,9 +856,740 @@ describe("per-wallet Mining history ledger", () => {
 
     expect(migration).toMatchObject({ integrity: "ok" });
     expect(store.integrityCheck()).toBe("ok");
-    await expect(fs.stat(`${databasePath}.migrating`)).rejects.toMatchObject({ code: "ENOENT" });
+    // A legacy fixed staging path is not ours to remove. Fresh publication
+    // now owns only a UUID-bound SQLite family.
+    await expect(fs.stat(`${databasePath}.migrating`)).resolves.toBeDefined();
     await expect(fs.stat(`${databasePath}.migration.lock`)).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("archives before fresh import and leaves JSON authoritative when archive creation fails", async () => {
+    const stateDir = await tempState();
+    const legacy = path.join(stateDir, "legacy-actions.ndjson");
+    const unsafe = path.join(stateDir, "unsafe-link.json");
+    const record = `${JSON.stringify(action(11, new Date().toISOString()))}\n`;
+    await fs.writeFile(legacy, record, "utf8");
+    await fs.symlink(legacy, unsafe);
+    const databasePath = resolveSatMiningHistoryDatabasePath(stateDir, "agent");
+
+    await expect(
+      SatMiningHistoryStore.open({
+        databasePath,
+        scope: scope(),
+        migration: {
+          sources: [{ kind: "action", path: legacy, label: "legacy" }],
+          preservePaths: [unsafe],
+        },
+      }),
+    ).rejects.toThrow(/Unsafe Mining legacy source/u);
+    await expect(fs.stat(databasePath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readFile(legacy, "utf8")).toBe(record);
+
+    const retry = await openStore({
+      stateDir,
+      migration: { sources: [{ kind: "action", path: legacy, label: "legacy" }] },
+    });
+    expect(retry.migration).toMatchObject({
+      importedActions: 1,
+      archiveManifestPath: expect.any(String),
+    });
+    const inspection = new DatabaseSync(retry.store.databasePath, { readOnly: true });
+    try {
+      const rows = inspection
+        .prepare("SELECT key, value FROM mining_meta WHERE key LIKE 'legacy-archive-receipt:%'")
+        .all() as Array<{ key: string; value: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.key).toMatch(/^legacy-archive-receipt:sha256:[a-f0-9]{64}$/u);
+      expect(rows[0]?.value).toContain("manifestDigest");
+    } finally {
+      inspection.close();
+    }
+  });
+
+  it("rolls an existing import and receipt back together after a DB transaction failure", async () => {
+    const stateDir = await tempState();
+    const first = await openStore({ stateDir });
+    await first.store.appendActions([action(1, new Date().toISOString())]);
+    first.store.close();
+    stores.splice(stores.indexOf(first.store), 1);
+    const legacy = path.join(stateDir, "existing-actions.ndjson");
+    const record = `${JSON.stringify(action(12, new Date().toISOString()))}\n`;
+    await fs.writeFile(legacy, record, "utf8");
+    removeActivationMarker(resolveSatMiningHistoryDatabasePath(stateDir, "agent"));
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+
+    await expect(
+      SatMiningHistoryStore.open({
+        databasePath: resolveSatMiningHistoryDatabasePath(stateDir, "agent"),
+        scope: scope(),
+        migration: {
+          sources: [{ kind: "action", path: legacy, label: "existing" }],
+          auditArtifacts: [circular],
+        },
+      }),
+    ).rejects.toThrow();
+    expect(await fs.readFile(legacy, "utf8")).toBe(record);
+    const failed = new DatabaseSync(resolveSatMiningHistoryDatabasePath(stateDir, "agent"), {
+      readOnly: true,
+    });
+    try {
+      expect(failed.prepare("SELECT COUNT(*) AS count FROM mining_event").get()).toMatchObject({
+        count: 1,
+      });
+      expect(
+        failed
+          .prepare("SELECT COUNT(*) AS count FROM migration_source WHERE source_label='existing'")
+          .get(),
+      ).toMatchObject({ count: 0 });
+      expect(
+        failed
+          .prepare(
+            "SELECT COUNT(*) AS count FROM mining_meta WHERE key LIKE 'legacy-archive-receipt:%'",
+          )
+          .get(),
+      ).toMatchObject({ count: 0 });
+    } finally {
+      failed.close();
+    }
+
+    const retry = await openStore({
+      stateDir,
+      migration: { sources: [{ kind: "action", path: legacy, label: "existing" }] },
+    });
+    expect(retry.migration).toMatchObject({
+      importedActions: 1,
+      archiveManifestPath: expect.any(String),
+    });
+    expect(retry.store.queryActions({ window: "all" }).totalStoredCount).toBe(2);
+  });
+
+  it("does not alter an existing SQLite ledger when its required archive cannot be created", async () => {
+    const stateDir = await tempState();
+    const base = await openStore({ stateDir });
+    await base.store.appendActions([action(1, new Date().toISOString())]);
+    base.store.close();
+    stores.splice(stores.indexOf(base.store), 1);
+    const legacy = path.join(stateDir, "existing-archive-actions.ndjson");
+    const unsafe = path.join(stateDir, "existing-unsafe-link.json");
+    const record = `${JSON.stringify(action(13, new Date().toISOString()))}\n`;
+    await fs.writeFile(legacy, record, "utf8");
+    await fs.symlink(legacy, unsafe);
+    removeActivationMarker(resolveSatMiningHistoryDatabasePath(stateDir, "agent"));
+
+    await expect(
+      SatMiningHistoryStore.open({
+        databasePath: resolveSatMiningHistoryDatabasePath(stateDir, "agent"),
+        scope: scope(),
+        migration: {
+          sources: [{ kind: "action", path: legacy, label: "existing-archive" }],
+          preservePaths: [unsafe],
+        },
+      }),
+    ).rejects.toThrow(/Unsafe Mining legacy source/u);
+    expect(await fs.readFile(legacy, "utf8")).toBe(record);
+    const inspection = new DatabaseSync(resolveSatMiningHistoryDatabasePath(stateDir, "agent"), {
+      readOnly: true,
+    });
+    try {
+      expect(inspection.prepare("SELECT COUNT(*) AS count FROM mining_event").get()).toMatchObject({
+        count: 1,
+      });
+      expect(
+        inspection
+          .prepare(
+            "SELECT COUNT(*) AS count FROM migration_source WHERE source_label='existing-archive'",
+          )
+          .get(),
+      ).toMatchObject({ count: 0 });
+    } finally {
+      inspection.close();
+    }
+  });
+
+  it("fails closed when a reused archive receipt was tampered", async () => {
+    const stateDir = await tempState();
+    const legacy = path.join(stateDir, "tampered-actions.ndjson");
+    await fs.writeFile(legacy, `${JSON.stringify(action(15, new Date().toISOString()))}\n`, "utf8");
+    const opened = await openStore({
+      stateDir,
+      migration: { sources: [{ kind: "action", path: legacy, label: "tampered" }] },
+    });
+    const databasePath = opened.store.databasePath;
+    opened.store.close();
+    stores.splice(stores.indexOf(opened.store), 1);
+    const tamper = new DatabaseSync(databasePath);
+    try {
+      tamper
+        .prepare(
+          "UPDATE mining_meta SET value='tampered' WHERE key LIKE 'legacy-archive-receipt:%'",
+        )
+        .run();
+    } finally {
+      tamper.close();
+    }
+    removeActivationMarker(databasePath);
+
+    await expect(
+      SatMiningHistoryStore.open({
+        databasePath,
+        scope: scope(),
+        migration: { sources: [{ kind: "action", path: legacy, label: "tampered" }] },
+      }),
+    ).rejects.toThrow(/archive receipt mismatch/u);
+  });
+
+  it("does not publish a fresh database when import transaction state cannot commit", async () => {
+    const stateDir = await tempState();
+    const legacy = path.join(stateDir, "fresh-transaction-actions.ndjson");
+    const record = `${JSON.stringify(action(14, new Date().toISOString()))}\n`;
+    await fs.writeFile(legacy, record, "utf8");
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    const databasePath = resolveSatMiningHistoryDatabasePath(stateDir, "agent");
+    await fs.mkdir(path.dirname(databasePath), { recursive: true });
+    const unrelatedFixedStaging = `${databasePath}.migrating`;
+    await fs.writeFile(unrelatedFixedStaging, "preserve\n", "utf8");
+
+    await expect(
+      SatMiningHistoryStore.open({
+        databasePath,
+        scope: scope(),
+        migration: {
+          sources: [{ kind: "action", path: legacy, label: "fresh-transaction" }],
+          auditArtifacts: [circular],
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(fs.stat(databasePath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readFile(unrelatedFixedStaging, "utf8")).toBe("preserve\n");
+    expect(
+      (await fs.readdir(path.dirname(databasePath))).filter((entry) =>
+        entry.startsWith(`${path.basename(databasePath)}.migrating-`),
+      ),
+    ).toEqual([]);
+    expect(await fs.readFile(legacy, "utf8")).toBe(record);
+
+    const retry = await openStore({
+      stateDir,
+      migration: { sources: [{ kind: "action", path: legacy, label: "fresh-transaction" }] },
+    });
+    expect(retry.migration).toMatchObject({
+      importedActions: 1,
+      archiveManifestPath: expect.any(String),
+    });
+  });
+
+  it("imports the verified archive bytes when the original changes after archive publication", async () => {
+    const stateDir = await tempState();
+    const legacy = path.join(stateDir, "archive-race-actions.ndjson");
+    const original = `${JSON.stringify(action(61, "2026-01-01T00:00:00.000Z"))}\n`;
+    const mutated = `${JSON.stringify(action(62, "2026-01-02T00:00:00.000Z"))}\n`;
+    await fs.writeFile(legacy, original, "utf8");
+    let changed = false;
+    const rename = fs.rename.bind(fs);
+    vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
+      await rename(source, destination);
+      if (String(destination).includes("/legacy-archive/migration-") && !changed) {
+        changed = true;
+        const replacement = path.join(stateDir, "archive-race-replacement.ndjson");
+        await fs.writeFile(replacement, mutated, "utf8");
+        await fs.unlink(legacy);
+        await fs.symlink(replacement, legacy);
+      }
+    });
+
+    const { store } = await openStore({
+      stateDir,
+      migration: { sources: [{ kind: "action", path: legacy, label: "archive-race" }] },
+    });
+    expect(changed).toBe(true);
+    expect(store.queryActions({ window: "all" }).actions).toMatchObject([{ cycleId: 61 }]);
+    expect(await fs.readFile(legacy, "utf8")).toBe(mutated);
+    const inspection = new DatabaseSync(store.databasePath, { readOnly: true });
+    try {
+      expect(
+        inspection
+          .prepare(
+            "SELECT source_path, source_sha256 FROM migration_source WHERE source_label='archive-race'",
+          )
+          .get(),
+      ).toEqual({ source_path: legacy, source_sha256: expect.any(String) });
+    } finally {
+      inspection.close();
+    }
+  });
+
+  it.each(["runtime", "audit", "submission"] as const)(
+    "imports only pinned archived %s JSON when its legacy pathname is replaced",
+    async (kind) => {
+      const stateDir = await tempState();
+      const sourcePath = path.join(stateDir, `${kind}-store.json`);
+      const originalByKind = {
+        runtime: JSON.stringify({
+          version: 12,
+          recentActions: [action(91, "2026-08-19T00:00:00.000Z")],
+          enabledWanted: true,
+        }),
+        audit: JSON.stringify({
+          version: 1,
+          artifacts: [{ roundKey: "audit-original", updatedAt: "2026-08-19T00:00:00.000Z" }],
+        }),
+        submission: JSON.stringify({
+          version: 1,
+          records: {
+            "request-original": {
+              requestId: "request-original",
+              workflowId: "cycle:91",
+              operationKey: "commit:91",
+              intentDigest: `sha256:${"91".repeat(32)}`,
+              walletId: "agent",
+              action: "commitCycle",
+              state: "prepared",
+              attempts: 1,
+              createdAt: "2026-08-19T00:00:00.000Z",
+              updatedAt: "2026-08-19T00:00:00.000Z",
+            },
+          },
+        }),
+      } as const;
+      const replacementByKind = {
+        runtime: JSON.stringify({
+          version: 12,
+          recentActions: [action(92, "2026-08-19T00:00:01.000Z")],
+        }),
+        audit: JSON.stringify({
+          version: 1,
+          artifacts: [{ roundKey: "audit-replacement", updatedAt: "2026-08-19T00:00:01.000Z" }],
+        }),
+        submission: JSON.stringify({
+          version: 1,
+          records: {
+            "request-replacement": {
+              requestId: "request-replacement",
+              workflowId: "cycle:92",
+              operationKey: "commit:92",
+              intentDigest: `sha256:${"92".repeat(32)}`,
+              walletId: "agent",
+              action: "commitCycle",
+              state: "prepared",
+              attempts: 1,
+              createdAt: "2026-08-19T00:00:01.000Z",
+              updatedAt: "2026-08-19T00:00:01.000Z",
+            },
+          },
+        }),
+      } as const;
+      const original = originalByKind[kind];
+      await fs.writeFile(sourcePath, original, "utf8");
+      const rename = fs.rename.bind(fs);
+      let replaced = false;
+      vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
+        await rename(source, destination);
+        if (String(destination).includes("/legacy-archive/migration-") && !replaced) {
+          replaced = true;
+          const replacementPath = `${sourcePath}.replacement`;
+          await fs.writeFile(replacementPath, replacementByKind[kind], "utf8");
+          await fs.unlink(sourcePath);
+          await fs.symlink(replacementPath, sourcePath);
+        }
+      });
+      const fileInputs =
+        kind === "runtime"
+          ? { runtimePath: sourcePath }
+          : kind === "audit"
+            ? { auditPath: sourcePath }
+            : { submissionPath: sourcePath };
+
+      const { store, migration } = await openStore({
+        stateDir,
+        migration: { fileInputs },
+      });
+      expect(replaced).toBe(true);
+      const manifest = JSON.parse(
+        await fs.readFile(String(migration?.archiveManifestPath), "utf8"),
+      ) as { sources: Array<{ sourcePath: string; archiveName: string }> };
+      const archived = manifest.sources.find((entry) => entry.sourcePath === sourcePath);
+      expect(archived).toBeDefined();
+      expect(
+        await fs.readFile(
+          path.join(path.dirname(String(migration?.archiveManifestPath)), archived!.archiveName),
+          "utf8",
+        ),
+      ).toBe(original);
+      if (kind === "runtime") {
+        expect(store.queryActions({ window: "all" }).actions).toMatchObject([{ cycleId: 91 }]);
+      } else if (kind === "audit") {
+        expect(store.readAuditArtifacts()).toEqual([
+          { roundKey: "audit-original", updatedAt: "2026-08-19T00:00:00.000Z" },
+        ]);
+      } else {
+        await expect(
+          store.read({ walletId: "agent", requestId: "request-original" }),
+        ).resolves.toMatchObject({ requestId: "request-original" });
+      }
+    },
+  );
+
+  it("cleans a failed archive staging copy and retries safely for fresh and existing ledgers", async () => {
+    for (const existing of [false, true]) {
+      const stateDir = await tempState();
+      if (existing) {
+        const base = await openStore({ stateDir });
+        await base.store.appendActions([action(70, "2026-01-01T00:00:00.000Z")]);
+        base.store.close();
+        stores.splice(stores.indexOf(base.store), 1);
+      }
+      const legacy = path.join(stateDir, `copy-failure-${String(existing)}.ndjson`);
+      const preserved = path.join(stateDir, `copy-failure-${String(existing)}.json`);
+      const content = `${JSON.stringify(action(71, "2026-01-02T00:00:00.000Z"))}\n`;
+      await fs.writeFile(legacy, content, "utf8");
+      await fs.writeFile(preserved, "preserve\n", "utf8");
+      if (existing) {
+        removeActivationMarker(resolveSatMiningHistoryDatabasePath(stateDir, "agent"));
+      }
+      const writeFile = fs.writeFile.bind(fs);
+      vi.spyOn(fs, "writeFile").mockImplementation(async (file, ...args) => {
+        if (String(file).includes("/legacy-archive/migration-")) {
+          throw Object.assign(new Error("injected archive copy failure"), { code: "EEXIST" });
+        }
+        return await writeFile(file, ...args);
+      });
+      const databasePath = resolveSatMiningHistoryDatabasePath(stateDir, "agent");
+      await expect(
+        SatMiningHistoryStore.open({
+          databasePath,
+          scope: scope(),
+          migration: {
+            sources: [{ kind: "action", path: legacy, label: "copy-failure" }],
+            preservePaths: [preserved],
+          },
+        }),
+      ).rejects.toThrow(/injected archive copy failure/u);
+      expect(await fs.readFile(legacy, "utf8")).toBe(content);
+      expect(await fs.readFile(preserved, "utf8")).toBe("preserve\n");
+      const archiveParent = path.join(path.dirname(databasePath), "legacy-archive");
+      const archiveEntries = await fs.readdir(archiveParent).catch(() => []);
+      expect(archiveEntries).toEqual([]);
+      if (existing) {
+        const inspection = new DatabaseSync(databasePath, { readOnly: true });
+        try {
+          expect(
+            inspection.prepare("SELECT COUNT(*) AS count FROM mining_event").get(),
+          ).toMatchObject({
+            count: 1,
+          });
+          expect(
+            inspection.prepare("SELECT COUNT(*) AS count FROM migration_source").get(),
+          ).toMatchObject({ count: 0 });
+        } finally {
+          inspection.close();
+        }
+      } else {
+        await expect(fs.stat(databasePath)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+      vi.restoreAllMocks();
+      const retry = await openStore({
+        stateDir,
+        migration: {
+          sources: [{ kind: "action", path: legacy, label: "copy-failure" }],
+          preservePaths: [preserved],
+        },
+      });
+      expect(
+        retry.store.queryActions({ window: "all" }).actions.map((entry) => entry.cycleId),
+      ).toContain(71);
+    }
+  });
+
+  it("never invokes legacy migration input after a scope-bound SQLite activation", async () => {
+    const stateDir = await tempState();
+    const legacy = path.join(stateDir, "activation-actions.ndjson");
+    await fs.writeFile(legacy, `${JSON.stringify(action(81, "2026-01-01T00:00:00.000Z"))}\n`);
+    const first = await openStore({
+      stateDir,
+      migration: { sources: [{ kind: "action", path: legacy, label: "activation" }] },
+    });
+    first.store.close();
+    stores.splice(stores.indexOf(first.store), 1);
+    await fs.writeFile(legacy, `${JSON.stringify(action(82, "2026-01-02T00:00:00.000Z"))}\n`);
+    const factory = vi.fn(async () => {
+      throw new Error("legacy state must not be read after activation");
+    });
+
+    const reopened = await SatMiningHistoryStore.open({
+      databasePath: resolveSatMiningHistoryDatabasePath(stateDir, "agent"),
+      scope: scope(),
+      migrationFactory: factory,
+    });
+    stores.push(reopened.store);
+    expect(factory).not.toHaveBeenCalled();
+    expect(reopened.migration).toBeNull();
+    expect(
+      reopened.store.queryActions({ window: "all" }).actions.map((entry) => entry.cycleId),
+    ).toEqual([81]);
+  });
+
+  it("fails closed for malformed or mismatched migration activation markers", async () => {
+    const stateDir = await tempState();
+    const opened = await openStore({ stateDir });
+    const databasePath = opened.store.databasePath;
+    opened.store.close();
+    stores.splice(stores.indexOf(opened.store), 1);
+    const db = new DatabaseSync(databasePath);
+    try {
+      db.prepare(
+        "UPDATE mining_meta SET value='malformed' WHERE key LIKE 'migration-activation:%'",
+      ).run();
+    } finally {
+      db.close();
+    }
+
+    await expect(
+      SatMiningHistoryStore.open({ databasePath, scope: scope(), migrationFactory: vi.fn() }),
+    ).rejects.toThrow(/activation marker is malformed or mismatched/u);
+  });
+
+  it("rejects archive-member or manifest mutation after archive publication without activation", async () => {
+    for (const mutation of ["member", "manifest"] as const) {
+      const stateDir = await tempState();
+      const legacy = path.join(stateDir, `published-${mutation}.ndjson`);
+      await fs.writeFile(legacy, `${JSON.stringify(action(90, "2026-01-01T00:00:00.000Z"))}\n`);
+      const databasePath = resolveSatMiningHistoryDatabasePath(stateDir, "agent");
+      const rename = fs.rename.bind(fs);
+      let changed = false;
+      vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
+        await rename(source, destination);
+        if (String(destination).includes("/legacy-archive/migration-") && !changed) {
+          changed = true;
+          const archiveDir = String(destination);
+          if (mutation === "manifest") {
+            await fs.writeFile(path.join(archiveDir, "manifest.json"), "{}\n", "utf8");
+          } else {
+            const [member] = await fs.readdir(archiveDir);
+            const memberPath = path.join(archiveDir, member!);
+            const replacement = `${memberPath}.replacement`;
+            await fs.writeFile(replacement, await fs.readFile(memberPath));
+            await rename(replacement, memberPath);
+          }
+        }
+      });
+
+      await expect(
+        SatMiningHistoryStore.open({
+          databasePath,
+          scope: scope(),
+          migration: {
+            sources: [{ kind: "action", path: legacy, label: `published-${mutation}` }],
+          },
+        }),
+      ).rejects.toThrow();
+      expect(changed).toBe(true);
+      await expect(fs.stat(databasePath)).rejects.toMatchObject({ code: "ENOENT" });
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("cleans only its UUID staging family when the fresh checkpoint is busy and retries", async () => {
+    const stateDir = await tempState();
+    const databasePath = resolveSatMiningHistoryDatabasePath(stateDir, "agent");
+    await fs.mkdir(path.dirname(databasePath), { recursive: true });
+    const unrelated = `${databasePath}.migrating`;
+    await fs.writeFile(unrelated, "unrelated\n", "utf8");
+    const prepare = DatabaseSync.prototype.prepare;
+    vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (sql: string) {
+      if (sql.includes("wal_checkpoint(TRUNCATE)")) {
+        return { get: () => ({ busy: 1, log: 1, checkpointed: 0 }) } as never;
+      }
+      return prepare.call(this, sql);
+    });
+
+    await expect(SatMiningHistoryStore.open({ databasePath, scope: scope() })).rejects.toThrow(
+      /fresh-history WAL checkpoint failed/u,
+    );
+    await expect(fs.stat(databasePath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readFile(unrelated, "utf8")).toBe("unrelated\n");
+    expect(
+      (await fs.readdir(path.dirname(databasePath))).filter((entry) =>
+        entry.startsWith(`${path.basename(databasePath)}.migrating-`),
+      ),
+    ).toEqual([]);
+
+    vi.restoreAllMocks();
+    const retry = await SatMiningHistoryStore.open({ databasePath, scope: scope() });
+    stores.push(retry.store);
+    expect(retry.store.integrityCheck()).toBe("ok");
+  });
+
+  it("reports an existing checkpoint failure without rolling back the committed activation", async () => {
+    const stateDir = await tempState();
+    const initial = await openStore({ stateDir });
+    const databasePath = initial.store.databasePath;
+    initial.store.close();
+    stores.splice(stores.indexOf(initial.store), 1);
+    removeActivationMarker(databasePath);
+    const legacy = path.join(stateDir, "checkpoint-existing.ndjson");
+    await fs.writeFile(legacy, `${JSON.stringify(action(100, "2026-01-01T00:00:00.000Z"))}\n`);
+    const prepare = DatabaseSync.prototype.prepare;
+    vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (sql: string) {
+      if (sql.includes("wal_checkpoint(TRUNCATE)")) {
+        return { get: () => ({ busy: 1, log: 1, checkpointed: 0 }) } as never;
+      }
+      return prepare.call(this, sql);
+    });
+
+    await expect(
+      SatMiningHistoryStore.open({
+        databasePath,
+        scope: scope(),
+        migration: { sources: [{ kind: "action", path: legacy, label: "checkpoint-existing" }] },
+      }),
+    ).rejects.toThrow(/existing-history WAL checkpoint failed/u);
+    vi.restoreAllMocks();
+
+    const inspection = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      expect(inspection.prepare("SELECT COUNT(*) AS count FROM mining_event").get()).toMatchObject({
+        count: 1,
+      });
+      expect(
+        inspection
+          .prepare(
+            "SELECT COUNT(*) AS count FROM mining_meta WHERE key LIKE 'migration-activation:%'",
+          )
+          .get(),
+      ).toMatchObject({ count: 1 });
+    } finally {
+      inspection.close();
+    }
+    const factory = vi.fn(async () => {
+      throw new Error("activation must avoid legacy reread");
+    });
+    const retry = await SatMiningHistoryStore.open({
+      databasePath,
+      scope: scope(),
+      migrationFactory: factory,
+    });
+    stores.push(retry.store);
+    expect(factory).not.toHaveBeenCalled();
+    expect(
+      retry.store.queryActions({ window: "all" }).actions.map((entry) => entry.cycleId),
+    ).toEqual([100]);
+  });
+
+  it("preserves archived failure history in activated SQLite without reading legacy input", async () => {
+    const stateDir = await tempState();
+    const initial = await openStore({ stateDir });
+    const failure = action(111, "2026-01-03T00:00:00.000Z", {
+      status: "failure",
+      complete: false,
+      message: "retained user-visible failure",
+    });
+    await initial.store.replaceOperationalState({ archivedFailures: [failure] });
+    initial.store.close();
+    stores.splice(stores.indexOf(initial.store), 1);
+    const factory = vi.fn(async () => {
+      throw new Error("activated SQLite must not read stale legacy failures");
+    });
+    const reopened = await SatMiningHistoryStore.open({
+      databasePath: initial.store.databasePath,
+      scope: scope(),
+      migrationFactory: factory,
+    });
+    stores.push(reopened.store);
+    expect(factory).not.toHaveBeenCalled();
+    expect(reopened.store.readOperationalState().archivedFailures).toEqual([failure]);
+  });
+
+  it("caps archived failures deterministically at migration and SQLite write boundaries", async () => {
+    const stateDir = await tempState();
+    const runtimePath = path.join(stateDir, "runtime-store.json");
+    const base = Date.parse("2026-08-19T00:00:00.000Z");
+    const failures = Array.from({ length: 521 }, (_unused, index) => ({
+      action: `failure-${index}`,
+      txHash: null,
+      status: "failure" as const,
+      message: `failure ${index}`,
+      at: new Date(base + index * 1_000).toISOString(),
+    }));
+    await fs.writeFile(
+      runtimePath,
+      JSON.stringify({ version: 12, recentActions: [], archivedFailures: failures }),
+      "utf8",
+    );
+    const opened = await openStore({
+      stateDir,
+      migration: { fileInputs: { runtimePath } },
+    });
+    const expectedActions = Array.from(
+      { length: 512 },
+      (_unused, index) => `failure-${520 - index}`,
+    );
+    expect(
+      opened.store.readOperationalState().archivedFailures?.map((entry) => entry.action),
+    ).toEqual(expectedActions);
+    const databasePath = opened.store.databasePath;
+    opened.store.close();
+    stores.splice(stores.indexOf(opened.store), 1);
+
+    const factory = vi.fn(async () => {
+      throw new Error("activated SQLite must not read legacy runtime JSON");
+    });
+    const reopened = await SatMiningHistoryStore.open({
+      databasePath,
+      scope: scope(),
+      migrationFactory: factory,
+    });
+    stores.push(reopened.store);
+    expect(factory).not.toHaveBeenCalled();
+    expect(
+      reopened.store.readOperationalState().archivedFailures?.map((entry) => entry.action),
+    ).toEqual(expectedActions);
+
+    await reopened.store.replaceOperationalState({ archivedFailures: failures.toReversed() });
+    expect(
+      reopened.store.readOperationalState().archivedFailures?.map((entry) => entry.action),
+    ).toEqual(expectedActions);
+    reopened.store.close();
+    stores.splice(stores.indexOf(reopened.store), 1);
+    const final = await SatMiningHistoryStore.open({ databasePath, scope: scope() });
+    stores.push(final.store);
+    expect(
+      final.store.readOperationalState().archivedFailures?.map((entry) => entry.action),
+    ).toEqual(expectedActions);
+  });
+
+  it("rotates the sole activation marker when rebinding scope and reopens without legacy input", async () => {
+    const stateDir = await tempState();
+    const initial = await openStore({ stateDir });
+    const rebound = scope("agent", "mainnet");
+    await initial.store.rebindScope(rebound);
+    const databasePath = initial.store.databasePath;
+    initial.store.close();
+    stores.splice(stores.indexOf(initial.store), 1);
+    const inspection = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      expect(
+        inspection
+          .prepare(
+            "SELECT COUNT(*) AS count FROM mining_meta WHERE key LIKE 'migration-activation:%'",
+          )
+          .get(),
+      ).toMatchObject({ count: 1 });
+    } finally {
+      inspection.close();
+    }
+    const factory = vi.fn(async () => {
+      throw new Error("rebound SQLite must not read legacy input");
+    });
+    const reopened = await SatMiningHistoryStore.open({
+      databasePath,
+      scope: rebound,
+      migrationFactory: factory,
+    });
+    stores.push(reopened.store);
+    expect(factory).not.toHaveBeenCalled();
+    expect(reopened.store.getScope()).toEqual(rebound);
   });
 });

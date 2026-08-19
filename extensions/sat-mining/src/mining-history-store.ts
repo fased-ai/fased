@@ -2,8 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import readline from "node:readline";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
+import {
+  parseSatAuditArtifactsBytes,
+  parseSatRuntimeSummaryBytes,
+  SAT_ACTION_HISTORY_RECENT_TAIL_LIMIT,
+  SAT_SQLITE_ARCHIVED_FAILURE_LIMIT,
+  type SatRuntimeSummary,
+} from "./audit-store.js";
 import type {
   SatMiningHistoryWindow,
   SatMiningRecentAction,
@@ -24,6 +30,7 @@ import {
   type SatSubmissionRecord,
   type SatSubmissionUpdateParams,
 } from "./submission-ledger.js";
+import { parseSatSubmissionRecordsBytes } from "./submission-ledger.js";
 
 const MINING_HISTORY_SCHEMA_VERSION = 2;
 const MINING_HISTORY_MIGRATION_LOCK_STALE_MS = 30 * 60 * 1000;
@@ -55,6 +62,13 @@ export type SatMiningHistoryMigrationSource = {
 export type SatMiningHistoryMigrationInput = {
   sources?: readonly SatMiningHistoryMigrationSource[];
   preservePaths?: readonly string[];
+  /** File-backed compatibility inputs are parsed only from pinned archived
+   * bytes inside the activation transaction. */
+  fileInputs?: {
+    runtimePath?: string;
+    auditPath?: string;
+    submissionPath?: string;
+  };
   runtimeRecentActions?: readonly SatMiningRecentAction[];
   runtimePlannerOutcomes?: readonly SatPlannerOutcomeMemory[];
   runtimePlannerCycles?: readonly SatPlannerCycleRecord[];
@@ -63,7 +77,12 @@ export type SatMiningHistoryMigrationInput = {
   submissionRecords?: readonly unknown[];
 };
 
+type MaterializedMigrationInput = SatMiningHistoryMigrationInput & {
+  runtimeSummary?: SatRuntimeSummary;
+};
+
 export type SatMiningOperationalState = {
+  archivedFailures?: readonly SatMiningRecentAction[];
   pendingPlannerCycles?: readonly unknown[];
   roundExecution?: readonly unknown[];
   claimBacklog?: readonly unknown[];
@@ -89,6 +108,33 @@ export type SatMiningHistoryDeletionReceipt = {
   toAt: string | null;
   historyRevision: number;
   deletedAt: string;
+};
+
+/** Conservative rolling limits. They deliberately retain several years of
+ * normal cycle activity and never evict records tied to live recovery. */
+export type SatMiningHistoryRetentionPolicy = {
+  maxActions: number;
+  maxOutcomes: number;
+  maxPlannerCycles: number;
+  maxAuditArtifacts: number;
+};
+
+export type SatMiningHistoryRetentionReceipt = {
+  walletId: string;
+  scopeKey: string;
+  prunedActions: number;
+  prunedOutcomes: number;
+  prunedPlannerCycles: number;
+  prunedAuditArtifacts: number;
+  protectedCycleCount: number;
+  historyRevision: number;
+};
+
+const DEFAULT_MINING_HISTORY_RETENTION: Readonly<SatMiningHistoryRetentionPolicy> = {
+  maxActions: 16_384,
+  maxOutcomes: 8_192,
+  maxPlannerCycles: 8_192,
+  maxAuditArtifacts: 4_096,
 };
 
 export type SatMiningDiskStatus = {
@@ -174,7 +220,13 @@ export type SatMiningHistoryMigrationReceipt = {
 type OpenMiningHistoryStoreParams = {
   databasePath: string;
   scope: SatMiningHistoryScope;
+  /**
+   * Compatibility input for callers/tests which already own an in-memory
+   * snapshot. Runtime callers should use migrationFactory so an activated
+   * SQLite ledger never touches stale legacy state again.
+   */
   migration?: SatMiningHistoryMigrationInput;
+  migrationFactory?: () => Promise<SatMiningHistoryMigrationInput | undefined>;
 };
 
 type ImportCounters = {
@@ -278,6 +330,46 @@ function scopeKey(scope: SatMiningHistoryScope): string {
   return sha256(canonicalJson(normalizeScope(scope)));
 }
 
+const MIGRATION_ACTIVATION_PREFIX = "migration-activation:";
+
+function migrationActivationKey(scope: SatMiningHistoryScope): string {
+  return `${MIGRATION_ACTIVATION_PREFIX}${scopeKey(scope)}:schema-${String(MINING_HISTORY_SCHEMA_VERSION)}`;
+}
+
+function migrationActivationValue(scope: SatMiningHistoryScope): string {
+  return canonicalJson({
+    schemaVersion: MINING_HISTORY_SCHEMA_VERSION,
+    scopeKey: scopeKey(scope),
+  });
+}
+
+/**
+ * A database becomes the authoritative runtime only after this marker commits
+ * beside its imported data. A marker for another scope/schema is never a
+ * reason to read old JSON again: that would mix two Wallet/network histories.
+ */
+function hasValidMigrationActivation(db: DatabaseSync, scope: SatMiningHistoryScope): boolean {
+  const rows = db
+    .prepare("SELECT key, value FROM mining_meta WHERE key LIKE ? ORDER BY key ASC")
+    .all(`${MIGRATION_ACTIVATION_PREFIX}%`) as SqlRow[];
+  if (rows.length === 0) {
+    return false;
+  }
+  const key = migrationActivationKey(scope);
+  const expected = migrationActivationValue(scope);
+  if (rows.length !== 1 || String(rows[0]?.key) !== key || String(rows[0]?.value) !== expected) {
+    throw new Error("Mining history migration activation marker is malformed or mismatched");
+  }
+  return true;
+}
+
+function writeMigrationActivation(db: DatabaseSync, scope: SatMiningHistoryScope): void {
+  db.prepare("INSERT INTO mining_meta(key, value) VALUES(?, ?)").run(
+    migrationActivationKey(scope),
+    migrationActivationValue(scope),
+  );
+}
+
 function bindingKey(scope: SatMiningHistoryScope): string {
   return sha256(
     canonicalJson({
@@ -317,6 +409,21 @@ function isSatMiningRecentAction(value: unknown): value is SatMiningRecentAction
     (candidate.complete == null || typeof candidate.complete === "boolean") &&
     Number.isFinite(Date.parse(String(candidate.at ?? "")))
   );
+}
+
+function normalizeSqliteArchivedFailures(
+  value: readonly unknown[] | undefined,
+): SatMiningRecentAction[] {
+  return (value ?? [])
+    .filter(isSatMiningRecentAction)
+    .toSorted((left, right) => {
+      const byTime = Date.parse(right.at) - Date.parse(left.at);
+      if (byTime !== 0) {
+        return byTime;
+      }
+      return canonicalJson(left).localeCompare(canonicalJson(right));
+    })
+    .slice(0, SAT_SQLITE_ARCHIVED_FAILURE_LIMIT);
 }
 
 function isSatPlannerOutcome(value: unknown): value is SatPlannerOutcomeMemory {
@@ -1208,12 +1315,117 @@ function plannerCycleInsertStatement(db: DatabaseSync): StatementSync {
   );
 }
 
-async function streamSha256(filePath: string): Promise<string> {
-  const digest = createHash("sha256");
-  for await (const chunk of createReadStream(filePath)) {
-    digest.update(chunk);
+type PinnedLegacySource = {
+  sourcePath: string;
+  handle: fs.FileHandle;
+  dev: number;
+  ino: number;
+  size: number;
+  mtimeMs: number;
+  sha256: string;
+};
+
+function assertPinnedLegacySource(
+  stat: { isFile: () => boolean; nlink: number; dev: number; ino: number; size: number },
+  sourcePath: string,
+  expected?: Pick<PinnedLegacySource, "dev" | "ino" | "size">,
+): void {
+  if (!stat.isFile() || stat.nlink !== 1) {
+    throw new Error(`Unsafe Mining legacy source: ${sourcePath}`);
   }
-  return digest.digest("hex");
+  if (
+    expected &&
+    (stat.dev !== expected.dev || stat.ino !== expected.ino || stat.size !== expected.size)
+  ) {
+    throw new Error(`Mining legacy source changed during archival: ${sourcePath}`);
+  }
+}
+
+async function hashPinnedLegacySource(
+  handle: fs.FileHandle,
+  size: number,
+  sourcePath: string,
+): Promise<string> {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let offset = 0;
+  while (offset < size) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      Math.min(buffer.length, size - offset),
+      offset,
+    );
+    if (bytesRead <= 0) {
+      throw new Error(`Mining legacy source changed during archival: ${sourcePath}`);
+    }
+    hash.update(buffer.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+  return hash.digest("hex");
+}
+
+async function openPinnedLegacySource(sourcePath: string): Promise<PinnedLegacySource | null> {
+  let handle: fs.FileHandle;
+  try {
+    handle = await fs.open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new Error(`Unsafe Mining legacy source: ${sourcePath}`);
+    }
+    throw error;
+  }
+  try {
+    const initial = await handle.stat();
+    assertPinnedLegacySource(initial, sourcePath);
+    const digest = await hashPinnedLegacySource(handle, initial.size, sourcePath);
+    const final = await handle.stat();
+    assertPinnedLegacySource(final, sourcePath, initial);
+    return {
+      sourcePath,
+      handle,
+      dev: initial.dev,
+      ino: initial.ino,
+      size: initial.size,
+      mtimeMs: Math.floor(initial.mtimeMs),
+      sha256: digest,
+    };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function copyPinnedLegacySource(
+  source: PinnedLegacySource,
+  destinationPath: string,
+): Promise<void> {
+  const destination = await fs.open(destinationPath, "wx", 0o440);
+  try {
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let offset = 0;
+    while (offset < source.size) {
+      const { bytesRead } = await source.handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, source.size - offset),
+        offset,
+      );
+      if (bytesRead <= 0) {
+        throw new Error(`Mining legacy source changed during archival: ${source.sourcePath}`);
+      }
+      await destination.write(buffer, 0, bytesRead, offset);
+      offset += bytesRead;
+    }
+    await destination.sync();
+    const final = await source.handle.stat();
+    assertPinnedLegacySource(final, source.sourcePath, source);
+  } finally {
+    await destination.close();
+  }
 }
 
 function isPidAlive(pid: number): boolean {
@@ -1277,134 +1489,419 @@ async function fsyncDirectory(directory: string): Promise<void> {
   }
 }
 
-async function copyFileStreaming(sourcePath: string, destinationPath: string): Promise<void> {
-  const source = await fs.open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-  const destination = await fs.open(destinationPath, "wx", 0o440);
+async function readRegularArchiveFile(filePath: string): Promise<{
+  bytes: Buffer;
+  digest: string;
+  stat: { dev: number; ino: number; size: number };
+}> {
+  const handle = await fs.open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const stat = await source.stat();
-    const buffer = Buffer.allocUnsafe(1024 * 1024);
-    let offset = 0;
-    while (offset < stat.size) {
-      const { bytesRead } = await source.read(
-        buffer,
-        0,
-        Math.min(buffer.length, stat.size - offset),
-        offset,
-      );
-      if (bytesRead <= 0) {
-        throw new Error(`Mining legacy source changed during archival: ${sourcePath}`);
-      }
-      await destination.write(buffer, 0, bytesRead, offset);
-      offset += bytesRead;
+    const initial = await handle.stat();
+    if (!initial.isFile() || initial.nlink !== 1) {
+      throw new Error(`Unsafe Mining legacy archive file: ${filePath}`);
     }
-    await destination.sync();
+    const bytes = await handle.readFile();
+    const final = await handle.stat();
+    if (
+      !final.isFile() ||
+      final.nlink !== 1 ||
+      final.dev !== initial.dev ||
+      final.ino !== initial.ino ||
+      final.size !== initial.size
+    ) {
+      throw new Error(`Mining legacy archive file changed while reading: ${filePath}`);
+    }
+    return { bytes, digest: sha256(bytes.toString("utf8")), stat: initial };
   } finally {
-    await Promise.all([source.close(), destination.close()]);
+    await handle.close();
   }
 }
 
 async function archiveLegacySources(
   databasePath: string,
   migration: SatMiningHistoryMigrationInput | undefined,
-): Promise<string | null> {
+): Promise<{
+  manifestPath: string;
+  manifestBytes: Buffer;
+  manifestMember: PinnedArchiveMember;
+} | null> {
   const selectedPaths = [
     ...(migration?.sources ?? []).map((source) => source.path),
     ...(migration?.preservePaths ?? []),
+    migration?.fileInputs?.runtimePath,
+    migration?.fileInputs?.auditPath,
+    migration?.fileInputs?.submissionPath,
   ];
-  const uniquePaths = [...new Set(selectedPaths.map((entry) => path.resolve(entry)))];
-  const records = [];
-  for (const sourcePath of uniquePaths) {
-    const stat = await fs.lstat(sourcePath).catch(() => null);
-    if (!stat) {
-      continue;
+  const uniquePaths = [
+    ...new Set(
+      selectedPaths
+        .filter((entry): entry is string => Boolean(entry))
+        .map((entry) => path.resolve(entry)),
+    ),
+  ];
+  const records: PinnedLegacySource[] = [];
+  try {
+    for (const sourcePath of uniquePaths) {
+      const source = await openPinnedLegacySource(sourcePath);
+      if (source) {
+        records.push(source);
+      }
     }
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
-      throw new Error(`Unsafe Mining legacy source: ${sourcePath}`);
+    if (records.length === 0) {
+      return null;
     }
-    records.push({
-      sourcePath,
-      size: stat.size,
-      mtimeMs: Math.floor(stat.mtimeMs),
-      sha256: await streamSha256(sourcePath),
-    });
+    const archiveRecords = records.map(({ handle: _handle, ...record }) => record);
+    const archiveDigest = sha256(canonicalJson(archiveRecords));
+    const archiveDir = path.join(
+      path.dirname(databasePath),
+      "legacy-archive",
+      `migration-${archiveDigest}`,
+    );
+    const manifestPath = path.join(archiveDir, "manifest.json");
+    const existingManifest = await fs.lstat(manifestPath).catch(() => null);
+    if (existingManifest) {
+      if (!existingManifest.isFile() || existingManifest.isSymbolicLink()) {
+        throw new Error(`Unsafe Mining legacy archive manifest: ${manifestPath}`);
+      }
+      const openedManifest = await readRegularArchiveFile(manifestPath);
+      const manifest = JSON.parse(openedManifest.bytes.toString("utf8")) as {
+        archiveDigest?: unknown;
+        sources?: Array<{
+          sourcePath?: unknown;
+          sha256?: unknown;
+          archiveName?: unknown;
+          archiveDev?: unknown;
+          archiveIno?: unknown;
+          archiveSize?: unknown;
+        }>;
+      };
+      if (
+        manifest.archiveDigest !== `sha256:${archiveDigest}` ||
+        !Array.isArray(manifest.sources) ||
+        manifest.sources.length !== archiveRecords.length
+      ) {
+        throw new Error(
+          `Mining legacy archive manifest does not bind current inputs: ${manifestPath}`,
+        );
+      }
+      for (const [index, record] of archiveRecords.entries()) {
+        const archived = manifest.sources[index];
+        const archiveName = String(archived?.archiveName ?? "");
+        const archivedPath = path.join(archiveDir, archiveName);
+        const archivedFile = await fs.lstat(archivedPath).catch(() => null);
+        if (
+          archived?.sourcePath !== record.sourcePath ||
+          archived?.sha256 !== record.sha256 ||
+          !/^\d{3}-[^/]+$/u.test(archiveName) ||
+          !Number.isSafeInteger(archived?.archiveDev) ||
+          !Number.isSafeInteger(archived?.archiveIno) ||
+          !Number.isSafeInteger(archived?.archiveSize) ||
+          !archivedFile?.isFile() ||
+          archivedFile.isSymbolicLink() ||
+          archivedFile.nlink !== 1 ||
+          archivedFile.dev !== archived.archiveDev ||
+          archivedFile.ino !== archived.archiveIno ||
+          archivedFile.size !== archived.archiveSize ||
+          (await readRegularArchiveFile(archivedPath)).digest !== record.sha256
+        ) {
+          throw new Error(`Mining legacy archive verification failed: ${manifestPath}`);
+        }
+      }
+      return {
+        manifestPath,
+        manifestBytes: openedManifest.bytes,
+        manifestMember: {
+          path: manifestPath,
+          digest: openedManifest.digest,
+          dev: openedManifest.stat.dev,
+          ino: openedManifest.stat.ino,
+          size: openedManifest.stat.size,
+        },
+      };
+    }
+    const available = await fs.statfs(path.dirname(databasePath)).catch(() => null);
+    const requiredBytes = archiveRecords.reduce((sum, record) => sum + record.size, 0);
+    const availableBytes = available ? Number(available.bavail) * Number(available.bsize) : null;
+    if (availableBytes != null && availableBytes < requiredBytes + 64 * 1024 * 1024) {
+      throw new Error(
+        `Insufficient disk space to preserve Mining legacy history (${requiredBytes} bytes required)`,
+      );
+    }
+    const archiveParent = path.dirname(archiveDir);
+    await fs.mkdir(archiveParent, { recursive: true, mode: 0o750 });
+    const stagingDir = `${archiveDir}.staging-${randomUUID()}`;
+    await fs.mkdir(stagingDir, { mode: 0o750 });
+    try {
+      const archived = [];
+      for (const [index, record] of archiveRecords.entries()) {
+        const source = records[index]!;
+        const destinationName = `${String(index).padStart(3, "0")}-${path.basename(record.sourcePath)}`;
+        const destinationPath = path.join(stagingDir, destinationName);
+        await copyPinnedLegacySource(source, destinationPath);
+        const archivedDigest = (await readRegularArchiveFile(destinationPath)).digest;
+        if (archivedDigest !== record.sha256) {
+          throw new Error(`Mining legacy archive digest mismatch: ${record.sourcePath}`);
+        }
+        const archivedStat = await fs.lstat(destinationPath);
+        if (!archivedStat.isFile() || archivedStat.isSymbolicLink() || archivedStat.nlink !== 1) {
+          throw new Error(`Unsafe Mining legacy archive member: ${destinationPath}`);
+        }
+        archived.push({
+          ...record,
+          archiveName: destinationName,
+          archiveDev: archivedStat.dev,
+          archiveIno: archivedStat.ino,
+          archiveSize: archivedStat.size,
+        });
+      }
+      const manifest = {
+        schemaVersion: 1,
+        archiveDigest: `sha256:${archiveDigest}`,
+        createdAt: new Date().toISOString(),
+        sources: archived,
+      };
+      const stagingManifest = path.join(stagingDir, "manifest.json");
+      const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      await fs.writeFile(stagingManifest, manifestBytes, {
+        mode: 0o440,
+        flag: "wx",
+      });
+      const manifestHandle = await fs.open(stagingManifest, "r");
+      let manifestMember: PinnedArchiveMember;
+      try {
+        await manifestHandle.sync();
+        const stat = await manifestHandle.stat();
+        if (!stat.isFile() || stat.nlink !== 1) {
+          throw new Error(`Unsafe Mining legacy archive manifest: ${stagingManifest}`);
+        }
+        manifestMember = {
+          path: manifestPath,
+          digest: sha256(manifestBytes.toString("utf8")),
+          dev: stat.dev,
+          ino: stat.ino,
+          size: stat.size,
+        };
+      } finally {
+        await manifestHandle.close();
+      }
+      await fsyncDirectory(stagingDir);
+      await fs.rename(stagingDir, archiveDir);
+      await fsyncDirectory(archiveParent);
+      return { manifestPath, manifestBytes, manifestMember: manifestMember! };
+    } catch (error) {
+      await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+  } finally {
+    await Promise.all(records.map(async (record) => await record.handle.close().catch(() => {})));
   }
-  if (records.length === 0) {
+}
+
+type PinnedArchiveMember = {
+  path: string;
+  digest: string;
+  dev: number;
+  ino: number;
+  size: number;
+};
+
+type PreparedLegacyArchive = {
+  manifestPath: string;
+  manifestDigest: string;
+  manifestBytes: Buffer;
+  manifestMember: PinnedArchiveMember;
+  archivedSources: Map<string, PinnedArchiveMember>;
+} | null;
+
+function assertPinnedRegularFile(
+  stat: { isFile: () => boolean; nlink: number; dev: number; ino: number; size: number },
+  sourcePath: string,
+  expected?: Pick<PinnedArchiveMember, "dev" | "ino" | "size">,
+): void {
+  if (!stat.isFile() || stat.nlink !== 1) {
+    throw new Error(`Unsafe Mining archived source: ${sourcePath}`);
+  }
+  if (
+    expected &&
+    (stat.dev !== expected.dev || stat.ino !== expected.ino || stat.size !== expected.size)
+  ) {
+    throw new Error(`Mining archived source changed before import: ${sourcePath}`);
+  }
+}
+
+/** Reads one pinned descriptor exactly once. The path only labels provenance:
+ * createReadStream consumes the already-open fd and never reopens that path. */
+async function readPinnedArchiveFile(
+  member: PinnedArchiveMember,
+): Promise<{ bytes: Buffer; digest: string }> {
+  const handle = await fs.open(member.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const initial = await handle.stat();
+    assertPinnedRegularFile(initial, member.path, member);
+    const hash = createHash("sha256");
+    const chunks: Buffer[] = [];
+    const stream = createReadStream(member.path, {
+      fd: handle.fd,
+      autoClose: false,
+      start: 0,
+    });
+    for await (const chunk of stream) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      hash.update(bytes);
+      chunks.push(bytes);
+    }
+    const digest = hash.digest("hex");
+    const final = await handle.stat();
+    assertPinnedRegularFile(final, member.path, member);
+    if (digest !== member.digest) {
+      throw new Error(`Mining archived source digest changed before import: ${member.path}`);
+    }
+    return { bytes: Buffer.concat(chunks), digest };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function prepareLegacyArchive(
+  databasePath: string,
+  migration: SatMiningHistoryMigrationInput | undefined,
+): Promise<PreparedLegacyArchive> {
+  const publication = await archiveLegacySources(databasePath, migration);
+  if (!publication) {
     return null;
   }
-  const archiveDigest = sha256(canonicalJson(records));
-  const archiveDir = path.join(
-    path.dirname(databasePath),
-    "legacy-archive",
-    `migration-${archiveDigest}`,
-  );
-  const manifestPath = path.join(archiveDir, "manifest.json");
-  const existingManifest = await fs.lstat(manifestPath).catch(() => null);
-  if (existingManifest) {
-    if (!existingManifest.isFile() || existingManifest.isSymbolicLink()) {
-      throw new Error(`Unsafe Mining legacy archive manifest: ${manifestPath}`);
+  const { manifestPath, manifestBytes, manifestMember } = publication;
+  const manifest = JSON.parse(manifestBytes.toString("utf8")) as {
+    sources: Array<{
+      sourcePath: string;
+      sha256: string;
+      archiveName: string;
+      archiveDev: number;
+      archiveIno: number;
+      archiveSize: number;
+    }>;
+  };
+  const archivedSources = new Map<string, PinnedArchiveMember>();
+  for (const source of manifest.sources) {
+    const archivedPath = path.join(path.dirname(manifestPath), source.archiveName);
+    if (
+      !Number.isSafeInteger(source.archiveDev) ||
+      !Number.isSafeInteger(source.archiveIno) ||
+      !Number.isSafeInteger(source.archiveSize)
+    ) {
+      throw new Error(`Unsafe Mining archived source: ${archivedPath}`);
     }
-    return manifestPath;
+    archivedSources.set(path.resolve(source.sourcePath), {
+      path: archivedPath,
+      digest: source.sha256,
+      dev: source.archiveDev,
+      ino: source.archiveIno,
+      size: source.archiveSize,
+    });
   }
-  const available = await fs.statfs(path.dirname(databasePath)).catch(() => null);
-  const requiredBytes = records.reduce((sum, record) => sum + record.size, 0);
-  const availableBytes = available ? Number(available.bavail) * Number(available.bsize) : null;
-  if (availableBytes != null && availableBytes < requiredBytes + 64 * 1024 * 1024) {
+  return {
+    manifestPath,
+    manifestDigest: `sha256:${sha256(manifestBytes.toString("utf8"))}`,
+    manifestBytes,
+    manifestMember: { ...manifestMember, digest: sha256(manifestBytes.toString("utf8")) },
+    archivedSources,
+  };
+}
+
+async function verifyPinnedArchiveManifest(archive: PreparedLegacyArchive): Promise<void> {
+  if (!archive) {
+    return;
+  }
+  const verified = await readPinnedArchiveFile(archive.manifestMember);
+  if (!verified.bytes.equals(archive.manifestBytes)) {
     throw new Error(
-      `Insufficient disk space to preserve Mining legacy history (${requiredBytes} bytes required)`,
+      `Mining legacy archive manifest changed before import: ${archive.manifestPath}`,
     );
   }
-  await fs.mkdir(archiveDir, { recursive: true, mode: 0o750 });
-  const archived = [];
-  for (const [index, record] of records.entries()) {
-    const destinationName = `${String(index).padStart(3, "0")}-${path.basename(record.sourcePath)}`;
-    const destinationPath = path.join(archiveDir, destinationName);
-    try {
-      await fs.copyFile(
-        record.sourcePath,
-        destinationPath,
-        constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
-      );
-      await fs.chmod(destinationPath, 0o440);
-      const handle = await fs.open(destinationPath, "r");
-      try {
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw error;
-      }
-      await fs.rm(destinationPath, { force: true }).catch(() => {});
-      await copyFileStreaming(record.sourcePath, destinationPath);
-    }
-    const archivedDigest = await streamSha256(destinationPath);
-    if (archivedDigest !== record.sha256) {
-      throw new Error(`Mining legacy archive digest mismatch: ${record.sourcePath}`);
-    }
-    archived.push({ ...record, archiveName: destinationName });
+}
+
+async function readArchivedMigrationInput(
+  archive: PreparedLegacyArchive,
+  sourcePath: string | undefined,
+): Promise<Buffer | null> {
+  if (!sourcePath) {
+    return null;
   }
-  const manifest = {
-    schemaVersion: 1,
-    archiveDigest: `sha256:${archiveDigest}`,
-    createdAt: new Date().toISOString(),
-    sources: archived,
+  const member = archive?.archivedSources.get(path.resolve(sourcePath));
+  return member ? (await readPinnedArchiveFile(member)).bytes : null;
+}
+
+function runtimeSummaryToOperationalState(summary: SatRuntimeSummary): SatMiningOperationalState {
+  return {
+    archivedFailures: summary.archivedFailures,
+    pendingPlannerCycles: summary.pendingPlannerCycles,
+    roundExecution: summary.roundExecution,
+    claimBacklog: summary.claimBacklog,
+    settlementPageParticipants: summary.settlementPageParticipants,
+    settlementPageLookupTables: summary.settlementPageLookupTables,
+    workers: summary.workers as Record<string, unknown>,
+    runtimeMeta: {
+      lastKnownStatus: summary.lastKnownStatus,
+      chainTime: summary.chainTime,
+      currentRunStartedAt: summary.currentRunStartedAt,
+      runStartSolBalanceLamports: summary.runStartSolBalanceLamports,
+      runStartSatBalanceRaw: summary.runStartSatBalanceRaw,
+      enabledWanted: summary.enabledWanted,
+      lastAction: summary.lastAction,
+      lastActionTxHash: summary.lastActionTxHash,
+      lastFailure: summary.lastFailure,
+    },
   };
-  const temporaryManifest = `${manifestPath}.${process.pid}.tmp`;
-  await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`, {
-    mode: 0o440,
-    flag: "wx",
-  });
-  const manifestHandle = await fs.open(temporaryManifest, "r");
-  try {
-    await manifestHandle.sync();
-  } finally {
-    await manifestHandle.close();
+}
+
+async function materializeArchivedMigrationInput(
+  migration: SatMiningHistoryMigrationInput | undefined,
+  archive: PreparedLegacyArchive,
+): Promise<MaterializedMigrationInput | undefined> {
+  if (!migration) {
+    return undefined;
   }
-  await fs.rename(temporaryManifest, manifestPath);
-  await fsyncDirectory(archiveDir);
-  await fsyncDirectory(path.dirname(archiveDir));
-  return manifestPath;
+  const [runtimeBytes, auditBytes, submissionBytes] = await Promise.all([
+    readArchivedMigrationInput(archive, migration.fileInputs?.runtimePath),
+    readArchivedMigrationInput(archive, migration.fileInputs?.auditPath),
+    readArchivedMigrationInput(archive, migration.fileInputs?.submissionPath),
+  ]);
+  const runtimeSummary = runtimeBytes ? parseSatRuntimeSummaryBytes(runtimeBytes) : undefined;
+  return {
+    ...migration,
+    runtimeSummary,
+    runtimeRecentActions: runtimeSummary?.recentActions ?? migration.runtimeRecentActions,
+    runtimePlannerOutcomes: runtimeSummary?.plannerHistory ?? migration.runtimePlannerOutcomes,
+    runtimePlannerCycles: runtimeSummary?.plannerCycles ?? migration.runtimePlannerCycles,
+    operationalState: runtimeSummary
+      ? runtimeSummaryToOperationalState(runtimeSummary)
+      : migration.operationalState,
+    auditArtifacts: auditBytes ? parseSatAuditArtifactsBytes(auditBytes) : migration.auditArtifacts,
+    submissionRecords: submissionBytes
+      ? parseSatSubmissionRecordsBytes(submissionBytes, migration.fileInputs?.submissionPath)
+      : migration.submissionRecords,
+  };
+}
+
+function bindLegacyArchiveReceipt(db: DatabaseSync, archive: PreparedLegacyArchive): void {
+  if (!archive) {
+    return;
+  }
+  const key = `legacy-archive-receipt:${archive.manifestDigest}`;
+  const value = canonicalJson({
+    manifestPath: archive.manifestPath,
+    manifestDigest: archive.manifestDigest,
+  });
+  const existing = db.prepare("SELECT value FROM mining_meta WHERE key=?").get(key) as
+    | SqlRow
+    | undefined;
+  if (existing) {
+    if (String(existing.value) !== value) {
+      throw new Error(`Mining legacy archive receipt mismatch: ${archive.manifestPath}`);
+    }
+    return;
+  }
+  db.prepare("INSERT INTO mining_meta(key, value) VALUES(?, ?)").run(key, value);
 }
 
 const STALE_MINING_TEMP_PATTERN =
@@ -1441,6 +1938,71 @@ async function quarantineStaleMiningTemps(databasePath: string): Promise<number>
     await fsyncDirectory(walletDir);
   }
   return quarantined;
+}
+
+const SQLITE_FAMILY_SUFFIXES = ["", "-wal", "-shm", "-journal"] as const;
+
+async function removeUniqueStagingFamily(stagingPath: string): Promise<void> {
+  for (const suffix of SQLITE_FAMILY_SUFFIXES) {
+    const candidate = `${stagingPath}${suffix}`;
+    const stat = await fs.lstat(candidate).catch(() => null);
+    if (!stat) {
+      continue;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+      throw new Error(`Unsafe Mining SQLite staging residue: ${candidate}`);
+    }
+    await fs.unlink(candidate);
+  }
+}
+
+async function publishFreshHistoryDatabase(
+  stagingPath: string,
+  databasePath: string,
+): Promise<void> {
+  const handle = await fs.open(stagingPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.nlink !== 1) {
+      throw new Error(`Unsafe Mining SQLite staging database: ${stagingPath}`);
+    }
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  for (const suffix of SQLITE_FAMILY_SUFFIXES.slice(1)) {
+    const candidate = `${stagingPath}${suffix}`;
+    const stat = await fs.lstat(candidate).catch(() => null);
+    if (!stat) {
+      continue;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size !== 0) {
+      throw new Error(`Unsafe Mining SQLite staging sidecar: ${candidate}`);
+    }
+    await fs.unlink(candidate);
+  }
+  await fs.chmod(stagingPath, 0o660);
+  await fs.rename(stagingPath, databasePath);
+  await fsyncDirectory(path.dirname(databasePath));
+}
+
+function assertCheckpointComplete(row: SqlRow, context: string): void {
+  const busy = Number(row.busy);
+  const log = Number(row.log);
+  const checkpointed = Number(row.checkpointed);
+  if (
+    !Number.isSafeInteger(busy) ||
+    !Number.isSafeInteger(log) ||
+    !Number.isSafeInteger(checkpointed) ||
+    busy !== 0 ||
+    log < 0 ||
+    checkpointed < 0 ||
+    checkpointed !== log
+  ) {
+    throw new Error(
+      `${context} (busy=${String(row.busy)}, log=${String(row.log)}, checkpointed=${String(row.checkpointed)})`,
+    );
+  }
 }
 
 function recordCorruption(
@@ -1512,23 +2074,22 @@ async function importNdjsonSource(
   scopeId: number,
   source: SatMiningHistoryMigrationSource,
   counters: ImportCounters,
+  provenancePath = source.path,
+  archived?: PinnedArchiveMember,
 ): Promise<void> {
-  const stat = await fs.stat(source.path).catch(() => null);
-  if (!stat?.isFile()) {
-    return;
+  if (!archived) {
+    throw new Error(`Mining migration source was not archived: ${provenancePath}`);
   }
   const existing = db
     .prepare("SELECT source_sha256 FROM migration_source WHERE source_label=?")
     .get(source.label) as SqlRow | undefined;
-  const digest = await streamSha256(source.path);
+  const { bytes, digest } = await readPinnedArchiveFile(archived);
   if (existing && String(existing.source_sha256) === digest) {
     return;
   }
 
   const actionStatement = actionInsertStatement(db);
   const outcomeStatement = outcomeInsertStatement(db);
-  const input = createReadStream(source.path, { encoding: "utf8" });
-  const lines = readline.createInterface({ input, crlfDelay: Infinity });
   let validRecords = 0;
   let duplicateRecords = 0;
   let malformedRecords = 0;
@@ -1536,82 +2097,68 @@ async function importNdjsonSource(
   let byteOffset = 0;
   let oldestAtMs: number | null = null;
   let newestAtMs: number | null = null;
-  let batchCount = 0;
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    for await (const line of lines) {
-      lineNumber += 1;
-      const trimmed = line.trim();
-      const lineByteOffset = byteOffset;
-      byteOffset += Buffer.byteLength(line, "utf8") + 1;
-      if (!trimmed) {
-        continue;
-      }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        malformedRecords += 1;
-        counters.malformedRecords += 1;
-        recordCorruption(db, {
-          sourceLabel: source.label,
-          sourcePath: source.path,
-          lineNumber,
-          byteOffset: lineByteOffset,
-          record: trimmed,
-          reason: "invalid-json",
-        });
-        continue;
-      }
-
-      let inserted = false;
-      if (source.kind === "action" && isSatMiningRecentAction(parsed)) {
-        if (recordActionConflict(db, scopeId, parsed, source.label)) {
-          counters.conflictRecords += 1;
-        }
-        inserted = insertAction(db, actionStatement, scopeId, parsed, source.label);
-        counters.importedActions += inserted ? 1 : 0;
-        counters.duplicateActions += inserted ? 0 : 1;
-        const atMs = Date.parse(parsed.at);
-        oldestAtMs = oldestAtMs == null ? atMs : Math.min(oldestAtMs, atMs);
-        newestAtMs = newestAtMs == null ? atMs : Math.max(newestAtMs, atMs);
-      } else if (source.kind === "planner" && isSatPlannerOutcome(parsed)) {
-        inserted = insertOutcome(db, outcomeStatement, scopeId, parsed, source.label);
-        counters.importedOutcomes += inserted ? 1 : 0;
-        counters.duplicateOutcomes += inserted ? 0 : 1;
-        const atMs = Date.parse(parsed.recordedAt);
-        oldestAtMs = oldestAtMs == null ? atMs : Math.min(oldestAtMs, atMs);
-        newestAtMs = newestAtMs == null ? atMs : Math.max(newestAtMs, atMs);
-      } else {
-        malformedRecords += 1;
-        counters.malformedRecords += 1;
-        recordCorruption(db, {
-          sourceLabel: source.label,
-          sourcePath: source.path,
-          lineNumber,
-          byteOffset: lineByteOffset,
-          record: trimmed,
-          reason: `invalid-${source.kind}-record`,
-        });
-        continue;
-      }
-      validRecords += 1;
-      duplicateRecords += inserted ? 0 : 1;
-      batchCount += 1;
-      if (batchCount >= MINING_HISTORY_IMPORT_BATCH_SIZE) {
-        db.exec("COMMIT");
-        batchCount = 0;
-        await immediate();
-        db.exec("BEGIN IMMEDIATE");
-      }
+  const rawLines = bytes.toString("utf8").split(/\r?\n/u);
+  for (const line of rawLines) {
+    lineNumber += 1;
+    const trimmed = line.trim();
+    const lineByteOffset = byteOffset;
+    byteOffset += Buffer.byteLength(line, "utf8") + 1;
+    if (!trimmed) {
+      continue;
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  } finally {
-    lines.close();
-    input.destroy();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      malformedRecords += 1;
+      counters.malformedRecords += 1;
+      recordCorruption(db, {
+        sourceLabel: source.label,
+        sourcePath: provenancePath,
+        lineNumber,
+        byteOffset: lineByteOffset,
+        record: trimmed,
+        reason: "invalid-json",
+      });
+      continue;
+    }
+
+    let inserted = false;
+    if (source.kind === "action" && isSatMiningRecentAction(parsed)) {
+      if (recordActionConflict(db, scopeId, parsed, source.label)) {
+        counters.conflictRecords += 1;
+      }
+      inserted = insertAction(db, actionStatement, scopeId, parsed, source.label);
+      counters.importedActions += inserted ? 1 : 0;
+      counters.duplicateActions += inserted ? 0 : 1;
+      const atMs = Date.parse(parsed.at);
+      oldestAtMs = oldestAtMs == null ? atMs : Math.min(oldestAtMs, atMs);
+      newestAtMs = newestAtMs == null ? atMs : Math.max(newestAtMs, atMs);
+    } else if (source.kind === "planner" && isSatPlannerOutcome(parsed)) {
+      inserted = insertOutcome(db, outcomeStatement, scopeId, parsed, source.label);
+      counters.importedOutcomes += inserted ? 1 : 0;
+      counters.duplicateOutcomes += inserted ? 0 : 1;
+      const atMs = Date.parse(parsed.recordedAt);
+      oldestAtMs = oldestAtMs == null ? atMs : Math.min(oldestAtMs, atMs);
+      newestAtMs = newestAtMs == null ? atMs : Math.max(newestAtMs, atMs);
+    } else {
+      malformedRecords += 1;
+      counters.malformedRecords += 1;
+      recordCorruption(db, {
+        sourceLabel: source.label,
+        sourcePath: provenancePath,
+        lineNumber,
+        byteOffset: lineByteOffset,
+        record: trimmed,
+        reason: `invalid-${source.kind}-record`,
+      });
+      continue;
+    }
+    validRecords += 1;
+    duplicateRecords += inserted ? 0 : 1;
+    if (validRecords % MINING_HISTORY_IMPORT_BATCH_SIZE === 0) {
+      await immediate();
+    }
   }
 
   db.prepare(
@@ -1635,10 +2182,10 @@ async function importNdjsonSource(
        imported_at_ms=excluded.imported_at_ms`,
   ).run(
     source.label,
-    source.path,
+    provenancePath,
     source.kind,
-    stat.size,
-    Math.floor(stat.mtimeMs),
+    archived.size,
+    0,
     digest,
     validRecords,
     duplicateRecords,
@@ -1667,57 +2214,50 @@ function importRuntimeRecords(
   const actionStatement = actionInsertStatement(db);
   const outcomeStatement = outcomeInsertStatement(db);
   const cycleStatement = plannerCycleInsertStatement(db);
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    for (const entry of input?.runtimeRecentActions ?? []) {
-      if (!isSatMiningRecentAction(entry)) {
-        counters.malformedRecords += 1;
-        continue;
-      }
-      const inserted = insertAction(
-        db,
-        actionStatement,
-        scopeId,
-        entry,
-        "runtime-store:recentActions",
-      );
-      counters.importedActions += inserted ? 1 : 0;
-      counters.duplicateActions += inserted ? 0 : 1;
+  for (const entry of input?.runtimeRecentActions ?? []) {
+    if (!isSatMiningRecentAction(entry)) {
+      counters.malformedRecords += 1;
+      continue;
     }
-    for (const entry of input?.runtimePlannerOutcomes ?? []) {
-      if (!isSatPlannerOutcome(entry)) {
-        counters.malformedRecords += 1;
-        continue;
-      }
-      const inserted = insertOutcome(
-        db,
-        outcomeStatement,
-        scopeId,
-        entry,
-        "runtime-store:plannerHistory",
-      );
-      counters.importedOutcomes += inserted ? 1 : 0;
-      counters.duplicateOutcomes += inserted ? 0 : 1;
+    const inserted = insertAction(
+      db,
+      actionStatement,
+      scopeId,
+      entry,
+      "runtime-store:recentActions",
+    );
+    counters.importedActions += inserted ? 1 : 0;
+    counters.duplicateActions += inserted ? 0 : 1;
+  }
+  for (const entry of input?.runtimePlannerOutcomes ?? []) {
+    if (!isSatPlannerOutcome(entry)) {
+      counters.malformedRecords += 1;
+      continue;
     }
-    for (const entry of input?.runtimePlannerCycles ?? []) {
-      if (!isSatPlannerCycle(entry)) {
-        counters.malformedRecords += 1;
-        continue;
-      }
-      const inserted = insertPlannerCycle(
-        db,
-        cycleStatement,
-        scopeId,
-        entry,
-        "runtime-store:plannerCycles",
-      );
-      counters.importedPlannerCycles += inserted ? 1 : 0;
-      counters.duplicatePlannerCycles += inserted ? 0 : 1;
+    const inserted = insertOutcome(
+      db,
+      outcomeStatement,
+      scopeId,
+      entry,
+      "runtime-store:plannerHistory",
+    );
+    counters.importedOutcomes += inserted ? 1 : 0;
+    counters.duplicateOutcomes += inserted ? 0 : 1;
+  }
+  for (const entry of input?.runtimePlannerCycles ?? []) {
+    if (!isSatPlannerCycle(entry)) {
+      counters.malformedRecords += 1;
+      continue;
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
+    const inserted = insertPlannerCycle(
+      db,
+      cycleStatement,
+      scopeId,
+      entry,
+      "runtime-store:plannerCycles",
+    );
+    counters.importedPlannerCycles += inserted ? 1 : 0;
+    counters.duplicatePlannerCycles += inserted ? 0 : 1;
   }
 }
 
@@ -1800,7 +2340,11 @@ function replaceOperationalStateRows(
     `INSERT INTO runtime_meta(scope_id, meta_key, payload_json, updated_at_ms)
      VALUES(?, ?, ?, ?)`,
   );
-  for (const [key, value] of Object.entries(state.runtimeMeta ?? {}).toSorted(([a], [b]) =>
+  const runtimeMeta = {
+    ...(state.runtimeMeta ?? {}),
+    archivedFailures: normalizeSqliteArchivedFailures(state.archivedFailures),
+  };
+  for (const [key, value] of Object.entries(runtimeMeta).toSorted(([a], [b]) =>
     a.localeCompare(b),
   )) {
     metaStatement.run(scopeId, key, canonicalJson(value), Date.now());
@@ -1822,13 +2366,21 @@ function upsertAuditArtifactRows(
        updated_at_ms=excluded.updated_at_ms`,
   );
   artifacts.forEach((artifact, index) => {
+    if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+      throw new Error("Mining audit artifact is invalid");
+    }
+    const updatedAt = String((artifact as Record<string, unknown>).updatedAt ?? "").trim();
+    const updatedAtMs = Date.parse(updatedAt);
+    if (!updatedAt || !Number.isFinite(updatedAtMs)) {
+      throw new Error("Mining audit artifact updatedAt is invalid");
+    }
     const payload = canonicalJson(artifact);
     statement.run(
       scopeId,
       stateKey(artifact, ["roundKey", "artifactId", "id"], index),
       `sha256:${sha256(payload)}`,
       payload,
-      Date.now(),
+      updatedAtMs,
     );
   });
 }
@@ -1934,16 +2486,9 @@ function importOperationalRecords(
   scopeId: number,
   input: SatMiningHistoryMigrationInput | undefined,
 ): void {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    replaceOperationalStateRows(db, scopeId, input?.operationalState);
-    upsertAuditArtifactRows(db, scopeId, input?.auditArtifacts ?? []);
-    upsertSubmissionRows(db, scopeId, input?.submissionRecords ?? []);
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  replaceOperationalStateRows(db, scopeId, input?.operationalState);
+  upsertAuditArtifactRows(db, scopeId, input?.auditArtifacts ?? []);
+  upsertSubmissionRows(db, scopeId, input?.submissionRecords ?? []);
 }
 
 function rowToAction(row: SqlRow): SatMiningRecentAction {
@@ -2054,6 +2599,8 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
   private scopeId: number;
   private readonly readOnly: boolean;
   private writeChain: Promise<void> = Promise.resolve();
+  private lifecycleFenced = false;
+  private closed = false;
 
   private constructor(
     databasePath: string,
@@ -2085,52 +2632,88 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
     const lock = await acquireMigrationLock(`${databasePath}.migration.lock`);
     try {
       const quarantinedTemps = await quarantineStaleMiningTemps(databasePath);
+      const countersFor = (): ImportCounters => ({
+        importedActions: 0,
+        duplicateActions: 0,
+        importedOutcomes: 0,
+        duplicateOutcomes: 0,
+        importedPlannerCycles: 0,
+        duplicatePlannerCycles: 0,
+        malformedRecords: 0,
+        sourceCount: 0,
+        conflictRecords: 0,
+        quarantinedRecords: quarantinedTemps,
+      });
+      const loadMigrationInput = async (): Promise<SatMiningHistoryMigrationInput | undefined> =>
+        params.migration ?? (await params.migrationFactory?.());
+      const importMigration = async (
+        db: DatabaseSync,
+        migration: SatMiningHistoryMigrationInput | undefined,
+        archive: PreparedLegacyArchive,
+        counters: ImportCounters,
+      ): Promise<void> => {
+        await verifyPinnedArchiveManifest(archive);
+        const inputs = await materializeArchivedMigrationInput(migration, archive);
+        const scopeId = ensureScope(db, normalizedScope);
+        const migrationScopeId = ensureScope(db, migrationScope(normalizedScope));
+        for (const source of inputs?.sources ?? []) {
+          const archived = archive?.archivedSources.get(path.resolve(source.path));
+          // The index always declares the legacy topology. Missing optional
+          // files have no archived descriptor and therefore no import; an
+          // existing source can never reach here without its pinned archive.
+          if (!archived) {
+            continue;
+          }
+          await importNdjsonSource(db, migrationScopeId, source, counters, source.path, archived);
+        }
+        importRuntimeRecords(db, migrationScopeId, inputs, counters);
+        importOperationalRecords(db, scopeId, inputs);
+        bindLegacyArchiveReceipt(db, archive);
+        writeMigrationActivation(db, normalizedScope);
+      };
       if (!existing) {
-        const stagingPath = `${databasePath}.migrating`;
+        const migration = await loadMigrationInput();
+        // Archive before opening the transaction so the legacy topology stays
+        // authoritative until the complete SQLite activation can commit.
+        const archive = await prepareLegacyArchive(databasePath, migration);
+        const stagingPath = `${databasePath}.migrating-${randomUUID()}`;
+        let stagingDb: DatabaseSync | null = null;
         try {
-          await fs.rm(stagingPath, { force: true });
           const db = new DatabaseSync(stagingPath);
+          stagingDb = db;
           applyDatabasePragmas(db);
           createSchema(db);
-          const scopeId = ensureScope(db, normalizedScope);
-          const migrationScopeId = ensureScope(db, migrationScope(normalizedScope));
-          const counters: ImportCounters = {
-            importedActions: 0,
-            duplicateActions: 0,
-            importedOutcomes: 0,
-            duplicateOutcomes: 0,
-            importedPlannerCycles: 0,
-            duplicatePlannerCycles: 0,
-            malformedRecords: 0,
-            sourceCount: 0,
-            conflictRecords: 0,
-            quarantinedRecords: quarantinedTemps,
-          };
-          for (const source of params.migration?.sources ?? []) {
-            await importNdjsonSource(db, migrationScopeId, source, counters);
-          }
-          importRuntimeRecords(db, migrationScopeId, params.migration, counters);
-          importOperationalRecords(db, scopeId, params.migration);
+          db.exec("BEGIN IMMEDIATE");
+          const counters = countersFor();
+          await importMigration(db, migration, archive, counters);
           incrementHistoryRevision(db);
           const integrityRow = db.prepare("PRAGMA integrity_check").get() as SqlRow;
           const integrity = String(Object.values(integrityRow)[0] ?? "");
           if (integrity !== "ok") {
             throw new Error(`Mining history integrity check failed: ${integrity || "unknown"}`);
           }
-          db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+          db.exec("COMMIT");
+          assertCheckpointComplete(
+            db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as SqlRow,
+            "Mining fresh-history WAL checkpoint failed",
+          );
           db.close();
-          await fs.chmod(stagingPath, 0o660);
-          await fs.rename(stagingPath, databasePath);
-          await fsyncDirectory(path.dirname(databasePath));
-          const archiveManifestPath = await archiveLegacySources(databasePath, params.migration);
+          stagingDb = null;
+          await publishFreshHistoryDatabase(stagingPath, databasePath);
           receipt = {
             schemaVersion: MINING_HISTORY_SCHEMA_VERSION,
             ...counters,
-            archiveManifestPath,
+            archiveManifestPath: archive?.manifestPath ?? null,
             integrity,
           };
         } catch (error) {
-          await fs.rm(stagingPath, { force: true }).catch(() => {});
+          try {
+            stagingDb?.exec("ROLLBACK");
+          } catch {
+            // The transaction may already have been committed or rolled back.
+          }
+          stagingDb?.close();
+          await removeUniqueStagingFamily(stagingPath).catch(() => {});
           throw error;
         }
       } else {
@@ -2139,49 +2722,38 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
           applyDatabasePragmas(migrationDb);
           migrateExistingSchema(migrationDb);
           createSchema(migrationDb);
-          const scopeId = ensureScope(migrationDb, normalizedScope);
-          const migrationScopeId = ensureScope(migrationDb, migrationScope(normalizedScope));
-          const counters: ImportCounters = {
-            importedActions: 0,
-            duplicateActions: 0,
-            importedOutcomes: 0,
-            duplicateOutcomes: 0,
-            importedPlannerCycles: 0,
-            duplicatePlannerCycles: 0,
-            malformedRecords: 0,
-            sourceCount: 0,
-            conflictRecords: 0,
-            quarantinedRecords: quarantinedTemps,
-          };
-          for (const source of params.migration?.sources ?? []) {
-            await importNdjsonSource(migrationDb, migrationScopeId, source, counters);
-          }
-          importRuntimeRecords(migrationDb, migrationScopeId, params.migration, counters);
-          importOperationalRecords(migrationDb, scopeId, params.migration);
-          const changed =
-            counters.importedActions +
-              counters.importedOutcomes +
-              counters.importedPlannerCycles +
-              counters.malformedRecords >
-            0;
-          if (changed) {
+          if (!hasValidMigrationActivation(migrationDb, normalizedScope)) {
+            const migration = await loadMigrationInput();
+            const archive = await prepareLegacyArchive(databasePath, migration);
+            migrationDb.exec("BEGIN IMMEDIATE");
+            const counters = countersFor();
+            await importMigration(migrationDb, migration, archive, counters);
             incrementHistoryRevision(migrationDb);
-          }
-          const integrityRow = migrationDb.prepare("PRAGMA integrity_check").get() as SqlRow;
-          const integrity = String(Object.values(integrityRow)[0] ?? "");
-          if (integrity !== "ok") {
-            throw new Error(`Mining history integrity check failed: ${integrity || "unknown"}`);
-          }
-          migrationDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-          if (changed || counters.sourceCount > 0) {
-            const archiveManifestPath = await archiveLegacySources(databasePath, params.migration);
+            const integrityRow = migrationDb.prepare("PRAGMA integrity_check").get() as SqlRow;
+            const integrity = String(Object.values(integrityRow)[0] ?? "");
+            if (integrity !== "ok") {
+              throw new Error(`Mining history integrity check failed: ${integrity || "unknown"}`);
+            }
+            migrationDb.exec("COMMIT");
+            assertCheckpointComplete(
+              migrationDb.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as SqlRow,
+              "Mining existing-history WAL checkpoint failed",
+            );
             receipt = {
               schemaVersion: MINING_HISTORY_SCHEMA_VERSION,
               ...counters,
-              archiveManifestPath,
+              archiveManifestPath: archive?.manifestPath ?? null,
               integrity,
             };
           }
+        } catch (error) {
+          try {
+            migrationDb.exec("ROLLBACK");
+          } catch {
+            // The transaction may already have been committed before a later
+            // checkpoint error; preserve that original error.
+          }
+          throw error;
         } finally {
           migrationDb.close();
         }
@@ -2273,8 +2845,26 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
   async rebindScope(scope: SatMiningHistoryScope): Promise<void> {
     await this.enqueueWrite(() => {
       const normalized = normalizeScope(scope);
-      this.scopeId = ensureScope(this.db, normalized);
-      this.scope = normalized;
+      // A rebind changes the exact scope that is allowed to suppress legacy
+      // migration input. Rotate the sole marker with the scope row or leave
+      // both unchanged if any part of the transaction fails.
+      if (!hasValidMigrationActivation(this.db, this.scope)) {
+        throw new Error("Mining history cannot rebind without a valid activation marker");
+      }
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        const nextScopeId = ensureScope(this.db, normalized);
+        this.db
+          .prepare("DELETE FROM mining_meta WHERE key LIKE ?")
+          .run(`${MIGRATION_ACTIVATION_PREFIX}%`);
+        writeMigrationActivation(this.db, normalized);
+        this.db.exec("COMMIT");
+        this.scopeId = nextScopeId;
+        this.scope = normalized;
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
     });
   }
 
@@ -2708,7 +3298,22 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
           .all(this.scopeId) as SqlRow[]
       ).map((row) => JSON.parse(String(row.payload_json)) as unknown);
     const settlement = rows("settlement_state") as Array<Record<string, unknown>>;
+    const runtimeMeta = Object.fromEntries(
+      (
+        this.db
+          .prepare(
+            `SELECT meta_key, payload_json FROM runtime_meta
+              WHERE scope_id=? ORDER BY meta_key ASC`,
+          )
+          .all(this.scopeId) as SqlRow[]
+      ).map((row) => [String(row.meta_key), JSON.parse(String(row.payload_json))]),
+    );
+    const archivedFailures = normalizeSqliteArchivedFailures(
+      Array.isArray(runtimeMeta.archivedFailures) ? runtimeMeta.archivedFailures : [],
+    );
+    delete runtimeMeta.archivedFailures;
     return {
+      archivedFailures,
       roundExecution: rows("round_execution"),
       pendingPlannerCycles: rows("pending_planner_cycle"),
       claimBacklog: rows("claim_backlog"),
@@ -2724,16 +3329,49 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
             .all(this.scopeId) as SqlRow[]
         ).map((row) => [String(row.worker_key), JSON.parse(String(row.payload_json))]),
       ),
-      runtimeMeta: Object.fromEntries(
-        (
-          this.db
-            .prepare(
-              `SELECT meta_key, payload_json FROM runtime_meta
-                WHERE scope_id=? ORDER BY meta_key ASC`,
-            )
-            .all(this.scopeId) as SqlRow[]
-        ).map((row) => [String(row.meta_key), JSON.parse(String(row.payload_json))]),
-      ),
+      runtimeMeta,
+    };
+  }
+
+  /** Reconstruct the plugin startup snapshot exclusively from the active
+   * SQLite scope. This is the post-activation replacement for runtime JSON. */
+  readRuntimeSummary(): SatRuntimeSummary {
+    const operational = this.readOperationalState();
+    const runtimeMeta = operational.runtimeMeta ?? {};
+    return {
+      recentActions: this.readRecentActions(SAT_ACTION_HISTORY_RECENT_TAIL_LIMIT),
+      archivedFailures: [...(operational.archivedFailures ?? [])],
+      plannerHistory: this.readRecentPlannerOutcomes(4096),
+      plannerCycles: this.readRecentPlannerCycles(4096),
+      pendingPlannerCycles: [
+        ...(operational.pendingPlannerCycles ?? []),
+      ] as SatRuntimeSummary["pendingPlannerCycles"],
+      roundExecution: [
+        ...(operational.roundExecution ?? []),
+      ] as SatRuntimeSummary["roundExecution"],
+      claimBacklog: [...(operational.claimBacklog ?? [])] as SatRuntimeSummary["claimBacklog"],
+      settlementPageParticipants: [
+        ...(operational.settlementPageParticipants ?? []),
+      ] as SatRuntimeSummary["settlementPageParticipants"],
+      settlementPageLookupTables: [
+        ...(operational.settlementPageLookupTables ?? []),
+      ] as SatRuntimeSummary["settlementPageLookupTables"],
+      workers: (operational.workers ?? {}) as SatRuntimeSummary["workers"],
+      lastKnownStatus:
+        (runtimeMeta.lastKnownStatus as SatRuntimeSummary["lastKnownStatus"]) ?? null,
+      chainTime: (runtimeMeta.chainTime as SatRuntimeSummary["chainTime"]) ?? null,
+      currentRunStartedAt:
+        (runtimeMeta.currentRunStartedAt as SatRuntimeSummary["currentRunStartedAt"]) ?? null,
+      runStartSolBalanceLamports:
+        (runtimeMeta.runStartSolBalanceLamports as SatRuntimeSummary["runStartSolBalanceLamports"]) ??
+        null,
+      runStartSatBalanceRaw:
+        (runtimeMeta.runStartSatBalanceRaw as SatRuntimeSummary["runStartSatBalanceRaw"]) ?? null,
+      enabledWanted: runtimeMeta.enabledWanted === true,
+      lastAction: (runtimeMeta.lastAction as SatRuntimeSummary["lastAction"]) ?? null,
+      lastActionTxHash:
+        (runtimeMeta.lastActionTxHash as SatRuntimeSummary["lastActionTxHash"]) ?? null,
+      lastFailure: (runtimeMeta.lastFailure as SatRuntimeSummary["lastFailure"]) ?? null,
     };
   }
 
@@ -3117,6 +3755,161 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
     return receipt;
   }
 
+  /**
+   * Transactionally bound rolling retention. Operational/recovery and live
+   * submission cycles are excluded before any row is eligible. The anchor
+   * records the terminal digest of each retired prefix so the retained chain
+   * remains honestly verifiable instead of pretending it starts at genesis.
+   */
+  async enforceRetention(
+    policy: Partial<SatMiningHistoryRetentionPolicy> = {},
+  ): Promise<SatMiningHistoryRetentionReceipt> {
+    const limits: SatMiningHistoryRetentionPolicy = {
+      maxActions: normalizeRetentionLimit(
+        policy.maxActions,
+        DEFAULT_MINING_HISTORY_RETENTION.maxActions,
+      ),
+      maxOutcomes: normalizeRetentionLimit(
+        policy.maxOutcomes,
+        DEFAULT_MINING_HISTORY_RETENTION.maxOutcomes,
+      ),
+      maxPlannerCycles: normalizeRetentionLimit(
+        policy.maxPlannerCycles,
+        DEFAULT_MINING_HISTORY_RETENTION.maxPlannerCycles,
+      ),
+      maxAuditArtifacts: normalizeRetentionLimit(
+        policy.maxAuditArtifacts,
+        DEFAULT_MINING_HISTORY_RETENTION.maxAuditArtifacts,
+      ),
+    };
+    let receipt!: SatMiningHistoryRetentionReceipt;
+    await this.enqueueWrite(() => {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        const protectedCycles = this.readProtectedCycleIds();
+        const prune = (
+          table: "mining_event" | "planner_outcome" | "planner_cycle",
+          maxRows: number,
+          kind: "actions" | "outcomes" | "planner-cycles",
+        ): number => {
+          const rows = this.db
+            .prepare(
+              `SELECT sequence, cycle_id, event_digest FROM ${table}
+                WHERE scope_id=? ORDER BY sequence ASC`,
+            )
+            .all(this.scopeId) as SqlRow[];
+          const required = Math.max(0, rows.length - maxRows);
+          const firstProtected = rows.findIndex(
+            (row) => row.cycle_id != null && protectedCycles.has(Number(row.cycle_id)),
+          );
+          // Retire only an oldest contiguous prefix. A protected record fences
+          // the prefix even when it prevents meeting the nominal bound.
+          const allowedPrefix = firstProtected < 0 ? rows : rows.slice(0, firstProtected);
+          const retired = allowedPrefix.slice(0, required);
+          if (retired.length === 0) {
+            return 0;
+          }
+          const sequences = retired.map((row) => Number(row.sequence));
+          const terminal = String(retired.at(-1)?.event_digest ?? "");
+          this.db
+            .prepare(
+              "INSERT INTO mining_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            )
+            .run(
+              `retention-anchor:${this.scopeId}:${kind}`,
+              canonicalJson({
+                retiredCount: sequences.length,
+                terminalDigest: terminal,
+                retainedAt: new Date().toISOString(),
+              }),
+            );
+          this.db
+            .prepare(
+              `DELETE FROM ${table} WHERE sequence IN (${sequences.map(() => "?").join(",")})`,
+            )
+            .run(...sequences);
+          return sequences.length;
+        };
+        const prunedActions = prune("mining_event", limits.maxActions, "actions");
+        const prunedOutcomes = prune("planner_outcome", limits.maxOutcomes, "outcomes");
+        const prunedPlannerCycles = prune(
+          "planner_cycle",
+          limits.maxPlannerCycles,
+          "planner-cycles",
+        );
+        const auditRows = this.db
+          .prepare(
+            `SELECT artifact_key, payload_json FROM audit_artifact
+              WHERE scope_id=? ORDER BY updated_at_ms ASC, artifact_key ASC`,
+          )
+          .all(this.scopeId) as SqlRow[];
+        const auditRequired = Math.max(0, auditRows.length - limits.maxAuditArtifacts);
+        const retiredAudit = auditRows
+          .filter((row) => !this.auditArtifactIsProtected(row, protectedCycles))
+          .slice(0, auditRequired);
+        if (retiredAudit.length > 0) {
+          this.db
+            .prepare(
+              `DELETE FROM audit_artifact WHERE scope_id=? AND artifact_key IN (${retiredAudit
+                .map(() => "?")
+                .join(",")})`,
+            )
+            .run(this.scopeId, ...retiredAudit.map((row) => String(row.artifact_key)));
+        }
+        const prunedAuditArtifacts = retiredAudit.length;
+        const historyRevision =
+          prunedActions || prunedOutcomes || prunedPlannerCycles || prunedAuditArtifacts
+            ? incrementHistoryRevision(this.db)
+            : getHistoryRevision(this.db);
+        receipt = {
+          walletId: this.scope.walletId,
+          scopeKey: this.getScopeKey(),
+          prunedActions,
+          prunedOutcomes,
+          prunedPlannerCycles,
+          prunedAuditArtifacts,
+          protectedCycleCount: protectedCycles.size,
+          historyRevision,
+        };
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+    return receipt;
+  }
+
+  async enforceDefaultRetentionIfNeeded(): Promise<SatMiningHistoryRetentionReceipt | null> {
+    if (this.readOnly || this.lifecycleFenced || this.closed) {
+      return null;
+    }
+    const counts = this.db
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM mining_event WHERE scope_id=?) AS actions,
+           (SELECT COUNT(*) FROM planner_outcome WHERE scope_id=?) AS outcomes,
+           (SELECT COUNT(*) FROM planner_cycle WHERE scope_id=?) AS planner_cycles`,
+      )
+      .get(this.scopeId, this.scopeId, this.scopeId) as SqlRow;
+    const auditCount = Number(
+      (
+        this.db
+          .prepare("SELECT COUNT(*) AS count FROM audit_artifact WHERE scope_id=?")
+          .get(this.scopeId) as SqlRow
+      ).count,
+    );
+    if (
+      Number(counts.actions) <= DEFAULT_MINING_HISTORY_RETENTION.maxActions &&
+      Number(counts.outcomes) <= DEFAULT_MINING_HISTORY_RETENTION.maxOutcomes &&
+      Number(counts.planner_cycles) <= DEFAULT_MINING_HISTORY_RETENTION.maxPlannerCycles &&
+      auditCount <= DEFAULT_MINING_HISTORY_RETENTION.maxAuditArtifacts
+    ) {
+      return null;
+    }
+    return await this.enforceRetention();
+  }
+
   async clearHistory(): Promise<void> {
     await this.deleteHistory({
       kinds: ["actions", "outcomes", "planner-cycles"],
@@ -3177,6 +3970,48 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
     }
   }
 
+  /** Fence late writers, drain the exact queued chain, then make the WAL
+   * snapshot-safe. This is intentionally separate from ordinary close. */
+  async checkpointAndCloseForLifecycle(): Promise<void> {
+    if (this.readOnly || this.closed) {
+      return;
+    }
+    this.lifecycleFenced = true;
+    let failure: unknown;
+    try {
+      await this.writeChain;
+      const row = this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as SqlRow;
+      const busy = Number(row.busy);
+      const log = Number(row.log);
+      const checkpointed = Number(row.checkpointed);
+      if (
+        !Number.isSafeInteger(busy) ||
+        !Number.isSafeInteger(log) ||
+        !Number.isSafeInteger(checkpointed) ||
+        busy !== 0 ||
+        log < 0 ||
+        checkpointed < 0 ||
+        checkpointed !== log
+      ) {
+        throw new Error(
+          `Mining lifecycle WAL checkpoint failed (busy=${String(row.busy)}, log=${String(row.log)}, checkpointed=${String(row.checkpointed)})`,
+        );
+      }
+    } catch (error) {
+      failure = error;
+    } finally {
+      try {
+        this.db.close();
+        this.closed = true;
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (failure !== undefined) {
+      throw failure;
+    }
+  }
+
   async flush(): Promise<void> {
     await this.writeChain;
   }
@@ -3187,10 +4022,13 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
   }
 
   close(): void {
-    if (!this.readOnly) {
+    if (!this.readOnly && !this.closed) {
       this.checkpoint();
     }
-    this.db.close();
+    if (!this.closed) {
+      this.db.close();
+      this.closed = true;
+    }
   }
 
   private resolveScopeSelection(requestedScopeKey?: string | null): {
@@ -3217,10 +4055,116 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
     if (this.readOnly) {
       throw new Error("Mining history store is read-only");
     }
+    if (this.lifecycleFenced || this.closed) {
+      throw new Error("Mining history store is fenced for lifecycle checkpoint");
+    }
     const next = this.writeChain.catch(() => {}).then(operation);
-    this.writeChain = next.then(() => undefined);
+    this.writeChain = next.then(() => undefined).catch(() => undefined);
     return await next;
   }
+
+  private readProtectedCycleIds(): Set<number> {
+    const protectedCycles = new Set<number>();
+    const addFromPayload = (payload: unknown) => {
+      const visit = (value: unknown): void => {
+        if (Array.isArray(value)) {
+          value.forEach(visit);
+        } else if (value && typeof value === "object") {
+          for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+            if (key === "cycleId" && typeof nested === "number" && Number.isSafeInteger(nested)) {
+              protectedCycles.add(nested);
+            }
+            visit(nested);
+          }
+        }
+      };
+      visit(payload);
+    };
+    for (const table of [
+      "round_execution",
+      "pending_planner_cycle",
+      "claim_backlog",
+      "settlement_state",
+    ]) {
+      for (const row of this.db
+        .prepare(`SELECT payload_json FROM ${table} WHERE scope_id=?`)
+        .all(this.scopeId) as SqlRow[]) {
+        addFromPayload(JSON.parse(String(row.payload_json)) as unknown);
+      }
+    }
+    for (const row of this.db
+      .prepare("SELECT state, payload_json FROM submission_record WHERE scope_id=?")
+      .all(this.scopeId) as SqlRow[]) {
+      if (!["confirmed", "failed", "rejected"].includes(String(row.state))) {
+        const record = normalizeSatSubmissionRecord(
+          JSON.parse(String(row.payload_json)) as unknown,
+        );
+        if (!record) {
+          throw new Error("Mining retention cannot classify a live submission record");
+        }
+        const cycleId = submissionRecordCycleId(record);
+        if (cycleId == null) {
+          throw new Error(
+            `Mining retention cannot classify live submission cycle ${record.requestId}`,
+          );
+        }
+        protectedCycles.add(cycleId);
+      }
+    }
+    return protectedCycles;
+  }
+
+  private auditArtifactIsProtected(row: SqlRow, protectedCycles: ReadonlySet<number>): boolean {
+    const keyCycle = Number(String(row.artifact_key).split(":", 1)[0]);
+    if (Number.isSafeInteger(keyCycle) && protectedCycles.has(keyCycle)) {
+      return true;
+    }
+    const values = new Set<number>();
+    const visit = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+      } else if (value && typeof value === "object") {
+        for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+          if (key === "cycleId" && typeof nested === "number" && Number.isSafeInteger(nested)) {
+            values.add(nested);
+          }
+          visit(nested);
+        }
+      }
+    };
+    visit(JSON.parse(String(row.payload_json)) as unknown);
+    return [...values].some((cycleId) => protectedCycles.has(cycleId));
+  }
+}
+
+function submissionRecordCycleId(record: SatSubmissionRecord): number | null {
+  const cycleIds = new Set<number>();
+  for (const [value, pattern] of [
+    [record.workflowId, /(?:^|:)cycle:(\d+)(?:$|:)/gu],
+    [
+      record.operationKey,
+      /(?:^|:)(?:commitCycle|revealCycle|submitCycle|closeCycle|claimCycle):(\d+)(?:$|:)/gu,
+    ],
+  ] as const) {
+    for (const match of value.matchAll(pattern)) {
+      const candidate = Number(match[1]);
+      if (!Number.isSafeInteger(candidate) || candidate < 0) {
+        return null;
+      }
+      cycleIds.add(candidate);
+    }
+  }
+  return cycleIds.size === 1 ? [...cycleIds][0]! : null;
+}
+
+function normalizeRetentionLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error("Mining history retention limit must be a positive safe integer");
+  }
+  return value;
 }
 
 export function resolveSatMiningHistoryDatabasePath(
