@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,12 +14,17 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"fased-lifecycled/acquire"
 	"fased-lifecycled/host"
+	"fased-lifecycled/model"
+	"fased-lifecycled/participant"
+	"fased-lifecycled/platform"
 	"fased-lifecycled/trust"
 )
 
@@ -115,6 +122,9 @@ func run(args []string, output io.Writer) error {
 	if len(args) > 0 && args[0] == "status" {
 		return runPublicLifecycleStatus(args[1:], output)
 	}
+	if len(args) > 0 && args[0] == "plugins" {
+		return runManagedPlugins(args[1:], output)
+	}
 	flags := flag.NewFlagSet("fased-bootstrap", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var request bootstrapRequest
@@ -148,6 +158,197 @@ func run(args []string, output io.Writer) error {
 	}
 	_, err = fmt.Fprintf(output, "Lifecycle host ready: %s sequence=%d epoch=%d digest=%s\n", result.Version, result.ReleaseSequence, result.SecurityEpoch, result.HostDigest)
 	return err
+}
+
+type managedPluginCommand struct {
+	profile, catalog, digest, operation string
+	archives                            map[string]string
+}
+
+func runManagedPlugins(args []string, output io.Writer) error {
+	if os.Geteuid() != 0 {
+		return errors.New("invalid managed plugin arguments")
+	}
+	command, err := parseManagedPluginCommand(args)
+	if err != nil {
+		return err
+	}
+	operatorName := operatorFromEnvironment(model.Profile(command.profile))
+	if operatorName == "" {
+		return errors.New("managed plugin operator identity is unavailable")
+	}
+	operator, err := resolveOperator(operatorName, model.Profile(command.profile))
+	if err != nil {
+		return err
+	}
+	data, err := readManagedPluginCatalog(command.catalog, operator.UID)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	if command.digest != fmt.Sprintf("sha256:%x", sum) {
+		return errors.New("managed plugin catalog digest mismatch")
+	}
+	configPath, err := installedConfigPath(model.Profile(command.profile), operator)
+	if err != nil {
+		return err
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return errors.New("installed lifecycle platform configuration is unavailable")
+	}
+	config, err := platform.DecodeConfig(configData)
+	if err != nil || config.Profile != model.Profile(command.profile) || config.Operator.UID != operator.UID || config.Operator.GID != operator.GID {
+		return errors.New("installed lifecycle platform identity differs from plugin operator")
+	}
+	manifestData, err := os.ReadFile(filepath.Join(config.LifecycleRoot, "installation-manifest.json"))
+	if err != nil {
+		return errors.New("installed lifecycle manifest is unavailable")
+	}
+	status, err := decodeInstalledLifecycleStatus(config, model.Profile(command.profile), manifestData)
+	if err != nil {
+		return err
+	}
+	var manifest model.Manifest
+	_ = json.Unmarshal(manifestData, &manifest)
+	identity, err := config.Identity()
+	expectedPlatformDigest, digestErr := identity.Digest(config.Profile)
+	actualPlatformDigest, actualErr := manifest.Platform.Digest(config.Profile)
+	if err != nil || digestErr != nil || actualErr != nil || expectedPlatformDigest != actualPlatformDigest {
+		return errors.New("installed lifecycle platform identity is invalid")
+	}
+	service, err := platform.NewSystemServiceManager()
+	if err != nil {
+		return err
+	}
+	transactionID := "plugin-" + command.digest[7:63]
+	catalog, err := participant.DecodeManagedPluginCatalog(data)
+	if err != nil {
+		return err
+	}
+	archiveDigest := map[string]string{}
+	for _, entry := range catalog.Entries {
+		archiveDigest[entry.ID] = entry.ArchiveDigest
+	}
+	sources := make([]platform.ManagedPluginArchiveSource, 0, len(command.archives))
+	for id, source := range command.archives {
+		sources = append(sources, platform.ManagedPluginArchiveSource{ID: id, Path: source, SHA256: archiveDigest[id]})
+	}
+	// Stage binds each source SHA to the catalog entry; copy the declared digest after catalog decoding in the platform transaction.
+	production, err := platform.NewManagedPluginProduction(config, status.ActiveGenerationID, service)
+	if err != nil {
+		return err
+	}
+	if current, receipt, candidateLock, err := production.Activation.AlreadyCurrent(transactionID); err != nil {
+		return err
+	} else if current {
+		_, err = fmt.Fprintf(output, "Managed plugins: status=ALREADY_CURRENT catalog=%s candidateLock=%s readiness=%s generation=%s\n", command.digest, candidateLock, receipt, status.ActiveGenerationID)
+		return err
+	}
+	result, err := production.Transaction.Stage(platform.ManagedPluginStageRequest{TransactionID: transactionID, CatalogData: data, ExpectedCatalogDigest: command.digest, BaseLock: production.BaseLock, Archives: sources})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	receipt, err := production.Activation.Apply(ctx, transactionID)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(output, "Managed plugins: status=INSTALLED catalog=%s candidateLock=%s readiness=%s generation=%s\n", command.digest, result.CandidateLockDigest, receipt, status.ActiveGenerationID)
+	return err
+}
+
+func parseManagedPluginCommand(args []string) (managedPluginCommand, error) {
+	if len(args) < 3 || args[0] != "--profile" || (args[2] != "install" && args[2] != "update") || namedPluginFlagCount(args, "profile") != 1 || namedPluginFlagCount(args, "catalog") != 1 || namedPluginFlagCount(args, "catalog-digest") != 1 {
+		return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
+	}
+	command := managedPluginCommand{operation: args[2], archives: map[string]string{}}
+	for i := 0; i < len(args); i++ {
+		if i == 2 {
+			continue
+		}
+		switch args[i] {
+		case "--profile", "--catalog", "--catalog-digest":
+			if i+1 >= len(args) {
+				return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
+			}
+			value := args[i+1]
+			i++
+			if args[i-1] == "--profile" {
+				command.profile = value
+			}
+			if args[i-1] == "--catalog" {
+				command.catalog = value
+			}
+			if args[i-1] == "--catalog-digest" {
+				command.digest = value
+			}
+		case "--archive":
+			if i+1 >= len(args) {
+				return managedPluginCommand{}, errors.New("invalid managed plugin archive")
+			}
+			value := args[i+1]
+			i++
+			id, source, ok := strings.Cut(value, "=")
+			if !ok || id == "" || !filepath.IsAbs(source) || filepath.Clean(source) != source || command.archives[id] != "" {
+				return managedPluginCommand{}, errors.New("invalid managed plugin archive")
+			}
+			command.archives[id] = source
+		default:
+			return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
+		}
+	}
+	if (command.profile != "protected-local" && command.profile != "hosting") || !pluginCommandDigest(command.digest) || !filepath.IsAbs(command.catalog) || filepath.Clean(command.catalog) != command.catalog || len(command.archives) == 0 || len(command.archives) > 4096 {
+		return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
+	}
+	return command, nil
+}
+func namedPluginFlagCount(args []string, name string) int {
+	count := 0
+	for _, arg := range args {
+		if arg == "--"+name {
+			count++
+		}
+	}
+	return count
+}
+func pluginCommandDigest(value string) bool {
+	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	_, err := hex.DecodeString(value[7:])
+	return err == nil && value == strings.ToLower(value)
+}
+
+func readManagedPluginCatalog(path string, ownerUID uint32) ([]byte, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, errors.New("managed plugin catalog is unsafe")
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	var before syscall.Stat_t
+	if err := syscall.Fstat(fd, &before); err != nil || before.Mode&syscall.S_IFMT != syscall.S_IFREG || before.Nlink != 1 || before.Uid != ownerUID || before.Mode&0o022 != 0 || before.Size <= 0 || before.Size > 1<<20 {
+		return nil, errors.New("managed plugin catalog is unsafe")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 1<<20+1))
+	if err != nil || len(data) == 0 || len(data) > 1<<20 {
+		return nil, errors.New("managed plugin catalog is unsafe")
+	}
+	var after syscall.Stat_t
+	if err := syscall.Fstat(fd, &after); err != nil || after.Ino != before.Ino || after.Dev != before.Dev || after.Size != before.Size || after.Mtim != before.Mtim {
+		return nil, errors.New("managed plugin catalog changed while reading")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, errors.New("managed plugin catalog changed while reading")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Ino != before.Ino || stat.Dev != before.Dev {
+		return nil, errors.New("managed plugin catalog changed while reading")
+	}
+	return data, nil
 }
 
 func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, error) {

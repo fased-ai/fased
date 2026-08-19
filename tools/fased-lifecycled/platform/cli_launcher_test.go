@@ -29,6 +29,13 @@ func TestCLILauncherUsesOnlyCurrentGenerationAndBoundDependency(t *testing.T) {
 	if !strings.Contains(source, `managed_operation="rollback"`) {
 		t.Fatal("launcher omitted managed rollback routing")
 	}
+	pluginRoute := strings.Index(source, `"${1:-}" == "plugins" && ( "${2:-}" == "install" || "${2:-}" == "update" )`)
+	pluginOperation := strings.Index(source, `managed_operation="plugins"`)
+	commonShift := strings.Index(source, "  shift\n")
+	bootstrapExec := strings.Index(source, `exec /usr/bin/sudo -n "$bootstrap" "$managed_operation" --profile "$FASED_LIFECYCLE_PROFILE" "$@"`)
+	if pluginRoute < 0 || pluginOperation < pluginRoute || commonShift < pluginOperation || bootstrapExec < commonShift || strings.Contains(source, `"${2:-}" == "list"`) {
+		t.Fatal("launcher did not route only managed plugin install/update")
+	}
 	updateRoute := strings.Index(source, `managed_operation=""`)
 	runtimeRoute := strings.Index(source, `current="$install_root/current"`)
 	if updateRoute < 0 || runtimeRoute < 0 || updateRoute >= runtimeRoute {

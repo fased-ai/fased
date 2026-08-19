@@ -21,7 +21,9 @@ func RenderUpdateAuthority(config Config, operatorUser string) ([]byte, error) {
 	}
 	bootstrap := config.BootstrapHostPath()
 	return []byte(fmt.Sprintf(
-		"%s ALL=(root) NOPASSWD: %s update --profile %s\n%s ALL=(root) NOPASSWD: %s update --profile %s *\n%s ALL=(root) NOPASSWD: %s repair --profile %s\n%s ALL=(root) NOPASSWD: %s repair --profile %s *\n%s ALL=(root) NOPASSWD: %s rollback --profile %s\n%s ALL=(root) NOPASSWD: %s rollback --profile %s *\n%s ALL=(root) NOPASSWD: %s uninstall --profile %s\n%s ALL=(root) NOPASSWD: %s uninstall --profile %s *\n%s ALL=(root) NOPASSWD: %s status --profile %s\n%s ALL=(root) NOPASSWD: %s status --profile %s *\n",
+		"%s ALL=(root) NOPASSWD: %s update --profile %s\n%s ALL=(root) NOPASSWD: %s update --profile %s *\n%s ALL=(root) NOPASSWD: %s plugins --profile %s install *\n%s ALL=(root) NOPASSWD: %s plugins --profile %s update *\n%s ALL=(root) NOPASSWD: %s repair --profile %s\n%s ALL=(root) NOPASSWD: %s repair --profile %s *\n%s ALL=(root) NOPASSWD: %s rollback --profile %s\n%s ALL=(root) NOPASSWD: %s rollback --profile %s *\n%s ALL=(root) NOPASSWD: %s uninstall --profile %s\n%s ALL=(root) NOPASSWD: %s uninstall --profile %s *\n%s ALL=(root) NOPASSWD: %s status --profile %s\n%s ALL=(root) NOPASSWD: %s status --profile %s *\n",
+		operatorUser, bootstrap, config.Profile,
+		operatorUser, bootstrap, config.Profile,
 		operatorUser, bootstrap, config.Profile,
 		operatorUser, bootstrap, config.Profile,
 		operatorUser, bootstrap, config.Profile,

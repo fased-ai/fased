@@ -103,6 +103,42 @@ func (activation ManagedPluginActivation) Apply(ctx context.Context, transaction
 	return activation.applyBound(ctx, transactionID, guard, configGID, unit)
 }
 
+// AlreadyCurrent recognizes only a durable committed journal whose exact
+// candidate readiness still verifies; it never creates a journal or restarts.
+func (activation ManagedPluginActivation) AlreadyCurrent(transactionID string) (bool, string, string, error) {
+	guard, _, unit, err := activation.validate(transactionID)
+	if err != nil {
+		return false, "", "", err
+	}
+	if err := activation.Transaction.validateRecordRoots(transactionID); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, "", "", nil
+		}
+		return false, "", "", err
+	}
+	data, err := activation.Transaction.readStableRecord(activation.journalPath(transactionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, "", "", nil
+	}
+	if err != nil {
+		return false, "", "", err
+	}
+	var journal managedPluginActivationJournal
+	if err := strictManagedPluginJSON(data, &journal); err != nil {
+		return false, "", "", err
+	}
+	if err := activation.validateJournal(journal, transactionID, unit, guard); err != nil {
+		return false, "", "", err
+	}
+	if journal.Phase != managedPluginCommitted {
+		return false, "", "", nil
+	}
+	if _, err := guard.VerifyReadiness(journal.CandidateLockDigest, activation.GenerationID); err != nil {
+		return false, "", "", err
+	}
+	return true, journal.ReadinessDigest, journal.CandidateLockDigest, nil
+}
+
 func (activation ManagedPluginActivation) applyBound(ctx context.Context, transactionID string, guard stateparticipant.PluginBoundary, configGID uint32, unit string) (string, error) {
 	j, err := activation.openJournal(transactionID, guard, configGID, unit)
 	if err != nil {

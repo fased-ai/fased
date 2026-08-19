@@ -66,6 +66,8 @@ elif [[ "${1:-}" == "uninstall" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; 
   managed_operation="uninstall"
 elif [[ "${1:-}" == "rollback" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; then
   managed_operation="rollback"
+elif [[ "${1:-}" == "plugins" && ( "${2:-}" == "install" || "${2:-}" == "update" ) ]]; then
+  managed_operation="plugins"
 fi
 if [[ -n "$managed_operation" ]]; then
   bootstrap=%q
