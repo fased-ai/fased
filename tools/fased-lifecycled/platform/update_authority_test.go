@@ -80,7 +80,10 @@ func TestDarwinManagedUpdateAuthorityUsesFixedLibraryBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(policy)
-	if strings.Count(text, "/Library/FasedLifecycle/bootstrap-v1/fased-bootstrap") != 12 || strings.Contains(text, FixedBootstrapPath) {
+	if strings.Count(text, "/Library/FasedLifecycle/bootstrap-v1/fased-bootstrap") != 10 || strings.Contains(text, FixedBootstrapPath) {
 		t.Fatalf("Darwin update authority used the wrong bootstrap path:\n%s", text)
+	}
+	if strings.Contains(text, " plugins --profile ") {
+		t.Fatalf("Darwin update authority exposed Linux-only plugin mutation:\n%s", text)
 	}
 }

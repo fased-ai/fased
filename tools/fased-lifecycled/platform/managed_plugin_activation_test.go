@@ -369,6 +369,18 @@ func TestManagedPluginActivationSurvivesCoreGenerationTransition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sameGenerationTransaction := first
+	sameGenerationTransaction.TransactionID = "plugin-generation-b-same"
+	sameGenerationTransaction.BaseLock = live
+	managedPluginPreRecordInterruption = func() error { return errors.New("injected current-transaction pre-record interruption") }
+	t.Cleanup(func() { managedPluginPreRecordInterruption = nil })
+	if _, err := activationB.Transaction.Stage(sameGenerationTransaction); err == nil {
+		t.Fatal("current generation pre-record interruption was accepted")
+	}
+	managedPluginPreRecordInterruption = nil
+	if recovered, err := activationB.Transaction.RecoverPreRecordResidue(sameGenerationTransaction.TransactionID); err != nil || !recovered {
+		t.Fatalf("current generation pre-record residue was not recovered before provenance lookup: recovered=%v err=%v", recovered, err)
+	}
 	if exists, err := activationB.Transaction.RecordExists("plugin-generation-b-same"); err != nil || exists {
 		t.Fatalf("new generation transaction unexpectedly exists: %v %v", exists, err)
 	}
@@ -503,6 +515,37 @@ func TestManagedPluginActivationStartFailureAndCrashResume(t *testing.T) {
 		}
 		if got, want := strings.Join(service.calls, ","), "start:fased-gateway.service"; got != want {
 			t.Fatalf("resume service order = %q, want %q", got, want)
+		}
+	})
+	t.Run("previous start boundary", func(t *testing.T) {
+		activation, request, service, _, _, _ := managedPluginActivationFixture(t)
+		if _, err := activation.Transaction.Stage(request); err != nil {
+			t.Fatal(err)
+		}
+		gid, unit := activation.Config.Operator.GID, activation.Identity.Services["gateway"]
+		guard := stateparticipant.PluginBoundary{CodeRoot: activation.Transaction.CodeRoot, DataRoot: filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"), LockPath: CanonicalPluginLockPath(activation.Config), ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), CodeOwnerUID: activation.Transaction.CodeOwnerUID, OperatorUID: activation.Config.Operator.UID, GatewayUID: activation.Config.Gateway.UID, ConfigGID: gid}
+		journal, err := activation.openJournal(request.TransactionID, guard, gid, unit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := activation.Transaction.Activate(request.TransactionID); err != nil {
+			t.Fatal(err)
+		}
+		journal.Phase = managedPluginPreviousLockWritten
+		if err := activation.writeJournal(journal); err != nil {
+			t.Fatal(err)
+		}
+		// The fixture's exact previous receipt models a crash after the previous
+		// service wrote readiness but before PREVIOUS_STARTED was persisted.
+		if _, err := activation.applyBound(context.Background(), request.TransactionID, guard, gid, unit); err == nil || !strings.Contains(err.Error(), "rolled back") {
+			t.Fatalf("previous-start crash resume did not finish terminal rollback: %v", err)
+		}
+		if len(service.calls) != 0 {
+			t.Fatalf("previous-start crash resume restarted an already-ready Gateway: %v", service.calls)
+		}
+		journal, err = activation.openJournal(request.TransactionID, guard, gid, unit)
+		if err != nil || journal.Phase != managedPluginRolledBack {
+			t.Fatalf("previous-start crash resume phase=%s err=%v", journal.Phase, err)
 		}
 	})
 }

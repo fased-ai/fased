@@ -167,6 +167,9 @@ type managedPluginCommand struct {
 }
 
 func runManagedPlugins(args []string, output io.Writer) error {
+	if !managedPluginsSupported(runtime.GOOS) {
+		return errors.New("managed plugin transactions are supported only on Linux")
+	}
 	if os.Geteuid() != 0 {
 		return errors.New("invalid managed plugin arguments")
 	}
@@ -252,6 +255,9 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if _, err := production.Transaction.RecoverPreRecordResidue(transactionID); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := production.Activation.ConvergeOtherUnfinished(ctx, transactionID); err != nil {
@@ -266,6 +272,9 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	}
 	transactionID, err = managedPluginTransactionIdentity(command.digest, status.ActiveGenerationID, production.BaseLock)
 	if err != nil {
+		return err
+	}
+	if _, err := production.Transaction.RecoverPreRecordResidue(transactionID); err != nil {
 		return err
 	}
 	if current, receipt, candidateLock, err := production.Activation.AlreadyCurrent(transactionID); err != nil {
@@ -304,6 +313,8 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	_, err = fmt.Fprintf(output, "Managed plugins: status=INSTALLED catalog=%s candidateLock=%s readiness=%s generation=%s\n", command.digest, result.CandidateLockDigest, receipt, status.ActiveGenerationID)
 	return err
 }
+
+func managedPluginsSupported(goos string) bool { return goos == "linux" }
 
 // managedPluginMutationLockPath deliberately returns the same installation-wide
 // lifecycle lease used by the bootstrap update and rollback routes. It is

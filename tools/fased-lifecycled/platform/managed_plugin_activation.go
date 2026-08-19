@@ -502,15 +502,29 @@ func (activation ManagedPluginActivation) rollback(ctx context.Context, guard st
 		}
 	}
 	if journal.Phase == managedPluginPreviousLockWritten {
-		if err := activation.clearReadiness(); err != nil {
-			return err
-		}
-		if err := activation.Gateway.Start(ctx, journal.GatewayUnit); err != nil {
-			return fmt.Errorf("restart previous Gateway after managed plugin failure: %w", err)
-		}
-		journal.Phase = managedPluginPreviousStarted
-		if err := activation.writeJournal(journal); err != nil {
-			return err
+		// A crash after Start but before PREVIOUS_STARTED can leave a valid
+		// readiness receipt while the journal still says PREVIOUS_LOCK_WRITTEN.
+		// Adopt that exact generation/lock-bound receipt before clearing it or
+		// issuing another start against an already-running service.
+		if _, err := guard.VerifyReadiness(journal.PreviousLockDigest, activation.GenerationID); err == nil {
+			journal.Phase = managedPluginPreviousReady
+			if err := activation.writeJournal(journal); err != nil {
+				return err
+			}
+		} else {
+			if !managedPluginReadinessRetryable(err) {
+				return fmt.Errorf("verify previous managed plugin readiness before restart: %w", err)
+			}
+			if err := activation.clearReadiness(); err != nil {
+				return err
+			}
+			if err := activation.Gateway.Start(ctx, journal.GatewayUnit); err != nil {
+				return fmt.Errorf("restart previous Gateway after managed plugin failure: %w", err)
+			}
+			journal.Phase = managedPluginPreviousStarted
+			if err := activation.writeJournal(journal); err != nil {
+				return err
+			}
 		}
 	}
 	if journal.Phase == managedPluginPreviousStarted {

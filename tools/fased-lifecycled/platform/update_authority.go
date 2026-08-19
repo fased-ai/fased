@@ -3,6 +3,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const FixedBootstrapPath = "/opt/fased/lifecycle/bootstrap-v1/fased-bootstrap"
@@ -20,7 +21,7 @@ func RenderUpdateAuthority(config Config, operatorUser string) ([]byte, error) {
 		return nil, errors.New("update operator identity is invalid")
 	}
 	bootstrap := config.BootstrapHostPath()
-	return []byte(fmt.Sprintf(
+	authority := fmt.Sprintf(
 		"%s ALL=(root) NOPASSWD: %s update --profile %s\n%s ALL=(root) NOPASSWD: %s update --profile %s *\n%s ALL=(root) NOPASSWD: %s plugins --profile %s install *\n%s ALL=(root) NOPASSWD: %s plugins --profile %s update *\n%s ALL=(root) NOPASSWD: %s repair --profile %s\n%s ALL=(root) NOPASSWD: %s repair --profile %s *\n%s ALL=(root) NOPASSWD: %s rollback --profile %s\n%s ALL=(root) NOPASSWD: %s rollback --profile %s *\n%s ALL=(root) NOPASSWD: %s uninstall --profile %s\n%s ALL=(root) NOPASSWD: %s uninstall --profile %s *\n%s ALL=(root) NOPASSWD: %s status --profile %s\n%s ALL=(root) NOPASSWD: %s status --profile %s *\n",
 		operatorUser, bootstrap, config.Profile,
 		operatorUser, bootstrap, config.Profile,
@@ -34,5 +35,15 @@ func RenderUpdateAuthority(config Config, operatorUser string) ([]byte, error) {
 		operatorUser, bootstrap, config.Profile,
 		operatorUser, bootstrap, config.Profile,
 		operatorUser, bootstrap, config.Profile,
-	)), nil
+	)
+	if config.IsDarwinLaunchd() {
+		lines := strings.SplitAfter(authority, "\n")
+		authority = ""
+		for _, line := range lines {
+			if !strings.Contains(line, " plugins --profile ") {
+				authority += line
+			}
+		}
+	}
+	return []byte(authority), nil
 }

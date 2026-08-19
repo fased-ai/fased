@@ -150,4 +150,7 @@ func TestDarwinCLILauncherUsesDarwinBootstrapAndPortableBindingProof(t *testing.
 			t.Fatalf("Darwin launcher retained Linux-only assumption %q", forbidden)
 		}
 	}
+	if strings.Contains(source, `managed_operation="plugins"`) || !strings.Contains(source, `Managed plugin transactions are supported only on Linux.`) {
+		t.Fatal("Darwin launcher did not fail closed for Linux-only managed plugin mutation")
+	}
 }

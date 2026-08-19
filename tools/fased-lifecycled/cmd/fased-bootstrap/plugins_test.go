@@ -29,6 +29,17 @@ func TestManagedPluginTransactionIdentityBindsCatalogGenerationAndBase(t *testin
 	}
 }
 
+func TestManagedPluginTransactionsAreLinuxOnly(t *testing.T) {
+	if !managedPluginsSupported("linux") {
+		t.Fatal("Linux managed plugin transaction was disabled")
+	}
+	for _, goos := range []string{"darwin", "windows", "freebsd"} {
+		if managedPluginsSupported(goos) {
+			t.Fatalf("managed plugin transaction was exposed on %s without runtime acceptance", goos)
+		}
+	}
+}
+
 func TestManagedPluginAndCoreUseOneMutationLease(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lifecycle.lock")
 	uid := uint32(os.Getuid())

@@ -33,6 +33,13 @@ func RenderCLILauncher(config Config) ([]byte, error) {
 	if config.IsDarwinLaunchd() {
 		bootstrapStat = `read -r bootstrap_uid bootstrap_mode bootstrap_links <<<"$(/usr/bin/stat -f '%u %Lp %l' "$bootstrap")"`
 	}
+	pluginRoute := `elif [[ "${1:-}" == "plugins" && ( "${2:-}" == "install" || "${2:-}" == "update" ) ]]; then
+  managed_operation="plugins"`
+	if config.IsDarwinLaunchd() {
+		pluginRoute = `elif [[ "${1:-}" == "plugins" && ( "${2:-}" == "install" || "${2:-}" == "update" ) ]]; then
+  echo "Managed plugin transactions are supported only on Linux." >&2
+  exit 1`
+	}
 	script := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 install_root=%q
@@ -66,8 +73,7 @@ elif [[ "${1:-}" == "uninstall" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; 
   managed_operation="uninstall"
 elif [[ "${1:-}" == "rollback" && "${2:-}" != "--help" && "${2:-}" != "-h" ]]; then
   managed_operation="rollback"
-elif [[ "${1:-}" == "plugins" && ( "${2:-}" == "install" || "${2:-}" == "update" ) ]]; then
-  managed_operation="plugins"
+%s
 fi
 if [[ -n "$managed_operation" ]]; then
   bootstrap=%q
@@ -141,7 +147,7 @@ exec "$node_bin" "$runtime" "$@"
 		projection.Environment["FASED_LIFECYCLE_CONFIG"], projection.Environment["FASED_LIFECYCLE_INSTALL_ROOT"],
 		projection.Environment["FASED_HOST_PROFILE"], projection.Environment["FASED_HOST_UPDATER_SOCKET"],
 		projection.Environment["FASED_WALLET_LOCAL_SIGNER_BIN"], projection.Environment["FASED_WALLET_LOCAL_SIGNER_SOCKET"],
-		localLauncherEnvironment(projection), config.BootstrapHostPath(), bootstrapStat)
+		localLauncherEnvironment(projection), pluginRoute, config.BootstrapHostPath(), bootstrapStat)
 	return []byte(script), nil
 }
 
