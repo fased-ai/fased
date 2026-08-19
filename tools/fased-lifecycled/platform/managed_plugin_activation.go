@@ -348,16 +348,32 @@ func (activation ManagedPluginActivation) ConvergeOtherUnfinished(ctx context.Co
 	if err != nil {
 		return err
 	}
-	return activation.convergeOtherUnfinishedBound(ctx, transactionID, guard, configGID, unit)
+	return activation.convergeUnfinishedBound(ctx, transactionID, guard, configGID, unit)
+}
+
+// ConvergeBeforeCoreGeneration finishes every non-terminal plugin journal for
+// the installed generation before the core lifecycle switches generations.
+// Unlike a plugin request, core transition recovery must not exempt a plugin
+// transaction ID from convergence.
+func (activation ManagedPluginActivation) ConvergeBeforeCoreGeneration(ctx context.Context) error {
+	guard, configGID, unit, err := activation.validate("core-lifecycle")
+	if err != nil {
+		return err
+	}
+	return activation.convergeUnfinishedBound(ctx, "", guard, configGID, unit)
 }
 
 func (activation ManagedPluginActivation) convergeOtherUnfinishedBound(ctx context.Context, transactionID string, guard stateparticipant.PluginBoundary, configGID uint32, unit string) error {
+	return activation.convergeUnfinishedBound(ctx, transactionID, guard, configGID, unit)
+}
+
+func (activation ManagedPluginActivation) convergeUnfinishedBound(ctx context.Context, skipTransactionID string, guard stateparticipant.PluginBoundary, configGID uint32, unit string) error {
 	ids, err := activation.Transaction.recordIDs()
 	if err != nil {
 		return err
 	}
 	for _, id := range ids {
-		if id == transactionID {
+		if skipTransactionID != "" && id == skipTransactionID {
 			continue
 		}
 		if recovered, residueErr := activation.Transaction.RecoverPreRecordResidue(id); residueErr != nil {

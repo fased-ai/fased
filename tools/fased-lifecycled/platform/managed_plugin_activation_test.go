@@ -418,6 +418,60 @@ func TestManagedPluginActivationSurvivesCoreGenerationTransition(t *testing.T) {
 	}
 }
 
+func TestManagedPluginActivationConvergesUnfinishedBeforeCoreGenerationTransition(t *testing.T) {
+	activationA, request, service, _, _, _ := managedPluginActivationFixture(t)
+	if _, err := activationA.Transaction.Stage(request); err != nil {
+		t.Fatal(err)
+	}
+
+	// A core generation-B activation must not interpret an unfinished
+	// generation-A journal as its own. It fails closed until A converges while
+	// the shared lifecycle lease still names A as the active generation.
+	generationB := "sha256:" + strings.Repeat("b", 64)
+	activationB := activationA
+	activationB.GenerationID = generationB
+	guard := stateparticipant.PluginBoundary{
+		CodeRoot:      activationA.Transaction.CodeRoot,
+		DataRoot:      filepath.Join(activationA.Config.OwnerStateRoot, "plugin-data"),
+		LockPath:      CanonicalPluginLockPath(activationA.Config),
+		ReadinessPath: filepath.Join(activationA.Config.OwnerStateRoot, "cache", "plugin-readiness.json"),
+		CodeOwnerUID:  activationA.Transaction.CodeOwnerUID,
+		OperatorUID:   activationA.Config.Operator.UID,
+		GatewayUID:    activationA.Config.Gateway.UID,
+		ConfigGID:     activationA.Config.Operator.GID,
+	}
+	if _, err := activationA.openJournal(request.TransactionID, guard, activationA.Config.Operator.GID, activationA.Identity.Services["gateway"]); err != nil {
+		t.Fatalf("generation A journal was not created: %v", err)
+	}
+	if _, err := activationB.openJournal(request.TransactionID, guard, activationA.Config.Operator.GID, activationA.Identity.Services["gateway"]); err == nil || !strings.Contains(err.Error(), "journal") {
+		t.Fatalf("generation B accepted an unfinished generation A journal: %v", err)
+	}
+	if len(service.calls) != 0 {
+		t.Fatalf("generation B recovery mutated Gateway before refusing: %v", service.calls)
+	}
+
+	if err := activationA.convergeUnfinishedBound(context.Background(), "", guard, activationA.Config.Operator.GID, activationA.Identity.Services["gateway"]); err != nil {
+		t.Fatalf("generation A did not converge before core transition: %v", err)
+	}
+	journal, err := activationA.openJournal(request.TransactionID, guard, activationA.Config.Operator.GID, activationA.Identity.Services["gateway"])
+	if err != nil || journal.Phase != managedPluginCommitted {
+		t.Fatalf("generation A journal did not reach committed provenance: phase=%s err=%v", journal.Phase, err)
+	}
+	live, _, err := guard.VerifyInstalledLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManagedPluginReadiness(t, filepath.Join(activationA.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), live, generationB)
+	catalog, err := stateparticipant.DecodeManagedPluginCatalog(request.CatalogData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, receipt, digest, err := activationB.catalogAlreadyCurrentBound(catalog, guard, activationA.Config.Operator.GID)
+	if err != nil || !current || receipt == "" || digest == "" {
+		t.Fatalf("generation B did not inherit converged plugin provenance: current=%v receipt=%q digest=%q err=%v", current, receipt, digest, err)
+	}
+}
+
 func TestManagedPluginLiveLockPublishesOnlyAfterFinalMetadata(t *testing.T) {
 	activation, request, _, previous, _, _ := managedPluginActivationFixture(t)
 	result, err := activation.Transaction.Stage(request)

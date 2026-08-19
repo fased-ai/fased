@@ -96,6 +96,17 @@ type publicLifecyclePerformance struct {
 	TransactionStatus       string                        `json:"transactionStatus"`
 }
 
+// These narrow seams keep the public-route lease ordering testable without
+// weakening the production trust or service path. Production always uses the
+// shared plugin/core lease, host preflight, and verified bootstrap executor.
+var (
+	publicLifecycleMutationLockPath    = managedPluginMutationLockPath
+	acquirePublicLifecycleMutationLock = acquireManagedPluginMutationLock
+	verifyPublicLifecycleHost          = func(ctx context.Context) error { return platform.NewHostPreflight().Verify(ctx) }
+	executePublicLifecycleBootstrap    = execute
+	publicLifecycleRootAuthorized      = func() bool { return os.Geteuid() == 0 }
+)
+
 type lifecyclePhaseProgress struct {
 	output   io.Writer
 	terminal bool
@@ -637,18 +648,33 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	if os.Geteuid() != 0 {
+	if !publicLifecycleRootAuthorized() {
 		return errors.New("public lifecycle operation requires root authorization")
 	}
 	operator, err := resolveOperator(request.OperatorUser, request.Profile)
 	if err != nil {
 		return err
 	}
+	// Core and third-party plugin mutations share one lease. Acquire it before
+	// inspecting installed state or acquiring a lifecycle release, then retain
+	// it through recovery, generation convergence, and terminal output.
+	lockPath, err := publicLifecycleMutationLockPath(request.Profile)
+	if err != nil {
+		return err
+	}
+	lock, err := acquirePublicLifecycleMutationLock(lockPath, 0)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
+	defer cancel()
 	ownerConfigExisted, err := pathExists(filepath.Join(operator.Home, ".fased", "fased.json"))
 	if err != nil {
 		return fmt.Errorf("inspect owner configuration: %w", err)
 	}
 	installedStatus := installedLifecycleStatus{}
+	var installedConfig *platform.Config
 	if request.Operation == "update" || request.Operation == "repair" {
 		configPath, configErr := installedConfigPath(request.Profile, operator)
 		if configErr != nil {
@@ -683,17 +709,21 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		if err := bindInstalledUpdateChannel(&request, installedChannel, installedStatus); err != nil {
 			return err
 		}
+		installedConfig = &config
 		if request.Operation == "repair" {
 			request.Version = installedStatus.Version
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
-	defer cancel()
 	if request.Profile == model.ProfileHosting && runtime.GOOS != "linux" {
 		return errors.New("Hosting lifecycle is supported only on Linux")
 	}
-	if err := platform.NewHostPreflight().Verify(ctx); err != nil {
+	if err := verifyPublicLifecycleHost(ctx); err != nil {
 		return err
+	}
+	if installedConfig != nil {
+		if err := convergeManagedPluginsBeforeCoreGeneration(ctx, *installedConfig, installedStatus); err != nil {
+			return err
+		}
 	}
 	now := time.Now().UTC()
 	var channelSelection *signedChannelSelection
@@ -741,7 +771,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		ExpectedRootSHA256: expectedRootSHA256,
 	}
 	acquisitionProgress := beginLifecyclePhase(output, request.JSON, "acquiring the verified lifecycle release")
-	result, err := execute(ctx, bootstrap)
+	result, err := executePublicLifecycleBootstrap(ctx, bootstrap)
 	acquisitionProgress.Stop()
 	if err != nil {
 		return err
@@ -868,6 +898,26 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		_, err = fmt.Fprintln(output, formatLifecyclePerformance(performance))
 	}
 	return err
+}
+
+// convergeManagedPluginsBeforeCoreGeneration is deliberately called with the
+// committed active generation, not the candidate generation. An unfinished
+// plugin journal is bound to the running Gateway/readiness identity and must
+// become terminal (or fail closed) before the core lifecycle may replace it.
+// The caller already owns the shared lifecycle mutation lease.
+func convergeManagedPluginsBeforeCoreGeneration(ctx context.Context, config platform.Config, status installedLifecycleStatus) error {
+	service, err := platform.NewSystemServiceManager()
+	if err != nil {
+		return err
+	}
+	production, err := platform.NewManagedPluginProduction(config, status.ActiveGenerationID, service)
+	if err != nil {
+		return fmt.Errorf("inspect managed plugin transaction before core generation transition: %w", err)
+	}
+	if err := production.Activation.ConvergeBeforeCoreGeneration(ctx); err != nil {
+		return fmt.Errorf("converge managed plugin transaction before core generation transition: %w", err)
+	}
+	return nil
 }
 
 func formatLifecyclePerformance(performance publicLifecyclePerformance) string {
