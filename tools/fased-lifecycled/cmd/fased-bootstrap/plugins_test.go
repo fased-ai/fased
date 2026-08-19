@@ -2,11 +2,32 @@ package main
 
 import (
 	"fased-lifecycled/hostsecurity"
+	"fased-lifecycled/participant"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestManagedPluginTransactionIdentityBindsCatalogGenerationAndBase(t *testing.T) {
+	base := participant.PluginLock{SchemaVersion: participant.PluginLockSchemaVersion, Type: "fased-plugin-lock"}
+	catalog := "sha256:" + strings.Repeat("a", 64)
+	generationA := "sha256:" + strings.Repeat("b", 64)
+	first, err := managedPluginTransactionIdentity(catalog, generationA, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated, err := managedPluginTransactionIdentity(catalog, generationA, base); err != nil || repeated != first {
+		t.Fatalf("transaction identity is not deterministic: %q %v", repeated, err)
+	}
+	if generationB, err := managedPluginTransactionIdentity(catalog, "sha256:"+strings.Repeat("c", 64), base); err != nil || generationB == first {
+		t.Fatalf("generation did not change transaction identity: %q %v", generationB, err)
+	}
+	base.Entries = []participant.PluginLockEntry{{ID: "demo", Origin: "store", Digest: "sha256:" + strings.Repeat("d", 64), APICapability: "fased.plugin.v1", Required: true}}
+	if nextBase, err := managedPluginTransactionIdentity(catalog, generationA, base); err != nil || nextBase == first {
+		t.Fatalf("base lock did not change transaction identity: %q %v", nextBase, err)
+	}
+}
 
 func TestManagedPluginAndCoreUseOneMutationLease(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lifecycle.lock")

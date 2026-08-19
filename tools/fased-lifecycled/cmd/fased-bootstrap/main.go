@@ -231,7 +231,6 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	transactionID := "plugin-" + command.digest[7:63]
 	catalog, err := participant.DecodeManagedPluginCatalog(data)
 	if err != nil {
 		return err
@@ -249,6 +248,10 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	transactionID, err := managedPluginTransactionIdentity(command.digest, status.ActiveGenerationID, production.BaseLock)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := production.Activation.ConvergeOtherUnfinished(ctx, transactionID); err != nil {
@@ -261,11 +264,25 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	transactionID, err = managedPluginTransactionIdentity(command.digest, status.ActiveGenerationID, production.BaseLock)
+	if err != nil {
+		return err
+	}
 	if current, receipt, candidateLock, err := production.Activation.AlreadyCurrent(transactionID); err != nil {
 		return err
 	} else if current {
 		_, err = fmt.Fprintf(output, "Managed plugins: status=ALREADY_CURRENT catalog=%s candidateLock=%s readiness=%s generation=%s\n", command.digest, candidateLock, receipt, status.ActiveGenerationID)
 		return err
+	}
+	if exists, err := production.Transaction.RecordExists(transactionID); err != nil {
+		return err
+	} else if !exists {
+		if current, receipt, candidateLock, currentErr := production.Activation.CatalogAlreadyCurrent(catalog); currentErr != nil {
+			return currentErr
+		} else if current {
+			_, err = fmt.Fprintf(output, "Managed plugins: status=ALREADY_CURRENT catalog=%s candidateLock=%s readiness=%s generation=%s\n", command.digest, candidateLock, receipt, status.ActiveGenerationID)
+			return err
+		}
 	}
 	stageRequest := platform.ManagedPluginStageRequest{TransactionID: transactionID, CatalogData: data, ExpectedCatalogDigest: command.digest, BaseLock: production.BaseLock, Archives: sources}
 	if _, err := production.Activation.ResetRolledBack(transactionID, command.digest); err != nil {
@@ -371,6 +388,15 @@ func pluginCommandDigest(value string) bool {
 	return err == nil && value == strings.ToLower(value)
 }
 
+func managedPluginTransactionIdentity(catalogDigest, generationID string, base participant.PluginLock) (string, error) {
+	baseDigest, err := participant.PluginLockDigest(base)
+	if err != nil || !pluginCommandDigest(catalogDigest) || !pluginCommandDigest(generationID) {
+		return "", errors.New("managed plugin transaction identity is invalid")
+	}
+	sum := sha256.Sum256([]byte(catalogDigest + "\n" + generationID + "\n" + baseDigest))
+	return fmt.Sprintf("plugin-%x", sum[:28]), nil
+}
+
 func readManagedPluginCatalog(path string, ownerUID uint32) ([]byte, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
@@ -378,6 +404,10 @@ func readManagedPluginCatalog(path string, ownerUID uint32) ([]byte, error) {
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
+	beforeInfo, err := file.Stat()
+	if err != nil {
+		return nil, errors.New("managed plugin catalog is unsafe")
+	}
 	var before syscall.Stat_t
 	if err := syscall.Fstat(fd, &before); err != nil || before.Mode&syscall.S_IFMT != syscall.S_IFREG || before.Nlink != 1 || before.Uid != ownerUID || before.Mode&0o022 != 0 || before.Size <= 0 || before.Size > 1<<20 {
 		return nil, errors.New("managed plugin catalog is unsafe")
@@ -387,7 +417,8 @@ func readManagedPluginCatalog(path string, ownerUID uint32) ([]byte, error) {
 		return nil, errors.New("managed plugin catalog is unsafe")
 	}
 	var after syscall.Stat_t
-	if err := syscall.Fstat(fd, &after); err != nil || after.Ino != before.Ino || after.Dev != before.Dev || after.Size != before.Size || after.Mtim != before.Mtim {
+	afterInfo, infoErr := file.Stat()
+	if err := syscall.Fstat(fd, &after); err != nil || infoErr != nil || after.Ino != before.Ino || after.Dev != before.Dev || after.Size != before.Size || !afterInfo.ModTime().Equal(beforeInfo.ModTime()) {
 		return nil, errors.New("managed plugin catalog changed while reading")
 	}
 	info, err := os.Lstat(path)

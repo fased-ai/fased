@@ -317,6 +317,78 @@ func TestManagedPluginActivationCommittedJournalDoesNotBlockLaterCatalogWork(t *
 	}
 }
 
+func TestManagedPluginActivationSurvivesCoreGenerationTransition(t *testing.T) {
+	activation, first, service, _, _, _ := managedPluginActivationFixture(t)
+	if _, err := activation.Transaction.Stage(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyManagedPluginFixture(t, activation, first.TransactionID); err != nil {
+		t.Fatal(err)
+	}
+
+	generationB := "sha256:" + strings.Repeat("b", 64)
+	activationB := activation
+	activationB.GenerationID = generationB
+	service.calls = nil
+	service.onStart = func(_ int) error {
+		data, err := os.ReadFile(CanonicalPluginLockPath(activation.Config))
+		if err != nil {
+			return err
+		}
+		lock, err := stateparticipant.DecodePluginLock(data)
+		if err != nil {
+			return err
+		}
+		writeManagedPluginReadiness(t, filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), lock, generationB)
+		return nil
+	}
+	guard := stateparticipant.PluginBoundary{
+		CodeRoot:      activation.Transaction.CodeRoot,
+		DataRoot:      filepath.Join(activation.Config.OwnerStateRoot, "plugin-data"),
+		LockPath:      CanonicalPluginLockPath(activation.Config),
+		ReadinessPath: filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"),
+		CodeOwnerUID:  activation.Transaction.CodeOwnerUID,
+		OperatorUID:   activation.Config.Operator.UID,
+		GatewayUID:    activation.Config.Gateway.UID,
+		ConfigGID:     activation.Config.Operator.GID,
+	}
+	live, _, err := guard.VerifyInstalledLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManagedPluginReadiness(t, filepath.Join(activation.Config.OwnerStateRoot, "cache", "plugin-readiness.json"), live, generationB)
+
+	catalog, err := stateparticipant.DecodeManagedPluginCatalog(first.CatalogData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := activationB.Transaction.RecordExists("plugin-generation-b-same"); err != nil || exists {
+		t.Fatalf("new generation transaction unexpectedly exists: %v %v", exists, err)
+	}
+	current, receipt, currentDigest, err := activationB.catalogAlreadyCurrentBound(catalog, guard, activation.Config.Operator.GID)
+	if err != nil || !current || receipt == "" || currentDigest == "" {
+		t.Fatalf("same catalog was not current after core transition: current=%v receipt=%q digest=%q err=%v", current, receipt, currentDigest, err)
+	}
+	if len(service.calls) != 0 {
+		t.Fatalf("same catalog restarted Gateway after core transition: %v", service.calls)
+	}
+
+	const secondID = "plugin-generation-b-different"
+	if err := activationB.convergeOtherUnfinishedBound(context.Background(), secondID, guard, activation.Config.Operator.GID, activation.Identity.Services["gateway"]); err != nil {
+		t.Fatalf("prior generation terminal journal blocked a new catalog: %v", err)
+	}
+	second := additionalManagedPluginRequest(t, activationB, secondID, live)
+	if _, err := activationB.Transaction.Stage(second); err != nil {
+		t.Fatalf("different catalog could not stage after core transition: %v", err)
+	}
+	if _, err := applyManagedPluginFixture(t, activationB, secondID); err != nil {
+		t.Fatalf("different catalog could not commit after core transition: %v", err)
+	}
+	if got, want := strings.Join(service.calls, ","), "stop:fased-gateway.service,start:fased-gateway.service"; got != want {
+		t.Fatalf("new catalog service order = %q, want %q", got, want)
+	}
+}
+
 func TestManagedPluginLiveLockPublishesOnlyAfterFinalMetadata(t *testing.T) {
 	activation, request, _, previous, _, _ := managedPluginActivationFixture(t)
 	result, err := activation.Transaction.Stage(request)

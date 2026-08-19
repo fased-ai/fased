@@ -183,10 +183,49 @@ func (activation ManagedPluginActivation) AlreadyCurrent(transactionID string) (
 	if journal.Phase != managedPluginCommitted {
 		return false, "", "", nil
 	}
-	if _, err := guard.VerifyReadiness(journal.CandidateLockDigest, activation.GenerationID); err != nil {
+	receipt, err := guard.VerifyReadiness(journal.CandidateLockDigest, activation.GenerationID)
+	if err != nil {
 		return false, "", "", err
 	}
-	return true, journal.ReadinessDigest, journal.CandidateLockDigest, nil
+	return true, receipt, journal.CandidateLockDigest, nil
+}
+
+// CatalogAlreadyCurrent recognizes a catalog already represented by the live
+// lock and the current core generation readiness. It is used only when no
+// transaction record exists for the generation/base-bound transaction ID.
+func (activation ManagedPluginActivation) CatalogAlreadyCurrent(catalog stateparticipant.ManagedPluginCatalog) (bool, string, string, error) {
+	guard, configGID, _, err := activation.validate("plugin-current")
+	if err != nil {
+		return false, "", "", err
+	}
+	return activation.catalogAlreadyCurrentBound(catalog, guard, configGID)
+}
+
+func (activation ManagedPluginActivation) catalogAlreadyCurrentBound(catalog stateparticipant.ManagedPluginCatalog, guard stateparticipant.PluginBoundary, configGID uint32) (bool, string, string, error) {
+	current, currentDigest, err := activation.readLiveLock(configGID)
+	if err != nil {
+		return false, "", "", err
+	}
+	live, err := stateparticipant.DecodePluginLock(current.data)
+	if err != nil {
+		return false, "", "", err
+	}
+	merged, err := stateparticipant.MergeManagedPluginCatalog(live, catalog)
+	if err != nil {
+		return false, "", "", err
+	}
+	mergedDigest, err := stateparticipant.PluginLockDigest(merged)
+	if err != nil {
+		return false, "", "", err
+	}
+	if mergedDigest != currentDigest {
+		return false, "", "", nil
+	}
+	receipt, err := guard.VerifyReadiness(currentDigest, activation.GenerationID)
+	if err != nil {
+		return false, "", "", err
+	}
+	return true, receipt, currentDigest, nil
 }
 
 // ResetRolledBack removes only an exact terminal rollback journal. It is safe
@@ -697,7 +736,8 @@ func (activation ManagedPluginActivation) clearReadiness() error {
 }
 
 func (activation ManagedPluginActivation) validateJournal(j managedPluginActivationJournal, transactionID, unit string, guard stateparticipant.PluginBoundary) error {
-	if j.SchemaVersion != managedPluginActivationSchemaVersion || j.TransactionID != transactionID || j.GenerationID != activation.GenerationID || j.GatewayUnit != unit || !activation.validPhase(j.Phase) || j.PreviousLockMode != 0o640 || j.PreviousLockUID != activation.Config.Operator.UID || j.PreviousLockGID != guard.ConfigGID || len(j.PreviousLock) == 0 || len(j.CandidateLock) == 0 {
+	terminal := j.Phase == managedPluginCommitted || j.Phase == managedPluginRolledBack
+	if j.SchemaVersion != managedPluginActivationSchemaVersion || j.TransactionID != transactionID || !managedPluginActivationDigest.MatchString(j.GenerationID) || (!terminal && j.GenerationID != activation.GenerationID) || j.GatewayUnit != unit || !activation.validPhase(j.Phase) || j.PreviousLockMode != 0o640 || j.PreviousLockUID != activation.Config.Operator.UID || j.PreviousLockGID != guard.ConfigGID || len(j.PreviousLock) == 0 || len(j.CandidateLock) == 0 {
 		return errors.New("managed plugin activation journal is invalid")
 	}
 	previous, err := stateparticipant.DecodePluginLock(j.PreviousLock)

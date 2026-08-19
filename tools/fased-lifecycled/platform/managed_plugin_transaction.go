@@ -84,6 +84,24 @@ type managedPluginTransactionEntry struct {
 	Created bool   `json:"created"`
 }
 
+// RecordExists reports whether the exact transaction has a complete durable
+// record. Unsafe, partial, or ambiguous residue remains an error so callers do
+// not bypass recovery by treating it as a missing transaction.
+func (transaction ManagedPluginTransaction) RecordExists(transactionID string) (bool, error) {
+	if err := transaction.validate(); err != nil {
+		return false, err
+	}
+	if !managedPluginTransactionID.MatchString(transactionID) {
+		return false, errors.New("managed plugin transaction ID is invalid")
+	}
+	if _, err := transaction.readRecord(transactionID); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (transaction ManagedPluginTransaction) Stage(request ManagedPluginStageRequest) (ManagedPluginStageResult, error) {
 	if err := transaction.validate(); err != nil {
 		return ManagedPluginStageResult{}, err
