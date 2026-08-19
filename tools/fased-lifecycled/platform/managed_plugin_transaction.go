@@ -230,6 +230,30 @@ func (transaction ManagedPluginTransaction) Discard(transactionID string) error 
 	return transaction.removeTransactionRoots(transactionID)
 }
 
+// Finalize removes only replay staging after a separately journaled live-lock
+// activation has committed. The durable transaction record remains available
+// as immutable provenance for the active candidate lock.
+func (transaction ManagedPluginTransaction) Finalize(transactionID string) error {
+	if err := transaction.validate(); err != nil {
+		return err
+	}
+	if _, err := transaction.readRecord(transactionID); err != nil {
+		return err
+	}
+	root := transaction.stagingRoot(transactionID)
+	if _, err := os.Lstat(root); err == nil {
+		if err := makePluginTreeRemovable(root); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(root); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return syncPluginDirectory(filepath.Dir(root))
+}
+
 func (transaction ManagedPluginTransaction) validate() error {
 	for label, value := range map[string]string{"managed plugin code root": transaction.CodeRoot, "managed plugin transaction root": transaction.TransactionRoot} {
 		if !filepath.IsAbs(value) || filepath.Clean(value) != value {
