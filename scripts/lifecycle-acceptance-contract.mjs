@@ -307,6 +307,11 @@ export function buildAcceptanceReceipt({
   acquisitionEvidenceClass = evidenceClass,
   acquisition,
   evidence,
+  productCommit,
+  productTree,
+  artifactSetDigest,
+  fixtureCommit,
+  fixtureTree,
 }) {
   validateAcceptanceContract(contract);
   const required = REQUIRED_PREDICATES[profile]?.[scenario];
@@ -318,6 +323,26 @@ export function buildAcceptanceReceipt({
   }
   if (!COMMIT_PATTERN.test(commit || "")) {
     fail("receipt commit is invalid");
+  }
+  const fixtureIdentity = [
+    productCommit,
+    productTree,
+    artifactSetDigest,
+    fixtureCommit,
+    fixtureTree,
+  ];
+  const hasFixtureIdentity = fixtureIdentity.some((value) => value !== undefined);
+  if (
+    hasFixtureIdentity &&
+    (fixtureIdentity.some((value) => value === undefined) ||
+      productCommit !== commit ||
+      !COMMIT_PATTERN.test(productCommit || "") ||
+      !COMMIT_PATTERN.test(productTree || "") ||
+      !DIGEST_PATTERN.test(artifactSetDigest || "") ||
+      !COMMIT_PATTERN.test(fixtureCommit || "") ||
+      !COMMIT_PATTERN.test(fixtureTree || ""))
+  ) {
+    fail("fixture receipt identity binding is invalid");
   }
   if (!DIGEST_PATTERN.test(candidateDescriptorDigest || "")) {
     fail("candidate descriptor digest is invalid");
@@ -345,7 +370,7 @@ export function buildAcceptanceReceipt({
     contract.evidencePolicy,
   );
   validateEvidence(evidence, required, version, evidenceClass, acquisitionEvidenceClass);
-  return {
+  const receipt = {
     schemaVersion: 3,
     role: "fased-lifecycle-acceptance-receipt",
     contractId: contract.contractId,
@@ -363,9 +388,27 @@ export function buildAcceptanceReceipt({
     acquisition: { ...acquisition },
     evidence: evidence.map((record) => ({ ...record })),
   };
+  if (hasFixtureIdentity) {
+    Object.assign(receipt, {
+      productCommit,
+      productTree,
+      artifactSetDigest,
+      fixtureCommit,
+      fixtureTree,
+    });
+  }
+  return receipt;
 }
 
 export function verifyAcceptanceReceipt({ contract, receipt, expected = {} }) {
+  const fixtureIdentityKeys = [
+    "productCommit",
+    "productTree",
+    "artifactSetDigest",
+    "fixtureCommit",
+    "fixtureTree",
+  ];
+  const hasFixtureIdentity = fixtureIdentityKeys.some((key) => key in receipt);
   exactKeys(
     receipt,
     [
@@ -385,6 +428,7 @@ export function verifyAcceptanceReceipt({ contract, receipt, expected = {} }) {
       "acquisitionEvidenceClass",
       "acquisition",
       "evidence",
+      ...(hasFixtureIdentity ? fixtureIdentityKeys : []),
     ],
     "receipt",
   );
@@ -455,6 +499,11 @@ function main() {
       transportSubstituted: options["transport-substituted"] === "true",
       trustInventoryDigest: options["trust-inventory-digest"],
     },
+    productCommit: options["product-commit"],
+    productTree: options["product-tree"],
+    artifactSetDigest: options["artifact-set-digest"],
+    fixtureCommit: options["fixture-commit"],
+    fixtureTree: options["fixture-tree"],
   };
   if (command === "issue-receipt") {
     const receipt = buildAcceptanceReceipt({

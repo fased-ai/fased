@@ -6,6 +6,15 @@ phase="${1:-fresh-install}"
 fixture_started="$SECONDS"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
+product_commit="${FASED_FIXTURE_PRODUCT_COMMIT:?missing fixture product commit}"
+product_tree="${FASED_FIXTURE_PRODUCT_TREE:?missing fixture product tree}"
+artifact_set_digest="${FASED_FIXTURE_ARTIFACT_SET_DIGEST:?missing fixture artifact set digest}"
+fixture_commit="${FASED_FIXTURE_SOURCE_COMMIT:?missing fixture source commit}"
+fixture_tree="${FASED_FIXTURE_SOURCE_TREE:?missing fixture source tree}"
+[[ "$commit" == "$product_commit" ]] || {
+  echo "fixture product commit binding is inconsistent" >&2
+  exit 1
+}
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
 predecessor_class="${FASED_FIXTURE_PREDECESSOR_CLASS:-public-stable}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
@@ -203,8 +212,8 @@ EOF_FIXTURE_V2_GATEWAY_DROPIN
   test "$install_duration_ms" -le 60000
   test "$update_duration_ms" -le 60000
   test "$noop_duration_ms" -le 5000
-  jq -cn --arg commit "$commit" --arg version "$version" --arg pluginId "$plugin_id" --arg v1Digest "$v1_digest" --arg v2Digest "$v2_digest" --arg v1CatalogDigest "$v1_catalog_digest" --arg v2CatalogDigest "$v2_catalog_digest" --arg candidateLockDigest "$v2_candidate_lock" --arg readinessDigest "$readiness_digest" --arg generationId "$generation_id" --arg failedOutputDigest "$failed_output_digest" --arg installedOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-install-v1.out | awk '{print $1}')" --arg noopOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-noop-v2.out | awk '{print $1}')" --argjson installDurationMs "$install_duration_ms" --argjson updateDurationMs "$update_duration_ms" --argjson noopDurationMs "$noop_duration_ms" \
-    '{schemaVersion:1,role:"fased-managed-plugin-transaction-acceptance",status:"PASS",evidenceClass:"PASS",commit:$commit,version:$version,pluginId:$pluginId,v1Digest:$v1Digest,v2Digest:$v2Digest,v1CatalogDigest:$v1CatalogDigest,v2CatalogDigest:$v2CatalogDigest,catalogDigest:$v2CatalogDigest,candidateLockDigest:$candidateLockDigest,readinessDigest:$readinessDigest,generationId:$generationId,rollbackRetry:true,failedOutputDigest:$failedOutputDigest,installedOutputDigest:$installedOutputDigest,noopOutputDigest:$noopOutputDigest,dataPreserved:true,performance:{installDurationMs:$installDurationMs,updateDurationMs:$updateDurationMs,noopDurationMs:$noopDurationMs,installBudgetMs:60000,noopBudgetMs:5000,updateBudgetMs:60000}}' > /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
+  jq -cn --arg commit "$commit" --arg productTree "$product_tree" --arg artifactSetDigest "$artifact_set_digest" --arg fixtureCommit "$fixture_commit" --arg fixtureTree "$fixture_tree" --arg version "$version" --arg pluginId "$plugin_id" --arg v1Digest "$v1_digest" --arg v2Digest "$v2_digest" --arg v1CatalogDigest "$v1_catalog_digest" --arg v2CatalogDigest "$v2_catalog_digest" --arg candidateLockDigest "$v2_candidate_lock" --arg readinessDigest "$readiness_digest" --arg generationId "$generation_id" --arg failedOutputDigest "$failed_output_digest" --arg installedOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-install-v1.out | awk '{print $1}')" --arg noopOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-noop-v2.out | awk '{print $1}')" --argjson installDurationMs "$install_duration_ms" --argjson updateDurationMs "$update_duration_ms" --argjson noopDurationMs "$noop_duration_ms" \
+    '{schemaVersion:1,role:"fased-managed-plugin-transaction-acceptance",status:"PASS",evidenceClass:"PASS",commit:$commit,productCommit:$commit,productTree:$productTree,artifactSetDigest:$artifactSetDigest,fixtureCommit:$fixtureCommit,fixtureTree:$fixtureTree,version:$version,pluginId:$pluginId,v1Digest:$v1Digest,v2Digest:$v2Digest,v1CatalogDigest:$v1CatalogDigest,v2CatalogDigest:$v2CatalogDigest,catalogDigest:$v2CatalogDigest,candidateLockDigest:$candidateLockDigest,readinessDigest:$readinessDigest,generationId:$generationId,rollbackRetry:true,failedOutputDigest:$failedOutputDigest,installedOutputDigest:$installedOutputDigest,noopOutputDigest:$noopOutputDigest,dataPreserved:true,performance:{installDurationMs:$installDurationMs,updateDurationMs:$updateDurationMs,noopDurationMs:$noopDurationMs,installBudgetMs:60000,noopBudgetMs:5000,updateBudgetMs:60000}}' > /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
   chmod 0600 /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
   rm -rf "$input_root"
   rm -f "$v2_ready_marker" "$v2_fault_script"
@@ -299,6 +308,11 @@ acceptance_finish() {
     --scenario "$phase" \
     --version "$version" \
     --commit "$commit" \
+    --product-commit "$product_commit" \
+    --product-tree "$product_tree" \
+    --artifact-set-digest "$artifact_set_digest" \
+    --fixture-commit "$fixture_commit" \
+    --fixture-tree "$fixture_tree" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
     --predecessor-installation-class "$([[ "$phase" == "managed-update" ]] && printf '%s' "$predecessor_class" || true)" \
@@ -319,6 +333,11 @@ acceptance_finish() {
     --scenario "$phase" \
     --version "$version" \
     --commit "$commit" \
+    --product-commit "$product_commit" \
+    --product-tree "$product_tree" \
+    --artifact-set-digest "$artifact_set_digest" \
+    --fixture-commit "$fixture_commit" \
+    --fixture-tree "$fixture_tree" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
     --predecessor-installation-class "$([[ "$phase" == "managed-update" ]] && printf '%s' "$predecessor_class" || true)" \
@@ -1093,6 +1112,10 @@ if [[ "$phase" == "verify-operations" ]]; then
 
   jq -n \
     --arg commit "$commit" \
+    --arg productTree "$product_tree" \
+    --arg artifactSetDigest "$artifact_set_digest" \
+    --arg fixtureCommit "$fixture_commit" \
+    --arg fixtureTree "$fixture_tree" \
     --arg instance "$instance" \
     --arg version "$version" \
     --arg predecessorClass "$predecessor_class" \
@@ -1101,7 +1124,9 @@ if [[ "$phase" == "verify-operations" ]]; then
     --arg ownerDigest "sha256:$(sha256sum "$owner_preservation" | awk '{print $1}')" \
     --arg signerDigest "sha256:$(sha256sum "$signer_preservation" | awk '{print $1}')" \
     '{schemaVersion:1,role:"fased-managed-operations-acceptance",status:"PASS",
-      evidenceClass:"PASS",commit:$commit,instanceId:$instance,version:$version,
+      evidenceClass:"PASS",commit:$commit,productCommit:$commit,productTree:$productTree,
+      artifactSetDigest:$artifactSetDigest,fixtureCommit:$fixtureCommit,fixtureTree:$fixtureTree,
+      instanceId:$instance,version:$version,
       predecessorClass:$predecessorClass,
       repair:{status:"PASS",outputDigest:$repairDigest,exactUnitRestored:true},
       uninstall:{status:"PASS",outputDigest:$uninstallDigest,managedAuthorityRemoved:true},

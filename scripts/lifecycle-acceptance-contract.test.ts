@@ -314,6 +314,61 @@ describe("lifecycle acceptance contract", () => {
     ).toThrow("acquisitionEvidenceClass mismatch");
   });
 
+  it("binds reused product bytes separately from exact fixture source", () => {
+    const value = contract();
+    const productCommit = "a".repeat(40);
+    const productTree = "b".repeat(40);
+    const fixtureCommit = "c".repeat(40);
+    const fixtureTree = "d".repeat(40);
+    const receipt = buildAcceptanceReceipt({
+      contract: value,
+      profile: "protected-local",
+      scenario: "fresh-install",
+      version: "0.1.76-rc.70",
+      commit: productCommit,
+      productCommit,
+      productTree,
+      artifactSetDigest: digest,
+      fixtureCommit,
+      fixtureTree,
+      candidateDescriptorDigest: digest,
+      acquisition: acquisition(),
+      evidence: evidence("protected-local", "fresh-install"),
+    });
+    expect(receipt).toMatchObject({
+      commit: productCommit,
+      productCommit,
+      productTree,
+      artifactSetDigest: digest,
+      fixtureCommit,
+      fixtureTree,
+    });
+    expect(() =>
+      buildAcceptanceReceipt({
+        contract: value,
+        profile: "protected-local",
+        scenario: "fresh-install",
+        version: "0.1.76-rc.70",
+        commit: productCommit,
+        productCommit: fixtureCommit,
+        productTree,
+        artifactSetDigest: digest,
+        fixtureCommit,
+        fixtureTree,
+        candidateDescriptorDigest: digest,
+        acquisition: acquisition(),
+        evidence: evidence("protected-local", "fresh-install"),
+      }),
+    ).toThrow("fixture receipt identity binding is invalid");
+    expect(() =>
+      verifyAcceptanceReceipt({
+        contract: value,
+        receipt,
+        expected: { fixtureTree: "e".repeat(40) },
+      }),
+    ).toThrow("fixtureTree mismatch");
+  });
+
   it("wires the v2 contract and capsule verifier into candidate proof", () => {
     const wrapper = readFileSync(
       new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
@@ -550,6 +605,12 @@ describe("lifecycle acceptance contract", () => {
       "utf8",
     );
     expect(wrapper).toContain('plugin_receipt="$receipt.plugins"');
+    expect(wrapper).toContain('FIXTURE_SOURCE_TREE="$(git -C "$ROOT_DIR" rev-parse');
+    expect(wrapper).toContain('-e "FASED_FIXTURE_PRODUCT_COMMIT=$COMMIT"');
+    expect(wrapper).toContain('-e "FASED_FIXTURE_SOURCE_COMMIT=$FIXTURE_SOURCE_COMMIT"');
+    expect(wrapper).toContain('--artifact-set-digest "$ARTIFACT_SET_DIGEST"');
+    expect(wrapper).toContain(".fixtureCommit == $fixture_commit");
+    expect(wrapper).toContain(".fixtureTree == $fixture_tree");
     expect(wrapper).toContain(".performance.installBudgetMs == 60000");
     expect(wrapper).toContain(".performance.noopBudgetMs == 5000");
     expect(wrapper).toContain("managed plugin transaction receipt verified");
