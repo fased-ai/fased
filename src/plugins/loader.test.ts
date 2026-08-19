@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { withEnv } from "../test-utils/env.js";
 import { __testing, clearPluginLoaderCache, loadFasedAgentPlugins } from "./loader.js";
+import { writePluginReadinessReceipt } from "./readiness-receipt.js";
 import { createPluginRuntime } from "./runtime/index.js";
 
 type TempPlugin = { dir: string; file: string; id: string };
@@ -213,6 +214,78 @@ afterAll(() => {
 });
 
 describe("loadFasedAgentPlugins", () => {
+  it("rejects an optional managed digest that exports multiple plugin identities", () => {
+    const root = makeTempDir();
+    const codeRoot = path.join(root, "plugin-code");
+    const dataRoot = path.join(root, "plugin-data");
+    const digest = `sha256:${"e".repeat(64)}`;
+    const digestRoot = path.join(codeRoot, digest.slice("sha256:".length));
+    const lockPath = path.join(root, "plugin.lock.json");
+    const outputPath = path.join(root, "plugin-readiness.json");
+    for (const id of ["optional", "rogue"]) {
+      const pluginRoot = path.join(digestRoot, id);
+      fs.mkdirSync(pluginRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(pluginRoot, "fased.plugin.json"),
+        JSON.stringify({ id, configSchema: EMPTY_PLUGIN_SCHEMA }),
+      );
+      fs.writeFileSync(
+        path.join(pluginRoot, "index.js"),
+        `export default { id: "${id}", register() { throw new Error("must not activate"); } };`,
+      );
+    }
+    fs.mkdirSync(dataRoot, { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        type: "fased-plugin-lock",
+        entries: [
+          {
+            id: "optional",
+            origin: "store",
+            digest,
+            apiCapability: "fased.plugin.v1",
+            required: false,
+          },
+        ],
+      }),
+    );
+
+    withEnv(
+      {
+        FASED_BUNDLED_PLUGINS_DIR: "/nonexistent/bundled/plugins",
+        FASED_PLUGIN_CODE_ROOT: codeRoot,
+        FASED_PLUGIN_DATA_ROOT: dataRoot,
+        FASED_PLUGIN_LOCK_PATH: lockPath,
+      },
+      () => {
+        const registry = loadFasedAgentPlugins({
+          cache: false,
+          config: { plugins: { allow: ["optional"], entries: { optional: { enabled: true } } } },
+        });
+        expect(registry.plugins).toHaveLength(0);
+        expect(registry.diagnostics).toContainEqual(
+          expect.objectContaining({
+            level: "error",
+            message: expect.stringContaining(
+              'lock entry "optional" must expose exactly one runtime plugin (found 2)',
+            ),
+          }),
+        );
+        expect(() =>
+          writePluginReadinessReceipt({
+            registry,
+            lockPath,
+            outputPath,
+            generationId: `sha256:${"a".repeat(64)}`,
+          }),
+        ).toThrow(/managed plugin identity rejected/);
+      },
+    );
+    expect(fs.existsSync(outputPath)).toBe(false);
+  });
+
   it("disables bundled plugins by default", () => {
     const bundledDir = makeTempDir();
     writePlugin({

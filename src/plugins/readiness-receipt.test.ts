@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { withEnv } from "../test-utils/env.js";
 import { writePluginReadinessReceipt } from "./readiness-receipt.js";
 
 const roots: string[] = [];
@@ -70,5 +71,23 @@ describe("managed plugin readiness receipt", () => {
     expect(() =>
       writePluginReadinessReceipt({ ...current, generationId: `sha256:${"a".repeat(64)}` }),
     ).toThrow(/canonical/);
+  });
+
+  it("fails closed when a loaded managed plugin is absent from the lock", () => {
+    const current = fixture();
+    const registry = {
+      ...current.registry,
+      plugins: [...current.registry.plugins, { id: "rogue", origin: "global", status: "loaded" }],
+    } as never;
+    withEnv({ FASED_PLUGIN_CODE_ROOT: path.join(current.root, "plugin-code") }, () => {
+      expect(() =>
+        writePluginReadinessReceipt({
+          ...current,
+          registry,
+          generationId: `sha256:${"a".repeat(64)}`,
+        }),
+      ).toThrow("managed plugin rogue is loaded but absent from the plugin lock");
+    });
+    expect(fs.existsSync(current.outputPath)).toBe(false);
   });
 });

@@ -56,6 +56,11 @@ describe("discoverFasedAgentPlugins", () => {
       "utf-8",
     );
     fs.writeFileSync(
+      path.join(approvedRoot, "fased.plugin.json"),
+      JSON.stringify({ id: "approved", configSchema: { type: "object" } }),
+      "utf-8",
+    );
+    fs.writeFileSync(
       path.join(unreferencedRoot, "rogue.ts"),
       "export default function () {}",
       "utf-8",
@@ -98,6 +103,57 @@ describe("discoverFasedAgentPlugins", () => {
     expect(result.candidates.map((candidate) => candidate.idHint)).toEqual(["approved"]);
     expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toContain(
       "managed plugin load paths are disabled; install code through fased plugins update",
+    );
+  });
+
+  it("rejects a managed digest whose discovered plugin ID differs from its optional lock entry", async () => {
+    const stateDir = makeTempDir();
+    const codeRoot = path.join(stateDir, "managed", "plugin-code");
+    const dataRoot = path.join(stateDir, "plugin-data");
+    const lockPath = path.join(stateDir, "plugin.lock.json");
+    const digest = `sha256:${"c".repeat(64)}`;
+    const digestRoot = path.join(codeRoot, digest.slice("sha256:".length));
+    fs.mkdirSync(digestRoot, { recursive: true });
+    fs.mkdirSync(dataRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(digestRoot, "fased.plugin.json"),
+      JSON.stringify({ id: "rogue", configSchema: { type: "object" } }),
+    );
+    fs.writeFileSync(path.join(digestRoot, "index.js"), "export default function () {}", "utf-8");
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        type: "fased-plugin-lock",
+        entries: [
+          {
+            id: "optional",
+            origin: "store",
+            digest,
+            apiCapability: "fased.plugin.v1",
+            required: false,
+          },
+        ],
+      }),
+    );
+
+    const result = await withEnvAsync(
+      {
+        FASED_STATE_DIR: stateDir,
+        FASED_BUNDLED_PLUGINS_DIR: "/nonexistent/bundled/plugins",
+        FASED_PLUGIN_CODE_ROOT: codeRoot,
+        FASED_PLUGIN_DATA_ROOT: dataRoot,
+        FASED_PLUGIN_LOCK_PATH: lockPath,
+      },
+      async () => discoverFasedAgentPlugins({}),
+    );
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        message: 'managed plugin identity rejected: lock entry "optional" exports "rogue"',
+      }),
     );
   });
 

@@ -75,6 +75,31 @@ export function writePluginReadinessReceipt(params: {
     throw new Error("managed plugin readiness identity is incomplete");
   }
   const lock = readCanonicalPluginLock(lockPath);
+  const managedCodeRoot = process.env.FASED_PLUGIN_CODE_ROOT?.trim();
+  if (managedCodeRoot) {
+    const identityError = params.registry.diagnostics.find(
+      (diagnostic) =>
+        diagnostic.level === "error" &&
+        diagnostic.message.startsWith("managed plugin identity rejected:"),
+    );
+    if (identityError) {
+      throw new Error(identityError.message);
+    }
+    const lockedManagedIds = new Set(
+      lock.entries.filter((entry) => entry.origin === "store").map((entry) => entry.id),
+    );
+    const unboundLoaded = params.registry.plugins.find(
+      (plugin) =>
+        plugin.origin === "global" &&
+        plugin.status === "loaded" &&
+        !lockedManagedIds.has(plugin.id),
+    );
+    if (unboundLoaded) {
+      throw new Error(
+        `managed plugin ${unboundLoaded.id} is loaded but absent from the plugin lock`,
+      );
+    }
+  }
   const canonical = JSON.stringify(lock);
   const lockDigest = `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
   const loaded = new Map(params.registry.plugins.map((plugin) => [plugin.id, plugin]));

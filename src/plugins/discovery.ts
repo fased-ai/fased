@@ -11,7 +11,7 @@ import {
   type PackageManifest,
 } from "./manifest.js";
 import { formatPosixMode, isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
-import { readCanonicalPluginLock } from "./readiness-receipt.js";
+import { readCanonicalPluginLock, type PluginLockEntry } from "./readiness-receipt.js";
 import type { PluginDiagnostic, PluginOrigin } from "./types.js";
 
 const EXTENSION_EXTS = new Set([".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"]);
@@ -616,6 +616,55 @@ function discoverFromPath(params: {
   }
 }
 
+/**
+ * A managed store digest is a single runtime trust boundary.  Unlike ordinary
+ * extension discovery, it may not fan out into several entries, nor may it
+ * rename the catalog identity through its fased.plugin.json manifest.
+ */
+function discoverManagedLockEntry(params: {
+  entry: PluginLockEntry;
+  codeRoot: string;
+  ownershipUid?: number | null;
+  candidates: PluginCandidate[];
+  diagnostics: PluginDiagnostic[];
+  seen: Set<string>;
+}) {
+  const discovered: PluginCandidate[] = [];
+  discoverFromPath({
+    rawPath: path.join(params.codeRoot, params.entry.digest.slice("sha256:".length)),
+    origin: "global",
+    ownershipUid: params.ownershipUid,
+    candidates: discovered,
+    diagnostics: params.diagnostics,
+    seen: params.seen,
+  });
+
+  if (discovered.length !== 1) {
+    params.diagnostics.push({
+      level: "error",
+      pluginId: params.entry.id,
+      source: path.join(params.codeRoot, params.entry.digest.slice("sha256:".length)),
+      message: `managed plugin identity rejected: lock entry "${params.entry.id}" must expose exactly one runtime plugin (found ${discovered.length})`,
+    });
+    return;
+  }
+
+  const candidate = discovered[0];
+  const manifest = loadPluginManifest(candidate.rootDir);
+  if (!manifest.ok || manifest.manifest.id !== params.entry.id) {
+    const discoveredId = manifest.ok ? manifest.manifest.id : "no valid manifest";
+    params.diagnostics.push({
+      level: "error",
+      pluginId: params.entry.id,
+      source: candidate.source,
+      message: `managed plugin identity rejected: lock entry "${params.entry.id}" exports "${discoveredId}"`,
+    });
+    return;
+  }
+
+  params.candidates.push(candidate);
+}
+
 export function discoverFasedAgentPlugins(params: {
   workspaceDir?: string;
   extraPaths?: string[];
@@ -691,9 +740,9 @@ export function discoverFasedAgentPlugins(params: {
           if (entry.origin !== "store") {
             continue;
           }
-          discoverFromPath({
-            rawPath: path.join(managedPluginCodeRoot, entry.digest.slice("sha256:".length)),
-            origin: "global",
+          discoverManagedLockEntry({
+            entry,
+            codeRoot: managedPluginCodeRoot,
             ownershipUid: params.ownershipUid,
             candidates,
             diagnostics,
