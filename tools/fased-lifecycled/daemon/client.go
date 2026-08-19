@@ -7,14 +7,31 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"time"
 
 	"fased-lifecycled/protocol"
+	"golang.org/x/sys/unix"
 )
 
 // Call performs one bounded newline-framed request. It never retries a
 // mutating operation; recovery and idempotency are explicit protocol actions.
 func Call(parent context.Context, socketPath string, request protocol.Request, timeout time.Duration) (protocol.Response, error) {
+	return call(parent, socketPath, request, timeout, nil)
+}
+
+// CallWithLease transfers a duplicate of the lifecycle mutation lease to the
+// persistent supervisor. The supervisor retains that capability while it runs
+// the request, so the bootstrap client may exit without opening an
+// unlock/relock window around a generation mutation.
+func CallWithLease(parent context.Context, socketPath string, request protocol.Request, timeout time.Duration, lease *os.File) (protocol.Response, error) {
+	if lease == nil {
+		return protocol.Response{}, errors.New("lifecycle mutation lease is unavailable")
+	}
+	return call(parent, socketPath, request, timeout, lease)
+}
+
+func call(parent context.Context, socketPath string, request protocol.Request, timeout time.Duration, lease *os.File) (protocol.Response, error) {
 	if err := request.Validate(); err != nil {
 		return protocol.Response{}, err
 	}
@@ -28,7 +45,39 @@ func Call(parent context.Context, socketPath string, request protocol.Request, t
 		return protocol.Response{}, err
 	}
 	defer connection.Close()
+	if lease != nil {
+		unixConnection, ok := connection.(*net.UnixConn)
+		if !ok {
+			return protocol.Response{}, errors.New("lifecycle lease handoff requires a Unix socket")
+		}
+		return callUnixConnectionWithLease(ctx, unixConnection, request, lease)
+	}
 	return callConnection(ctx, connection, request)
+}
+
+func callUnixConnectionWithLease(ctx context.Context, connection *net.UnixConn, request protocol.Request, lease *os.File) (protocol.Response, error) {
+	deadline, ok := ctx.Deadline()
+	if ok {
+		if err := connection.SetDeadline(deadline); err != nil {
+			return protocol.Response{}, err
+		}
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	data = append(data, '\n')
+	if len(data) > maxRequestBytes {
+		return protocol.Response{}, errors.New("lifecycle request exceeds size limit")
+	}
+	n, _, err := connection.WriteMsgUnix(data, unix.UnixRights(int(lease.Fd())), nil)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if n != len(data) {
+		return protocol.Response{}, errors.New("lifecycle lease handoff wrote an incomplete request")
+	}
+	return readResponse(connection, request)
 }
 
 func callConnection(ctx context.Context, connection net.Conn, request protocol.Request) (protocol.Response, error) {
@@ -48,6 +97,10 @@ func callConnection(ctx context.Context, connection net.Conn, request protocol.R
 	if _, err := connection.Write(append(data, '\n')); err != nil {
 		return protocol.Response{}, err
 	}
+	return readResponse(connection, request)
+}
+
+func readResponse(connection net.Conn, request protocol.Request) (protocol.Response, error) {
 	reader := bufio.NewReaderSize(connection, maxRequestBytes+1)
 	frame, err := reader.ReadSlice('\n')
 	if errors.Is(err, bufio.ErrBufferFull) || len(frame) > maxRequestBytes {

@@ -317,7 +317,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 		}
 		if fast {
 			applyArguments[1] = configPath
-			return applyVerifiedArchive(applyArguments, output)
+			return applyVerifiedArchiveWithLease(applyArguments, output, initializationLock)
 		}
 	}
 	homeACL, err := platform.NewHomeACL()
@@ -356,7 +356,7 @@ func runInitialize(args []string, output io.Writer) (resultErr error) {
 	defer func() { resultErr = errors.Join(resultErr, result.ReleaseCreatedRootHandles()) }()
 	configPath := filepath.Join(result.Config.LifecycleRoot, "platform.json")
 	applyArguments[1] = configPath
-	if err := applyVerifiedArchive(applyArguments, output); err != nil {
+	if err := applyVerifiedArchiveWithLease(applyArguments, output, initializationLock); err != nil {
 		rollbackErr := result.Transaction.Rollback()
 		cleanupErr := cleanupFailedInitialization(result, rollbackErr)
 		if cleanupErr == nil {
@@ -514,22 +514,33 @@ type initializationMutationLock struct {
 	handoff *hostsecurity.MutationLock
 }
 
+// DupForSupervisor carries the already-held open-file-description lease to
+// the persistent supervisor. It does not unlock and reacquire by path.
+func (lock *initializationMutationLock) DupForSupervisor() (*os.File, error) {
+	if lock == nil {
+		return nil, errors.New("lifecycle mutation lease is unavailable")
+	}
+	if lock.handoff != nil {
+		return lock.handoff.DupForChild()
+	}
+	if lock.file == nil {
+		return nil, errors.New("lifecycle mutation lease is unavailable")
+	}
+	descriptor, err := syscall.Dup(int(lock.file.Fd()))
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(descriptor), lock.file.Name()), nil
+}
+
 func acquireInitializationLock(profile model.Profile) (*initializationMutationLock, error) {
 	return acquireInitializationLockForOS(runtime.GOOS, profile, 0)
 }
 
 func acquireInitializationLockForOS(operatingSystem string, profile model.Profile, inheritedFD int) (*initializationMutationLock, error) {
-	var path string
-	switch profile {
-	case model.ProfileProtectedLocal:
-		path = platform.BootstrapMutationLockPathForOS(operatingSystem)
-	case model.ProfileHosting:
-		if operatingSystem != "linux" {
-			return nil, errors.New("Hosting lifecycle is supported only on Linux")
-		}
-		path = "/run/lock/fased-bootstrap-hosting.lock"
-	default:
-		return nil, errors.New("lifecycle initialization profile is unsupported")
+	path, err := initializationMutationLockPath(operatingSystem, profile)
+	if err != nil {
+		return nil, err
 	}
 	if inheritedFD != 0 {
 		if (operatingSystem != "linux" && operatingSystem != "darwin") || inheritedFD != 3 {
@@ -538,6 +549,20 @@ func acquireInitializationLockForOS(operatingSystem string, profile model.Profil
 		return acquireInheritedInitializationLockAt(inheritedFD, path, 0)
 	}
 	return acquireInitializationLockAt(path, 0)
+}
+
+func initializationMutationLockPath(operatingSystem string, profile model.Profile) (string, error) {
+	switch profile {
+	case model.ProfileProtectedLocal:
+		return platform.BootstrapMutationLockPathForOS(operatingSystem), nil
+	case model.ProfileHosting:
+		if operatingSystem != "linux" {
+			return "", errors.New("Hosting lifecycle is supported only on Linux")
+		}
+		return "/run/lock/fased-bootstrap-hosting.lock", nil
+	default:
+		return "", errors.New("lifecycle initialization profile is unsupported")
+	}
 }
 
 func acquireInitializationLockAt(path string, expectedUID uint32) (*initializationMutationLock, error) {
@@ -831,6 +856,10 @@ func ensureStableBinaryDirectory(directory string) error {
 }
 
 func applyVerifiedArchive(args []string, output io.Writer) error {
+	return applyVerifiedArchiveWithLease(args, output, nil)
+}
+
+func applyVerifiedArchiveWithLease(args []string, output io.Writer, lifecycleLease *initializationMutationLock) error {
 	flags := flag.NewFlagSet("verified-archive-apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string
@@ -929,13 +958,24 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	if repairCurrent {
 		operation = protocol.OperationRepairCurrent
 	}
-	response, err := daemon.Call(ctx, config.SupervisorSocket(), protocol.Request{
+	request := protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID,
 		Operation: operation, TargetGenerationID: generation.ID,
 		SourceTopology:           sourceTopology,
 		PublicPredecessorVersion: publicPredecessorVersion,
 		ExpectedManifestDigest:   expectedManifest,
-	}, 5*time.Minute)
+	}
+	var response protocol.Response
+	if lifecycleLease != nil {
+		leaseFile, leaseErr := lifecycleLease.DupForSupervisor()
+		if leaseErr != nil {
+			return leaseErr
+		}
+		defer leaseFile.Close()
+		response, err = daemon.CallWithLease(ctx, config.SupervisorSocket(), request, 5*time.Minute, leaseFile)
+	} else {
+		response, err = daemon.Call(ctx, config.SupervisorSocket(), request, 5*time.Minute)
+	}
 	if err != nil {
 		return err
 	}
@@ -1072,8 +1112,22 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 		CanonicalManifestPath: filepath.Join(config.LifecycleRoot, "installation-manifest.json"), CanonicalInstallRoot: config.InstallRoot,
 	}}
 	service := &daemon.Service{Profile: config.Profile, Platform: identity, Store: state, Inventory: binder, Supervisor: supervisor, Onboarding: targetAdapter, PredecessorEvidence: evidence, CurrentConvergence: targetAdapter, CurrentRepair: targetAdapter}
-	if err := service.RecoverPending(ctx); err != nil {
-		return fmt.Errorf("startup lifecycle recovery: %w", err)
+	mutationLockPath, err := initializationMutationLockPath(runtime.GOOS, config.Profile)
+	if err != nil {
+		return err
+	}
+	if _, pendingErr := state.PendingSupervisorTransaction(); pendingErr == nil {
+		startupLease, leaseErr := hostsecurity.AcquireMutationLock(mutationLockPath, 0)
+		if leaseErr != nil {
+			return leaseErr
+		}
+		recoveryErr := service.RecoverPending(ctx)
+		releaseErr := startupLease.Release()
+		if recoveryErr != nil || releaseErr != nil {
+			return fmt.Errorf("startup lifecycle recovery: %w", errors.Join(recoveryErr, releaseErr))
+		}
+	} else if !errors.Is(pendingErr, os.ErrNotExist) {
+		return pendingErr
 	}
 	listener, err := listenBound(socketPath, 0o660, int(config.Operator.GID))
 	if err != nil {
@@ -1083,6 +1137,23 @@ func runSupervisor(ctx context.Context, config platform.Config, socketPath strin
 	go closeOnContext(ctx, listener)
 	server := daemon.Server{Handler: service, AllowedUIDs: map[uint32]struct{}{0: {}, config.Operator.UID: {}},
 		ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, OperationTimeout: 5 * time.Minute}
+	server.OperationLease = func(_ context.Context, peer daemon.Peer, received *os.File) (func() error, error) {
+		if received != nil {
+			if peer.UID != 0 {
+				return nil, errors.New("lifecycle mutation lease handoff requires the root-authorized lifecycle client")
+			}
+			lease, leaseErr := hostsecurity.AdoptReceivedMutationLock(int(received.Fd()), mutationLockPath, 0)
+			if leaseErr != nil {
+				return nil, leaseErr
+			}
+			return lease.Release, nil
+		}
+		lease, leaseErr := hostsecurity.AcquireMutationLock(mutationLockPath, 0)
+		if leaseErr != nil {
+			return nil, leaseErr
+		}
+		return lease.Release, nil
+	}
 	return server.Serve(ctx, listener)
 }
 

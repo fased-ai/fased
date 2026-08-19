@@ -218,6 +218,27 @@ func TestInitializationLockAdoptsBootstrapHandoffWithoutUnlockingParent(t *testi
 	}
 }
 
+func TestInitializationLockRejectsInheritedDescriptorForWrongPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap.lock")
+	parent, err := hostsecurity.AcquireMutationLock(path, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Release()
+	childLease, err := parent.DupForChild()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer childLease.Close()
+	command := exec.Command(os.Args[0], "-test.run=^$")
+	command.ExtraFiles = []*os.File{childLease}
+	command.Env = append(os.Environ(), "FASED_TEST_INITIALIZATION_LEASE_HANDOFF=1", "FASED_TEST_INITIALIZATION_LEASE_PATH="+filepath.Join(filepath.Dir(path), "other.lock"))
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "differs from the expected lock") {
+		t.Fatalf("wrong inherited descriptor path was accepted: err=%v output=%s", err, output)
+	}
+}
+
 func TestBootstrapPathRemovalFailuresPreserveCriticalErrors(t *testing.T) {
 	removal := &platform.BootstrapPathRemovalError{Path: "/created", Err: syscall.ENOTEMPTY}
 	selected, only := bootstrapPathRemovalFailures(removal)
