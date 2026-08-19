@@ -360,6 +360,8 @@ export function createSatRoundWatcherService(params: {
   let timer: ReturnType<typeof setInterval> | null = null;
   let initialRunTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
+  let stopping = false;
+  let activeTick: Promise<void> | null = null;
 
   const ensureCycleRentFunding = async (params: {
     cycleId: number;
@@ -544,7 +546,7 @@ export function createSatRoundWatcherService(params: {
   };
 
   const tick = async () => {
-    if (inFlight) {
+    if (stopping || inFlight) {
       markWorkerOverlap(state, "roundWatcher", "previous cycle tick still running");
       return;
     }
@@ -1685,6 +1687,21 @@ export function createSatRoundWatcherService(params: {
       await persistRuntimeState?.();
     }
   };
+  const runTick = () => {
+    if (activeTick) {
+      void tick();
+      return activeTick;
+    }
+    const tickPromise = tick();
+    activeTick = tickPromise;
+    const clearActiveTick = () => {
+      if (activeTick === tickPromise) {
+        activeTick = null;
+      }
+    };
+    void tickPromise.then(clearActiveTick, clearActiveTick);
+    return tickPromise;
+  };
 
   return {
     id: "sat-mining-round-watcher",
@@ -1695,6 +1712,7 @@ export function createSatRoundWatcherService(params: {
       if (timer) {
         return;
       }
+      stopping = false;
       state.running = true;
       api.logger.info("[sat-mining] cycle watcher start");
       const initialDelayMs = Math.max(0, Math.floor(params.deferInitialActiveRunMs ?? 0));
@@ -1703,23 +1721,24 @@ export function createSatRoundWatcherService(params: {
         if (!isWorkerDue(state, "roundWatcher")) {
           return;
         }
-        void tick();
+        void runTick();
       };
       if (initialDelayMs > 0) {
         initialRunTimer = setTimeout(runInitialTick, initialDelayMs);
       } else if (params.backgroundInitialRun === true) {
-        void tick();
+        void runTick();
       } else {
-        await tick();
+        await runTick();
       }
       timer = setInterval(() => {
         if (!isWorkerDue(state, "roundWatcher")) {
           return;
         }
-        void tick();
+        void runTick();
       }, 5_000);
     },
-    stop: async () => {
+    stop: async (opts?: { persistRuntimeState?: boolean }) => {
+      stopping = true;
       state.running = false;
       markWorkerIdle(state, "roundWatcher");
       if (initialRunTimer) {
@@ -1730,7 +1749,10 @@ export function createSatRoundWatcherService(params: {
         clearInterval(timer);
         timer = null;
       }
-      await persistRuntimeState?.();
+      await activeTick;
+      if (opts?.persistRuntimeState !== false) {
+        await persistRuntimeState?.();
+      }
     },
   };
 }

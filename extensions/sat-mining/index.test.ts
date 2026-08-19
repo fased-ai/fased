@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendSatPlannerHistoryOutcome,
   resolveSatPlannerHistoryStorePath,
   resolveSatRuntimeStorePath,
+  resolveSatWalletStateDir,
   writeSatRecentActions,
 } from "./src/audit-store.js";
 import {
@@ -517,7 +519,16 @@ describe("sat-mining plugin config persistence", () => {
       runtime: {
         version: "test",
         config: {
-          loadConfig: vi.fn(() => ({ plugins: { entries: {} } })),
+          loadConfig: vi.fn(() => ({
+            plugins: {
+              entries: {
+                "sat-mining": {
+                  enabled: false,
+                  config: { enabled: false, network: "devnet", riskMode: "balanced", walletId },
+                },
+              },
+            },
+          })),
           writeConfigFile: vi.fn(async () => {}),
         },
       },
@@ -556,7 +567,7 @@ describe("sat-mining plugin config persistence", () => {
     expect(result.details.recordLocator.targetAuthority).toBe("target-1");
   });
 
-  it("includes resolved validator authority in gateway attestation responses", async () => {
+  it("fails closed before gateway attestation persistence is initialized", async () => {
     const { default: satMiningPlugin } = await import("./index.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
@@ -595,7 +606,7 @@ describe("sat-mining plugin config persistence", () => {
       on: vi.fn(),
     } as never);
 
-    let response: { ok: boolean; payload: unknown } | null = null;
+    let response: { ok: boolean; payload: unknown; error?: unknown } | null = null;
     await gatewayMethods.get("sat.submitValidatorAttestation")!.handler({
       params: {
         targetAuthority: "target-2",
@@ -608,26 +619,18 @@ describe("sat-mining plugin config persistence", () => {
         coordinationRoot: "cc",
         evidenceHash: "dd",
       },
-      respond: (ok, payload) => {
-        response = { ok, payload };
+      respond: (ok, payload, error) => {
+        response = { ok, payload, error };
       },
     });
 
     expect(response).toMatchObject({
-      ok: true,
-      payload: {
-        ok: true,
-        payload: {
-          recordLocator: {
-            validatorAuthority: "validator-auto-1",
-            targetAuthority: "target-2",
-          },
-        },
-      },
+      ok: false,
+      error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
     });
   });
 
-  it("includes resolved validator authority in gateway dispute responses", async () => {
+  it("fails closed before gateway dispute persistence is initialized", async () => {
     const { default: satMiningPlugin } = await import("./index.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
@@ -666,7 +669,7 @@ describe("sat-mining plugin config persistence", () => {
       on: vi.fn(),
     } as never);
 
-    let response: { ok: boolean; payload: unknown } | null = null;
+    let response: { ok: boolean; payload: unknown; error?: unknown } | null = null;
     await gatewayMethods.get("sat.openDispute")!.handler({
       params: {
         targetAuthority: "target-3",
@@ -676,22 +679,14 @@ describe("sat-mining plugin config persistence", () => {
         evidenceHash: "ee",
         targetRoot: "ff",
       },
-      respond: (ok, payload) => {
-        response = { ok, payload };
+      respond: (ok, payload, error) => {
+        response = { ok, payload, error };
       },
     });
 
     expect(response).toMatchObject({
-      ok: true,
-      payload: {
-        ok: true,
-        payload: {
-          recordLocator: {
-            validatorAuthority: "validator-auto-1",
-            targetAuthority: "target-3",
-          },
-        },
-      },
+      ok: false,
+      error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
     });
   });
 
@@ -1393,44 +1388,9 @@ describe("sat-mining plugin config persistence", () => {
     });
   });
 
-  it("submits gateway dispute resolution and corrected root republish", async () => {
+  it("fails closed for dispute resolution and corrected root republish before startup", async () => {
     const { default: satMiningPlugin } = await import("./index.js");
-    const rpcRead = await import("./src/rpc-read.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
-
-    vi.mocked(rpcRead.inspectSatEpoch).mockResolvedValueOnce({
-      address: "epoch-13",
-      epochId: 13,
-      claimsBlocked: true,
-      blockedReason: { kind: "corrected_roots_required", slashReasonCode: 10 },
-      openDisputeCount: 0,
-      validatorRejectCount: 0,
-      slashReasonCode: 10,
-      bucketRoot: "11".repeat(32),
-      scoreRoot: "22".repeat(32),
-      coordinationRoot: "33".repeat(32),
-      republishStatus: {
-        canRepublish: true,
-        blockedReason: { kind: "corrected_roots_required", slashReasonCode: 10 },
-        correctionSignal: { validatorRejectCount: 0, slashReasonCode: 10 },
-        currentRoots: {
-          bucketRoot: "11".repeat(32),
-          scoreRoot: "22".repeat(32),
-          coordinationRoot: "33".repeat(32),
-        },
-        proposalCheck: null,
-        rejectionReasons: [],
-      },
-      epoch: {
-        startTs: 0,
-        endTs: 600,
-        microRoundsTotal: 10,
-        validWalletCount: 1,
-        baseEligibleWalletCount: 1,
-        skillEligibleWalletCount: 1,
-        settledEmissionSat: 80,
-      },
-    });
 
     satMiningPlugin.register({
       id: "sat-mining",
@@ -1467,7 +1427,7 @@ describe("sat-mining plugin config persistence", () => {
       on: vi.fn(),
     } as never);
 
-    let resolveResponse: { ok: boolean; payload: unknown } | null = null;
+    let resolveResponse: { ok: boolean; payload: unknown; error?: unknown } | null = null;
     await gatewayMethods.get("sat.resolveDispute")!.handler({
       params: {
         disputeAuthority: "validator-auto-1",
@@ -1476,31 +1436,17 @@ describe("sat-mining plugin config persistence", () => {
         microRoundId: 6,
         statusFlag: 2,
       },
-      respond: (ok, payload) => {
-        resolveResponse = { ok, payload };
+      respond: (ok, payload, error) => {
+        resolveResponse = { ok, payload, error };
       },
     });
 
     expect(resolveResponse).toMatchObject({
-      ok: true,
-      payload: {
-        ok: true,
-        payload: {
-          request: {
-            method: "sat.resolveDispute",
-            params: {
-              disputeAuthority: "validator-auto-1",
-              targetAuthority: "target-4",
-              epochId: 13,
-              microRoundId: 6,
-              statusFlag: 2,
-            },
-          },
-        },
-      },
+      ok: false,
+      error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
     });
 
-    let republishResponse: { ok: boolean; payload: unknown } | null = null;
+    let republishResponse: { ok: boolean; payload: unknown; error?: unknown } | null = null;
     await gatewayMethods.get("sat.republishEpochRoots")!.handler({
       params: {
         epochId: 13,
@@ -1508,27 +1454,14 @@ describe("sat-mining plugin config persistence", () => {
         scoreRoot: "bb".repeat(32),
         coordinationRoot: "cc".repeat(32),
       },
-      respond: (ok, payload) => {
-        republishResponse = { ok, payload };
+      respond: (ok, payload, error) => {
+        republishResponse = { ok, payload, error };
       },
     });
 
     expect(republishResponse).toMatchObject({
-      ok: true,
-      payload: {
-        ok: true,
-        payload: {
-          request: {
-            method: "sat.republishEpochRoots",
-            params: {
-              epochId: 13,
-              bucketRoot: "aa".repeat(32),
-              scoreRoot: "bb".repeat(32),
-              coordinationRoot: "cc".repeat(32),
-            },
-          },
-        },
-      },
+      ok: false,
+      error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
     });
   });
 
@@ -1623,23 +1556,12 @@ describe("sat-mining plugin config persistence", () => {
     });
     expect(gatewayResponse).toMatchObject({
       ok: false,
-      payload: {
-        preflight: {
-          canRepublish: false,
-        },
-      },
       error: {
-        code: "INVALID_REQUEST",
-        message: "SAT republish preflight failed",
+        code: "UNAVAILABLE",
+        message: "Mining history service is not ready",
       },
     });
-    expect(
-      (
-        gatewayResponse as unknown as {
-          payload: { preflight: { rejectionReasons: Array<{ code: string }> } };
-        }
-      ).payload.preflight.rejectionReasons,
-    ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "open_disputes_present" })]));
+    expect(gatewayResponse?.payload).toBeUndefined();
   });
 
   it("returns mining readiness with real stake and payout probes", async () => {
@@ -4456,6 +4378,7 @@ describe("sat-mining plugin config persistence", () => {
         enabled: true,
         network: "devnet",
         riskMode: "balanced",
+        walletId: "wallet-a",
       },
       runtime: {
         version: "test",
@@ -5540,14 +5463,21 @@ describe("sat-mining plugin config persistence", () => {
             response = { ok, error };
           },
         });
-        expect(response).toMatchObject({
-          ok: false,
-          error: {
-            code: "UNAVAILABLE",
-            message:
-              "walletId wallet-a is not the dedicated Mining wallet; create or import @wallet:mining and use that wallet for SAT mining",
-          },
-        });
+        if (method === "sat.getMiningReadiness") {
+          expect(response).toMatchObject({
+            ok: false,
+            error: {
+              code: "UNAVAILABLE",
+              message:
+                "walletId wallet-a is not the dedicated Mining wallet; create or import @wallet:mining and use that wallet for SAT mining",
+            },
+          });
+        } else {
+          expect(response).toMatchObject({
+            ok: false,
+            error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+          });
+        }
       }
 
       let walletsResponse: { ok: boolean; payload: unknown } | null = null;
@@ -5650,7 +5580,7 @@ describe("sat-mining plugin config persistence", () => {
       payload: undefined,
       error: {
         code: "UNAVAILABLE",
-        message: "no SAT mining wallet is attached; choose a mining wallet first",
+        message: "Mining history service is not ready",
       },
     });
     registryMock.mockReturnValue({
@@ -5729,9 +5659,9 @@ describe("sat-mining plugin config persistence", () => {
     expect(response).toMatchObject({
       ok: false,
       payload: undefined,
-      error: { message: "set active commit transaction failed" },
+      error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
     });
-    expect(writeConfigFile).toHaveBeenCalled();
+    expect(writeConfigFile).not.toHaveBeenCalled();
 
     response = null;
     await gatewayMethods.get("sat.setMinerProfile")!.handler({
@@ -5743,10 +5673,7 @@ describe("sat-mining plugin config persistence", () => {
     expect(response).toMatchObject({
       ok: false,
       payload: undefined,
-      error: {
-        message:
-          "mining profile saved, but active commit was not confirmed: profile commit transaction failed",
-      },
+      error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
     });
   });
 
@@ -6442,6 +6369,12 @@ describe("sat-mining cycle gateway integration", () => {
   it("registers and executes cycle-native gateway methods", async () => {
     const { default: satMiningPlugin } = await import("./index.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
+    const services: Array<{
+      id: string;
+      start?: (ctx?: unknown) => Promise<void>;
+      stop?: (ctx?: unknown) => Promise<void>;
+    }> = [];
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-cycle-gateway-"));
 
     satMiningPlugin.register({
       id: "sat-mining",
@@ -6471,12 +6404,21 @@ describe("sat-mining cycle gateway integration", () => {
         gatewayMethods.set(name, { handler });
       }),
       registerCli: vi.fn(),
-      registerService: vi.fn(),
+      registerService: vi.fn((service) => {
+        services.push(service);
+      }),
       registerProvider: vi.fn(),
       registerCommand: vi.fn(),
       resolvePath: vi.fn((input: string) => input),
       on: vi.fn(),
     } as never);
+
+    const mainService = services.find((service) => service.id === "sat-mining");
+    await mainService?.start?.({
+      config: {},
+      stateDir,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    });
 
     for (const method of [
       "sat.openCycle",
@@ -6537,6 +6479,8 @@ describe("sat-mining cycle gateway integration", () => {
       expect.anything(),
       { cycleId: 123, pageIndex: 4, action: "deactivate" },
     );
+    await mainService?.stop?.({});
+    await fs.rm(stateDir, { recursive: true, force: true });
   });
 });
 
@@ -6633,7 +6577,7 @@ describe("sat-mining capital signer guard", () => {
         ok: false,
         error: {
           code: "UNAVAILABLE",
-          message: expect.stringContaining("Solana is not enabled for the running signer"),
+          message: "Mining history service is not ready",
         },
       });
     }
@@ -6642,5 +6586,1199 @@ describe("sat-mining capital signer guard", () => {
     expect(vi.mocked(solanaSubmit.submitSatDepositMinerCapital)).not.toHaveBeenCalled();
     expect(vi.mocked(solanaSubmit.submitSatWithdrawMinerCapital)).not.toHaveBeenCalled();
     expect(vi.mocked(solanaSubmit.submitSatSetActiveCommit)).not.toHaveBeenCalled();
+  });
+});
+
+describe("sat-mining durable history startup", () => {
+  async function registerMiningPlugin(
+    walletId: string,
+    opts?: { enabled?: boolean; persistedConfig?: Record<string, unknown> },
+  ) {
+    const { default: satMiningPlugin } = await import("./index.js");
+    const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
+    const enabled = opts?.enabled ?? false;
+    const configState = {
+      plugins: {
+        entries: {
+          "sat-mining": {
+            enabled,
+            config: {
+              enabled,
+              network: "devnet",
+              riskMode: "balanced",
+              walletId,
+              ...(opts?.persistedConfig ?? {}),
+            },
+          },
+        },
+      },
+    };
+    const writeConfigFile = vi.fn(async (next: typeof configState) => {
+      Object.assign(configState, next);
+    });
+    const services: Array<{
+      id: string;
+      start?: (ctx?: unknown) => Promise<void>;
+      stop?: (ctx?: unknown) => Promise<void>;
+    }> = [];
+    satMiningPlugin.register({
+      id: "sat-mining",
+      name: "SAT Mining",
+      source: "test",
+      config: {} as never,
+      pluginConfig: {
+        enabled,
+        network: "devnet",
+        riskMode: "balanced",
+        walletId,
+      },
+      runtime: {
+        version: "test",
+        config: {
+          loadConfig: vi.fn(() => structuredClone(configState)),
+          writeConfigFile,
+        },
+      },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      registerTool: vi.fn(),
+      registerHook: vi.fn(),
+      registerHttpHandler: vi.fn(),
+      registerHttpRoute: vi.fn(),
+      registerChannel: vi.fn(),
+      registerGatewayMethod: vi.fn((name: string, handler: RegisteredGatewayMethod["handler"]) => {
+        gatewayMethods.set(name, { handler });
+      }),
+      registerCli: vi.fn(),
+      registerService: vi.fn((service) => {
+        services.push(service);
+      }),
+      registerProvider: vi.fn(),
+      registerCommand: vi.fn(),
+      resolvePath: vi.fn((input: string) => input),
+      on: vi.fn(),
+    } as never);
+    return {
+      gatewayMethods,
+      mainService: services.find((service) => service.id === "sat-mining"),
+      writeConfigFile,
+      configState,
+    };
+  }
+
+  async function registerTransitionWallets() {
+    const { readWalletProviderRegistry } =
+      await import("../../src/wallet/wallet-provider-registry.js");
+    const registryMock = vi.mocked(readWalletProviderRegistry);
+    registryMock.mockReset();
+    registryMock.mockReturnValue({
+      defaultWalletId: "wallet-a",
+      wallets: [
+        {
+          id: "wallet-a",
+          name: "Wallet A",
+          providerId: "embedded-keystore",
+          addresses: { solana: "miner-wallet-1" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+        {
+          id: "wallet-b",
+          name: "Wallet B",
+          providerId: "embedded-keystore",
+          addresses: { solana: "miner-wallet-2" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+      ],
+    } as never);
+  }
+
+  it("reconciles and stops the enabled unattached SQLite store without authorizing mutations", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-unattached-history-"));
+    const { gatewayMethods, mainService } = await registerMiningPlugin("", { enabled: true });
+    try {
+      await expect(
+        mainService?.start?.({
+          config: {},
+          stateDir,
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        }),
+      ).resolves.toBeUndefined();
+      await expect(mainService?.stop?.({})).resolves.toBeUndefined();
+
+      let response: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 123 },
+        respond: (ok, payload, error) => {
+          response = { ok, payload, error };
+        },
+      });
+      expect(response).toMatchObject({
+        ok: false,
+        error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+      });
+    } finally {
+      await mainService?.stop?.({});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["../escape", "legacy wallet", "wallet/a/b"])(
+    "keeps SQLite and migration descriptors under the normalized state root for %s",
+    async (walletId) => {
+      const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-normalized-history-"));
+      const { mainService } = await registerMiningPlugin(walletId);
+      try {
+        await mainService?.start?.({
+          config: {},
+          stateDir,
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        });
+        const walletStateDir = resolveSatWalletStateDir(stateDir, walletId);
+        const databasePath = path.join(walletStateDir, "mining.sqlite");
+        expect(path.dirname(resolveSatPlannerHistoryStorePath(stateDir, walletId))).toBe(
+          walletStateDir,
+        );
+        expect(path.dirname(resolveSatRuntimeStorePath(stateDir, walletId))).toBe(walletStateDir);
+        await expect(fs.stat(databasePath)).resolves.toMatchObject({
+          isFile: expect.any(Function),
+        });
+        expect(path.relative(walletStateDir, databasePath)).toBe("mining.sqlite");
+      } finally {
+        await mainService?.stop?.({}).catch(() => {});
+        await fs.rm(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("opens a registered unsafe wallet history query only from its normalized state root", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-query-normalized-history-"));
+    const requestedWalletId = "../legacy/query wallet";
+    const databasePath = path.join(
+      resolveSatWalletStateDir(stateDir, requestedWalletId),
+      "mining.sqlite",
+    );
+    const { readWalletProviderRegistry } =
+      await import("../../src/wallet/wallet-provider-registry.js");
+    vi.mocked(readWalletProviderRegistry).mockReturnValue({
+      defaultWalletId: "wallet-a",
+      wallets: [
+        {
+          id: "wallet-a",
+          name: "Wallet A",
+          providerId: "embedded-keystore",
+          addresses: { solana: "miner-wallet-1" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+        {
+          id: requestedWalletId,
+          name: "Legacy Mining Wallet",
+          providerId: "embedded-keystore",
+          addresses: { solana: "legacy-miner-wallet" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+      ],
+    } as never);
+    const seeded = await SatMiningHistoryStore.open({
+      databasePath,
+      scope: {
+        walletId: requestedWalletId,
+        authority: "legacy-miner-wallet",
+        providerId: "embedded-keystore",
+        network: "devnet",
+        programId: SAT_PROGRAM_ID,
+        mintAddress: SAT_MINT_ADDRESS,
+        mintProgramId: SAT_MINT_PROGRAM_ID,
+        protocolVersion: "sat-v2",
+      },
+    });
+    seeded.store.close();
+    const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      let response: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMiningHistorySeries")!.handler({
+        params: { walletId: requestedWalletId, window: "all" },
+        respond: (ok, payload, error) => {
+          response = { ok, payload, error };
+        },
+      });
+      expect(response).toMatchObject({ ok: true });
+      expect(
+        path.relative(resolveSatWalletStateDir(stateDir, requestedWalletId), databasePath),
+      ).toBe("mining.sqlite");
+    } finally {
+      await mainService?.stop?.({});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects normalized wallet-directory alias scopes before every cross-wallet query callback", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-query-wallet-alias-"));
+    const requestedWalletId = "wallet/a";
+    const storedWalletId = "wallet_a";
+    const databasePath = path.join(
+      resolveSatWalletStateDir(stateDir, storedWalletId),
+      "mining.sqlite",
+    );
+    const { readWalletProviderRegistry } =
+      await import("../../src/wallet/wallet-provider-registry.js");
+    vi.mocked(readWalletProviderRegistry).mockReturnValue({
+      defaultWalletId: "wallet-a",
+      wallets: [
+        {
+          id: "wallet-a",
+          name: "Wallet A",
+          providerId: "embedded-keystore",
+          addresses: { solana: "miner-wallet-1" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+        {
+          id: requestedWalletId,
+          name: "Alias Mining Wallet",
+          providerId: "embedded-keystore",
+          addresses: { solana: "alias-miner-wallet" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+      ],
+    } as never);
+    const seeded = await SatMiningHistoryStore.open({
+      databasePath,
+      scope: {
+        walletId: storedWalletId,
+        authority: "stored-miner-wallet",
+        providerId: "embedded-keystore",
+        network: "devnet",
+        programId: SAT_PROGRAM_ID,
+        mintAddress: SAT_MINT_ADDRESS,
+        mintProgramId: SAT_MINT_PROGRAM_ID,
+        protocolVersion: "sat-v2",
+      },
+    });
+    const storedScopeKey = seeded.store.getScopeKey();
+    seeded.store.close();
+    const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      for (const params of [
+        { walletId: requestedWalletId, window: "all" },
+        { walletId: requestedWalletId, scopeId: storedScopeKey, window: "all" },
+      ]) {
+        let response: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+        await gatewayMethods.get("sat.getMiningHistorySeries")!.handler({
+          params,
+          respond: (ok, payload, error) => {
+            response = { ok, payload, error };
+          },
+        });
+        expect(response).toMatchObject({
+          ok: false,
+          error: {
+            code: "UNAVAILABLE",
+            message: "Mining history scope does not match the requested Wallet ID",
+          },
+        });
+        expect(response?.payload).toBeUndefined();
+      }
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a caller-selected foreign scope from the active wallet history store", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-current-scope-alias-"));
+    const databasePath = path.join(resolveSatWalletStateDir(stateDir, "wallet-a"), "mining.sqlite");
+    const primary = await SatMiningHistoryStore.open({
+      databasePath,
+      scope: {
+        walletId: "wallet-a",
+        authority: "miner-wallet-1",
+        providerId: "embedded-keystore",
+        network: "devnet",
+        programId: SAT_PROGRAM_ID,
+        mintAddress: SAT_MINT_ADDRESS,
+        mintProgramId: SAT_MINT_PROGRAM_ID,
+        protocolVersion: "sat-v2",
+      },
+    });
+    primary.store.close();
+    const foreign = await SatMiningHistoryStore.open({
+      databasePath: path.join(stateDir, "foreign-scope.sqlite"),
+      scope: {
+        walletId: "wallet-b",
+        authority: "miner-wallet-2",
+        providerId: "embedded-keystore",
+        network: "devnet",
+        programId: SAT_PROGRAM_ID,
+        mintAddress: SAT_MINT_ADDRESS,
+        mintProgramId: SAT_MINT_PROGRAM_ID,
+        protocolVersion: "sat-v2",
+      },
+    });
+    const foreignScopeKey = foreign.store.getScopeKey();
+    foreign.store.close();
+    const database = new DatabaseSync(databasePath);
+    try {
+      database
+        .prepare(
+          `INSERT INTO history_scope (
+             scope_key, wallet_id, authority, provider_id, network,
+             program_id, mint_address, mint_program_id, protocol_version, created_at_ms
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          foreignScopeKey,
+          "wallet-b",
+          "miner-wallet-2",
+          "embedded-keystore",
+          "devnet",
+          SAT_PROGRAM_ID,
+          SAT_MINT_ADDRESS,
+          SAT_MINT_PROGRAM_ID,
+          "sat-v2",
+          Date.now(),
+        );
+    } finally {
+      database.close();
+    }
+    const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      let response: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMiningHistorySeries")!.handler({
+        params: { walletId: "wallet-a", scopeId: foreignScopeKey, window: "all" },
+        respond: (ok, payload, error) => {
+          response = { ok, payload, error };
+        },
+      });
+      expect(response).toMatchObject({
+        ok: false,
+        error: {
+          code: "UNAVAILABLE",
+          message: "Mining history scope does not match the requested Wallet ID",
+        },
+      });
+      expect(response?.payload).toBeUndefined();
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([".", ".."])(
+    "fails closed before persistence startup for the unsafe registered wallet ID %s",
+    async (walletId) => {
+      const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-contained-history-"));
+      const walletsRoot = path.join(stateDir, "sat-mining", "wallets");
+      const unsafeStateDir = walletId === "." ? walletsRoot : path.join(stateDir, "sat-mining");
+      const { mainService } = await registerMiningPlugin(walletId);
+      try {
+        expect(mainService).toBeDefined();
+        await expect(
+          mainService!.start!({
+            config: {},
+            stateDir,
+            logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+          }),
+        ).rejects.toThrow("Mining wallet state path is outside the wallet state root");
+
+        for (const filename of [
+          "mining.sqlite",
+          "audit-store.json",
+          "runtime-store.json",
+          "planner-history.ndjson",
+          "action-history.ndjson",
+          "action-history.mirror.ndjson",
+        ]) {
+          await expect(fs.stat(path.join(unsafeStateDir, filename))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        }
+      } finally {
+        await mainService?.stop?.({}).catch(() => {});
+        await fs.rm(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([".", ".."])(
+    "rejects a registered cross-wallet history query for unsafe wallet ID %s",
+    async (requestedWalletId) => {
+      const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-contained-query-"));
+      const walletsRoot = path.join(stateDir, "sat-mining", "wallets");
+      const unsafeStateDir =
+        requestedWalletId === "." ? walletsRoot : path.join(stateDir, "sat-mining");
+      const { readWalletProviderRegistry } =
+        await import("../../src/wallet/wallet-provider-registry.js");
+      vi.mocked(readWalletProviderRegistry).mockReturnValue({
+        defaultWalletId: "wallet-a",
+        wallets: [
+          {
+            id: "wallet-a",
+            name: "Wallet A",
+            providerId: "embedded-keystore",
+            addresses: { solana: "miner-wallet-1" },
+            metadata: { role: "mining", purpose: "mining" },
+          },
+          {
+            id: requestedWalletId,
+            name: "Unsafe Legacy Mining Wallet",
+            providerId: "embedded-keystore",
+            addresses: { solana: "unsafe-miner-wallet" },
+            metadata: { role: "mining", purpose: "mining" },
+          },
+        ],
+      } as never);
+      const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+      try {
+        await mainService?.start?.({
+          config: {},
+          stateDir,
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        });
+        let response: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+        await gatewayMethods.get("sat.getMiningHistorySeries")!.handler({
+          params: { walletId: requestedWalletId, window: "all" },
+          respond: (ok, payload, error) => {
+            response = { ok, payload, error };
+          },
+        });
+        expect(response).toMatchObject({
+          ok: false,
+          error: {
+            code: "UNAVAILABLE",
+            message: "Mining wallet state path is outside the wallet state root",
+          },
+        });
+        for (const filename of [
+          "mining.sqlite",
+          "audit-store.json",
+          "runtime-store.json",
+          "planner-history.ndjson",
+          "action-history.ndjson",
+          "action-history.mirror.ndjson",
+        ]) {
+          await expect(fs.stat(path.join(unsafeStateDir, filename))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        }
+      } finally {
+        await mainService?.stop?.({}).catch(() => {});
+        await fs.rm(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("restores the prior wallet after a failed switch before later submission-capable mutation", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-switch-failure-"));
+    const { readWalletProviderRegistry } =
+      await import("../../src/wallet/wallet-provider-registry.js");
+    const solanaSubmit = await import("./src/solana-submit.js");
+    vi.mocked(readWalletProviderRegistry).mockReturnValue({
+      defaultWalletId: "wallet-a",
+      wallets: [
+        {
+          id: "wallet-a",
+          name: "Wallet A",
+          providerId: "embedded-keystore",
+          addresses: { solana: "miner-wallet-1" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+        {
+          id: "wallet-b",
+          name: "Wallet B",
+          providerId: "embedded-keystore",
+          addresses: { solana: "miner-wallet-2" },
+          metadata: { role: "mining", purpose: "mining" },
+        },
+      ],
+    } as never);
+    const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+    const targetDatabasePath = path.join(
+      resolveSatWalletStateDir(stateDir, "wallet-b"),
+      "mining.sqlite",
+    );
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      await fs.mkdir(targetDatabasePath, { recursive: true });
+
+      let switchResponse: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          switchResponse = { ok, payload, error };
+        },
+      });
+      expect(switchResponse).toMatchObject({
+        ok: false,
+        error: { code: "UNAVAILABLE" },
+      });
+
+      vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow).mockClear();
+      vi.mocked(solanaSubmit.submitSatOpenCycle).mockClear();
+      let response: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 123 },
+        respond: (ok, payload, error) => {
+          response = { ok, payload, error };
+        },
+      });
+
+      expect(response).toMatchObject({
+        ok: true,
+      });
+      expect(vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(solanaSubmit.submitSatOpenCycle)).toHaveBeenCalledTimes(1);
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fences submission mutations while old-wallet persistence is suspended, then permits the completed switch", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-switch-fence-"));
+    await registerTransitionWallets();
+    const solanaSubmit = await import("./src/solana-submit.js");
+    const { SatMiningHistoryStore: ActiveMiningHistoryStore } =
+      await import("./src/mining-history-store.js");
+    const { gatewayMethods, mainService, writeConfigFile } = await registerMiningPlugin("wallet-a");
+    let releaseOldPersistence!: () => void;
+    const oldPersistenceReleased = new Promise<void>((resolve) => {
+      releaseOldPersistence = resolve;
+    });
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      const persistenceSpy = vi
+        .spyOn(ActiveMiningHistoryStore.prototype, "replaceAuditArtifacts")
+        .mockImplementationOnce(async () => {
+          await oldPersistenceReleased;
+        });
+      let switchResponse: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      const switchPromise = gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          switchResponse = { ok, payload, error };
+        },
+      });
+      await vi.waitFor(() => expect(persistenceSpy).toHaveBeenCalledTimes(1));
+
+      vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow).mockClear();
+      vi.mocked(solanaSubmit.submitSatOpenCycle).mockClear();
+      writeConfigFile.mockClear();
+      let fencedResponse: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 123 },
+        respond: (ok, payload, error) => {
+          fencedResponse = { ok, payload, error };
+        },
+      });
+      expect(fencedResponse).toMatchObject({
+        ok: false,
+        error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+      });
+      expect(fencedResponse?.payload).toBeUndefined();
+      expect(vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow)).not.toHaveBeenCalled();
+      expect(vi.mocked(solanaSubmit.submitSatOpenCycle)).not.toHaveBeenCalled();
+      expect(writeConfigFile).not.toHaveBeenCalled();
+
+      let fencedRead: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMinerProfile")!.handler({
+        respond: (ok, payload, error) => {
+          fencedRead = { ok, payload, error };
+        },
+      });
+      expect(fencedRead).toMatchObject({
+        ok: false,
+        error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+      });
+      expect(fencedRead?.payload).toBeUndefined();
+
+      releaseOldPersistence();
+      await switchPromise;
+      persistenceSpy.mockRestore();
+      expect(switchResponse).toMatchObject({ ok: true });
+
+      let retryResponse: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 124 },
+        respond: (ok, payload, error) => {
+          retryResponse = { ok, payload, error };
+        },
+      });
+      expect(retryResponse).toMatchObject({ ok: true });
+      expect(vi.mocked(solanaSubmit.submitSatOpenCycle)).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseOldPersistence?.();
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed after pre-close old-store persistence failure and permits a clean retry", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-preclose-failure-"));
+    await registerTransitionWallets();
+    const solanaSubmit = await import("./src/solana-submit.js");
+    const { SatMiningHistoryStore: ActiveMiningHistoryStore } =
+      await import("./src/mining-history-store.js");
+    const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      const persistenceSpy = vi
+        .spyOn(ActiveMiningHistoryStore.prototype, "replaceAuditArtifacts")
+        .mockRejectedValueOnce(new Error("old history persistence failed"));
+      let failedSwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          failedSwitch = { ok, payload, error };
+        },
+      });
+      persistenceSpy.mockRestore();
+      expect(failedSwitch).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+
+      vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow).mockClear();
+      vi.mocked(solanaSubmit.submitSatOpenCycle).mockClear();
+      let restoredResponse: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 125 },
+        respond: (ok, payload, error) => {
+          restoredResponse = { ok, payload, error };
+        },
+      });
+      expect(restoredResponse).toMatchObject({ ok: true });
+      expect(vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(solanaSubmit.submitSatOpenCycle)).toHaveBeenCalledTimes(1);
+
+      vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow).mockClear();
+      vi.mocked(solanaSubmit.submitSatOpenCycle).mockClear();
+      let retrySwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          retrySwitch = { ok, payload, error };
+        },
+      });
+      expect(retrySwitch).toMatchObject({ ok: true });
+      let retryMutation: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 127 },
+        respond: (ok, payload, error) => {
+          retryMutation = { ok, payload, error };
+        },
+      });
+      expect(retryMutation).toMatchObject({ ok: true });
+      expect(vi.mocked(solanaSubmit.submitSatOpenCycle)).toHaveBeenCalledTimes(1);
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("closes an unready target store when post-open restoration fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-postopen-failure-"));
+    await registerTransitionWallets();
+    const solanaSubmit = await import("./src/solana-submit.js");
+    const { SatMiningHistoryStore: ActiveMiningHistoryStore } =
+      await import("./src/mining-history-store.js");
+    const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      let seededAction: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 126 },
+        respond: (ok, payload, error) => {
+          seededAction = { ok, payload, error };
+        },
+      });
+      expect(seededAction).toMatchObject({ ok: true });
+      const closeSpy = vi.spyOn(ActiveMiningHistoryStore.prototype, "close");
+      const restoreSpy = vi
+        .spyOn(ActiveMiningHistoryStore.prototype, "readOperationalState")
+        .mockImplementationOnce(() => {
+          throw new Error("target history restoration failed");
+        });
+      let failedSwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          failedSwitch = { ok, payload, error };
+        },
+      });
+      restoreSpy.mockRestore();
+      expect(failedSwitch).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+      expect(closeSpy).toHaveBeenCalledTimes(3);
+      closeSpy.mockRestore();
+
+      vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow).mockClear();
+      vi.mocked(solanaSubmit.submitSatOpenCycle).mockClear();
+      let restoredProfile: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMinerProfile")!.handler({
+        respond: (ok, payload, error) => {
+          restoredProfile = { ok, payload, error };
+        },
+      });
+      expect(restoredProfile).toMatchObject({
+        ok: true,
+        payload: { payload: { walletId: "wallet-a" } },
+      });
+      let restoredMutation: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 127 },
+        respond: (ok, payload, error) => {
+          restoredMutation = { ok, payload, error };
+        },
+      });
+      expect(restoredMutation).toMatchObject({ ok: true });
+      expect(vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(solanaSubmit.submitSatOpenCycle)).toHaveBeenCalledTimes(1);
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back to the exact prior wallet when target config persistence fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-target-config-failure-"));
+    await registerTransitionWallets();
+    const { gatewayMethods, mainService, writeConfigFile } = await registerMiningPlugin("wallet-a");
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      writeConfigFile.mockRejectedValueOnce(new Error("target config write failed"));
+      let failedSwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          failedSwitch = { ok, payload, error };
+        },
+      });
+      expect(failedSwitch).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+
+      let restoredProfile: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMinerProfile")!.handler({
+        respond: (ok, payload, error) => {
+          restoredProfile = { ok, payload, error };
+        },
+      });
+      expect(restoredProfile).toMatchObject({
+        ok: true,
+        payload: { payload: { walletId: "wallet-a" } },
+      });
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stops partial target workers and restores the running A worker state after target readiness fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-target-worker-failure-"));
+    await registerTransitionWallets();
+    const rpcRead = await import("./src/rpc-read.js");
+    await writeSatRecentActions(resolveSatRuntimeStorePath(stateDir, "wallet-a"), [], {
+      enabledWanted: true,
+    });
+    await writeSatRecentActions(resolveSatRuntimeStorePath(stateDir, "wallet-b"), [], {
+      enabledWanted: true,
+    });
+    const { gatewayMethods, mainService, configState } = await registerMiningPlugin("wallet-a", {
+      enabled: true,
+      persistedConfig: {
+        cycleCadence: 12,
+        tokenConfig: { mintDecimals: 9, treasuryMode: "locked" },
+        unknownRollbackSentinel: { nested: ["retain", 7] },
+      },
+    });
+    const priorPersistedEntry = structuredClone(configState.plugins.entries["sat-mining"]);
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      let initialStatus: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMiningStatus")!.handler({
+        respond: (ok, payload, error) => {
+          initialStatus = { ok, payload, error };
+        },
+      });
+      expect(initialStatus).toMatchObject({
+        ok: true,
+        payload: {
+          payload: {
+            walletId: "wallet-a",
+            running: true,
+            bootstrapState: "ready",
+            bootstrapWalletId: "wallet-a",
+            workers: { roundWatcher: expect.any(Object) },
+          },
+        },
+      });
+
+      // The preceding transition regression leaves a fresh chain-time cache.
+      // Advance beyond its reuse window so this failure is injected into B,
+      // rather than being hidden by that prior A cache entry.
+      const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5 * 60_000);
+      vi.mocked(rpcRead.inspectSatChainUnixTime).mockRejectedValueOnce(
+        new Error("target chain time unavailable"),
+      );
+      let failedSwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          failedSwitch = { ok, payload, error };
+        },
+      });
+      nowSpy.mockRestore();
+      expect(failedSwitch).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+      expect(configState.plugins.entries["sat-mining"]).toEqual(priorPersistedEntry);
+      expect(JSON.stringify(configState.plugins.entries["sat-mining"])).toBe(
+        JSON.stringify(priorPersistedEntry),
+      );
+
+      let restoredStatus: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMiningStatus")!.handler({
+        respond: (ok, payload, error) => {
+          restoredStatus = { ok, payload, error };
+        },
+      });
+      expect(restoredStatus).toMatchObject({
+        ok: true,
+        payload: {
+          payload: {
+            walletId: "wallet-a",
+            running: true,
+            bootstrapState: "ready",
+            bootstrapWalletId: "wallet-a",
+            workers: { roundWatcher: expect.any(Object) },
+          },
+        },
+      });
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps reads and mutations fenced when target rollback restoration fails", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-rollback-fence-"));
+    await registerTransitionWallets();
+    const rpcRead = await import("./src/rpc-read.js");
+    const solanaSubmit = await import("./src/solana-submit.js");
+    await writeSatRecentActions(resolveSatRuntimeStorePath(stateDir, "wallet-a"), [], {
+      enabledWanted: true,
+    });
+    await writeSatRecentActions(resolveSatRuntimeStorePath(stateDir, "wallet-b"), [], {
+      enabledWanted: true,
+    });
+    const { gatewayMethods, mainService, writeConfigFile, configState } =
+      await registerMiningPlugin("wallet-a", {
+        enabled: true,
+      });
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      writeConfigFile.mockClear();
+      writeConfigFile.mockImplementationOnce(async (next) => {
+        Object.assign(configState, next);
+      });
+      writeConfigFile.mockRejectedValueOnce(new Error("rollback config restore failed"));
+      const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10 * 60_000);
+      vi.mocked(rpcRead.inspectSatChainUnixTime).mockRejectedValueOnce(
+        new Error("target chain time unavailable"),
+      );
+      let failedSwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          failedSwitch = { ok, payload, error };
+        },
+      });
+      nowSpy.mockRestore();
+      expect(failedSwitch).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+      expect(failedSwitch?.error).toMatchObject({
+        message: expect.stringContaining("rollback failed"),
+      });
+
+      writeConfigFile.mockClear();
+      vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow).mockClear();
+      vi.mocked(solanaSubmit.submitSatOpenCycle).mockClear();
+      let fencedRead: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMinerProfile")!.handler({
+        respond: (ok, payload, error) => {
+          fencedRead = { ok, payload, error };
+        },
+      });
+      expect(fencedRead).toMatchObject({
+        ok: false,
+        error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+      });
+      expect(fencedRead?.payload).toBeUndefined();
+
+      let fencedMutation: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 129 },
+        respond: (ok, payload, error) => {
+          fencedMutation = { ok, payload, error };
+        },
+      });
+      expect(fencedMutation).toMatchObject({
+        ok: false,
+        error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+      });
+      expect(fencedMutation?.payload).toBeUndefined();
+      expect(vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow)).not.toHaveBeenCalled();
+      expect(vi.mocked(solanaSubmit.submitSatOpenCycle)).not.toHaveBeenCalled();
+      expect(writeConfigFile).not.toHaveBeenCalled();
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stops terminal rollback workers and clears their fence only after a ready service restart", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-rollback-worker-fence-"));
+    await registerTransitionWallets();
+    const rpcRead = await import("./src/rpc-read.js");
+    const solanaSubmit = await import("./src/solana-submit.js");
+    await writeSatRecentActions(resolveSatRuntimeStorePath(stateDir, "wallet-a"), [], {
+      enabledWanted: true,
+    });
+    await writeSatRecentActions(resolveSatRuntimeStorePath(stateDir, "wallet-b"), [], {
+      enabledWanted: true,
+    });
+    const { gatewayMethods, mainService, writeConfigFile } = await registerMiningPlugin(
+      "wallet-a",
+      { enabled: true },
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      vi.setSystemTime(new Date("2030-01-01T00:10:00.000Z"));
+      vi.mocked(rpcRead.inspectSatChainUnixTime)
+        .mockRejectedValueOnce(new Error("target worker readiness failed"))
+        .mockRejectedValueOnce(new Error("rollback worker readiness failed"));
+      let failedSwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.setMinerProfile")!.handler({
+        params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },
+        respond: (ok, payload, error) => {
+          failedSwitch = { ok, payload, error };
+        },
+      });
+      expect(failedSwitch).toMatchObject({
+        ok: false,
+        error: {
+          code: "UNAVAILABLE",
+          message: expect.stringContaining("rollback failed"),
+        },
+      });
+
+      writeConfigFile.mockClear();
+      vi.mocked(rpcRead.inspectSatChainUnixTime).mockClear();
+      vi.mocked(rpcRead.inspectCurrentSatRoundBucket).mockClear();
+      vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow).mockClear();
+      vi.mocked(solanaSubmit.submitSatOpenCycle).mockClear();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(vi.mocked(rpcRead.inspectSatChainUnixTime)).not.toHaveBeenCalled();
+      expect(vi.mocked(rpcRead.inspectCurrentSatRoundBucket)).not.toHaveBeenCalled();
+      expect(writeConfigFile).not.toHaveBeenCalled();
+      expect(vi.mocked(solanaSubmit.runWithSatSubmissionWorkflow)).not.toHaveBeenCalled();
+      expect(vi.mocked(solanaSubmit.submitSatOpenCycle)).not.toHaveBeenCalled();
+
+      for (const method of ["sat.getMinerProfile", "sat.getMiningStatus"] as const) {
+        let readResponse: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+        await gatewayMethods.get(method)!.handler({
+          respond: (ok, payload, error) => {
+            readResponse = { ok, payload, error };
+          },
+        });
+        expect(readResponse).toMatchObject({
+          ok: false,
+          error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+        });
+        expect(readResponse?.payload).toBeUndefined();
+      }
+      let mutationResponse: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.openCycle")!.handler({
+        params: { cycleId: 130 },
+        respond: (ok, payload, error) => {
+          mutationResponse = { ok, payload, error };
+        },
+      });
+      expect(mutationResponse).toMatchObject({
+        ok: false,
+        error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+      });
+      expect(mutationResponse?.payload).toBeUndefined();
+
+      await mainService?.stop?.({});
+      vi.mocked(rpcRead.inspectSatChainUnixTime).mockResolvedValue(Math.floor(Date.now() / 1000));
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      let recoveredRead: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMinerProfile")!.handler({
+        respond: (ok, payload, error) => {
+          recoveredRead = { ok, payload, error };
+        },
+      });
+      expect(recoveredRead).toMatchObject({
+        ok: true,
+        payload: { payload: { walletId: "wallet-a" } },
+      });
+    } finally {
+      await mainService?.stop?.({});
+      vi.useRealTimers();
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores A bootstrap state when the attach-wallet route cannot persist B configuration", async () => {
+    const stateDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "sat-history-attach-bootstrap-failure-"),
+    );
+    await registerTransitionWallets();
+    await writeSatRecentActions(resolveSatRuntimeStorePath(stateDir, "wallet-a"), [], {
+      enabledWanted: true,
+    });
+    await writeSatRecentActions(resolveSatRuntimeStorePath(stateDir, "wallet-b"), [], {
+      enabledWanted: true,
+    });
+    const { gatewayMethods, mainService, writeConfigFile } = await registerMiningPlugin(
+      "wallet-a",
+      {
+        enabled: true,
+      },
+    );
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+      let initialStatus: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMiningStatus")!.handler({
+        respond: (ok, payload, error) => {
+          initialStatus = { ok, payload, error };
+        },
+      });
+      expect(initialStatus).toMatchObject({
+        ok: true,
+        payload: {
+          payload: { walletId: "wallet-a", running: true, bootstrapState: "ready" },
+        },
+      });
+      writeConfigFile.mockRejectedValueOnce(new Error("attach target config write failed"));
+      let failedAttach: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.startMining")!.handler({
+        params: { walletId: "wallet-b" },
+        respond: (ok, payload, error) => {
+          failedAttach = { ok, payload, error };
+        },
+      });
+      expect(failedAttach).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+
+      let restoredStatus: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.getMiningStatus")!.handler({
+        respond: (ok, payload, error) => {
+          restoredStatus = { ok, payload, error };
+        },
+      });
+      expect(restoredStatus).toMatchObject({
+        ok: true,
+        payload: {
+          payload: {
+            walletId: "wallet-a",
+            running: true,
+            bootstrapState: "ready",
+            bootstrapWalletId: "wallet-a",
+          },
+        },
+      });
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back a failed SQLite start, rejects durable mutation, then retries cleanly", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-history-start-failure-"));
+    const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+    const databasePath = path.join(resolveSatWalletStateDir(stateDir, "wallet-a"), "mining.sqlite");
+    try {
+      await fs.mkdir(databasePath, { recursive: true });
+      expect(mainService).toBeDefined();
+      await expect(
+        mainService!.start!({
+          config: {},
+          stateDir,
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        }),
+      ).rejects.toThrow();
+
+      let response: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get("sat.clearMiningHistory")!.handler({
+        params: { confirmation: "clear-mining-history" },
+        respond: (ok, payload, error) => {
+          response = { ok, payload, error };
+        },
+      });
+      expect(response).toMatchObject({
+        ok: false,
+        error: { code: "UNAVAILABLE", message: "Mining history service is not ready" },
+      });
+      expect(response?.payload).toBeUndefined();
+
+      await fs.rm(databasePath, { recursive: true, force: true });
+      await expect(
+        mainService!.start!({
+          config: {},
+          stateDir,
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await mainService?.stop?.({}).catch(() => {});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
   });
 });
