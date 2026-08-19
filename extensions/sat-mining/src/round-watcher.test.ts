@@ -49,6 +49,8 @@ type MinerCycleView = {
   validParticipation?: boolean;
 };
 
+const TEST_AUTHORITY = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW"; // pragma: allowlist secret
+
 function createOpenCycleView(cycleId: number): CycleView {
   const openTs = cycleId * 300;
   return {
@@ -122,7 +124,7 @@ const inspectSatCycleRegistryMeta = vi.fn(
 const inspectSatMinerCapital = vi.fn(
   async (..._args: unknown[]): Promise<unknown> => ({
     address: "capital",
-    authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW", // pragma: allowlist secret
+    authority: TEST_AUTHORITY,
     fundedLamports: "3000000000",
     lockedLamports: "0",
     freeLamports: "3000000000",
@@ -255,7 +257,7 @@ describe("createSatRoundWatcherService", () => {
     inspectSatMinerCapital.mockReset();
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "3000000000",
       lockedLamports: "0",
       freeLamports: "3000000000",
@@ -291,7 +293,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -317,7 +319,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const api = {
       config: {},
@@ -369,7 +371,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     let firstRead = true;
     inspectSatChainUnixTime.mockImplementation(async () => {
       if (firstRead) {
@@ -407,7 +409,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -448,7 +450,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     state.commitFreezeUntilMs = Date.now() + 600_000;
     const api = {
       config: {},
@@ -479,11 +481,11 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     state.commitFreezeUntilMs = Date.now() + 600_000;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "1200000000",
       lockedLamports: "0",
       freeLamports: "900000000",
@@ -514,7 +516,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     getOrCreateRoundExecutionState(state, cycleId, 0).participationSubmitted = true;
     getOrCreateRoundExecutionState(state, cycleId, 0).openRoundSubmitted = true;
@@ -545,7 +547,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    const authority = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    const authority = TEST_AUTHORITY;
     state.activeWalletAddress = authority;
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const nowSec = cycleId * 300 + 280;
@@ -620,7 +622,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    const authority = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    const authority = TEST_AUTHORITY;
     state.activeWalletAddress = authority;
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const nowSec = cycleId * 300 + 180;
@@ -681,7 +683,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     let firstRead = true;
     inspectSatChainUnixTime.mockImplementation(async () => {
       if (firstRead) {
@@ -725,7 +727,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
     execution.openRoundSubmitted = true;
@@ -774,7 +776,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
     execution.openRoundSubmitted = true;
@@ -808,7 +810,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCycleAccountExists.mockResolvedValueOnce(true);
     const api = {
       config: {},
@@ -832,7 +834,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const localNowSec = Math.floor(Date.now() / 1000);
     inspectSatChainUnixTime.mockResolvedValue(localNowSec - 300);
     const api = {
@@ -862,7 +864,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCycleAccountExists.mockResolvedValueOnce(true);
     const api = {
       config: {},
@@ -890,7 +892,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -916,7 +918,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCycleAccountExists.mockResolvedValueOnce(false).mockResolvedValue(true);
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
@@ -953,7 +955,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
       if (method === "sat.commitCycle") {
@@ -987,7 +989,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
       if (method === "sat.commitCycle") {
@@ -1026,7 +1028,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     let landedAfterTimeout = false;
     inspectSatMinerCycleAccountExists.mockImplementation(async () => landedAfterTimeout);
@@ -1073,7 +1075,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const cycleId = Math.floor(Date.now() / 1000 / 300);
     inspectSatMinerCycleAccountExists.mockResolvedValue(false);
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
@@ -1119,7 +1121,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycleAccountExists.mockResolvedValue(false);
     const api = {
       config: {},
@@ -1152,7 +1154,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 250_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatGlobalState.mockResolvedValue({
       address: "global",
@@ -1163,7 +1165,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "3000000000",
       lockedLamports: "0",
       freeLamports: "250015000",
@@ -1196,10 +1198,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 9_275_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "10493000000",
       lockedLamports: "0",
       freeLamports: "252600000",
@@ -1237,7 +1239,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 9_970_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatGlobalState.mockResolvedValue({
       address: "global",
       cycleSeconds: 180,
@@ -1247,7 +1249,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "9969867331",
       lockedLamports: "0",
       freeLamports: "9969867331",
@@ -1285,7 +1287,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 10_000_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatGlobalState.mockResolvedValue({
       address: "global",
       cycleSeconds: 300,
@@ -1295,7 +1297,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "10000000000",
       lockedLamports: "0",
       freeLamports: "10000000000",
@@ -1332,7 +1334,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatMinerCycleAccountExists.mockResolvedValue(false);
     const api = {
@@ -1360,7 +1362,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatRegistryReserveLamports.mockResolvedValue({
       address: "reserve",
@@ -1392,7 +1394,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatRegistryReserveLamports.mockResolvedValue({
       address: "reserve",
@@ -1428,7 +1430,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatLamportBalance.mockResolvedValue("160000000");
     inspectSatRegistryReserveLamports.mockResolvedValue({
@@ -1462,7 +1464,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycleAccountExists.mockResolvedValue(false);
     inspectSatLamportBalance.mockResolvedValue("160000000");
     inspectSatRegistryReserveLamports.mockResolvedValue({
@@ -1483,7 +1485,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "3000000000",
       lockedLamports: "2700000000",
       freeLamports: "300000000",
@@ -1513,7 +1515,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 300_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
       if (method === "sat.setActiveCommit") {
@@ -1553,7 +1555,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1582,7 +1584,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1609,7 +1611,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     runSatGatewayMethod.mockImplementation(async (args: unknown) => {
       const method = (args as { method?: string })?.method;
       if (method === "sat.commitCycle") {
@@ -1668,7 +1670,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const api = {
       config: {},
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1700,7 +1702,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycle.mockResolvedValueOnce({
       address: "cycle",
       cycleId: 0,
@@ -1726,7 +1728,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValueOnce({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "1000000000",
       lockedLamports: "0",
       freeLamports: "1000000000",
@@ -1782,7 +1784,7 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatCycle.mockResolvedValueOnce({
       address: "cycle",
       cycleId: 0,
@@ -1809,7 +1811,7 @@ describe("createSatRoundWatcherService", () => {
     inspectSatMinerCapital
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "1000000000",
         lockedLamports: "0",
         freeLamports: "1000000000",
@@ -1817,7 +1819,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "340000000",
         lockedLamports: "0",
         freeLamports: "340000000",
@@ -1856,11 +1858,11 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatLamportBalance.mockResolvedValue("1000000000");
     inspectSatMinerCapital.mockResolvedValueOnce({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "1000000000",
       lockedLamports: "0",
       freeLamports: "1000000000",
@@ -1896,10 +1898,10 @@ describe("createSatRoundWatcherService", () => {
       walletId: "wallet-a",
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "200000000",
       lockedLamports: "0",
       freeLamports: "200000000",
@@ -1930,10 +1932,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 300_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "510000000",
       lockedLamports: "250000000",
       freeLamports: "260000000",
@@ -1971,10 +1973,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 300_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "13887000000",
       lockedLamports: "13850000000",
       freeLamports: "37000000",
@@ -2009,10 +2011,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 4_090_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "5600000000",
       lockedLamports: "0",
       freeLamports: "5600000000",
@@ -2047,7 +2049,7 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 4_090_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     const currentCycleId = Math.floor(Date.now() / 1000 / 300);
     const submittedCycleId = currentCycleId - 1;
     state.recentActions.unshift({
@@ -2059,7 +2061,7 @@ describe("createSatRoundWatcherService", () => {
     });
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "8200000000",
       lockedLamports: "3050000000",
       freeLamports: "5150000000",
@@ -2094,10 +2096,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 250_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "550000000",
       lockedLamports: "250000000",
       freeLamports: "260000000",
@@ -2134,11 +2136,11 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 400_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "1000000000",
         lockedLamports: "0",
         freeLamports: "1000000000",
@@ -2146,7 +2148,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "1000000000",
         lockedLamports: "0",
         freeLamports: "1000000000",
@@ -2154,7 +2156,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "340000000",
         lockedLamports: "0",
         freeLamports: "340000000",
@@ -2162,7 +2164,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "340000000",
         lockedLamports: "0",
         freeLamports: "340000000",
@@ -2200,11 +2202,11 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 250_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "300000000",
         lockedLamports: "0",
         freeLamports: "300000000",
@@ -2212,7 +2214,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "300000000",
         lockedLamports: "0",
         freeLamports: "300000000",
@@ -2220,7 +2222,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "250000000",
         lockedLamports: "0",
         freeLamports: "250000000",
@@ -2228,7 +2230,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "250000000",
         lockedLamports: "0",
         freeLamports: "250000000",
@@ -2261,11 +2263,11 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 5_650_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "13887000000",
         lockedLamports: "8225000000",
         freeLamports: "5662000000",
@@ -2275,7 +2277,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "13887000000",
         lockedLamports: "8225000000",
         freeLamports: "5662000000",
@@ -2285,7 +2287,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "13887000000",
         lockedLamports: "8225000000",
         freeLamports: "5662000000",
@@ -2295,7 +2297,7 @@ describe("createSatRoundWatcherService", () => {
       })
       .mockResolvedValueOnce({
         address: "capital",
-        authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+        authority: TEST_AUTHORITY,
         fundedLamports: "13887000000",
         lockedLamports: "8225000000",
         freeLamports: "5662000000",
@@ -2335,10 +2337,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 9_970_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "9968550788",
       lockedLamports: "250000000",
       freeLamports: "9718550788",
@@ -2378,10 +2380,10 @@ describe("createSatRoundWatcherService", () => {
       commitLamports: 9_695_000_000,
     };
     const state = createSatMiningRuntimeState(config);
-    state.activeWalletAddress = "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW";
+    state.activeWalletAddress = TEST_AUTHORITY;
     inspectSatMinerCapital.mockResolvedValue({
       address: "capital",
-      authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+      authority: TEST_AUTHORITY,
       fundedLamports: "9968897560",
       lockedLamports: "9695000000",
       freeLamports: "273897560",
