@@ -67,6 +67,7 @@ type TargetAdapter struct {
 	Network     NetworkPolicy
 	Manifest    ManifestReader
 	Plugins     PluginBoundary
+	TaskLedger  *TaskLedgerQuiescer
 }
 
 func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Result, error) {
@@ -313,6 +314,12 @@ func normalizeHostedSignerConfiguration(document map[string]any) {
 }
 
 func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction) error {
+	needsTaskLedgerProof := adapter.TaskLedger != nil && tx.Phase == model.PhasePrepared && tx.Previous != nil
+	if needsTaskLedgerProof {
+		if err := adapter.TaskLedger.Begin(tx); err != nil {
+			return err
+		}
+	}
 	var quiesceError error
 	if tx.Phase == model.PhasePrepared {
 		// Fence the selected predecessor before switching. During
@@ -329,6 +336,11 @@ func (adapter *TargetAdapter) Quiesce(ctx context.Context, tx model.Transaction)
 	if quiesceError != nil {
 		return quiesceError
 	}
+	if needsTaskLedgerProof {
+		if err := adapter.TaskLedger.Complete(tx); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -337,7 +349,15 @@ func (adapter *TargetAdapter) PrepareState(_ context.Context, tx model.Transacti
 	if err != nil {
 		return engine.ParticipantReceipt{}, "", err
 	}
+	evidenceDigest := ""
+	if adapter.TaskLedger != nil && tx.Phase == model.PhasePrepared && tx.Previous != nil {
+		evidenceDigest, err = adapter.TaskLedger.BindStateCapture(tx, prepared.ParticipantDigests["application-state"])
+		if err != nil {
+			return engine.ParticipantReceipt{}, "", err
+		}
+	}
 	receipt := engine.ParticipantReceipt{TransactionID: tx.ID, TargetGenerationID: tx.Target.ID, StateInventoryDigest: tx.StateInventoryDigest, PlanDigest: tx.StateInventoryDigest,
+		EvidenceDigest: evidenceDigest,
 		MemberDigests: engine.StateMemberDigests{
 			ApplicationState: prepared.ParticipantDigests["application-state"], Configuration: prepared.ParticipantDigests["configuration"],
 			Wallet: prepared.ParticipantDigests["wallet"], Mining: prepared.ParticipantDigests["mining"], Federation: prepared.ParticipantDigests["federation"],
@@ -651,7 +671,11 @@ func (adapter *TargetAdapter) localPublicStableBridge(tx model.Transaction) bool
 }
 
 func (adapter *TargetAdapter) Discard(ctx context.Context, tx model.Transaction) error {
-	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx), adapter.Predecessor.Discard(ctx, tx))
+	var taskLedgerError error
+	if adapter.TaskLedger != nil {
+		taskLedgerError = adapter.TaskLedger.Abort(tx)
+	}
+	return errors.Join(adapter.Units.Discard(tx.ID), adapter.Files.Discard(tx.ID), adapter.TypedState.Discard(tx.ID), adapter.Plugins.Discard(tx), adapter.Predecessor.Discard(ctx, tx), taskLedgerError)
 }
 
 func (adapter *TargetAdapter) validate(tx model.Transaction) error {

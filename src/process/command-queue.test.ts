@@ -27,6 +27,7 @@ import {
   markGatewayDraining,
   resetAllLanes,
   setCommandLaneConcurrency,
+  waitForAllTasks,
   waitForActiveTasks,
 } from "./command-queue.js";
 
@@ -272,6 +273,27 @@ describe("command queue", () => {
 
     resolve2();
     await Promise.all([first, second]);
+  });
+
+  it("waitForAllTasks drains accepted queued work after Gateway draining and rejects new work", async () => {
+    const lane = `full-drain-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setCommandLaneConcurrency(lane, 1);
+    const firstGate = createDeferred();
+    const secondGate = createDeferred();
+    const first = enqueueCommandInLane(lane, async () => firstGate.promise);
+    const second = enqueueCommandInLane(lane, async () => secondGate.promise);
+
+    markGatewayDraining();
+    const draining = waitForAllTasks(2_000);
+    await expect(enqueueCommandInLane(lane, async () => "late")).rejects.toBeInstanceOf(
+      GatewayDrainingError,
+    );
+    firstGate.resolve();
+    await first;
+    secondGate.resolve();
+    await second;
+
+    await expect(draining).resolves.toEqual({ drained: true });
   });
 
   it("clearCommandLane rejects pending promises", async () => {

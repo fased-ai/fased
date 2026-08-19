@@ -42,6 +42,12 @@ func TestCanonicalStateSpecsSeparateSignerWalletPluginDataAndApplication(t *test
 		if (spec.Kind == Mining || spec.Kind == Federation) && !spec.SQLite {
 			t.Fatalf("database participant lost SQLite family handling: %+v", spec)
 		}
+		if spec.Kind == ApplicationState && spec.Path == filepath.Join("/home/app/.fased", "tasks") {
+			wantLedger := filepath.Join("/home/app/.fased", "tasks", "task-ledger.sqlite")
+			if len(spec.SQLiteMains) != 1 || spec.SQLiteMains[0] != wantLedger {
+				t.Fatalf("task ledger lost its exact SQLite family boundary: %+v", spec)
+			}
+		}
 	}
 	for kind, found := range want {
 		if !found {

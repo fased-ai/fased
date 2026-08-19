@@ -5,6 +5,7 @@ import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js
 import { stopGmailWatcher } from "../hooks/gmail-watcher.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
+import { checkpointAndCloseTaskLedgersForLifecycle } from "../tasks/task-ledger-lifecycle.js";
 
 export function createGatewayCloseHandler(params: {
   bonjourStop: (() => Promise<void>) | null;
@@ -13,7 +14,7 @@ export function createGatewayCloseHandler(params: {
   canvasHostServer: CanvasHostServer | null;
   stopChannel: (name: ChannelId, accountId?: string) => Promise<void>;
   pluginServices: PluginServicesHandle | null;
-  cron: { stop: () => void };
+  cron: { stop: () => void; stopAndDrainForLifecycle: (timeoutMs?: number) => Promise<void> };
   heartbeatRunner: HeartbeatRunner;
   nodePresenceTimers: Map<string, ReturnType<typeof setInterval>>;
   broadcast: (event: string, payload: unknown, opts?: { dropIfSlow?: boolean }) => void;
@@ -78,7 +79,10 @@ export function createGatewayCloseHandler(params: {
       await params.pluginServices.stop().catch(() => {});
     }
     await stopGmailWatcher();
-    params.cron.stop();
+    // Freeze and await an in-flight reload before selecting the final Cron
+    // instance. Otherwise reload could publish a replacement after its drain.
+    await params.configReloader.stop();
+    await params.cron.stopAndDrainForLifecycle();
     params.heartbeatRunner.stop();
     for (const timer of params.nodePresenceTimers.values()) {
       clearInterval(timer);
@@ -114,7 +118,6 @@ export function createGatewayCloseHandler(params: {
       }
     }
     params.clients.clear();
-    await params.configReloader.stop().catch(() => {});
     if (params.browserControl) {
       await params.browserControl.stop().catch(() => {});
     }
@@ -134,5 +137,10 @@ export function createGatewayCloseHandler(params: {
         httpServer.close((err) => (err ? reject(err) : resolve())),
       );
     }
+    // All task ingress writers have stopped: channels, plugins, mail hooks,
+    // cron, heartbeat, WebSockets, and HTTP requests precede the exact WAL
+    // checkpoint. This must reject on failure so systemd cannot claim a
+    // durable stop before lifecycle capture.
+    checkpointAndCloseTaskLedgersForLifecycle({ managedStop: restartExpectedMs === null });
   };
 }

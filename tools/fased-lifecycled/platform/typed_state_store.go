@@ -489,13 +489,24 @@ func (store *DiskTypedStateStore) inspect(spec stateparticipant.StateSpec, path 
 		return typedStateRecord{}, fmt.Errorf("%s state has an unexpected owner", spec.Kind)
 	}
 	record := typedStateRecord{Participant: string(spec.Kind), Path: store.unresolve(path), Mode: durableStateMode(info.Mode()), UID: stat.Uid, GID: stat.Gid, Directory: info.IsDir(), SignerOwned: spec.SignerOwned, ProjectionOwned: spec.ProjectionOwned}
-	if spec.SQLite && info.Mode().IsRegular() {
+	if info.Mode().IsRegular() {
 		if family, ok := stateparticipant.SQLiteFamilyMain(record.Path); ok {
-			record.SQLite = true
-			record.SQLiteFamily = family
+			if spec.SQLite || containsSQLiteMain(spec.SQLiteMains, family) {
+				record.SQLite = true
+				record.SQLiteFamily = family
+			}
 		}
 	}
 	return record, nil
+}
+
+func containsSQLiteMain(mains []string, family string) bool {
+	for _, main := range mains {
+		if main == family {
+			return true
+		}
+	}
+	return false
 }
 
 func durableStateMode(mode os.FileMode) uint32 {
@@ -589,7 +600,7 @@ func (store *DiskTypedStateStore) matchesSpec(record typedStateRecord) bool {
 			continue
 		}
 		family, sqlite := stateparticipant.SQLiteFamilyMain(record.Path)
-		if record.SQLite != (spec.SQLite && sqlite) {
+		if record.SQLite != (sqlite && (spec.SQLite || containsSQLiteMain(spec.SQLiteMains, family))) {
 			return false
 		}
 		if record.SQLite && record.SQLiteFamily != family {

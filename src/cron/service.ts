@@ -24,6 +24,10 @@ export class CronService {
     ops.stop(this.state);
   }
 
+  async stopAndDrainForLifecycle(timeoutMs?: number) {
+    await ops.stopAndDrainForLifecycle(this.state, timeoutMs);
+  }
+
   async status() {
     return await ops.status(this.state);
   }

@@ -8,10 +8,9 @@ import {
 } from "../../infra/restart.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
-  getActiveTaskCount,
   markGatewayDraining,
   resetAllLanes,
-  waitForActiveTasks,
+  waitForAllTasks,
 } from "../../process/command-queue.js";
 import { createRestartIterationHook } from "../../process/restart-recovery.js";
 import type { defaultRuntime } from "../../runtime.js";
@@ -87,6 +86,14 @@ export async function runGatewayLoop(params: {
     await releaseLockIfHeld();
     exitProcess(0);
   };
+  const exitAfterFailedShutdown = async () => {
+    try {
+      await releaseLockIfHeld();
+    } catch (err) {
+      gatewayLog.error(`failed to release gateway lock after shutdown failure: ${String(err)}`);
+    }
+    exitProcess(1);
+  };
 
   const DRAIN_TIMEOUT_MS = 30_000;
   const SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -100,33 +107,33 @@ export async function runGatewayLoop(params: {
     const isRestart = action === "restart";
     gatewayLog.info(`received ${signal}; ${isRestart ? "restarting" : "shutting down"}`);
 
-    // Allow extra time for draining active turns on restart.
-    const forceExitMs = isRestart ? DRAIN_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS : SHUTDOWN_TIMEOUT_MS;
+    // The stop deadline includes accepted queued work plus service teardown.
+    const forceExitMs = DRAIN_TIMEOUT_MS + SHUTDOWN_TIMEOUT_MS;
+    let forceExitTriggered = false;
     const forceExitTimer = setTimeout(() => {
+      forceExitTriggered = true;
       gatewayLog.error("shutdown timed out; exiting without full cleanup");
-      exitProcess(0);
+      void exitAfterFailedShutdown();
     }, forceExitMs);
 
     void (async () => {
+      let closeFailure: unknown;
       try {
-        // On restart, wait for in-flight agent turns to finish before
-        // tearing down the server so buffered messages are delivered.
-        if (isRestart) {
-          // Reject new enqueues immediately during the drain window so
-          // sessions get an explicit restart error instead of silent task loss.
-          markGatewayDraining();
-          const activeTasks = getActiveTaskCount();
-          if (activeTasks > 0) {
-            gatewayLog.info(
-              `draining ${activeTasks} active task(s) before restart (timeout ${DRAIN_TIMEOUT_MS}ms)`,
-            );
-            const { drained } = await waitForActiveTasks(DRAIN_TIMEOUT_MS);
-            if (drained) {
-              gatewayLog.info("all active tasks drained");
-            } else {
-              gatewayLog.warn("drain timeout reached; proceeding with restart");
-            }
-          }
+        // Reject new enqueues immediately during the drain window so sessions
+        // get an explicit lifecycle error instead of silently losing tasks.
+        // A normal stop is stricter: it must not checkpoint a still-writing
+        // ledger after the deadline.
+        markGatewayDraining();
+        gatewayLog.info(
+          `draining accepted tasks before ${isRestart ? "restart" : "stop"} (timeout ${DRAIN_TIMEOUT_MS}ms)`,
+        );
+        const { drained } = await waitForAllTasks(DRAIN_TIMEOUT_MS);
+        if (drained) {
+          gatewayLog.info("all accepted tasks drained");
+        } else if (isRestart) {
+          gatewayLog.warn("drain timeout reached; proceeding with restart");
+        } else {
+          throw new Error("drain timeout reached; refusing task-ledger checkpoint during stop");
         }
 
         await server?.close({
@@ -135,14 +142,25 @@ export async function runGatewayLoop(params: {
         });
       } catch (err) {
         gatewayLog.error(`shutdown error: ${String(err)}`);
+        closeFailure = err;
       } finally {
         clearTimeout(forceExitTimer);
         server = null;
-        if (isRestart) {
-          await handleRestartAfterServerClose();
-        } else {
-          await handleStopAfterServerClose();
-        }
+      }
+      if (forceExitTriggered) {
+        return;
+      }
+      if (closeFailure !== undefined) {
+        // Lifecycle close includes durable state capture. A checkpoint
+        // failure cannot be treated as a normal stop or restart: release
+        // the lock, suppress respawn, and let systemd observe failure.
+        await exitAfterFailedShutdown();
+        return;
+      }
+      if (isRestart) {
+        await handleRestartAfterServerClose();
+      } else {
+        await handleStopAfterServerClose();
       }
     })();
   };

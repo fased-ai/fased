@@ -105,6 +105,23 @@ function closeCachedLedger(): void {
   }
 }
 
+function checkpointAndCloseCachedLedgerForLifecycle(): void {
+  try {
+    cachedLedger?.checkpointAndCloseForLifecycle();
+  } finally {
+    cachedLedger = null;
+    loadedLedgerPath = null;
+  }
+}
+
+/**
+ * Lifecycle shutdown hook. This is intentionally separate from test reset so
+ * the Gateway can make the checkpoint-before-close boundary explicit.
+ */
+export function closeTaskRegistryLedgerForLifecycle(): void {
+  checkpointAndCloseCachedLedgerForLifecycle();
+}
+
 function normalizeTaskId(input: string): string {
   return (
     input

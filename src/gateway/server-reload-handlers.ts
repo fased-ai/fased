@@ -123,7 +123,10 @@ export function createGatewayReloadHandlers(params: {
 
       if (plan.restartCron) {
         cronMutated = true;
-        workingState.cronState.cron.stop();
+        // A CronService is permanently fenced after lifecycle draining. Wait
+        // for its timer/queue writes before making it unreachable; publishing
+        // a replacement first would let state capture race the displaced WAL.
+        await workingState.cronState.cron.stopAndDrainForLifecycle();
         workingState.cronState = buildGatewayCronService({
           cfg: nextConfig,
           deps: params.deps,
@@ -248,10 +251,29 @@ export function createGatewayReloadHandlers(params: {
       }
 
       if (cronMutated) {
-        await capture(() => workingState.cronState.cron.stop());
-        workingState.cronState = originalState.cronState;
-        publishState();
-        await capture(async () => await originalState.cronState.cron.start());
+        const displacedCron = workingState.cronState.cron;
+        const drained = await capture(async () => await displacedCron.stopAndDrainForLifecycle());
+        if (drained) {
+          let restoredCronState: GatewayCronState | null = null;
+          const built = await capture(() => {
+            restoredCronState = buildGatewayCronService({
+              cfg: previousConfig,
+              deps: params.deps,
+              broadcast: params.broadcast,
+            });
+          });
+          if (built && restoredCronState) {
+            // The original instance is permanently lifecycle-fenced. Restore
+            // configuration through a fresh service instead of silently
+            // restarting that old object.
+            workingState.cronState = restoredCronState;
+            publishState();
+            const started = await capture(async () => await restoredCronState.cron.start());
+            if (!started) {
+              await capture(async () => await restoredCronState.cron.stopAndDrainForLifecycle());
+            }
+          }
+        }
       }
 
       if (heartbeatMutated) {

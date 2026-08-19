@@ -132,6 +132,11 @@ export type CronServiceState = {
   timer: NodeJS.Timeout | null;
   activeRunAbortControllers: Map<string, AbortController>;
   running: boolean;
+  /** Permanently fences timer ingress for this service instance during managed shutdown. */
+  lifecycleStopping: boolean;
+  /** Resolves only after an already-started timer tick completed its final durable writes. */
+  activeTimerDrain: Promise<void> | null;
+  activeTimerFailure: Error | null;
   op: Promise<unknown>;
   warnedDisabled: boolean;
   storeLoadedAtMs: number | null;
@@ -145,6 +150,9 @@ export function createCronServiceState(deps: CronServiceDeps): CronServiceState 
     timer: null,
     activeRunAbortControllers: new Map(),
     running: false,
+    lifecycleStopping: false,
+    activeTimerDrain: null,
+    activeTimerFailure: null,
     op: Promise.resolve(),
     warnedDisabled: false,
     storeLoadedAtMs: null,

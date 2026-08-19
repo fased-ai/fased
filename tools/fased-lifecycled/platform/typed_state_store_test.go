@@ -114,11 +114,13 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			installProjection := filepath.Join(owner, "install.json")
 			lifecycleProjection := filepath.Join(owner, "lifecycle.json")
 			applicationState := filepath.Join(application, "task.json")
+			taskLedger := filepath.Join(application, "task-ledger.sqlite")
+			taskLedgerWAL := taskLedger + "-wal"
 			pluginState := filepath.Join(pluginData, "memory-core.json")
 			original := map[string][]byte{
 				database: sqliteBytes("database-before\n"), wal: []byte("wal-before\n"),
 				federationDatabase: sqliteBytes("federation-before\n"), federationWAL: []byte("federation-wal-before\n"),
-				registry: []byte("wallet-before\n"), configuration: []byte("config-before\n"), installProjection: []byte("install-before\n"), lifecycleProjection: []byte("lifecycle-before\n"), applicationState: []byte("task-before\n"), pluginState: []byte("plugin-data-before\n"),
+				registry: []byte("wallet-before\n"), configuration: []byte("config-before\n"), installProjection: []byte("install-before\n"), lifecycleProjection: []byte("lifecycle-before\n"), applicationState: []byte("task-before\n"), taskLedger: sqliteBytes("task-ledger-before\n"), taskLedgerWAL: []byte("task-ledger-wal-before\n"), pluginState: []byte("plugin-data-before\n"),
 			}
 			for path, data := range original {
 				if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -129,7 +131,7 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(prepared.ParticipantDigests) != 7 || prepared.ParticipantDigests["mining"] == "" || prepared.ParticipantDigests["wallet"] == "" {
+			if len(prepared.ParticipantDigests) != 7 || prepared.ParticipantDigests["mining"] == "" || prepared.ParticipantDigests["wallet"] == "" || prepared.ParticipantDigests["application-state"] == "" {
 				t.Fatalf("typed participant receipts are incomplete: %+v", prepared)
 			}
 			records, err := store.read("transaction")
@@ -137,6 +139,7 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 				t.Fatal(err)
 			}
 			familyMembers := 0
+			taskLedgerFamilyMembers := 0
 			projectionBound := false
 			for _, record := range records {
 				if strings.Contains(record.Path, "/extensions/") || strings.HasSuffix(record.Path, "/extensions") {
@@ -145,12 +148,18 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 				if record.SQLiteFamily == store.unresolve(database) {
 					familyMembers++
 				}
+				if record.SQLiteFamily == store.unresolve(taskLedger) {
+					taskLedgerFamilyMembers++
+				}
 				if record.Path == store.unresolve(configuration) {
 					projectionBound = record.ProjectionOwned && record.Backup == "" && record.Digest != ""
 				}
 			}
 			if familyMembers != 2 {
 				t.Fatalf("SQLite main/WAL were not bound as one family: %+v", records)
+			}
+			if taskLedgerFamilyMembers != 2 {
+				t.Fatalf("task SQLite main/WAL were not bound as one application-state family: %+v", records)
 			}
 			if !projectionBound {
 				t.Fatal("configuration was not digest-bound as a lifecycle-file-owned projection")
@@ -184,6 +193,13 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			if err := os.WriteFile(applicationState, []byte("task-after\n"), 0o660); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.WriteFile(taskLedger, sqliteBytes("task-ledger-after\n"), 0o660); err != nil {
+				t.Fatal(err)
+			}
+			taskLedgerSHM := taskLedger + "-shm"
+			if err := os.WriteFile(taskLedgerSHM, []byte("task-ledger-shm-after\n"), 0o660); err != nil {
+				t.Fatal(err)
+			}
 			unexpected := filepath.Join(application, "created-by-failed-target.json")
 			if err := os.WriteFile(unexpected, []byte("new\n"), 0o660); err != nil {
 				t.Fatal(err)
@@ -199,6 +215,9 @@ func TestTypedStateStorePreservesWALAndVerifiesLocalAndHostingTargetAccess(t *te
 			}
 			if _, err := os.Lstat(newSidecar); !os.IsNotExist(err) {
 				t.Fatalf("new SQLite sidecar survived rollback: %v", err)
+			}
+			if _, err := os.Lstat(taskLedgerSHM); !os.IsNotExist(err) {
+				t.Fatalf("new task SQLite sidecar survived rollback: %v", err)
 			}
 			if _, err := os.Lstat(unexpected); !os.IsNotExist(err) {
 				t.Fatalf("new application state survived rollback: %v", err)
@@ -328,6 +347,50 @@ func TestTypedStateStoreRejectsUnsafeAndInaccessibleState(t *testing.T) {
 	}
 	if _, err := store.Prepare("transaction", nil); err == nil {
 		t.Fatal("typed state accepted a symlink")
+	}
+}
+
+func TestTypedStateStoreAcceptsJSONOnlyTaskPredecessorWithoutSQLiteFamily(t *testing.T) {
+	operator := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	config, err := NewConfig(
+		model.ProfileProtectedLocal,
+		"json-only-tasks",
+		"/home/owner/.fased",
+		operator,
+		Principal{UID: operator.UID + 1, GID: operator.GID + 1},
+		Principal{UID: operator.UID + 2, GID: operator.GID + 2},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewDiskTypedStateStore(config, &modeAccessVerifier{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.rootPrefix = t.TempDir()
+	tasks := filepath.Join(store.resolve(config.OwnerStateRoot), "tasks")
+	if err := os.MkdirAll(tasks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jsonOnly := filepath.Join(tasks, "tasks.json")
+	if err := os.WriteFile(jsonOnly, []byte(`{"version":1,"tasks":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := store.Prepare("json-only", nil)
+	if err != nil {
+		t.Fatalf("JSON-only predecessor preparation failed: %v", err)
+	}
+	if prepared.ParticipantDigests["application-state"] == "" {
+		t.Fatalf("JSON-only task state was absent from application receipt: %+v", prepared)
+	}
+	records, err := store.read("json-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range records {
+		if record.Path == store.unresolve(jsonOnly) && record.SQLite {
+			t.Fatalf("legacy JSON-only task state was misclassified as SQLite: %+v", record)
+		}
 	}
 }
 

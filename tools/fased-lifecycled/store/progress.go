@@ -411,9 +411,9 @@ func validateProgressEvent(event ProgressEvent, transaction model.Transaction) e
 		if (receipt.Participant != "migrator" && receipt.Participant != "signer" && receipt.Participant != "state" && receipt.Participant != "plugin" && receipt.Participant != "convergence") || receipt.TransactionID != transaction.ID || receipt.TargetGenerationID != transaction.Target.ID || receipt.StateInventoryDigest != transaction.StateInventoryDigest || receipt.PlanDigest != wantPlan {
 			return errors.New("participant receipt differs from the immutable transaction")
 		}
-		if receipt.Participant == "plugin" || receipt.Participant == "convergence" {
+		if receipt.Participant == "plugin" || receipt.Participant == "convergence" || receipt.Participant == "state" && receipt.EvidenceDigest != "" {
 			if !validSHA256Digest(receipt.EvidenceDigest) {
-				return errors.New("readiness evidence digest is invalid")
+				return errors.New("participant evidence digest is invalid")
 			}
 		} else if receipt.EvidenceDigest != "" {
 			return errors.New("non-plugin receipt contains plugin readiness evidence")

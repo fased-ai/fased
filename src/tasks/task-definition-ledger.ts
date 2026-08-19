@@ -35,6 +35,20 @@ function closeCachedLedger(): void {
   }
 }
 
+function checkpointAndCloseCachedLedgerForLifecycle(): void {
+  try {
+    cachedLedger?.checkpointAndCloseForLifecycle();
+  } finally {
+    cachedLedger = null;
+    loadedLedgerPath = null;
+  }
+}
+
+/** Close the definition handle after its WAL has been checkpointed. */
+export function closeTaskDefinitionLedgerForLifecycle(): void {
+  checkpointAndCloseCachedLedgerForLifecycle();
+}
+
 function ledger(): TaskLedgerStore {
   const databasePath = resolveTaskLedgerPath();
   if (cachedLedger && loadedLedgerPath === databasePath) {

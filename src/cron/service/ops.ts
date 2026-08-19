@@ -276,6 +276,43 @@ export function stop(state: CronServiceState) {
   stopTimer(state);
 }
 
+/**
+ * Managed Gateway shutdown boundary. Unlike ordinary stop(), this permanently
+ * rejects timer ingress for the instance and waits for an already-running tick
+ * to finish all queue/ledger writes before state capture may continue.
+ */
+export async function stopAndDrainForLifecycle(
+  state: CronServiceState,
+  timeoutMs = 30_000,
+): Promise<void> {
+  state.lifecycleStopping = true;
+  stopTimer(state);
+  const active = state.activeTimerDrain;
+  if (!active) {
+    return;
+  }
+  const timeout = Math.max(1, Math.floor(timeoutMs));
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`cron lifecycle drain timed out after ${timeout}ms`));
+    }, timeout);
+    void active.then(
+      () => {
+        clearTimeout(timer);
+        if (state.activeTimerFailure !== null) {
+          reject(state.activeTimerFailure);
+          return;
+        }
+        resolve();
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function status(state: CronServiceState) {
   return await locked(state, async () => {
     await ensureLoadedForRead(state);

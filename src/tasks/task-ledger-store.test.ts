@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
-import { initializeTaskLedger, openTaskLedgerStore } from "./task-ledger-store.js";
+import {
+  fenceTaskLedgerWritersForLifecycle,
+  initializeTaskLedger,
+  openTaskLedgerStore,
+  resetTaskLedgerWriterFenceForTests,
+} from "./task-ledger-store.js";
 import {
   createTaskRecord,
   listAllTaskRecords,
@@ -55,6 +60,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  resetTaskLedgerWriterFenceForTests();
   if (previousStateDir === undefined) {
     delete process.env.FASED_STATE_DIR;
   } else {
@@ -65,6 +71,107 @@ afterEach(async () => {
 });
 
 describe("task ledger store", () => {
+  it("checkpoints WAL before lifecycle close and makes lifecycle close idempotent", () => {
+    const databasePath = path.join(stateDir, "tasks", "task-ledger.sqlite");
+    const legacyPath = path.join(stateDir, "tasks", "tasks.json");
+    initializeTaskLedger({ databasePath, legacyPath, sanitizeLegacy: () => [] });
+    const store = openTaskLedgerStore(databasePath);
+    store.upsert(task("checkpointed"), (_existing, incoming) => incoming);
+
+    store.checkpointAndCloseForLifecycle();
+    store.checkpointAndCloseForLifecycle();
+
+    expect(fs.existsSync(`${databasePath}-wal`)).toBe(false);
+    const { DatabaseSync } = requireNodeSqlite();
+    const verified = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      expect(
+        verified
+          .prepare("SELECT task_json FROM task_ledger_tasks WHERE task_id = 'checkpointed'")
+          .get(),
+      ).toEqual({ task_json: JSON.stringify(task("checkpointed")) });
+    } finally {
+      verified.close();
+    }
+  });
+
+  it("keeps ordinary close cheap and succeeds with a busy reader", () => {
+    const databasePath = path.join(stateDir, "tasks", "task-ledger.sqlite");
+    const legacyPath = path.join(stateDir, "tasks", "tasks.json");
+    initializeTaskLedger({ databasePath, legacyPath, sanitizeLegacy: () => [] });
+    const store = openTaskLedgerStore(databasePath);
+    const { DatabaseSync } = requireNodeSqlite();
+    const reader = new DatabaseSync(databasePath);
+    try {
+      store.upsert(task("ordinary-close"), (_existing, incoming) => incoming);
+      reader.exec("BEGIN");
+      reader.prepare("SELECT task_json FROM task_ledger_tasks").all();
+
+      expect(() => store.close()).not.toThrow();
+      expect(() => store.list()).toThrow();
+    } finally {
+      reader.exec("ROLLBACK");
+      reader.close();
+    }
+  });
+
+  it("fails lifecycle close when WAL checkpoint reports a busy reader but still closes its handle", () => {
+    const databasePath = path.join(stateDir, "tasks", "task-ledger.sqlite");
+    const legacyPath = path.join(stateDir, "tasks", "tasks.json");
+    initializeTaskLedger({ databasePath, legacyPath, sanitizeLegacy: () => [] });
+    const store = openTaskLedgerStore(databasePath);
+    const { DatabaseSync } = requireNodeSqlite();
+    const reader = new DatabaseSync(databasePath);
+    try {
+      store.upsert(task("busy-checkpoint"), (_existing, incoming) => incoming);
+      reader.exec("BEGIN");
+      reader.prepare("SELECT task_json FROM task_ledger_tasks").all();
+
+      expect(() => store.checkpointAndCloseForLifecycle()).toThrow(
+        "WAL checkpoint did not complete",
+      );
+      // The close error is the checkpoint verdict, not a licence to retain a
+      // live writer handle. A use after close proves close was still attempted.
+      expect(() => store.list()).toThrow();
+    } finally {
+      reader.exec("ROLLBACK");
+      reader.close();
+    }
+  });
+
+  it("fences late writes and new handles while allowing lifecycle checkpoint/close", () => {
+    const databasePath = path.join(stateDir, "tasks", "task-ledger.sqlite");
+    const legacyPath = path.join(stateDir, "tasks", "tasks.json");
+    initializeTaskLedger({ databasePath, legacyPath, sanitizeLegacy: () => [] });
+    const store = openTaskLedgerStore(databasePath);
+    store.upsert(task("before-fence"), (_existing, incoming) => incoming);
+    const bytesBeforeFence = fs.readFileSync(databasePath);
+
+    fenceTaskLedgerWritersForLifecycle();
+
+    expect(() => store.upsert(task("late-write"), (_existing, incoming) => incoming)).toThrow(
+      "fenced",
+    );
+    expect(() => openTaskLedgerStore(databasePath)).toThrow("fenced");
+    expect(() =>
+      initializeTaskLedger({ databasePath, legacyPath, sanitizeLegacy: () => [] }),
+    ).toThrow("fenced");
+    expect(fs.readFileSync(databasePath)).toEqual(bytesBeforeFence);
+    expect(() => store.checkpointAndCloseForLifecycle()).not.toThrow();
+
+    const { DatabaseSync } = requireNodeSqlite();
+    const verified = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      expect(
+        verified.prepare("SELECT task_json FROM task_ledger_tasks ORDER BY task_id").all(),
+      ).toEqual([{ task_json: JSON.stringify(task("before-fence")) }]);
+    } finally {
+      verified.close();
+    }
+    // WAL checkpoint can change physical SQLite pages after this point, but no late row exists.
+    expect(fs.existsSync(databasePath)).toBe(true);
+  });
+
   it("imports valid legacy records once without changing legacy bytes", async () => {
     const legacyPath = resolveTaskRegistryPath();
     const ledgerPath = resolveTaskLedgerPath();

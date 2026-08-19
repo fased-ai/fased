@@ -49,6 +49,7 @@ import { getTotalQueueSize } from "../process/command-queue.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { clearSecretsRuntimeSnapshot } from "../secrets/runtime.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
+import { ensureTaskLedgerQuiesceCapability } from "../tasks/task-ledger-quiesce.js";
 import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
@@ -998,6 +999,7 @@ async function startGatewayServerInternal(
         });
       });
 
+  ensureTaskLedgerQuiesceCapability();
   gatewayReadiness.markReady();
   startupTrace.logSummary(log);
 
@@ -1008,7 +1010,10 @@ async function startGatewayServerInternal(
     canvasHostServer,
     stopChannel,
     pluginServices,
-    cron,
+    cron: {
+      stop: () => cron.stop(),
+      stopAndDrainForLifecycle: async (timeoutMs) => await cron.stopAndDrainForLifecycle(timeoutMs),
+    },
     heartbeatRunner,
     nodePresenceTimers,
     broadcast,
