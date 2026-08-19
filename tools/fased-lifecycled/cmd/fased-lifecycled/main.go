@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -859,7 +860,7 @@ func applyVerifiedArchive(args []string, output io.Writer) error {
 	return applyVerifiedArchiveWithLease(args, output, nil)
 }
 
-func applyVerifiedArchiveWithLease(args []string, output io.Writer, lifecycleLease *initializationMutationLock) error {
+func applyVerifiedArchiveWithLease(args []string, output io.Writer, lifecycleLease *initializationMutationLock) (resultErr error) {
 	flags := flag.NewFlagSet("verified-archive-apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var configPath, generationArchive, dependencyArchive, sourceTopology, publicPredecessorVersion string
@@ -945,11 +946,11 @@ func applyVerifiedArchiveWithLease(args []string, output io.Writer, lifecycleLea
 	if err := serviceManager.IsActive(ctx, identity.Services["supervisor"]); err != nil {
 		var startupLeaseBroker *supervisorStartupLeaseBroker
 		if lifecycleLease != nil {
-			startupLeaseBroker, err = startSupervisorStartupLeaseBroker(config, lifecycleLease)
+			startupLeaseBroker, err = startSupervisorStartupLeaseBroker(ctx, config, lifecycleLease)
 			if err != nil {
 				return err
 			}
-			defer startupLeaseBroker.Close()
+			defer func() { resultErr = errors.Join(resultErr, startupLeaseBroker.Close()) }()
 		}
 		if err := serviceManager.Start(ctx, identity.Services["supervisor"]); err != nil {
 			return err
@@ -1022,6 +1023,8 @@ func waitForSocket(ctx context.Context, path string) error {
 
 var supervisorStartupLeaseHandshake = []byte{0xa7}
 
+const supervisorStartupLeaseTimeout = 5 * time.Second
+
 // supervisorStartupLeaseBroker is a one-shot root-peer capability handoff.
 // It exists only while initialize starts a previously inactive supervisor.
 // The supervisor adopts the same open-file-description lock before replaying a
@@ -1031,13 +1034,16 @@ type supervisorStartupLeaseBroker struct {
 	path     string
 	done     chan struct{}
 	result   chan error
+	mu       sync.Mutex
+	active   *net.UnixConn
+	closed   bool
 }
 
 func startupLeaseSocketPath(config platform.Config) string {
 	return filepath.Join(config.LifecycleRoot, "supervisor-startup-lease.sock")
 }
 
-func startSupervisorStartupLeaseBroker(config platform.Config, lease *initializationMutationLock) (*supervisorStartupLeaseBroker, error) {
+func startSupervisorStartupLeaseBroker(ctx context.Context, config platform.Config, lease *initializationMutationLock) (*supervisorStartupLeaseBroker, error) {
 	if lease == nil {
 		return nil, errors.New("lifecycle mutation lease is unavailable")
 	}
@@ -1067,7 +1073,13 @@ func startSupervisorStartupLeaseBroker(config platform.Config, lease *initializa
 			}
 			return
 		}
+		broker.setActive(connection)
+		defer broker.setActive(nil)
 		defer connection.Close()
+		if err := connection.SetDeadline(startupLeaseDeadline(ctx)); err != nil {
+			broker.result <- err
+			return
+		}
 		peer, peerErr := daemon.UnixPeer(connection)
 		if peerErr != nil || peer.UID != uint32(os.Geteuid()) {
 			broker.result <- errors.New("supervisor startup lease peer is not authorized")
@@ -1106,6 +1118,13 @@ func (broker *supervisorStartupLeaseBroker) Close() error {
 	if errors.Is(err, net.ErrClosed) {
 		err = nil
 	}
+	broker.mu.Lock()
+	broker.closed = true
+	active := broker.active
+	broker.mu.Unlock()
+	if active != nil {
+		err = errors.Join(err, active.Close())
+	}
 	<-broker.done
 	resultErr := <-broker.result
 	removeErr := os.Remove(broker.path)
@@ -1113,6 +1132,24 @@ func (broker *supervisorStartupLeaseBroker) Close() error {
 		removeErr = nil
 	}
 	return errors.Join(err, resultErr, removeErr)
+}
+
+func (broker *supervisorStartupLeaseBroker) setActive(connection *net.UnixConn) {
+	broker.mu.Lock()
+	broker.active = connection
+	closed := broker.closed
+	broker.mu.Unlock()
+	if closed && connection != nil {
+		_ = connection.Close()
+	}
+}
+
+func startupLeaseDeadline(ctx context.Context) time.Time {
+	deadline := time.Now().Add(supervisorStartupLeaseTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		return ctxDeadline
+	}
+	return deadline
 }
 
 func prepareStartupLeaseSocket(path string, expectedUID uint32) error {
@@ -1140,7 +1177,7 @@ func prepareStartupLeaseSocket(path string, expectedUID uint32) error {
 	return nil
 }
 
-func acquireSupervisorStartupLease(config platform.Config, lockPath string) (*hostsecurity.MutationLock, error) {
+func acquireSupervisorStartupLease(ctx context.Context, config platform.Config, lockPath string) (*hostsecurity.MutationLock, error) {
 	path := startupLeaseSocketPath(config)
 	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
@@ -1150,6 +1187,9 @@ func acquireSupervisorStartupLease(config platform.Config, lockPath string) (*ho
 		return nil, err
 	}
 	defer connection.Close()
+	if err := connection.SetDeadline(startupLeaseDeadline(ctx)); err != nil {
+		return nil, err
+	}
 	if n, writeErr := connection.Write(supervisorStartupLeaseHandshake); writeErr != nil || n != len(supervisorStartupLeaseHandshake) {
 		if writeErr != nil {
 			return nil, writeErr
@@ -1338,7 +1378,7 @@ func recoverStoppedSupervisorPending(ctx context.Context, config platform.Config
 	} else if pendingErr != nil {
 		return pendingErr
 	}
-	startupLease, leaseErr := acquireSupervisorStartupLease(config, lockPath)
+	startupLease, leaseErr := acquireSupervisorStartupLease(ctx, config, lockPath)
 	if leaseErr != nil {
 		return leaseErr
 	}

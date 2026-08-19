@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
@@ -258,7 +259,7 @@ func TestStoppedSupervisorPendingRecoveryAdoptsStartupLeaseBeforeSocket(t *testi
 		t.Fatal(err)
 	}
 	initialization := &initializationMutationLock{handoff: initializationLease}
-	broker, err := startSupervisorStartupLeaseBroker(config, initialization)
+	broker, err := startSupervisorStartupLeaseBroker(context.Background(), config, initialization)
 	if err != nil {
 		_ = initialization.Release()
 		t.Fatal(err)
@@ -308,7 +309,7 @@ func TestStandaloneSupervisorPendingRecoveryAcquiresSharedLease(t *testing.T) {
 	defer os.RemoveAll(root)
 	config := platform.Config{LifecycleRoot: root}
 	lockPath := filepath.Join(config.LifecycleRoot, "lifecycle.lock")
-	lease, err := acquireSupervisorStartupLease(config, lockPath)
+	lease, err := acquireSupervisorStartupLease(context.Background(), config, lockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +333,7 @@ func TestStartupLeaseBrokerRejectsPartialRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lock.Release()
-	broker, err := startSupervisorStartupLeaseBroker(config, &initializationMutationLock{handoff: lock})
+	broker, err := startSupervisorStartupLeaseBroker(context.Background(), config, &initializationMutationLock{handoff: lock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,6 +350,52 @@ func TestStartupLeaseBrokerRejectsPartialRequest(t *testing.T) {
 	_ = connection.Close()
 	if err := broker.Close(); err == nil || !strings.Contains(err.Error(), "request is invalid") {
 		t.Fatalf("partial startup lease request was accepted: %v", err)
+	}
+}
+
+func TestStartupLeaseBrokerCloseInterruptsConnectedStalledPeer(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fsl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	config := platform.Config{LifecycleRoot: root}
+	lock, err := hostsecurity.AcquireMutationLock(filepath.Join(root, "lifecycle.lock"), uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	broker, err := startSupervisorStartupLeaseBroker(context.Background(), config, &initializationMutationLock{handoff: lock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: startupLeaseSocketPath(config), Net: "unix"})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	defer client.Close()
+	deadline := time.Now().Add(time.Second)
+	for {
+		broker.mu.Lock()
+		active := broker.active != nil
+		broker.mu.Unlock()
+		if active {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = broker.Close()
+			t.Fatal("broker did not register the connected stalled peer")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	started := time.Now()
+	closeErr := broker.Close()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("broker close waited on stalled peer for %s", elapsed)
+	}
+	if closeErr == nil || !strings.Contains(closeErr.Error(), "request is invalid") {
+		t.Fatalf("stalled peer broker failure was not propagated: %v", closeErr)
 	}
 }
 
