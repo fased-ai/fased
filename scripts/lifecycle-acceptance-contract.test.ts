@@ -508,16 +508,19 @@ describe("lifecycle acceptance contract", () => {
     expect(local).toContain('plugins update --catalog "$v2_catalog"');
     expect(local).toContain('test "$v1_digest" != "$v2_digest"');
     expect(local).toContain('test "$v1_candidate_lock" != "$v2_candidate_lock"');
-    expect(local).toContain('if (!existsSync("/tmp/fased-managed-plugin-v2-ready"))');
     expect(local).toContain(
-      "local v2_fault_dropin_dir=/home/testop/.config/systemd/user/fased-gateway.service.d",
+      "local v2_ready_marker=/var/lib/fased-protected-local-fixture/managed-plugin-v2-ready",
+    );
+    expect(local).toContain('if (!existsSync("%s"))');
+    expect(local).toContain(
+      'local v2_fault_dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"',
     );
     expect(local).toContain("ExecStartPre=$v2_fault_script");
-    expect(local).toContain("user_systemctl daemon-reload");
+    expect(local).toContain("systemctl daemon-reload");
     expect(local).toContain('rm -f "$v2_fault_dropin"');
     expect(local).toContain("fixture v2 activation failure was accepted");
-    expect(local).toContain("user_systemctl is-active --quiet fased-gateway.service");
-    expect(local).toContain("install -m 0444 /dev/null /tmp/fased-managed-plugin-v2-ready");
+    expect(local).toContain('systemctl is-active --quiet "fased-gateway-$instance.service"');
+    expect(local).toContain('install -m 0444 /dev/null "$v2_ready_marker"');
     expect(local).toContain("rollbackRetry:true");
     expect(local).toContain("failedOutputDigest:$failedOutputDigest");
     const failedUpdate =
@@ -526,9 +529,9 @@ describe("lifecycle acceptance contract", () => {
       'plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2.out';
     expect(local).toContain(failedUpdate);
     expect(local).toContain(successfulUpdate);
-    expect(
-      local.indexOf("install -m 0444 /dev/null /tmp/fased-managed-plugin-v2-ready"),
-    ).toBeLessThan(local.indexOf('update_started_ms="$(date +%s%3N)"'));
+    expect(local.indexOf('install -m 0444 /dev/null "$v2_ready_marker"')).toBeLessThan(
+      local.indexOf('update_started_ms="$(date +%s%3N)"'),
+    );
     expect(local).toContain("Managed plugins: status=INSTALLED");
     expect(local).toContain("Managed plugins: status=ALREADY_CURRENT");
     expect(local).toContain('role:"fased-managed-plugin-transaction-acceptance"');

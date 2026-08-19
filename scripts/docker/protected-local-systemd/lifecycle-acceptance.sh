@@ -92,14 +92,15 @@ run_managed_plugin_transaction_acceptance() {
   local v1_root="$input_root/v1" v2_root="$input_root/v2"
   local v1_archive="$input_root/v1.tar.gz" v2_archive="$input_root/v2.tar.gz"
   local v1_catalog="$input_root/v1.catalog.json" v2_catalog="$input_root/v2.catalog.json"
-  local v2_fault_script="$input_root/reject-v2-gateway-start.sh"
-  local v2_fault_dropin_dir=/home/testop/.config/systemd/user/fased-gateway.service.d
+  local v2_ready_marker=/var/lib/fased-protected-local-fixture/managed-plugin-v2-ready
+  local v2_fault_script=/var/lib/fased-protected-local-fixture/reject-v2-gateway-start.sh
+  local v2_fault_dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"
   local v2_fault_dropin="$v2_fault_dropin_dir/99-fixture-v2-plugin-failure.conf"
   local v1_digest v2_digest v1_archive_digest v2_archive_digest v1_catalog_digest v2_catalog_digest
   local v1_candidate_lock v2_candidate_lock v1_readiness_digest readiness_digest generation_id failed_output_digest
   local install_started_ms install_duration_ms noop_started_ms noop_duration_ms update_started_ms update_duration_ms
   rm -rf "$input_root"
-  rm -f /tmp/fased-managed-plugin-v2-ready
+  rm -f "$v2_ready_marker"
   install -d -m 0700 -o testop -g testop "$input_root"
   for fixture_root in "$v1_root" "$v2_root"; do
     install -d -m 0755 -o testop -g testop "$fixture_root"
@@ -112,7 +113,7 @@ run_managed_plugin_transaction_acceptance() {
   done
   {
     printf 'import { existsSync } from "node:fs";\n'
-    printf 'if (!existsSync("/tmp/fased-managed-plugin-v2-ready")) throw new Error("fixture v2 activation failure");\n'
+    printf 'if (!existsSync("%s")) throw new Error("fixture v2 activation failure");\n' "$v2_ready_marker"
     cat "$v2_root/index.js"
   } >"$v2_root/index.js.tmp"
   mv "$v2_root/index.js.tmp" "$v2_root/index.js"
@@ -154,23 +155,23 @@ run_managed_plugin_transaction_acceptance() {
   runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash /usr/local/bin/fased plugins install --catalog "$v1_catalog" --catalog-digest "$v1_catalog_digest" --archive "$plugin_id=$v1_archive" >/tmp/fased-managed-plugin-noop-v1.out
   noop_duration_ms="$(( $(date +%s%3N) - noop_started_ms ))"
   grep -F "Managed plugins: status=ALREADY_CURRENT catalog=$v1_catalog_digest candidateLock=$v1_candidate_lock" /tmp/fased-managed-plugin-noop-v1.out >/dev/null
-  install -d -m 0755 -o testop -g testop "$v2_fault_dropin_dir"
+  install -d -m 0755 -o root -g root "$v2_fault_dropin_dir"
   cat >"$v2_fault_script" <<EOF_FIXTURE_V2_GATEWAY_FAILURE
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ ! -e /tmp/fased-managed-plugin-v2-ready ]] && jq -e --arg digest "$v2_digest" '.entries[] | select(.id == "$plugin_id" and .origin == "store" and .digest == $digest)' "$state/plugin.lock.json" >/dev/null; then
+if [[ ! -e "$v2_ready_marker" ]] && jq -e --arg digest "$v2_digest" '.entries[] | select(.id == "$plugin_id" and .origin == "store" and .digest == $digest)' "$state/plugin.lock.json" >/dev/null; then
   exit 1
 fi
 EOF_FIXTURE_V2_GATEWAY_FAILURE
-  chown testop:testop "$v2_fault_script"
+  chown root:root "$v2_fault_script"
   chmod 0755 "$v2_fault_script"
   cat >"$v2_fault_dropin" <<EOF_FIXTURE_V2_GATEWAY_DROPIN
 [Service]
 ExecStartPre=$v2_fault_script
 EOF_FIXTURE_V2_GATEWAY_DROPIN
-  chown testop:testop "$v2_fault_dropin"
+  chown root:root "$v2_fault_dropin"
   chmod 0644 "$v2_fault_dropin"
-  user_systemctl daemon-reload
+  systemctl daemon-reload
   if runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash /usr/local/bin/fased plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2-failed.out 2>&1; then
     echo "fixture v2 activation failure was accepted" >&2
     return 1
@@ -179,14 +180,14 @@ EOF_FIXTURE_V2_GATEWAY_DROPIN
   failed_output_digest="sha256:$(sha256sum /tmp/fased-managed-plugin-update-v2-failed.out | awk '{print $1}')"
   test "$(jq -er --arg id "$plugin_id" '.entries[] | select(.id == $id and .origin == "store") | .digest' "$state/plugin.lock.json")" = "$v1_digest"
   jq -e --arg digest "$v1_candidate_lock" '.lockDigest == $digest' "$state/cache/plugin-readiness.json" >/dev/null
-  user_systemctl is-active --quiet fased-gateway.service
+  systemctl is-active --quiet "fased-gateway-$instance.service"
   test "$data_before" = "sha256:$(sha256sum "$state/plugin-data/$plugin_id/state.json" | awk '{print $1}')"
-  install -m 0444 /dev/null /tmp/fased-managed-plugin-v2-ready
+  install -m 0444 /dev/null "$v2_ready_marker"
   update_started_ms="$(date +%s%3N)"
   runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash /usr/local/bin/fased plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2.out
   update_duration_ms="$(( $(date +%s%3N) - update_started_ms ))"
   rm -f "$v2_fault_dropin"
-  user_systemctl daemon-reload
+  systemctl daemon-reload
   grep -F "Managed plugins: status=INSTALLED catalog=$v2_catalog_digest candidateLock=" /tmp/fased-managed-plugin-update-v2.out >/dev/null
   v2_candidate_lock="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=\([^ ]*\) readiness=.*$/\1/p' /tmp/fased-managed-plugin-update-v2.out)"
   readiness_digest="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=[^ ]* readiness=\([^ ]*\) generation=.*$/\1/p' /tmp/fased-managed-plugin-update-v2.out)"
@@ -206,7 +207,7 @@ EOF_FIXTURE_V2_GATEWAY_DROPIN
     '{schemaVersion:1,role:"fased-managed-plugin-transaction-acceptance",status:"PASS",evidenceClass:"PASS",commit:$commit,version:$version,pluginId:$pluginId,v1Digest:$v1Digest,v2Digest:$v2Digest,v1CatalogDigest:$v1CatalogDigest,v2CatalogDigest:$v2CatalogDigest,catalogDigest:$v2CatalogDigest,candidateLockDigest:$candidateLockDigest,readinessDigest:$readinessDigest,generationId:$generationId,rollbackRetry:true,failedOutputDigest:$failedOutputDigest,installedOutputDigest:$installedOutputDigest,noopOutputDigest:$noopOutputDigest,dataPreserved:true,performance:{installDurationMs:$installDurationMs,updateDurationMs:$updateDurationMs,noopDurationMs:$noopDurationMs,installBudgetMs:60000,noopBudgetMs:5000,updateBudgetMs:60000}}' > /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
   chmod 0600 /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
   rm -rf "$input_root"
-  rm -f /tmp/fased-managed-plugin-v2-ready
+  rm -f "$v2_ready_marker" "$v2_fault_script"
 }
 
 acceptance_mark() {
