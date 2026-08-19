@@ -352,6 +352,41 @@ describe("SAT mining HTTP routes", () => {
     });
   });
 
+  test.each([
+    {
+      path: "/api/mining/action/participate",
+      replacement: "protected Mining automation",
+    },
+    { path: "/api/mining/action/crank", replacement: "managed keeper" },
+    { path: "/api/mining/action/finalize-epoch", replacement: "managed keeper" },
+  ])("retires $path without calling Gateway", async ({ path: requestPath, replacement }) => {
+    await withTempConfig({
+      cfg: { gateway: { trustedProxies: [] } },
+      run: async () => {
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+
+        await dispatch(server, createRequest({ path: requestPath }), response.res);
+
+        expect(response.res.statusCode).toBe(410);
+        expect(JSON.parse(response.getBody())).toMatchObject({
+          ok: false,
+          error: { code: "mining_action_retired", message: expect.stringContaining(replacement) },
+        });
+        expect(callGatewayScoped).not.toHaveBeenCalled();
+      },
+    });
+  });
+
   test("allows mining start to auto-create missing miner capital when wallet is funded", async () => {
     vi.mocked(callGatewayScoped)
       .mockResolvedValueOnce({

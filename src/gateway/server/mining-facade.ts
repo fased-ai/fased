@@ -1,4 +1,5 @@
 import { loadConfig, resolveGatewayPort, type FasedAgentConfig } from "../../config/config.js";
+import type { SatMiningGatewayMethod } from "../../mining/mining-facade.js";
 import {
   readWalletProviderRegistry,
   resolveWalletUserRole,
@@ -6,32 +7,7 @@ import {
 } from "../../wallet/wallet-provider-registry.js";
 import { callGatewayScoped } from "../call.js";
 
-export type GatewayMiningMethod =
-  | "sat.claimBacklog"
-  | "sat.claimCycleRewards"
-  | "sat.clearMiningHistory"
-  | "sat.depositMinerCapital"
-  | "sat.finalizeEpoch"
-  | "sat.getMainnetSyncStatus"
-  | "sat.getMinerProfile"
-  | "sat.getMiningHistory"
-  | "sat.getMiningReadiness"
-  | "sat.getMiningRecovery"
-  | "sat.getMiningStatus"
-  | "sat.getMiningWalletAttachment"
-  | "sat.initMinerCapital"
-  | "sat.listMiningWallets"
-  | "sat.miningCrank"
-  | "sat.republishEpochRoots"
-  | "sat.resolveDispute"
-  | "sat.setActiveCommit"
-  | "sat.setMinerProfile"
-  | "sat.startMining"
-  | "sat.stopMining"
-  | "sat.submitParticipation"
-  | "sat.syncMainnet"
-  | "sat.topUpRegistryReserve"
-  | "sat.withdrawMinerCapital";
+export type GatewayMiningMethod = SatMiningGatewayMethod;
 
 export type GatewayMiningFacade = {
   call<T>(

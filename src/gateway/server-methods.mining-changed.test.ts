@@ -107,4 +107,34 @@ describe("gateway mining change events", () => {
     expect(context.broadcast).not.toHaveBeenCalled();
     expect(listTaskRecords({ source: "mining" }).tasks).toHaveLength(0);
   });
+
+  it("broadcasts mining.changed for every canonical mutation, including submission-wrapped methods", async () => {
+    const { context } = await runMiningMethod({
+      method: "sat.abortEmptyCycle",
+      handler: ({ respond }) =>
+        respond(true, {
+          ok: true,
+          payload: { submitted: { txHash: "abort-empty-cycle-tx" } },
+        }),
+    });
+
+    expect(context.broadcast).toHaveBeenCalledWith(
+      GATEWAY_EVENT_MINING_CHANGED,
+      expect.objectContaining({
+        method: "sat.abortEmptyCycle",
+        atMs: expect.any(Number),
+        submitted: { txHash: "abort-empty-cycle-tx" },
+      }),
+      { dropIfSlow: true },
+    );
+  });
+
+  it("does not broadcast mining.changed for a successful canonical read", async () => {
+    const { context } = await runMiningMethod({
+      method: "sat.getMiningStatus",
+      handler: ({ respond }) => respond(true, { ok: true, payload: { running: true } }),
+    });
+
+    expect(context.broadcast).not.toHaveBeenCalled();
+  });
 });

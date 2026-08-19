@@ -17,6 +17,25 @@ export { callGatewayScoped } from "../gateway/call.js";
 export { getSatMainnetSyncStatus, syncSatMainnetRuntimeIds } from "../mining/mainnet-sync.js";
 export type { SatMainnetSyncStatus } from "../mining/mainnet-sync.js";
 export {
+  assertSatMiningGatewayMethodRegistrations,
+  isSatMiningGatewayMethod,
+  isSatMiningMutationMethod,
+  isSatMiningReadMethod,
+  registerSatMiningGatewayMethods,
+  SAT_MINING_GATEWAY_METHODS,
+  SAT_MINING_METHOD_INVENTORY,
+  SAT_MINING_MUTATION_METHODS,
+  SAT_MINING_READ_METHODS,
+} from "../mining/mining-facade.js";
+export type {
+  SatMiningGatewayMethod,
+  SatMiningGatewayMethodHandlerRegistration,
+  SatMiningGatewayMethodRegistration,
+  SatMiningMethodKind,
+  SatMiningMutationMethod,
+  SatMiningReadMethod,
+} from "../mining/mining-facade.js";
+export {
   resolveAgentConfig,
   resolveAgentDir,
   resolveAgentEffectiveModelPrimary,

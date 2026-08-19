@@ -12,6 +12,7 @@ import {
   probeLocalSocketSignerHealth,
   readWalletProviderRegistry,
   readWalletStatusSnapshot,
+  registerSatMiningGatewayMethods,
   resolveLocalSignerSocketPath,
   resolveWalletRuntimeConfig,
   resolveWalletUserRole,
@@ -19,6 +20,10 @@ import {
   upsertNamedWallet,
   type ErrorCode,
   type RespondFn,
+  type SatMiningGatewayMethodHandlerRegistration,
+  type SatMiningMethodKind,
+  type SatMiningMutationMethod,
+  type SatMiningReadMethod,
 } from "fased/plugin-sdk/sat-runtime";
 import {
   type SatPendingPlannerCycleMemory,
@@ -7146,8 +7151,29 @@ const satMiningPlugin = {
     };
 
     type SatGatewayHandler = Parameters<typeof api.registerGatewayMethod>[1];
-    const registerSatSubmissionMethod = (method: string, handler: SatGatewayHandler) => {
-      api.registerGatewayMethod(method, async (context) => {
+    const registeredSatGatewayMethods: SatMiningGatewayMethodHandlerRegistration<SatGatewayHandler>[] =
+      [];
+    const registerSatGatewayMethod = (
+      method: SatMiningReadMethod | SatMiningMutationMethod,
+      kind: SatMiningMethodKind,
+      handler: SatGatewayHandler,
+    ) => {
+      registeredSatGatewayMethods.push({ method, kind, handler });
+    };
+    const registerSatReadMethod = (method: SatMiningReadMethod, handler: SatGatewayHandler) => {
+      registerSatGatewayMethod(method, "read", handler);
+    };
+    const registerSatMutationMethod = (
+      method: SatMiningMutationMethod,
+      handler: SatGatewayHandler,
+    ) => {
+      registerSatGatewayMethod(method, "mutation", handler);
+    };
+    const registerSatSubmissionMethod = (
+      method: SatMiningMutationMethod,
+      handler: SatGatewayHandler,
+    ) => {
+      registerSatMutationMethod(method, async (context) => {
         const source =
           context.params && typeof context.params === "object" && !Array.isArray(context.params)
             ? (context.params as Record<string, unknown>)
@@ -8334,7 +8360,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.status", async ({ params, respond }) => {
+    registerSatReadMethod("sat.status", async ({ params, respond }) => {
       try {
         const action = String((params as { action?: string })?.action ?? "status") as "status";
         const validatorAuthority = await resolveSatValidatorAuthority(state.activeConfig).catch(
@@ -8428,7 +8454,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getMinerProfile", async ({ respond }) => {
+    registerSatReadMethod("sat.getMinerProfile", async ({ respond }) => {
       respond(true, jsonOk(await Promise.resolve(readProfile())));
     });
 
@@ -8457,7 +8483,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.listMiningWallets", async ({ respond }) => {
+    registerSatReadMethod("sat.listMiningWallets", async ({ respond }) => {
       try {
         const wallets = await listMiningWallets();
         const defaultWalletId = resolveConfiguredWalletId() ?? resolveRegistryDefaultWalletId();
@@ -8473,11 +8499,11 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getMiningWalletAttachment", async ({ respond }) => {
+    registerSatReadMethod("sat.getMiningWalletAttachment", async ({ respond }) => {
       respond(true, jsonOk(readWalletAttachment()));
     });
 
-    api.registerGatewayMethod("sat.getMainnetSyncStatus", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getMainnetSyncStatus", async ({ params, respond }) => {
       try {
         const manifestUrl =
           typeof (params as { manifestUrl?: unknown })?.manifestUrl === "string"
@@ -8489,7 +8515,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.syncMainnet", async ({ params, respond }) => {
+    registerSatMutationMethod("sat.syncMainnet", async ({ params, respond }) => {
       try {
         const manifestUrl =
           typeof (params as { manifestUrl?: unknown })?.manifestUrl === "string"
@@ -8501,7 +8527,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getMiningReadiness", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getMiningReadiness", async ({ params, respond }) => {
       try {
         const walletId =
           typeof (params as { walletId?: string })?.walletId === "string"
@@ -8513,7 +8539,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getMiningStatus", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getMiningStatus", async ({ params, respond }) => {
       try {
         const statusMode =
           normalizeSatMaintenanceStatusMode(
@@ -8564,7 +8590,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getMiningHistory", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getMiningHistory", async ({ params, respond }) => {
       try {
         const window =
           typeof (params as { window?: unknown })?.window === "string"
@@ -8656,8 +8682,8 @@ const satMiningPlugin = {
         respondGatewayError(respond, error);
       }
     };
-    api.registerGatewayMethod("sat.getMiningActionPage", queryMiningActions);
-    api.registerGatewayMethod("sat.queryMiningActions", queryMiningActions);
+    registerSatReadMethod("sat.getMiningActionPage", queryMiningActions);
+    registerSatReadMethod("sat.queryMiningActions", queryMiningActions);
 
     const queryMiningOutcomes: SatGatewayMethodHandler = async ({ params, respond }) => {
       try {
@@ -8691,10 +8717,10 @@ const satMiningPlugin = {
         respondGatewayError(respond, error);
       }
     };
-    api.registerGatewayMethod("sat.getMiningOutcomePage", queryMiningOutcomes);
-    api.registerGatewayMethod("sat.queryMiningOutcomes", queryMiningOutcomes);
+    registerSatReadMethod("sat.getMiningOutcomePage", queryMiningOutcomes);
+    registerSatReadMethod("sat.queryMiningOutcomes", queryMiningOutcomes);
 
-    api.registerGatewayMethod("sat.getMiningHistorySeries", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getMiningHistorySeries", async ({ params, respond }) => {
       try {
         const input = (params ?? {}) as {
           walletId?: unknown;
@@ -8721,7 +8747,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getMiningRecovery", async ({ respond }) => {
+    registerSatReadMethod("sat.getMiningRecovery", async ({ respond }) => {
       try {
         respond(true, jsonOk(await getMiningRecovery()));
       } catch (error) {
@@ -8765,7 +8791,7 @@ const satMiningPlugin = {
       state,
       persistRuntimeState: persistRecentActions,
     });
-    api.registerGatewayMethod("sat.runKeeperOnce", async ({ respond }) => {
+    registerSatMutationMethod("sat.runKeeperOnce", async ({ respond }) => {
       try {
         await epochService.runOnce();
         respond(
@@ -9164,7 +9190,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.clearMiningHistory", async ({ params, respond }) => {
+    registerSatMutationMethod("sat.clearMiningHistory", async ({ params, respond }) => {
       try {
         const confirmation = String(
           (params as { confirmation?: unknown } | undefined)?.confirmation ?? "",
@@ -9192,7 +9218,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getEpoch", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getEpoch", async ({ params, respond }) => {
       try {
         const request = state.client.buildGetEpochRequest({
           epochId: Number((params as { epochId?: number })?.epochId ?? 0),
@@ -9204,7 +9230,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getRecoverySummary", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getRecoverySummary", async ({ params, respond }) => {
       try {
         const request = state.client.buildGetRecoverySummaryRequest({
           validatorAuthority: String(
@@ -9270,7 +9296,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getValidatorAttestation", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getValidatorAttestation", async ({ params, respond }) => {
       try {
         const inspection = await attachArtifactCorrelation(
           await inspectSatValidatorAttestation(state.activeConfig, {
@@ -9290,7 +9316,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.getDispute", async ({ params, respond }) => {
+    registerSatReadMethod("sat.getDispute", async ({ params, respond }) => {
       try {
         const inspection = await attachArtifactCorrelation(
           await inspectSatDispute(state.activeConfig, {
@@ -9310,7 +9336,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.listValidatorAttestations", async ({ params, respond }) => {
+    registerSatReadMethod("sat.listValidatorAttestations", async ({ params, respond }) => {
       try {
         const inspection = await attachArtifactCorrelationList(
           await listSatValidatorAttestations(state.activeConfig, {
@@ -9335,7 +9361,7 @@ const satMiningPlugin = {
       }
     });
 
-    api.registerGatewayMethod("sat.listDisputes", async ({ params, respond }) => {
+    registerSatReadMethod("sat.listDisputes", async ({ params, respond }) => {
       try {
         const inspection = await attachArtifactCorrelationList(
           await listSatDisputes(state.activeConfig, {
@@ -9418,6 +9444,10 @@ const satMiningPlugin = {
       } catch (error) {
         respondGatewayError(respond, error);
       }
+    });
+
+    registerSatMiningGatewayMethods(registeredSatGatewayMethods, (method, handler) => {
+      api.registerGatewayMethod(method, handler);
     });
 
     api.registerService({
