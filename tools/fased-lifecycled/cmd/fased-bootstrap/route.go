@@ -71,7 +71,6 @@ type installedLifecycleStatus struct {
 	Profile            model.Profile
 	Channel            string
 	Version            string
-	ManifestSchema     uint32
 	ReleaseSequence    uint64
 	SecurityEpoch      uint64
 	ActiveGenerationID string
@@ -201,7 +200,6 @@ func decodeInstalledLifecycleStatus(config platform.Config, profile model.Profil
 	}
 	return installedLifecycleStatus{
 		Profile: profile, Version: manifest.ActiveGeneration.Version,
-		ManifestSchema:  manifest.SchemaVersion,
 		ReleaseSequence: manifest.ReleaseSequence, SecurityEpoch: manifest.SecurityEpoch,
 		ActiveGenerationID: manifest.ActiveGeneration.ID,
 	}, nil
@@ -931,12 +929,14 @@ func convergeManagedPluginsBeforeCoreGeneration(ctx context.Context, config plat
 	if err != nil {
 		return err
 	}
-	production, err := platform.NewManagedPluginProductionForCoreTransition(config, status.ActiveGenerationID, status.ManifestSchema, service)
+	activation, err := platform.PrepareManagedPluginCoreTransition(config, status.ActiveGenerationID, service)
 	if err != nil {
 		return fmt.Errorf("inspect managed plugin transaction before core generation transition: %w", err)
 	}
-	if err := production.Activation.ConvergeBeforeCoreGeneration(ctx); err != nil {
-		return fmt.Errorf("converge managed plugin transaction before core generation transition: %w", err)
+	if activation != nil {
+		if err := activation.ConvergeBeforeCoreGeneration(ctx); err != nil {
+			return fmt.Errorf("converge managed plugin transaction before core generation transition: %w", err)
+		}
 	}
 	return nil
 }
