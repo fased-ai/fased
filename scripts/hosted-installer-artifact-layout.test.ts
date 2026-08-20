@@ -36,8 +36,12 @@ const removedMutationOwners = [
 ];
 
 describe("attested Go lifecycle artifact layout", () => {
-  it("builds optional component assets beside the core before signing release inventory", () => {
+  it("allows fresh-core proof to skip optional packs without changing core bytes", () => {
+    expect(localFixture).toContain(
+      'BUILD_COMPONENT_PACKS="${FASED_SYSTEMD_FIXTURE_BUILD_COMPONENT_PACKS:-1}"',
+    );
     expect(localFixture.indexOf(componentPackBuild)).toBeGreaterThan(0);
+    expect(localFixture).toContain('if [[ "$BUILD_COMPONENT_PACKS" == "1" ]]');
     expect(localFixture.indexOf(hostedReleaseManifestBuild)).toBeGreaterThan(
       localFixture.indexOf(componentPackBuild),
     );

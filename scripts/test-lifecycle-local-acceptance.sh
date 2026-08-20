@@ -32,6 +32,7 @@ PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
 RELEASE_SEQUENCE="${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}"
 SECURITY_EPOCH="${FASED_LIFECYCLE_SECURITY_EPOCH:-1}"
 BUILD_ONLY="${FASED_SYSTEMD_FIXTURE_BUILD_ONLY:-0}"
+BUILD_COMPONENT_PACKS="${FASED_SYSTEMD_FIXTURE_BUILD_COMPONENT_PACKS:-1}"
 ARTIFACT_OUTPUT_DIR="${FASED_SYSTEMD_FIXTURE_OUTPUT_DIR:-}"
 ARTIFACT_PROFILE="${FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE:-branch-x64}"
 RECEIPT_DIR="${FASED_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
@@ -183,6 +184,10 @@ fi
   echo "FASED_SYSTEMD_FIXTURE_BUILD_ONLY must be 0 or 1." >&2
   exit 1
 }
+[[ "$BUILD_COMPONENT_PACKS" == "0" || "$BUILD_COMPONENT_PACKS" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_BUILD_COMPONENT_PACKS must be 0 or 1." >&2
+  exit 1
+}
 if [[ "$BUILD_ONLY" == "1" ]]; then
   [[ -z "$ARTIFACT_DIR" && "$ARTIFACT_OUTPUT_DIR" == /* ]] || {
     echo "Build-only mode requires one absolute FASED_SYSTEMD_FIXTURE_OUTPUT_DIR." >&2
@@ -304,10 +309,12 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     OWN_ARTIFACT_DIR=1
   fi
   pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
-  # Optional components are separate immutable P6 assets. Building them here
-  # publishes their inventory beside the core bytes without adding them to the
-  # fresh-core generation or its dependency layer.
-  pnpm --dir "$ROOT_DIR" hosted:component-packs --output "$ARTIFACT_DIR"
+  # Optional components are separate immutable P6 assets. A literal fresh-core
+  # proof skips them entirely; release evidence may opt in to build their
+  # inventory beside the same core bytes.
+  if [[ "$BUILD_COMPONENT_PACKS" == "1" ]]; then
+    pnpm --dir "$ROOT_DIR" hosted:component-packs --output "$ARTIFACT_DIR"
+  fi
   cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
   node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
     --source "$ROOT_DIR/install.sh" \
