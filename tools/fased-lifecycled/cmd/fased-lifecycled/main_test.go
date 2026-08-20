@@ -321,7 +321,7 @@ func TestStandaloneSupervisorPendingRecoveryAcquiresSharedLease(t *testing.T) {
 	}
 }
 
-func TestStartupLeaseBrokerRejectsPartialRequest(t *testing.T) {
+func TestStartupLeaseBrokerRejectsInvalidRequest(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "fsl-")
 	if err != nil {
 		t.Fatal(err)
@@ -342,14 +342,30 @@ func TestStartupLeaseBrokerRejectsPartialRequest(t *testing.T) {
 		_ = broker.Close()
 		t.Fatal(err)
 	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		broker.mu.Lock()
+		active := broker.active != nil
+		broker.mu.Unlock()
+		if active {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = connection.Close()
+			_ = broker.Close()
+			t.Fatal("broker did not register the invalid-request peer")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if _, err := connection.Write([]byte{0}); err != nil {
 		_ = connection.Close()
 		_ = broker.Close()
 		t.Fatal(err)
 	}
+	<-broker.done
 	_ = connection.Close()
 	if err := broker.Close(); err == nil || !strings.Contains(err.Error(), "request is invalid") {
-		t.Fatalf("partial startup lease request was accepted: %v", err)
+		t.Fatalf("invalid startup lease request was accepted: %v", err)
 	}
 }
 
