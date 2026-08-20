@@ -2,20 +2,43 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fased-lifecycled/hostsecurity"
+	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
 	"fased-lifecycled/store"
+	"golang.org/x/sys/unix"
 )
+
+func init() {
+	if os.Getenv("FASED_TEST_INITIALIZATION_LEASE_HANDOFF") != "1" {
+		return
+	}
+	path := os.Getenv("FASED_TEST_INITIALIZATION_LEASE_PATH")
+	lock, err := acquireInheritedInitializationLockAt(3, path, uint32(os.Getuid()))
+	if err == nil {
+		err = lock.Release()
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(3)
+	}
+	os.Exit(0)
+}
 
 type missingCandidateAuthority struct{ err error }
 
@@ -172,6 +195,299 @@ func TestInitializationLockSerializesAndReleases(t *testing.T) {
 	}
 	if err := second.Release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitializationLockAdoptsBootstrapHandoffWithoutUnlockingParent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap.lock")
+	parent, err := hostsecurity.AcquireMutationLock(path, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Release()
+	childLease, err := parent.DupForChild()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer childLease.Close()
+	command := exec.Command(os.Args[0], "-test.run=^$")
+	command.ExtraFiles = []*os.File{childLease}
+	command.Env = append(os.Environ(), "FASED_TEST_INITIALIZATION_LEASE_HANDOFF=1", "FASED_TEST_INITIALIZATION_LEASE_PATH="+path)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("inherited initialization lease failed: %v: %s", err, output)
+	}
+	if contender, err := hostsecurity.AcquireMutationLock(path, uint32(os.Getuid())); err == nil {
+		_ = contender.Release()
+		t.Fatal("child initialization unlocked the bootstrap parent lease")
+	}
+}
+
+func TestInitializationLockRejectsInheritedDescriptorForWrongPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap.lock")
+	parent, err := hostsecurity.AcquireMutationLock(path, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Release()
+	childLease, err := parent.DupForChild()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer childLease.Close()
+	command := exec.Command(os.Args[0], "-test.run=^$")
+	command.ExtraFiles = []*os.File{childLease}
+	command.Env = append(os.Environ(), "FASED_TEST_INITIALIZATION_LEASE_HANDOFF=1", "FASED_TEST_INITIALIZATION_LEASE_PATH="+filepath.Join(filepath.Dir(path), "other.lock"))
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "differs from the expected lock") {
+		t.Fatalf("wrong inherited descriptor path was accepted: err=%v output=%s", err, output)
+	}
+}
+
+func TestStoppedSupervisorPendingRecoveryAdoptsStartupLeaseBeforeSocket(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fsl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := platform.Config{LifecycleRoot: root}
+	lockPath := filepath.Join(root, "lifecycle.lock")
+	initializationLease, err := hostsecurity.AcquireMutationLock(lockPath, uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialization := &initializationMutationLock{handoff: initializationLease}
+	broker, err := startSupervisorStartupLeaseBroker(context.Background(), config, initialization)
+	if err != nil {
+		_ = initialization.Release()
+		t.Fatal(err)
+	}
+	recovered := false
+	err = recoverStoppedSupervisorPending(context.Background(), config, lockPath,
+		func() (model.Transaction, error) { return model.Transaction{}, nil },
+		func(context.Context) error {
+			if contender, contenderErr := hostsecurity.AcquireMutationLock(lockPath, uint32(os.Geteuid())); contenderErr == nil {
+				_ = contender.Release()
+				return errors.New("pending recovery did not retain the shared lifecycle lease")
+			}
+			recovered = true
+			return nil
+		})
+	if err != nil {
+		_ = broker.Close()
+		_ = initialization.Release()
+		t.Fatalf("stopped supervisor pending recovery self-deadlocked or released its lease: %v", err)
+	}
+	if !recovered {
+		t.Fatal("stopped supervisor did not replay the pending transaction")
+	}
+	// Only after terminal pending recovery may the stopped supervisor expose its
+	// public socket; the initialize lease continues through its first request.
+	if err := broker.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := initialization.Release(); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(root, "supervisor.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatalf("supervisor socket did not start after pending recovery: %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStandaloneSupervisorPendingRecoveryAcquiresSharedLease(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fsl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	config := platform.Config{LifecycleRoot: root}
+	lockPath := filepath.Join(config.LifecycleRoot, "lifecycle.lock")
+	lease, err := acquireSupervisorStartupLease(context.Background(), config, lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hostsecurity.AcquireMutationLock(lockPath, uint32(os.Geteuid())); err == nil {
+		t.Fatal("standalone supervisor did not acquire the shared lifecycle lease")
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartupLeaseBrokerRejectsInvalidRequest(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fsl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	config := platform.Config{LifecycleRoot: root}
+	lock, err := hostsecurity.AcquireMutationLock(filepath.Join(root, "lifecycle.lock"), uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	broker, err := startSupervisorStartupLeaseBroker(context.Background(), config, &initializationMutationLock{handoff: lock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: startupLeaseSocketPath(config), Net: "unix"})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		broker.mu.Lock()
+		active := broker.active != nil
+		broker.mu.Unlock()
+		if active {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = connection.Close()
+			_ = broker.Close()
+			t.Fatal("broker did not register the invalid-request peer")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := connection.Write([]byte{0}); err != nil {
+		_ = connection.Close()
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	<-broker.done
+	_ = connection.Close()
+	if err := broker.Close(); err == nil || !strings.Contains(err.Error(), "request is invalid") {
+		t.Fatalf("invalid startup lease request was accepted: %v", err)
+	}
+}
+
+func TestStartupLeaseBrokerCloseInterruptsConnectedStalledPeer(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "fsl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	config := platform.Config{LifecycleRoot: root}
+	lock, err := hostsecurity.AcquireMutationLock(filepath.Join(root, "lifecycle.lock"), uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	broker, err := startSupervisorStartupLeaseBroker(context.Background(), config, &initializationMutationLock{handoff: lock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: startupLeaseSocketPath(config), Net: "unix"})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	defer client.Close()
+	deadline := time.Now().Add(time.Second)
+	for {
+		broker.mu.Lock()
+		active := broker.active != nil
+		broker.mu.Unlock()
+		if active {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = broker.Close()
+			t.Fatal("broker did not register the connected stalled peer")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	started := time.Now()
+	closeErr := broker.Close()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("broker close waited on stalled peer for %s", elapsed)
+	}
+	if closeErr == nil || !strings.Contains(closeErr.Error(), "request is invalid") {
+		t.Fatalf("stalled peer broker failure was not propagated: %v", closeErr)
+	}
+}
+
+func TestStartupLeaseAdoptionClosesInvalidOrTruncatedDescriptors(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("descriptor accounting is Linux-specific")
+	}
+	for _, truncated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("truncated=%t", truncated), func(t *testing.T) {
+			root, err := os.MkdirTemp("/tmp", "fsl-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(root)
+			path := filepath.Join(root, "broker.sock")
+			listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			lease, err := os.OpenFile(filepath.Join(root, "lease.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.Close()
+			sent := make(chan error, 1)
+			go func() {
+				connection, acceptErr := listener.AcceptUnix()
+				if acceptErr != nil {
+					sent <- acceptErr
+					return
+				}
+				n, _, writeErr := connection.WriteMsgUnix([]byte{0}, unix.UnixRights(int(lease.Fd())), nil)
+				if writeErr == nil && n != 1 {
+					writeErr = errors.New("short broker test response")
+				}
+				closeErr := connection.Close()
+				if writeErr == nil {
+					writeErr = closeErr
+				}
+				sent <- writeErr
+			}()
+			client, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: path, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			data := make([]byte, 1)
+			oobSize := unix.CmsgSpace(4 * 4)
+			if truncated {
+				oobSize = 1
+			}
+			oob := make([]byte, oobSize)
+			n, oobn, flags, _, readErr := client.ReadMsgUnix(data, oob)
+			if err := <-sent; err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadDir("/proc/self/fd")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := adoptSupervisorStartupLease(data, oob[:oobn], flags, n, readErr, filepath.Join(root, "lifecycle.lock")); err == nil {
+				t.Fatal("invalid or truncated startup lease descriptor was accepted")
+			}
+			after, err := os.ReadDir("/proc/self/fd")
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := len(before)
+			if !truncated {
+				expected--
+			}
+			if len(after) != expected {
+				t.Fatalf("startup lease invalid path leaked descriptors: before=%d after=%d want=%d", len(before), len(after), expected)
+			}
+		})
 	}
 }
 

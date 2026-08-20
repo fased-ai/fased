@@ -664,6 +664,8 @@ elif [[ -f "$ARTIFACT_DIR/fased-branch-proof-x64.json" ||
   FIXTURE_SOURCE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
   echo "branch artifact reuse: product=$COMMIT fixture=$FIXTURE_SOURCE_COMMIT"
 fi
+FIXTURE_SOURCE_TREE="$(git -C "$ROOT_DIR" rev-parse "${FIXTURE_SOURCE_COMMIT}^{tree}")"
+ARTIFACT_SET_DIGEST="$(jq -er .artifactSetDigest "$ARTIFACT_DIR/fased-hosting-candidate.json")"
 git -C "$ROOT_DIR" archive "$FIXTURE_SOURCE_COMMIT" -- \
   scripts/build-hosted-release-manifest.mjs \
   scripts/signer-protocol-v2.generated.mjs \
@@ -711,6 +713,11 @@ run_fixture_scenario() {
     --tmpfs /tmp \
     -e "FASED_FIXTURE_VERSION=$VERSION" \
     -e "FASED_FIXTURE_COMMIT=$COMMIT" \
+    -e "FASED_FIXTURE_PRODUCT_COMMIT=$COMMIT" \
+    -e "FASED_FIXTURE_PRODUCT_TREE=$TREE" \
+    -e "FASED_FIXTURE_ARTIFACT_SET_DIGEST=$ARTIFACT_SET_DIGEST" \
+    -e "FASED_FIXTURE_SOURCE_COMMIT=$FIXTURE_SOURCE_COMMIT" \
+    -e "FASED_FIXTURE_SOURCE_TREE=$FIXTURE_SOURCE_TREE" \
     -e "FASED_FIXTURE_PREDECESSOR_VERSION=$predecessor_version" \
     -e "FASED_FIXTURE_PREDECESSOR_CLASS=$MANAGED_PREDECESSOR_CLASS" \
     -e "FASED_FIXTURE_PREINSTALLED_TOOLS=$PREINSTALLED_TOOLS" \
@@ -830,6 +837,11 @@ run_fixture_scenario() {
     --scenario "$scenario" \
     --version "$VERSION" \
     --commit "$COMMIT" \
+    --product-commit "$COMMIT" \
+    --product-tree "$TREE" \
+    --artifact-set-digest "$ARTIFACT_SET_DIGEST" \
+    --fixture-commit "$FIXTURE_SOURCE_COMMIT" \
+    --fixture-tree "$FIXTURE_SOURCE_TREE" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
     --predecessor-installation-class "$([[ "$scenario" == "managed-update" ]] && printf '%s' "$MANAGED_PREDECESSOR_CLASS" || true)" \
@@ -838,6 +850,27 @@ run_fixture_scenario() {
     --acquisition-evidence-class SUPPORTING >/dev/null
   printf 'branch lifecycle product receipt verified; acquisition supporting: %s\n' "$receipt"
   if [[ "$scenario" == "managed-update" ]]; then
+    plugin_receipt="$receipt.plugins"
+    run_container cp \
+      "$name:/var/lib/fased-protected-local-fixture/managed-plugin-transaction.json" \
+      "$plugin_receipt"
+    jq -e --arg commit "$COMMIT" --arg tree "$TREE" \
+      --arg artifact_set_digest "$ARTIFACT_SET_DIGEST" \
+      --arg fixture_commit "$FIXTURE_SOURCE_COMMIT" --arg fixture_tree "$FIXTURE_SOURCE_TREE" \
+      --arg version "$VERSION" \
+      '.schemaVersion == 1 and .role == "fased-managed-plugin-transaction-acceptance" and
+       .status == "PASS" and .evidenceClass == "PASS" and .commit == $commit and
+       .productCommit == $commit and .productTree == $tree and
+       .artifactSetDigest == $artifact_set_digest and
+       .fixtureCommit == $fixture_commit and .fixtureTree == $fixture_tree and
+       .version == $version and .dataPreserved == true and
+       .performance.installDurationMs >= 0 and .performance.installDurationMs <= .performance.installBudgetMs and
+       .performance.noopDurationMs >= 0 and .performance.noopDurationMs <= .performance.noopBudgetMs and
+       .performance.installBudgetMs == 60000 and .performance.noopBudgetMs == 5000 and
+       ([.catalogDigest,.candidateLockDigest,.readinessDigest,.generationId,
+         .installedOutputDigest,.noopOutputDigest] | all(test("^sha256:[0-9a-f]{64}$")))' \
+      "$plugin_receipt" >/dev/null
+    printf 'managed plugin transaction receipt verified: %s\n' "$plugin_receipt"
     if ! run_container exec "$name" /bin/bash \
       /usr/local/bin/fased-protected-local-systemd-fixture verify-operations; then
       dump_fixture_failure "$name"
@@ -847,8 +880,14 @@ run_fixture_scenario() {
     run_container cp \
       "$name:/var/lib/fased-protected-local-fixture/lifecycle-operations.json" \
       "$operations_receipt"
-    jq -e --arg commit "$COMMIT" --arg predecessor_class "$MANAGED_PREDECESSOR_CLASS" \
+    jq -e --arg commit "$COMMIT" --arg tree "$TREE" \
+      --arg artifact_set_digest "$ARTIFACT_SET_DIGEST" \
+      --arg fixture_commit "$FIXTURE_SOURCE_COMMIT" --arg fixture_tree "$FIXTURE_SOURCE_TREE" \
+      --arg predecessor_class "$MANAGED_PREDECESSOR_CLASS" \
       '.status == "PASS" and .evidenceClass == "PASS" and .commit == $commit and
+       .productCommit == $commit and .productTree == $tree and
+       .artifactSetDigest == $artifact_set_digest and
+       .fixtureCommit == $fixture_commit and .fixtureTree == $fixture_tree and
        .predecessorClass == $predecessor_class and
        .repair.status == "PASS" and .repair.exactUnitRestored == true and
        .uninstall.status == "PASS" and .uninstall.managedAuthorityRemoved == true' \

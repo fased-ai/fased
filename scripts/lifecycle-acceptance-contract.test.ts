@@ -314,6 +314,61 @@ describe("lifecycle acceptance contract", () => {
     ).toThrow("acquisitionEvidenceClass mismatch");
   });
 
+  it("binds reused product bytes separately from exact fixture source", () => {
+    const value = contract();
+    const productCommit = "a".repeat(40);
+    const productTree = "b".repeat(40);
+    const fixtureCommit = "c".repeat(40);
+    const fixtureTree = "d".repeat(40);
+    const receipt = buildAcceptanceReceipt({
+      contract: value,
+      profile: "protected-local",
+      scenario: "fresh-install",
+      version: "0.1.76-rc.70",
+      commit: productCommit,
+      productCommit,
+      productTree,
+      artifactSetDigest: digest,
+      fixtureCommit,
+      fixtureTree,
+      candidateDescriptorDigest: digest,
+      acquisition: acquisition(),
+      evidence: evidence("protected-local", "fresh-install"),
+    });
+    expect(receipt).toMatchObject({
+      commit: productCommit,
+      productCommit,
+      productTree,
+      artifactSetDigest: digest,
+      fixtureCommit,
+      fixtureTree,
+    });
+    expect(() =>
+      buildAcceptanceReceipt({
+        contract: value,
+        profile: "protected-local",
+        scenario: "fresh-install",
+        version: "0.1.76-rc.70",
+        commit: productCommit,
+        productCommit: fixtureCommit,
+        productTree,
+        artifactSetDigest: digest,
+        fixtureCommit,
+        fixtureTree,
+        candidateDescriptorDigest: digest,
+        acquisition: acquisition(),
+        evidence: evidence("protected-local", "fresh-install"),
+      }),
+    ).toThrow("fixture receipt identity binding is invalid");
+    expect(() =>
+      verifyAcceptanceReceipt({
+        contract: value,
+        receipt,
+        expected: { fixtureTree: "e".repeat(40) },
+      }),
+    ).toThrow("fixtureTree mismatch");
+  });
+
   it("wires the v2 contract and capsule verifier into candidate proof", () => {
     const wrapper = readFileSync(
       new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
@@ -490,6 +545,75 @@ describe("lifecycle acceptance contract", () => {
         expect(contract().profiles[profile][scenario]).toContain("updater-noop-performance");
       }
     }
+  });
+
+  it("proves a distinct managed-plugin install, digest-changing update, and no-op in protected Local", () => {
+    const local = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    expect(local).toContain("run_managed_plugin_transaction_acceptance() {");
+    expect(local).toContain("/usr/local/bin/fased plugins install");
+    expect(local).toContain('--catalog "$v1_catalog" --catalog-digest "$v1_catalog_digest"');
+    expect(local).toContain("local plugin_id=fixture-transaction-plugin");
+    expect(local).toContain('jq -cjn --arg id "$plugin_id"');
+    expect(local).toContain('local v1_root="$input_root/v1" v2_root="$input_root/v2"');
+    expect(local).toContain("managed_plugin_tree_digest()");
+    expect(local).toContain('plugins install --catalog "$v1_catalog"');
+    expect(local).toContain('plugins update --catalog "$v2_catalog"');
+    expect(local).toContain('test "$v1_digest" != "$v2_digest"');
+    expect(local).toContain('test "$v1_candidate_lock" != "$v2_candidate_lock"');
+    expect(local).toContain(
+      "local v2_ready_marker=/var/lib/fased-protected-local-fixture/managed-plugin-v2-ready",
+    );
+    expect(local).toContain('const fixtureManagedPluginVersion = "v2";');
+    expect(local).not.toContain('if (!existsSync("%s"))');
+    expect(local).toContain(
+      'local v2_fault_dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"',
+    );
+    expect(local).toContain("ExecStartPre=$v2_fault_script");
+    expect(local).toContain(".digest == \\$digest)");
+    expect(local).toContain("systemctl daemon-reload");
+    expect(local).toContain('rm -f "$v2_fault_dropin"');
+    expect(local).toContain("fixture v2 activation failure was accepted");
+    expect(local).toContain('systemctl is-active --quiet "fased-gateway-$instance.service"');
+    expect(local).toContain('install -m 0444 /dev/null "$v2_ready_marker"');
+    expect(local).toContain("rollbackRetry:true");
+    expect(local).toContain("failedOutputDigest:$failedOutputDigest");
+    const failedUpdate =
+      'plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2-failed.out';
+    const successfulUpdate =
+      'plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2.out';
+    expect(local).toContain(failedUpdate);
+    expect(local).toContain(successfulUpdate);
+    expect(local.indexOf('install -m 0444 /dev/null "$v2_ready_marker"')).toBeLessThan(
+      local.indexOf('update_started_ms="$(date +%s%3N)"'),
+    );
+    expect(local).toContain("Managed plugins: status=INSTALLED");
+    expect(local).toContain("Managed plugins: status=ALREADY_CURRENT");
+    expect(local).toContain('role:"fased-managed-plugin-transaction-acceptance"');
+    expect(local).toContain('test "$install_duration_ms" -le 60000');
+    expect(local).toContain('test "$update_duration_ms" -le 60000');
+    expect(local).toContain('test "$noop_duration_ms" -le 5000');
+    expect(local).toContain("run_managed_plugin_transaction_acceptance");
+    expect(local).toContain(
+      'run_managed_plugin_transaction_acceptance "$stable_bridge_plugin_object"',
+    );
+    expect(local).not.toContain("fased plugins install npm:");
+    const wrapper = readFileSync(
+      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    expect(wrapper).toContain('plugin_receipt="$receipt.plugins"');
+    expect(wrapper).toContain('FIXTURE_SOURCE_TREE="$(git -C "$ROOT_DIR" rev-parse');
+    expect(wrapper).toContain('-e "FASED_FIXTURE_PRODUCT_COMMIT=$COMMIT"');
+    expect(wrapper).toContain('-e "FASED_FIXTURE_SOURCE_COMMIT=$FIXTURE_SOURCE_COMMIT"');
+    expect(wrapper).toContain('--artifact-set-digest "$ARTIFACT_SET_DIGEST"');
+    expect(wrapper).toContain(".fixtureCommit == $fixture_commit");
+    expect(wrapper).toContain(".fixtureTree == $fixture_tree");
+    expect(wrapper).toContain(".performance.installBudgetMs == 60000");
+    expect(wrapper).toContain(".performance.noopBudgetMs == 5000");
+    expect(wrapper).toContain("managed plugin transaction receipt verified");
   });
 
   it("restores the protected Local system command ancestry after Node extraction", () => {

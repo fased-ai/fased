@@ -797,7 +797,7 @@ describe("installPluginFromNpmSpec", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: expect.stringContaining("separate digest-bound plugin transaction"),
+      error: expect.stringContaining("digest-bound `fased plugins install`"),
     });
     expect(runCommandWithTimeout).not.toHaveBeenCalled();
   });

@@ -44,7 +44,9 @@ func TestManagedUpdateAuthorityIsScopedToOperatorProfileAndStaticBootstrap(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(policy) != fixture.line {
+			pluginLines := fixture.user + " ALL=(root) NOPASSWD: " + config.BootstrapHostPath() + " plugins --profile " + string(fixture.profile) + " install *\n" + fixture.user + " ALL=(root) NOPASSWD: " + config.BootstrapHostPath() + " plugins --profile " + string(fixture.profile) + " update *\n"
+			want := strings.Replace(fixture.line, fixture.user+" ALL=(root) NOPASSWD: "+config.BootstrapHostPath()+" repair", pluginLines+fixture.user+" ALL=(root) NOPASSWD: "+config.BootstrapHostPath()+" repair", 1)
+			if string(policy) != want {
 				t.Fatalf("unexpected update authority:\n%s", policy)
 			}
 			for _, forbidden := range []string{" ALL\n", "ALL=(ALL)", FixedBootstrapPath + " install ", "fased-lifecycled", "/bin/sh", "/usr/bin/env"} {
@@ -80,5 +82,8 @@ func TestDarwinManagedUpdateAuthorityUsesFixedLibraryBootstrap(t *testing.T) {
 	text := string(policy)
 	if strings.Count(text, "/Library/FasedLifecycle/bootstrap-v1/fased-bootstrap") != 10 || strings.Contains(text, FixedBootstrapPath) {
 		t.Fatalf("Darwin update authority used the wrong bootstrap path:\n%s", text)
+	}
+	if strings.Contains(text, " plugins --profile ") {
+		t.Fatalf("Darwin update authority exposed Linux-only plugin mutation:\n%s", text)
 	}
 }

@@ -6,6 +6,15 @@ phase="${1:-fresh-install}"
 fixture_started="$SECONDS"
 version="${FASED_FIXTURE_VERSION:?missing fixture version}"
 commit="${FASED_FIXTURE_COMMIT:?missing fixture commit}"
+product_commit="${FASED_FIXTURE_PRODUCT_COMMIT:?missing fixture product commit}"
+product_tree="${FASED_FIXTURE_PRODUCT_TREE:?missing fixture product tree}"
+artifact_set_digest="${FASED_FIXTURE_ARTIFACT_SET_DIGEST:?missing fixture artifact set digest}"
+fixture_commit="${FASED_FIXTURE_SOURCE_COMMIT:?missing fixture source commit}"
+fixture_tree="${FASED_FIXTURE_SOURCE_TREE:?missing fixture source tree}"
+[[ "$commit" == "$product_commit" ]] || {
+  echo "fixture product commit binding is inconsistent" >&2
+  exit 1
+}
 predecessor_version="${FASED_FIXTURE_PREDECESSOR_VERSION:-}"
 predecessor_class="${FASED_FIXTURE_PREDECESSOR_CLASS:-public-stable}"
 preinstalled_tools="${FASED_FIXTURE_PREINSTALLED_TOOLS:-0}"
@@ -58,6 +67,156 @@ assert_public_command_projection() {
   test -f /usr/local/bin/fased
   test ! -L /usr/local/bin/fased
   test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"
+}
+
+managed_plugin_tree_digest() {
+  local root="${1:?plugin root is required}"
+  /usr/local/bin/node - "$root" <<'NODE'
+const { createHash } = require("node:crypto");
+const { readFileSync, readdirSync, statSync } = require("node:fs");
+const { join, relative, sep } = require("node:path");
+const root = process.argv[2];
+const entries = [];
+function visit(path) {
+  for (const name of readdirSync(path).sort()) {
+    const item = join(path, name);
+    const stat = statSync(item);
+    const record = { path: relative(root, item).split(sep).join("/"), mode: stat.isDirectory() ? 0o555 : 0o444 };
+    if (stat.isDirectory()) visit(item);
+    else record.digest = `sha256:${createHash("sha256").update(readFileSync(item)).digest("hex")}`;
+    entries.push(record);
+  }
+}
+visit(root);
+entries.sort((left, right) => left.path.localeCompare(right.path));
+process.stdout.write(`sha256:${createHash("sha256").update(JSON.stringify(entries)).digest("hex")}`);
+NODE
+}
+
+run_managed_plugin_transaction_acceptance() {
+  local plugin_object="${1:?source plugin object is required}"
+  local plugin_id=fixture-transaction-plugin
+  local input_root=/tmp/fased-managed-plugin-acceptance
+  local api_capability required data_before data_after
+  local v1_root="$input_root/v1" v2_root="$input_root/v2"
+  local v1_archive="$input_root/v1.tar.gz" v2_archive="$input_root/v2.tar.gz"
+  local v1_catalog="$input_root/v1.catalog.json" v2_catalog="$input_root/v2.catalog.json"
+  local v2_ready_marker=/var/lib/fased-protected-local-fixture/managed-plugin-v2-ready
+  local v2_fault_script=/var/lib/fased-protected-local-fixture/reject-v2-gateway-start.sh
+  local v2_fault_dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"
+  local v2_fault_dropin="$v2_fault_dropin_dir/99-fixture-v2-plugin-failure.conf"
+  local v1_digest v2_digest v1_archive_digest v2_archive_digest v1_catalog_digest v2_catalog_digest
+  local v1_candidate_lock v2_candidate_lock v1_readiness_digest readiness_digest generation_id failed_output_digest
+  local install_started_ms install_duration_ms noop_started_ms noop_duration_ms update_started_ms update_duration_ms
+  rm -rf "$input_root"
+  rm -f "$v2_ready_marker"
+  install -d -m 0700 -o testop -g testop "$input_root"
+  for fixture_root in "$v1_root" "$v2_root"; do
+    install -d -m 0755 -o testop -g testop "$fixture_root"
+    cp "$plugin_object/fased.plugin.json" "$plugin_object/index.js" "$plugin_object/package.json" "$fixture_root/"
+    jq --arg id "$plugin_id" '.id = $id' "$fixture_root/fased.plugin.json" >"$fixture_root/fased.plugin.json.tmp"
+    mv "$fixture_root/fased.plugin.json.tmp" "$fixture_root/fased.plugin.json"
+    sed -i "s/stable-bridge/$plugin_id/g" "$fixture_root/fased.plugin.json" "$fixture_root/index.js" "$fixture_root/package.json"
+    find "$fixture_root" -type d -exec chmod 0555 {} +
+    find "$fixture_root" -type f -exec chmod 0444 {} +
+  done
+  {
+    printf 'const fixtureManagedPluginVersion = "v2";\n'
+    printf 'void fixtureManagedPluginVersion;\n'
+    cat "$v2_root/index.js"
+  } >"$v2_root/index.js.tmp"
+  mv "$v2_root/index.js.tmp" "$v2_root/index.js"
+  chmod 0444 "$v2_root/index.js"
+  v1_digest="$(managed_plugin_tree_digest "$v1_root")"
+  v2_digest="$(managed_plugin_tree_digest "$v2_root")"
+  test "$v1_digest" != "$v2_digest"
+  runuser -u testop -- tar -C "$v1_root" -czf "$v1_archive" fased.plugin.json index.js package.json
+  runuser -u testop -- tar -C "$v2_root" -czf "$v2_archive" fased.plugin.json index.js package.json
+  chmod 0600 "$v1_archive" "$v2_archive"
+  v1_archive_digest="sha256:$(sha256sum "$v1_archive" | awk '{print $1}')"
+  v2_archive_digest="sha256:$(sha256sum "$v2_archive" | awk '{print $1}')"
+  api_capability="$(jq -er '.entries[] | select(.id == "stable-bridge" and .origin == "store") | .apiCapability' "$state/plugin.lock.json")"
+  required=true
+  for fixture in v1 v2; do
+    local digest_var="${fixture}_digest" archive_digest_var="${fixture}_archive_digest" catalog_var="${fixture}_catalog"
+    jq -cjn --arg id "$plugin_id" --arg digest "${!digest_var}" --arg archiveDigest "${!archive_digest_var}" --arg apiCapability "$api_capability" --argjson required "$required" \
+      '{schemaVersion:1,type:"fased-managed-plugin-catalog",entries:[{id:$id,digest:$digest,archiveDigest:$archiveDigest,apiCapability:$apiCapability,required:$required}]}' \
+      >"${!catalog_var}"
+    chown testop:testop "${!catalog_var}"
+    chmod 0600 "${!catalog_var}"
+  done
+  v1_catalog_digest="sha256:$(sha256sum "$v1_catalog" | awk '{print $1}')"
+  v2_catalog_digest="sha256:$(sha256sum "$v2_catalog" | awk '{print $1}')"
+  install -d -m 2770 -o "fsgw-$instance" -g "fscf-$instance" "$state/plugin-data/$plugin_id"
+  printf '%s\n' fixture-data >"$state/plugin-data/$plugin_id/state.json"
+  chown "fsgw-$instance":"fscf-$instance" "$state/plugin-data/$plugin_id/state.json"
+  chmod 0660 "$state/plugin-data/$plugin_id/state.json"
+  data_before="sha256:$(sha256sum "$state/plugin-data/$plugin_id/state.json" | awk '{print $1}')"
+  install_started_ms="$(date +%s%3N)"
+  runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash /usr/local/bin/fased plugins install --catalog "$v1_catalog" --catalog-digest "$v1_catalog_digest" --archive "$plugin_id=$v1_archive" >/tmp/fased-managed-plugin-install-v1.out
+  install_duration_ms="$(( $(date +%s%3N) - install_started_ms ))"
+  grep -F "Managed plugins: status=INSTALLED catalog=$v1_catalog_digest candidateLock=" /tmp/fased-managed-plugin-install-v1.out >/dev/null
+  v1_candidate_lock="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=\([^ ]*\) readiness=.*$/\1/p' /tmp/fased-managed-plugin-install-v1.out)"
+  v1_readiness_digest="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=[^ ]* readiness=\([^ ]*\) generation=.*$/\1/p' /tmp/fased-managed-plugin-install-v1.out)"
+  test "$(jq -er --arg id "$plugin_id" '.entries[] | select(.id == $id and .origin == "store") | .digest' "$state/plugin.lock.json")" = "$v1_digest"
+  test -f "/opt/fased/local/$instance/plugin-code/${v1_digest#sha256:}/index.js"
+  noop_started_ms="$(date +%s%3N)"
+  runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash /usr/local/bin/fased plugins install --catalog "$v1_catalog" --catalog-digest "$v1_catalog_digest" --archive "$plugin_id=$v1_archive" >/tmp/fased-managed-plugin-noop-v1.out
+  noop_duration_ms="$(( $(date +%s%3N) - noop_started_ms ))"
+  grep -F "Managed plugins: status=ALREADY_CURRENT catalog=$v1_catalog_digest candidateLock=$v1_candidate_lock" /tmp/fased-managed-plugin-noop-v1.out >/dev/null
+  install -d -m 0755 -o root -g root "$v2_fault_dropin_dir"
+  cat >"$v2_fault_script" <<EOF_FIXTURE_V2_GATEWAY_FAILURE
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -e "$v2_ready_marker" ]] && jq -e --arg digest "$v2_digest" '.entries[] | select(.id == "$plugin_id" and .origin == "store" and .digest == \$digest)' "$state/plugin.lock.json" >/dev/null; then
+  exit 1
+fi
+EOF_FIXTURE_V2_GATEWAY_FAILURE
+  chown root:root "$v2_fault_script"
+  chmod 0755 "$v2_fault_script"
+  cat >"$v2_fault_dropin" <<EOF_FIXTURE_V2_GATEWAY_DROPIN
+[Service]
+ExecStartPre=$v2_fault_script
+EOF_FIXTURE_V2_GATEWAY_DROPIN
+  chown root:root "$v2_fault_dropin"
+  chmod 0644 "$v2_fault_dropin"
+  systemctl daemon-reload
+  if runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash /usr/local/bin/fased plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2-failed.out 2>&1; then
+    echo "fixture v2 activation failure was accepted" >&2
+    return 1
+  fi
+  test -s /tmp/fased-managed-plugin-update-v2-failed.out
+  failed_output_digest="sha256:$(sha256sum /tmp/fased-managed-plugin-update-v2-failed.out | awk '{print $1}')"
+  test "$(jq -er --arg id "$plugin_id" '.entries[] | select(.id == $id and .origin == "store") | .digest' "$state/plugin.lock.json")" = "$v1_digest"
+  jq -e --arg digest "$v1_candidate_lock" '.lockDigest == $digest' "$state/cache/plugin-readiness.json" >/dev/null
+  systemctl is-active --quiet "fased-gateway-$instance.service"
+  test "$data_before" = "sha256:$(sha256sum "$state/plugin-data/$plugin_id/state.json" | awk '{print $1}')"
+  install -m 0444 /dev/null "$v2_ready_marker"
+  update_started_ms="$(date +%s%3N)"
+  runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash /usr/local/bin/fased plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2.out
+  update_duration_ms="$(( $(date +%s%3N) - update_started_ms ))"
+  rm -f "$v2_fault_dropin"
+  systemctl daemon-reload
+  grep -F "Managed plugins: status=INSTALLED catalog=$v2_catalog_digest candidateLock=" /tmp/fased-managed-plugin-update-v2.out >/dev/null
+  v2_candidate_lock="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=\([^ ]*\) readiness=.*$/\1/p' /tmp/fased-managed-plugin-update-v2.out)"
+  readiness_digest="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=[^ ]* readiness=\([^ ]*\) generation=.*$/\1/p' /tmp/fased-managed-plugin-update-v2.out)"
+  generation_id="$(sed -n 's/^Managed plugins: status=INSTALLED catalog=[^ ]* candidateLock=[^ ]* readiness=[^ ]* generation=\([^ ]*\)$/\1/p' /tmp/fased-managed-plugin-update-v2.out)"
+  test "$v1_candidate_lock" != "$v2_candidate_lock"
+  test "$(jq -er --arg id "$plugin_id" '.entries[] | select(.id == $id and .origin == "store") | .digest' "$state/plugin.lock.json")" = "$v2_digest"
+  test -f "/opt/fased/local/$instance/plugin-code/${v1_digest#sha256:}/index.js"
+  test -f "/opt/fased/local/$instance/plugin-code/${v2_digest#sha256:}/index.js"
+  data_after="sha256:$(sha256sum "$state/plugin-data/$plugin_id/state.json" | awk '{print $1}')"
+  test "$data_before" = "$data_after"
+  runuser -u testop -- bash -c 'cd /tmp && exec "$@"' bash /usr/local/bin/fased plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-noop-v2.out
+  grep -F "Managed plugins: status=ALREADY_CURRENT catalog=$v2_catalog_digest candidateLock=$v2_candidate_lock readiness=$readiness_digest generation=$generation_id" /tmp/fased-managed-plugin-noop-v2.out >/dev/null
+  test "$install_duration_ms" -le 60000
+  test "$update_duration_ms" -le 60000
+  test "$noop_duration_ms" -le 5000
+  jq -cn --arg commit "$commit" --arg productTree "$product_tree" --arg artifactSetDigest "$artifact_set_digest" --arg fixtureCommit "$fixture_commit" --arg fixtureTree "$fixture_tree" --arg version "$version" --arg pluginId "$plugin_id" --arg v1Digest "$v1_digest" --arg v2Digest "$v2_digest" --arg v1CatalogDigest "$v1_catalog_digest" --arg v2CatalogDigest "$v2_catalog_digest" --arg candidateLockDigest "$v2_candidate_lock" --arg readinessDigest "$readiness_digest" --arg generationId "$generation_id" --arg failedOutputDigest "$failed_output_digest" --arg installedOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-install-v1.out | awk '{print $1}')" --arg noopOutputDigest "sha256:$(sha256sum /tmp/fased-managed-plugin-noop-v2.out | awk '{print $1}')" --argjson installDurationMs "$install_duration_ms" --argjson updateDurationMs "$update_duration_ms" --argjson noopDurationMs "$noop_duration_ms" \
+    '{schemaVersion:1,role:"fased-managed-plugin-transaction-acceptance",status:"PASS",evidenceClass:"PASS",commit:$commit,productCommit:$commit,productTree:$productTree,artifactSetDigest:$artifactSetDigest,fixtureCommit:$fixtureCommit,fixtureTree:$fixtureTree,version:$version,pluginId:$pluginId,v1Digest:$v1Digest,v2Digest:$v2Digest,v1CatalogDigest:$v1CatalogDigest,v2CatalogDigest:$v2CatalogDigest,catalogDigest:$v2CatalogDigest,candidateLockDigest:$candidateLockDigest,readinessDigest:$readinessDigest,generationId:$generationId,rollbackRetry:true,failedOutputDigest:$failedOutputDigest,installedOutputDigest:$installedOutputDigest,noopOutputDigest:$noopOutputDigest,dataPreserved:true,performance:{installDurationMs:$installDurationMs,updateDurationMs:$updateDurationMs,noopDurationMs:$noopDurationMs,installBudgetMs:60000,noopBudgetMs:5000,updateBudgetMs:60000}}' > /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
+  chmod 0600 /var/lib/fased-protected-local-fixture/managed-plugin-transaction.json
+  rm -rf "$input_root"
+  rm -f "$v2_ready_marker" "$v2_fault_script"
 }
 
 acceptance_mark() {
@@ -149,6 +308,11 @@ acceptance_finish() {
     --scenario "$phase" \
     --version "$version" \
     --commit "$commit" \
+    --product-commit "$product_commit" \
+    --product-tree "$product_tree" \
+    --artifact-set-digest "$artifact_set_digest" \
+    --fixture-commit "$fixture_commit" \
+    --fixture-tree "$fixture_tree" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
     --predecessor-installation-class "$([[ "$phase" == "managed-update" ]] && printf '%s' "$predecessor_class" || true)" \
@@ -169,6 +333,11 @@ acceptance_finish() {
     --scenario "$phase" \
     --version "$version" \
     --commit "$commit" \
+    --product-commit "$product_commit" \
+    --product-tree "$product_tree" \
+    --artifact-set-digest "$artifact_set_digest" \
+    --fixture-commit "$fixture_commit" \
+    --fixture-tree "$fixture_tree" \
     --candidate-descriptor-digest "$descriptor_digest" \
     --predecessor-capsule-digest "$capsule_digest" \
     --predecessor-installation-class "$([[ "$phase" == "managed-update" ]] && printf '%s' "$predecessor_class" || true)" \
@@ -943,6 +1112,10 @@ if [[ "$phase" == "verify-operations" ]]; then
 
   jq -n \
     --arg commit "$commit" \
+    --arg productTree "$product_tree" \
+    --arg artifactSetDigest "$artifact_set_digest" \
+    --arg fixtureCommit "$fixture_commit" \
+    --arg fixtureTree "$fixture_tree" \
     --arg instance "$instance" \
     --arg version "$version" \
     --arg predecessorClass "$predecessor_class" \
@@ -951,7 +1124,9 @@ if [[ "$phase" == "verify-operations" ]]; then
     --arg ownerDigest "sha256:$(sha256sum "$owner_preservation" | awk '{print $1}')" \
     --arg signerDigest "sha256:$(sha256sum "$signer_preservation" | awk '{print $1}')" \
     '{schemaVersion:1,role:"fased-managed-operations-acceptance",status:"PASS",
-      evidenceClass:"PASS",commit:$commit,instanceId:$instance,version:$version,
+      evidenceClass:"PASS",commit:$commit,productCommit:$commit,productTree:$productTree,
+      artifactSetDigest:$artifactSetDigest,fixtureCommit:$fixtureCommit,fixtureTree:$fixtureTree,
+      instanceId:$instance,version:$version,
       predecessorClass:$predecessorClass,
       repair:{status:"PASS",outputDigest:$repairDigest,exactUnitRestored:true},
       uninstall:{status:"PASS",outputDigest:$uninstallDigest,managedAuthorityRemoved:true},
@@ -1847,6 +2022,8 @@ EOF_STABLE_BRIDGE_DROPIN
     jq -e --arg digest "$stable_bridge_plugin_digest" \
       '.entries[] | select(.id == "stable-bridge" and .origin == "store" and .digest == $digest and .status == "loaded")' \
       "$state/cache/plugin-readiness.json" >/dev/null
+    run_managed_plugin_transaction_acceptance "$stable_bridge_plugin_object"
+    sha256sum --check "$stable_bridge_manifest"
     verify_canonical_lifecycle_supervisor "$instance"
     acceptance_mark canonical-lifecycle "/var/lib/fased-local/$instance/lifecycle/installation-manifest.json"
     verify_three_services "$instance"

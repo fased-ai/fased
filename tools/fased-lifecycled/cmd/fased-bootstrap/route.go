@@ -96,6 +96,17 @@ type publicLifecyclePerformance struct {
 	TransactionStatus       string                        `json:"transactionStatus"`
 }
 
+// These narrow seams keep the public-route lease ordering testable without
+// weakening the production trust or service path. Production always uses the
+// shared plugin/core lease, host preflight, and verified bootstrap executor.
+var (
+	publicLifecycleMutationLockPath    = managedPluginMutationLockPath
+	acquirePublicLifecycleMutationLock = acquireManagedPluginMutationLock
+	verifyPublicLifecycleHost          = func(ctx context.Context) error { return platform.NewHostPreflight().Verify(ctx) }
+	executePublicLifecycleBootstrap    = execute
+	publicLifecycleRootAuthorized      = func() bool { return os.Geteuid() == 0 }
+)
+
 type lifecyclePhaseProgress struct {
 	output   io.Writer
 	terminal bool
@@ -519,6 +530,9 @@ func runPublicRollback(args []string, output io.Writer) error {
 	if err != nil || manifestPlatformErr != nil || configuredDigest != manifestPlatformDigest {
 		return errors.New("installed rollback platform identity is inconsistent")
 	}
+	if err := convergeManagedPluginsBeforeCoreGeneration(ctx, config, installedLifecycleStatus{Profile: selectedProfile, ActiveGenerationID: manifest.ActiveGeneration.ID}); err != nil {
+		return err
+	}
 	_, previous, err := state.ReadGenerationContract(manifest.PreviousGeneration.ID)
 	if err != nil || previous != *manifest.PreviousGeneration {
 		return errors.Join(err, errors.New("committed previous generation is unavailable or inconsistent"))
@@ -568,10 +582,10 @@ func runPublicRollback(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	response, err := daemon.Call(ctx, config.SupervisorSocket(), protocol.Request{
+	response, err := callManagedRollback(ctx, config.SupervisorSocket(), protocol.Request{
 		SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationRollback,
 		TargetGenerationID: previous.ID, ExpectedManifestDigest: manifestDigest, RollbackAuthorization: &authorization,
-	}, time.Duration(timeoutSeconds)*time.Second)
+	}, time.Duration(timeoutSeconds)*time.Second, lock)
 	if err != nil {
 		return err
 	}
@@ -584,6 +598,22 @@ func runPublicRollback(args []string, output io.Writer) error {
 		_, err = fmt.Fprintf(output, "Rolled back successfully: %s\n", previous.Version)
 	}
 	return err
+}
+
+// callManagedRollback keeps the public rollback's already-acquired shared
+// lifecycle lease continuous into the persistent supervisor. It duplicates the
+// open file description rather than reopening the lock path, so the supervisor
+// can execute rollback without self-deadlocking against its caller.
+func callManagedRollback(ctx context.Context, socketPath string, request protocol.Request, timeout time.Duration, lock *hostsecurity.MutationLock) (protocol.Response, error) {
+	if lock == nil {
+		return protocol.Response{}, errors.New("lifecycle mutation lease is unavailable")
+	}
+	leaseFile, err := lock.DupForChild()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer leaseFile.Close()
+	return daemon.CallWithLease(ctx, socketPath, request, timeout, leaseFile)
 }
 
 func readSecureRollbackInput(path string, limit int64, expectedUID uint32) ([]byte, error) {
@@ -637,18 +667,33 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	if os.Geteuid() != 0 {
+	if !publicLifecycleRootAuthorized() {
 		return errors.New("public lifecycle operation requires root authorization")
 	}
 	operator, err := resolveOperator(request.OperatorUser, request.Profile)
 	if err != nil {
 		return err
 	}
+	// Core and third-party plugin mutations share one lease. Acquire it before
+	// inspecting installed state or acquiring a lifecycle release, then retain
+	// it through recovery, generation convergence, and terminal output.
+	lockPath, err := publicLifecycleMutationLockPath(request.Profile)
+	if err != nil {
+		return err
+	}
+	lock, err := acquirePublicLifecycleMutationLock(lockPath, 0)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
+	defer cancel()
 	ownerConfigExisted, err := pathExists(filepath.Join(operator.Home, ".fased", "fased.json"))
 	if err != nil {
 		return fmt.Errorf("inspect owner configuration: %w", err)
 	}
 	installedStatus := installedLifecycleStatus{}
+	var installedConfig *platform.Config
 	if request.Operation == "update" || request.Operation == "repair" {
 		configPath, configErr := installedConfigPath(request.Profile, operator)
 		if configErr != nil {
@@ -683,17 +728,21 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		if err := bindInstalledUpdateChannel(&request, installedChannel, installedStatus); err != nil {
 			return err
 		}
+		installedConfig = &config
 		if request.Operation == "repair" {
 			request.Version = installedStatus.Version
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
-	defer cancel()
 	if request.Profile == model.ProfileHosting && runtime.GOOS != "linux" {
 		return errors.New("Hosting lifecycle is supported only on Linux")
 	}
-	if err := platform.NewHostPreflight().Verify(ctx); err != nil {
+	if err := verifyPublicLifecycleHost(ctx); err != nil {
 		return err
+	}
+	if installedConfig != nil {
+		if err := convergeManagedPluginsBeforeCoreGeneration(ctx, *installedConfig, installedStatus); err != nil {
+			return err
+		}
 	}
 	now := time.Now().UTC()
 	var channelSelection *signedChannelSelection
@@ -741,7 +790,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		ExpectedRootSHA256: expectedRootSHA256,
 	}
 	acquisitionProgress := beginLifecyclePhase(output, request.JSON, "acquiring the verified lifecycle release")
-	result, err := execute(ctx, bootstrap)
+	result, err := executePublicLifecycleBootstrap(ctx, bootstrap)
 	acquisitionProgress.Stop()
 	if err != nil {
 		return err
@@ -792,7 +841,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	}
 	applyStarted := time.Now()
 	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
-	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result)
+	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result, lock)
 	applyProgress.Stop()
 	performance.ApplyMillis = durationMillis(applyStarted)
 	performance.Transaction = convergence.Performance
@@ -811,7 +860,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	outcome := convergence.Outcome
 	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
 		onboardingStarted := time.Now()
-		convergence, err = runOnboarding(ctx, request, operator, result, output, os.Stderr)
+		convergence, err = runOnboarding(ctx, request, operator, result, lock, output, os.Stderr)
 		performance.OnboardingMillis = durationMillis(onboardingStarted)
 		if err != nil {
 			return err
@@ -868,6 +917,26 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		_, err = fmt.Fprintln(output, formatLifecyclePerformance(performance))
 	}
 	return err
+}
+
+// convergeManagedPluginsBeforeCoreGeneration is deliberately called with the
+// committed active generation, not the candidate generation. An unfinished
+// plugin journal is bound to the running Gateway/readiness identity and must
+// become terminal (or fail closed) before the core lifecycle may replace it.
+// The caller already owns the shared lifecycle mutation lease.
+func convergeManagedPluginsBeforeCoreGeneration(ctx context.Context, config platform.Config, status installedLifecycleStatus) error {
+	service, err := platform.NewSystemServiceManager()
+	if err != nil {
+		return err
+	}
+	production, err := platform.NewManagedPluginProduction(config, status.ActiveGenerationID, service)
+	if err != nil {
+		return fmt.Errorf("inspect managed plugin transaction before core generation transition: %w", err)
+	}
+	if err := production.Activation.ConvergeBeforeCoreGeneration(ctx); err != nil {
+		return fmt.Errorf("converge managed plugin transaction before core generation transition: %w", err)
+	}
+	return nil
 }
 
 func formatLifecyclePerformance(performance publicLifecyclePerformance) string {
@@ -1417,7 +1486,7 @@ func resolveOperator(name string, profile model.Profile) (publicOperator, error)
 	return publicOperator{Name: name, Home: record.HomeDir, UID: uint32(uid), GID: uint32(gid)}, nil
 }
 
-func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult) (protocol.Response, []byte, error) {
+func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, lifecycleLease *hostsecurity.MutationLock) (protocol.Response, []byte, error) {
 	args := []string{"initialize", "--profile", string(request.Profile), "--operator-user", operator.Name,
 		"--owner-state", filepath.Join(operator.Home, ".fased"), "--gateway-port", strconv.Itoa(int(request.GatewayPort)),
 		"--update-channel", request.Channel,
@@ -1429,7 +1498,17 @@ func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, op
 	if request.Operation == "repair" {
 		args = append(args, "--repair-current")
 	}
+	if lifecycleLease == nil {
+		return protocol.Response{}, nil, errors.New("lifecycle mutation lease is unavailable")
+	}
+	leaseFile, err := lifecycleLease.DupForChild()
+	if err != nil {
+		return protocol.Response{}, nil, err
+	}
+	defer leaseFile.Close()
+	args = append(args, "--lifecycle-lease-fd", "3")
 	command := exec.CommandContext(ctx, result.HostPath, args...)
+	command.ExtraFiles = []*os.File{leaseFile}
 	data, err := command.Output()
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
@@ -1464,7 +1543,7 @@ func emitLifecycleHostVerbose(output io.Writer, data []byte) {
 	}
 }
 
-func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, output, diagnostics io.Writer) (protocol.Response, error) {
+func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, lifecycleLease *hostsecurity.MutationLock, output, diagnostics io.Writer) (protocol.Response, error) {
 	configPath, err := installedConfigPath(request.Profile, operator)
 	if err != nil {
 		return protocol.Response{}, err
@@ -1504,15 +1583,30 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 	if err != nil {
 		return protocol.Response{}, err
 	}
-	complete := exec.CommandContext(ctx, result.HostPath, "request", "--socket", config.SupervisorSocket(), "--operation", "COMPLETE_ONBOARDING", "--request-id", requestID)
-	data, err := complete.CombinedOutput()
+	response, err := completeOnboardingWithLease(ctx, config.SupervisorSocket(), requestID, lifecycleLease)
+	data, encodeErr := json.Marshal(response)
+	if encodeErr == nil {
+		data = append(data, '\n')
+	}
 	if request.Verbose && len(data) > 0 {
 		_, _ = onboardingVerboseOutputWriter(request, output, diagnostics).Write([]byte(tail(data, 64*1024) + "\n"))
 	}
 	if err != nil {
-		return protocol.Response{}, fmt.Errorf("onboarding commit failed: %s", tail(data, 4096))
+		return protocol.Response{}, fmt.Errorf("onboarding commit failed: %s", tail([]byte(err.Error()), 4096))
 	}
-	return decodeTerminalLifecycleResponse(data)
+	return response, nil
+}
+
+func completeOnboardingWithLease(ctx context.Context, socketPath, requestID string, lifecycleLease *hostsecurity.MutationLock) (protocol.Response, error) {
+	if lifecycleLease == nil {
+		return protocol.Response{}, errors.New("lifecycle mutation lease is unavailable")
+	}
+	leaseFile, err := lifecycleLease.DupForChild()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer leaseFile.Close()
+	return daemon.CallWithLease(ctx, socketPath, protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationCompleteOnboarding}, 5*time.Minute, leaseFile)
 }
 
 func onboardingProcessOutputWriters(request publicLifecycleRequest, output, diagnostics io.Writer) (io.Writer, io.Writer) {

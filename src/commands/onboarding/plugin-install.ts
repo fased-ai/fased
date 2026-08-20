@@ -126,7 +126,7 @@ export async function ensureOnboardingPluginInstalled(params: {
     Boolean(localPath);
   if (isManagedLifecycleRuntime() && !bundledLocalPlugin) {
     await prompter.note(
-      "Managed installations bundle Fased-owned plugins inside the signed core artifact. Third-party plugin code installation is disabled until the separate digest-bound plugin transaction is available.",
+      "Managed installations bundle Fased-owned plugins inside the signed core artifact. Install third-party code afterward with the digest-bound `fased plugins install` catalog command; npm and path mutation remain available only in a developer source runtime.",
       "Plugin install",
     );
     return { cfg: next, installed: false };

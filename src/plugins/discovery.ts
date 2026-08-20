@@ -11,7 +11,11 @@ import {
   type PackageManifest,
 } from "./manifest.js";
 import { formatPosixMode, isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
-import { readCanonicalPluginLock } from "./readiness-receipt.js";
+import {
+  readCanonicalPluginLock,
+  type PluginLock,
+  type PluginLockEntry,
+} from "./readiness-receipt.js";
 import type { PluginDiagnostic, PluginOrigin } from "./types.js";
 
 const EXTENSION_EXTS = new Set([".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"]);
@@ -29,11 +33,15 @@ export type PluginCandidate = {
   packageDescription?: string;
   packageDir?: string;
   packageManifest?: FasedAgentPackageManifest;
+  managedDigest?: string;
+  managedCodeRoot?: string;
 };
 
 export type PluginDiscoveryResult = {
   candidates: PluginCandidate[];
   diagnostics: PluginDiagnostic[];
+  managedLock?: PluginLock;
+  managedCodeRoot?: string;
 };
 
 export function clearPluginDiscoveryCache(): void {
@@ -338,6 +346,8 @@ function addCandidate(params: {
   workspaceDir?: string;
   manifest?: PackageManifest | null;
   packageDir?: string;
+  managedDigest?: string;
+  managedCodeRoot?: string;
 }) {
   const resolved = path.resolve(params.source);
   if (params.seen.has(resolved)) {
@@ -368,6 +378,8 @@ function addCandidate(params: {
     packageDescription: manifest?.description?.trim() || undefined,
     packageDir: params.packageDir,
     packageManifest: getPackageManifestMetadata(manifest ?? undefined),
+    managedDigest: params.managedDigest,
+    managedCodeRoot: params.managedCodeRoot,
   });
 }
 
@@ -510,6 +522,8 @@ function discoverFromPath(params: {
   candidates: PluginCandidate[];
   diagnostics: PluginDiagnostic[];
   seen: Set<string>;
+  managedDigest?: string;
+  managedCodeRoot?: string;
 }) {
   const resolved = resolveUserPath(params.rawPath);
   if (!fs.existsSync(resolved)) {
@@ -541,6 +555,8 @@ function discoverFromPath(params: {
       origin: params.origin,
       ownershipUid: params.ownershipUid,
       workspaceDir: params.workspaceDir,
+      managedDigest: params.managedDigest,
+      managedCodeRoot: params.managedCodeRoot,
     });
     return;
   }
@@ -576,6 +592,8 @@ function discoverFromPath(params: {
           workspaceDir: params.workspaceDir,
           manifest,
           packageDir: resolved,
+          managedDigest: params.managedDigest,
+          managedCodeRoot: params.managedCodeRoot,
         });
       }
       return;
@@ -599,6 +617,8 @@ function discoverFromPath(params: {
         workspaceDir: params.workspaceDir,
         manifest,
         packageDir: resolved,
+        managedDigest: params.managedDigest,
+        managedCodeRoot: params.managedCodeRoot,
       });
       return;
     }
@@ -616,6 +636,109 @@ function discoverFromPath(params: {
   }
 }
 
+/**
+ * A managed store digest is a single runtime trust boundary.  Unlike ordinary
+ * extension discovery, it may not fan out into several entries, nor may it
+ * rename the catalog identity through its fased.plugin.json manifest.
+ */
+function discoverManagedLockEntry(params: {
+  entry: PluginLockEntry;
+  codeRoot: string;
+  ownershipUid?: number | null;
+  candidates: PluginCandidate[];
+  diagnostics: PluginDiagnostic[];
+  seen: Set<string>;
+}) {
+  const codeRootPath = path.resolve(params.codeRoot);
+  const codeRootRealPath = safeRealpathSync(codeRootPath);
+  const digestName = params.entry.digest.slice("sha256:".length);
+  const digestRootPath = path.join(codeRootPath, digestName);
+  const digestRootRealPath = codeRootRealPath ? path.join(codeRootRealPath, digestName) : undefined;
+  const rejectManagedPath = (message: string, source = digestRootPath) => {
+    params.diagnostics.push({
+      level: "error",
+      pluginId: params.entry.id,
+      source,
+      message: `managed plugin identity rejected: ${message}`,
+    });
+  };
+
+  if (!codeRootRealPath || codeRootRealPath !== codeRootPath) {
+    rejectManagedPath("plugin-code root must be the canonical real path");
+    return;
+  }
+  let digestRootStat: fs.Stats;
+  try {
+    digestRootStat = fs.lstatSync(digestRootPath);
+  } catch {
+    rejectManagedPath("digest root is unavailable");
+    return;
+  }
+  if (digestRootStat.isSymbolicLink() || !digestRootStat.isDirectory()) {
+    rejectManagedPath("digest root must be a canonical directory");
+    return;
+  }
+  if (!digestRootRealPath || safeRealpathSync(digestRootPath) !== digestRootRealPath) {
+    rejectManagedPath("digest root is not a canonical real directory");
+    return;
+  }
+
+  const discovered: PluginCandidate[] = [];
+  discoverFromPath({
+    rawPath: digestRootRealPath,
+    origin: "global",
+    ownershipUid: params.ownershipUid,
+    candidates: discovered,
+    diagnostics: params.diagnostics,
+    seen: params.seen,
+    managedDigest: params.entry.digest,
+    managedCodeRoot: codeRootRealPath,
+  });
+
+  if (discovered.length !== 1) {
+    params.diagnostics.push({
+      level: "error",
+      pluginId: params.entry.id,
+      source: path.join(params.codeRoot, params.entry.digest.slice("sha256:".length)),
+      message: `managed plugin identity rejected: lock entry "${params.entry.id}" must expose exactly one runtime plugin (found ${discovered.length})`,
+    });
+    return;
+  }
+
+  const candidate = discovered[0];
+  const candidateSource = path.resolve(candidate.source);
+  const candidateSourceRealPath = safeRealpathSync(candidateSource);
+  const candidateRoot = path.resolve(candidate.rootDir);
+  const candidateRootRealPath = safeRealpathSync(candidateRoot);
+  if (
+    !candidateSourceRealPath ||
+    candidateSourceRealPath !== candidateSource ||
+    !isPathInside(digestRootRealPath, candidateSourceRealPath) ||
+    !candidateRootRealPath ||
+    candidateRootRealPath !== candidateRoot ||
+    !isPathInside(digestRootRealPath, candidateRootRealPath)
+  ) {
+    rejectManagedPath(
+      "plugin source must be the exact canonical file under its digest root",
+      candidate.source,
+    );
+    return;
+  }
+  const manifest = loadPluginManifest(candidate.rootDir);
+  if (!manifest.ok || manifest.manifest.id !== params.entry.id) {
+    const discoveredId = manifest.ok ? manifest.manifest.id : "no valid manifest";
+    params.diagnostics.push({
+      level: "error",
+      pluginId: params.entry.id,
+      source: candidate.source,
+      message: `managed plugin identity rejected: lock entry "${params.entry.id}" exports "${discoveredId}"`,
+    });
+    return;
+  }
+
+  params.candidates.push(candidate);
+}
+
 export function discoverFasedAgentPlugins(params: {
   workspaceDir?: string;
   extraPaths?: string[];
@@ -628,6 +751,8 @@ export function discoverFasedAgentPlugins(params: {
   const managedPluginCodeRoot = process.env.FASED_PLUGIN_CODE_ROOT?.trim();
   const managedPluginDataRoot = process.env.FASED_PLUGIN_DATA_ROOT?.trim();
   const managedPluginLockPath = process.env.FASED_PLUGIN_LOCK_PATH?.trim();
+  let managedLock: PluginLock | undefined;
+  let managedCodeRoot: string | undefined;
   if (managedPluginCodeRoot && !managedPluginDataRoot) {
     diagnostics.push({
       level: "error",
@@ -687,13 +812,21 @@ export function discoverFasedAgentPlugins(params: {
     } else {
       try {
         const lock = readCanonicalPluginLock(managedPluginLockPath);
+        managedLock = lock;
+        const canonicalCodeRoot = safeRealpathSync(managedPluginCodeRoot);
+        if (
+          canonicalCodeRoot &&
+          path.resolve(canonicalCodeRoot) === path.resolve(managedPluginCodeRoot)
+        ) {
+          managedCodeRoot = canonicalCodeRoot;
+        }
         for (const entry of lock.entries) {
           if (entry.origin !== "store") {
             continue;
           }
-          discoverFromPath({
-            rawPath: path.join(managedPluginCodeRoot, entry.digest.slice("sha256:".length)),
-            origin: "global",
+          discoverManagedLockEntry({
+            entry,
+            codeRoot: managedPluginCodeRoot,
             ownershipUid: params.ownershipUid,
             candidates,
             diagnostics,
@@ -731,5 +864,5 @@ export function discoverFasedAgentPlugins(params: {
     });
   }
 
-  return { candidates, diagnostics };
+  return { candidates, diagnostics, managedLock, managedCodeRoot };
 }

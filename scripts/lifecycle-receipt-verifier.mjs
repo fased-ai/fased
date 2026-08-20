@@ -52,6 +52,11 @@ function main() {
       evidenceClass: options["evidence-class"] || "PASS",
       acquisitionEvidenceClass:
         options["acquisition-evidence-class"] || options["evidence-class"] || "PASS",
+      productCommit: options["product-commit"],
+      productTree: options["product-tree"],
+      artifactSetDigest: options["artifact-set-digest"],
+      fixtureCommit: options["fixture-commit"],
+      fixtureTree: options["fixture-tree"],
     },
   });
   process.stdout.write(

@@ -20,8 +20,8 @@ import { discoverFasedAgentPlugins } from "./discovery.js";
 import { initializeGlobalHookRunner } from "./hook-runner-global.js";
 import { repairUpdateOwnedPluginInstallState } from "./installs.js";
 import { loadPluginManifestRegistry } from "./manifest-registry.js";
-import { isPathInside, safeStatSync } from "./path-safety.js";
-import { readCanonicalPluginLock } from "./readiness-receipt.js";
+import { isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
+import { bindManagedPluginSnapshot, readCanonicalPluginLock } from "./readiness-receipt.js";
 import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./registry.js";
 import { setActivePluginRegistry } from "./runtime.js";
 import { createPluginRuntime } from "./runtime/index.js";
@@ -53,7 +53,7 @@ export function clearPluginLoaderCache(): void {
 
 const defaultLogger = () => createSubsystemLogger("plugins");
 
-function applyManagedRequiredBundledAllowlist(
+function applyManagedRequiredAllowlist(
   config: NormalizedPluginsConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): NormalizedPluginsConfig {
@@ -61,15 +61,15 @@ function applyManagedRequiredBundledAllowlist(
   if (!lockPath || config.allow.length === 0) {
     return config;
   }
-  const requiredBundled = readCanonicalPluginLock(lockPath)
-    .entries.filter((entry) => entry.origin === "bundled" && entry.required)
+  const requiredManaged = readCanonicalPluginLock(lockPath)
+    .entries.filter((entry) => entry.required)
     .map((entry) => entry.id);
-  if (requiredBundled.length === 0) {
+  if (requiredManaged.length === 0) {
     return config;
   }
   return {
     ...config,
-    allow: [...new Set([...config.allow, ...requiredBundled])].toSorted(),
+    allow: [...new Set([...config.allow, ...requiredManaged])].toSorted(),
   };
 }
 
@@ -263,7 +263,7 @@ export async function preloadNativePluginModules(
 ): Promise<Map<string, FasedAgentPluginModule>> {
   const cfg = applyTestPluginDefaults(options.config ?? {}, process.env);
   const logger = options.logger ?? defaultLogger();
-  const normalized = applyManagedRequiredBundledAllowlist(normalizePluginsConfig(cfg.plugins));
+  const normalized = applyManagedRequiredAllowlist(normalizePluginsConfig(cfg.plugins));
   const discovery = discoverFasedAgentPlugins({
     workspaceDir: options.workspaceDir,
     extraPaths: normalized.loadPaths,
@@ -323,7 +323,7 @@ export async function preloadNativePluginModules(
 }
 
 export const __testing = {
-  applyManagedRequiredBundledAllowlist,
+  applyManagedRequiredAllowlist,
   repairOfficialChannelRuntimeDependencies,
   resolvePluginSdkAliasFile,
   resolvePluginSdkAliases,
@@ -422,6 +422,10 @@ function resolvePluginModuleExport(moduleExport: unknown): {
     return { definition: def, register };
   }
   return {};
+}
+
+function isManagedPluginMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.FASED_PLUGIN_CODE_ROOT?.trim() && env.FASED_PLUGIN_LOCK_PATH?.trim());
 }
 
 function createPluginRecord(params: {
@@ -650,7 +654,7 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
   const cfg = applyTestPluginDefaults(options.config ?? {}, process.env);
   const logger = options.logger ?? defaultLogger();
   const validateOnly = options.mode === "validate";
-  const normalized = applyManagedRequiredBundledAllowlist(normalizePluginsConfig(cfg.plugins));
+  const normalized = applyManagedRequiredAllowlist(normalizePluginsConfig(cfg.plugins));
   const cacheKey = buildCacheKey({
     workspaceDir: options.workspaceDir,
     plugins: normalized,
@@ -686,6 +690,30 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
     candidates: discovery.candidates,
     diagnostics: discovery.diagnostics,
   });
+  if (discovery.managedLock && discovery.managedCodeRoot) {
+    const managedBindings = new Map<string, { id: string; digest: string; source: string }>();
+    for (const candidate of discovery.candidates) {
+      if (!candidate.managedDigest || !candidate.managedCodeRoot) {
+        continue;
+      }
+      const manifestRecord = manifestRegistry.plugins.find(
+        (record) => record.rootDir === candidate.rootDir && record.source === candidate.source,
+      );
+      if (!manifestRecord) {
+        continue;
+      }
+      managedBindings.set(manifestRecord.id, {
+        id: manifestRecord.id,
+        digest: candidate.managedDigest,
+        source: candidate.source,
+      });
+    }
+    bindManagedPluginSnapshot(registry, {
+      codeRoot: discovery.managedCodeRoot,
+      lock: discovery.managedLock,
+      bindings: managedBindings,
+    });
+  }
   pushDiagnostics(registry.diagnostics, manifestRegistry.diagnostics);
   warnWhenAllowlistIsOpen({
     logger,
@@ -799,6 +827,38 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
       continue;
     }
 
+    if (candidate.managedDigest && candidate.managedCodeRoot) {
+      const expectedRoot = path.join(
+        candidate.managedCodeRoot,
+        candidate.managedDigest.slice("sha256:".length),
+      );
+      const source = path.resolve(candidate.source);
+      const sourceRealPath = safeRealpathSync(source);
+      const root = path.resolve(candidate.rootDir);
+      const rootRealPath = safeRealpathSync(root);
+      if (
+        !sourceRealPath ||
+        sourceRealPath !== source ||
+        !isPathInside(expectedRoot, source) ||
+        !rootRealPath ||
+        rootRealPath !== root ||
+        !isPathInside(expectedRoot, root)
+      ) {
+        const message = `managed plugin identity rejected: lock entry "${pluginId}" source is not the exact canonical digest-bound path`;
+        record.status = "error";
+        record.error = message;
+        registry.plugins.push(record);
+        seenIds.set(pluginId, candidate.origin);
+        registry.diagnostics.push({
+          level: "error",
+          pluginId: record.id,
+          source: record.source,
+          message,
+        });
+        continue;
+      }
+    }
+
     const pluginRoot = safeRealpathOrResolve(candidate.rootDir);
     const opened = openBoundaryFileSync({
       absolutePath: candidate.source,
@@ -824,6 +884,20 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
     }
     const safeSource = opened.path;
     fs.closeSync(opened.fd);
+    if (candidate.managedDigest && candidate.managedCodeRoot && safeSource !== candidate.source) {
+      const message = `managed plugin identity rejected: lock entry "${pluginId}" source changed through a path alias`;
+      record.status = "error";
+      record.error = message;
+      registry.plugins.push(record);
+      seenIds.set(pluginId, candidate.origin);
+      registry.diagnostics.push({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message,
+      });
+      continue;
+    }
 
     repairOfficialChannelRuntimeDependencies({
       pluginId,
@@ -859,12 +933,23 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
     const register = resolved.register;
 
     if (definition?.id && definition.id !== record.id) {
+      const managed = isManagedPluginMode();
+      const message = managed
+        ? `managed plugin identity rejected: lock entry "${record.id}" exports "${definition.id}"`
+        : `plugin id mismatch (config uses "${record.id}", export uses "${definition.id}")`;
       registry.diagnostics.push({
-        level: "warn",
+        level: managed ? "error" : "warn",
         pluginId: record.id,
         source: record.source,
-        message: `plugin id mismatch (config uses "${record.id}", export uses "${definition.id}")`,
+        message,
       });
+      if (managed) {
+        record.status = "error";
+        record.error = message;
+        registry.plugins.push(record);
+        seenIds.set(pluginId, candidate.origin);
+        continue;
+      }
     }
 
     record.name = definition?.name ?? record.name;
