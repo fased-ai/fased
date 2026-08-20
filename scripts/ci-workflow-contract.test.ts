@@ -608,6 +608,17 @@ describe("CI workflow routing", () => {
       'mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts"',
     );
     const finalizePreTagCandidate = finalizeText.indexOf("scripts/finalize-pretag-candidate.sh");
+    const restoreFinalizerDependencies = finalizeCandidate?.steps?.findIndex(
+      (step) => step.name === "Restore frozen finalizer dependencies",
+    );
+    const finalizeCandidateStep = finalizeCandidate?.steps?.findIndex(
+      (step) => step.name === "Verify and stage only the pre-tag product bytes",
+    );
+    expect(restoreFinalizerDependencies).toBeGreaterThan(-1);
+    expect(finalizeCandidateStep).toBeGreaterThan(restoreFinalizerDependencies ?? -1);
+    expect(finalizeCandidate?.steps?.[restoreFinalizerDependencies ?? -1]?.run).toBe(
+      "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline",
+    );
     expect(prepareArtifactParent).toBeGreaterThan(-1);
     expect(finalizePreTagCandidate).toBeGreaterThan(prepareArtifactParent);
     expect(finalizeText).toContain("release-artifact-set.mjs build");
