@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const runtime = vi.hoisted(() => ({ log: vi.fn() }));
 const writeConfigFile = vi.hoisted(() => vi.fn());
-const finalizeInstalledPluginConfig = vi.hoisted(() => vi.fn());
+const installCapabilityComponent = vi.hoisted(() => vi.fn());
 const report = vi.hoisted(() => ({
   entries: [
     {
       id: "agent-core",
       label: "Fased Agent",
       category: "core",
-      delivery: "core",
+      delivery: "managed-component",
       description: "Agent",
       docsPath: "/start/fased",
       surface: "Agent > Models",
@@ -33,7 +33,7 @@ vi.mock("../config/config.js", () => ({
   loadConfig: vi.fn(() => ({})),
   writeConfigFile,
 }));
-vi.mock("../plugins/lifecycle.js", () => ({ finalizeInstalledPluginConfig }));
+vi.mock("../capabilities/install.js", () => ({ installCapabilityComponent }));
 vi.mock("../capabilities/catalog.js", () => ({
   buildCapabilityReadinessReport: vi.fn(() => report),
   formatCapabilityReadinessSummary: vi.fn(() => "Core included: 1"),
@@ -57,7 +57,7 @@ describe("components CLI", () => {
   beforeEach(() => {
     runtime.log.mockClear();
     writeConfigFile.mockReset();
-    finalizeInstalledPluginConfig.mockReset();
+    installCapabilityComponent.mockReset();
   });
 
   it("prints the shared capability report as JSON", async () => {
@@ -77,21 +77,49 @@ describe("components CLI", () => {
     expect(runtime.log.mock.calls.flat().join("\n")).toContain("included");
   });
 
-  it("enables a bundled runtime through the plugin lifecycle", async () => {
-    finalizeInstalledPluginConfig.mockReturnValue({ config: { plugins: {} }, slotWarnings: [] });
+  it("installs a signed runtime through the managed component lifecycle", async () => {
+    installCapabilityComponent.mockResolvedValue({
+      config: { plugins: {} },
+      entry: {
+        id: "media-runtime",
+        label: "Media Runtime",
+        delivery: "managed-component",
+        restartRequired: true,
+      },
+      pluginId: "media-runtime",
+      slotWarnings: [],
+    });
     const { registerComponentsCli } = await import("./components-cli.js");
     const program = new Command().name("fased");
     registerComponentsCli(program);
 
-    await program.parseAsync(["components", "install", "media-runtime"], { from: "user" });
+    await program.parseAsync(
+      [
+        "components",
+        "install",
+        "media-runtime",
+        "--catalog",
+        "/tmp/media.catalog.json",
+        "--catalog-digest",
+        `sha256:${"a".repeat(64)}`,
+        "--archive",
+        "/tmp/media.tar.gz",
+      ],
+      { from: "user" },
+    );
 
-    expect(finalizeInstalledPluginConfig).toHaveBeenCalledWith({
+    expect(installCapabilityComponent).toHaveBeenCalledWith({
+      id: "media-runtime",
       config: {},
-      pluginId: "media-runtime",
+      transaction: {
+        catalogPath: "/tmp/media.catalog.json",
+        catalogDigest: `sha256:${"a".repeat(64)}`,
+        archivePath: "/tmp/media.tar.gz",
+      },
     });
     expect(writeConfigFile).toHaveBeenCalledWith({ plugins: {} });
     expect(runtime.log.mock.calls.flat().join("\n")).toContain(
-      "Enabled bundled component: Media Runtime",
+      "Installed signed component: Media Runtime",
     );
   });
 });

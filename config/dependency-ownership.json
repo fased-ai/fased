@@ -72,98 +72,106 @@
       "dependencies": ["gaxios"]
     },
     {
-      "id": "advanced-channels",
-      "label": "Bundled LINE Channel",
+      "id": "channel-discord",
+      "label": "Discord Channel Pack",
       "delivery": "channel-addon",
       "target": "extract",
-      "dependencies": ["@line/bot-sdk"]
-    },
-    {
-      "id": "official-channel-components",
-      "label": "Bundled Official Channel Components",
-      "delivery": "core",
-      "target": "keep",
+      "packagePath": "extensions/discord/package.json",
       "dependencies": [
         "@buape/carbon",
         "@discordjs/voice",
-        "@grammyjs/runner",
-        "@grammyjs/transformer-throttler",
-        "@larksuiteoapi/node-sdk",
-        "@slack/bolt",
-        "@slack/web-api",
         "@snazzah/davey",
-        "@whiskeysockets/baileys",
         "discord-api-types",
-        "google-auth-library",
-        "grammy",
         "opusscript"
       ]
     },
     {
-      "id": "bundled-runtime-components",
-      "label": "Bundled Runtime Components",
-      "delivery": "core",
-      "target": "keep",
-      "dependencies": [
-        "@mozilla/readability",
-        "@napi-rs/canvas",
-        "@openai/codex",
-        "file-type",
-        "linkedom",
-        "node-edge-tts",
-        "pdfjs-dist",
-        "playwright-core",
-        "sharp",
-        "sqlite-vec"
-      ]
+      "id": "channel-line",
+      "label": "LINE Channel Pack",
+      "delivery": "channel-addon",
+      "target": "extract",
+      "packagePath": "extensions/line/package.json",
+      "dependencies": ["@line/bot-sdk"]
+    },
+    {
+      "id": "channel-slack",
+      "label": "Slack Channel Pack",
+      "delivery": "channel-addon",
+      "target": "extract",
+      "packagePath": "extensions/slack/package.json",
+      "dependencies": ["@slack/bolt", "@slack/web-api"]
+    },
+    {
+      "id": "channel-telegram",
+      "label": "Telegram Channel Pack",
+      "delivery": "channel-addon",
+      "target": "extract",
+      "packagePath": "extensions/telegram/package.json",
+      "dependencies": ["@grammyjs/runner", "@grammyjs/transformer-throttler", "grammy"]
+    },
+    {
+      "id": "channel-whatsapp",
+      "label": "WhatsApp Channel Pack",
+      "delivery": "channel-addon",
+      "target": "extract",
+      "packagePath": "extensions/whatsapp/package.json",
+      "dependencies": ["@whiskeysockets/baileys"]
     },
     {
       "id": "channel-feishu",
       "label": "Feishu Channel",
-      "delivery": "core",
-      "target": "keep",
+      "delivery": "channel-addon",
+      "target": "extract",
       "packagePath": "extensions/feishu/package.json",
       "dependencies": ["@larksuiteoapi/node-sdk", "@sinclair/typebox", "zod"]
     },
     {
       "id": "channel-googlechat",
       "label": "Google Chat Channel",
-      "delivery": "core",
-      "target": "keep",
+      "delivery": "channel-addon",
+      "target": "extract",
       "packagePath": "extensions/googlechat/package.json",
       "dependencies": ["google-auth-library"]
     },
     {
       "id": "browser-runtime",
       "label": "Browser Runtime",
-      "delivery": "core",
-      "target": "keep",
+      "delivery": "runtime-addon",
+      "target": "extract",
       "packagePath": "extensions/runtime-browser/package.json",
       "dependencies": ["@mozilla/readability", "linkedom", "playwright-core"]
     },
     {
       "id": "media-runtime",
       "label": "Media Runtime",
-      "delivery": "core",
-      "target": "keep",
+      "delivery": "runtime-addon",
+      "target": "extract",
       "packagePath": "extensions/runtime-media/package.json",
       "dependencies": ["@napi-rs/canvas", "file-type", "pdfjs-dist", "sharp"]
     },
     {
       "id": "speech-runtime",
       "label": "Speech Runtime",
-      "delivery": "core",
-      "target": "keep",
+      "delivery": "runtime-addon",
+      "target": "extract",
       "packagePath": "extensions/runtime-speech/package.json",
       "dependencies": ["node-edge-tts"]
     },
     {
       "id": "local-memory",
       "label": "Native Local Memory",
-      "delivery": "core",
-      "target": "keep",
+      "delivery": "runtime-addon",
+      "target": "extract",
       "packagePath": "extensions/runtime-local-memory/package.json",
       "dependencies": ["sqlite-vec"]
+    },
+    {
+      "id": "provider-openai-runtime",
+      "label": "OpenAI Runtime Pack",
+      "delivery": "provider-addon",
+      "target": "extract",
+      "packagePath": "extensions/runtime-openai/package.json",
+      "dependencies": ["@openai/codex"]
     }
   ]
 }

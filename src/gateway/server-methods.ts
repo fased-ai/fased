@@ -17,8 +17,6 @@ import { isRoleAuthorizedForMethod, parseGatewayRole } from "./role-policy.js";
 import { acpxPushTestHandlers } from "./server-methods/acpx-push-test.js";
 import { agentHandlers } from "./server-methods/agent.js";
 import { agentsHandlers } from "./server-methods/agents.js";
-import { browserHandlers } from "./server-methods/browser.js";
-import { channelsHandlers } from "./server-methods/channels.js";
 import { chatHandlers } from "./server-methods/chat.js";
 import { commandsHandlers } from "./server-methods/commands.js";
 import { configHandlers } from "./server-methods/config.js";
@@ -35,6 +33,7 @@ import { modelsHandlers } from "./server-methods/models.js";
 import { logMutatingAdminRpcAudit } from "./server-methods/mutating-admin-rpc-audit.js";
 import { nodePendingHandlers } from "./server-methods/nodes-pending.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { optionalGatewayHandlers } from "./server-methods/optional-capabilities.js";
 import { pluginsMarketplaceHandlers } from "./server-methods/plugins-marketplace.js";
 import { pushHandlers } from "./server-methods/push.js";
 import { sendHandlers } from "./server-methods/send.js";
@@ -46,11 +45,9 @@ import { talkHandlers } from "./server-methods/talk.js";
 import { tasksHandlers } from "./server-methods/tasks.js";
 import { toolsCatalogHandlers } from "./server-methods/tools-catalog.js";
 import { toolsEffectiveHandlers } from "./server-methods/tools-effective.js";
-import { ttsHandlers } from "./server-methods/tts.js";
 import type { GatewayRequestHandlers, GatewayRequestOptions } from "./server-methods/types.js";
 import { updateHandlers } from "./server-methods/update.js";
 import { usageHandlers } from "./server-methods/usage.js";
-import { voicewakeHandlers } from "./server-methods/voicewake.js";
 import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
 
@@ -93,10 +90,8 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...connectHandlers,
   ...acpxPushTestHandlers,
   ...logsHandlers,
-  ...voicewakeHandlers,
   ...healthHandlers,
   ...hooksHandlers,
-  ...channelsHandlers,
   ...chatHandlers,
   ...commandsHandlers,
   ...cronHandlers,
@@ -113,7 +108,6 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...tasksHandlers,
   ...toolsCatalogHandlers,
   ...toolsEffectiveHandlers,
-  ...ttsHandlers,
   ...skillsHandlers,
   ...sessionsHandlers,
   ...systemHandlers,
@@ -126,7 +120,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...usageHandlers,
   ...agentHandlers,
   ...agentsHandlers,
-  ...browserHandlers,
+  ...optionalGatewayHandlers,
 };
 
 export async function handleGatewayRequest(

@@ -1,0 +1,26 @@
+{
+  "name": "@fased/qwen-portal-auth",
+  "version": "0.1.76-rc.105",
+  "private": true,
+  "description": "Optional Qwen Portal OAuth provider plugin",
+  "files": [
+    "index.ts",
+    "oauth.ts",
+    "fased.plugin.json",
+    "README.md"
+  ],
+  "type": "module",
+  "peerDependencies": {
+    "@fased/fased": "^0.1.76-rc.105"
+  },
+  "peerDependenciesMeta": {
+    "@fased/fased": {
+      "optional": true
+    }
+  },
+  "fased": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

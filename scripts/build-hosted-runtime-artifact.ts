@@ -7,6 +7,14 @@ import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import {
+  assertHostedCoreBudgets,
+  enforceHostedApplicationAllowlist,
+  measureRegularFiles,
+  pruneHostedDependencies,
+  readHostedComponentContract,
+  retainHostedCoreExtensions,
+} from "./hosted-component-contract.js";
 import { writeReleaseArchive } from "./release-archive.js";
 
 const execFileAsync = promisify(execFile);
@@ -23,6 +31,9 @@ type HostedRuntimeMetadata = {
   version: string;
   commit: string;
   dependencyHash: string;
+  componentContractDigest: string;
+  coreExtensions: string[];
+  loadedPlugins: string[];
 };
 
 type RunResult = {
@@ -32,8 +43,6 @@ type RunResult = {
 };
 
 const HOSTED_DEPENDENCY_LAYER_SCHEMA = 2;
-const HOSTED_DEPENDENCY_FILE_BUDGET = 40_000;
-const HOSTED_DEPENDENCY_BYTE_BUDGET = 350 * 1024 * 1024;
 
 function parseOutputDir(): string {
   const outputFlag = process.argv.indexOf("--output");
@@ -152,58 +161,6 @@ async function activePnpmStore(): Promise<string> {
     throw new Error("pnpm store path is not a directory");
   }
   return canonical;
-}
-
-async function pruneHostedDependencies(
-  nodeModulesRoot: string,
-  arch: string,
-): Promise<{ files: number; bytes: number }> {
-  const keepClipboardPackages = new Set([
-    `clipboard-linux-${arch}-gnu`,
-    `clipboard-linux-${arch}-musl`,
-  ]);
-  let removedFiles = 0;
-  let removedBytes = 0;
-  let removedDirectories = 0;
-  let retainedFiles = 0;
-  let retainedBytes = 0;
-
-  const visit = async (dir: string): Promise<void> => {
-    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        const isForeignClipboardPackage =
-          path.basename(dir) === "@mariozechner" &&
-          entry.name.startsWith("clipboard-") &&
-          !keepClipboardPackages.has(entry.name);
-        if (isForeignClipboardPackage) {
-          await fs.rm(fullPath, { recursive: true, force: true });
-          removedDirectories += 1;
-          continue;
-        }
-        await visit(fullPath);
-        continue;
-      }
-      if (!entry.isFile() || (!entry.name.endsWith(".map") && !entry.name.endsWith(".d.ts"))) {
-        if (entry.isFile()) {
-          const stat = await fs.stat(fullPath);
-          retainedFiles += 1;
-          retainedBytes += stat.size;
-        }
-        continue;
-      }
-      const stat = await fs.stat(fullPath);
-      await fs.rm(fullPath, { force: true });
-      removedFiles += 1;
-      removedBytes += stat.size;
-    }
-  };
-
-  await visit(nodeModulesRoot);
-  console.log(
-    `hosted-artifact: pruned ${removedFiles} runtime-irrelevant files and ${removedDirectories} foreign-platform directories (${(removedBytes / 1024 / 1024).toFixed(1)} MB)`,
-  );
-  return { files: retainedFiles, bytes: retainedBytes };
 }
 
 async function writeChecksum(assetPath: string): Promise<string> {
@@ -355,7 +312,7 @@ async function main(): Promise<void> {
 
     console.log(`hosted-artifact: deploying @fased/fased@${version} with pnpm`);
     const pnpmStore = await activePnpmStore();
-    await run(
+    const deployment = await run(
       "pnpm",
       [
         "--store-dir",
@@ -370,6 +327,23 @@ async function main(): Promise<void> {
       ],
       rootDir,
       { npm_config_ignore_scripts: "true" },
+    );
+    const componentContract = await readHostedComponentContract(
+      path.join(rootDir, "config", "hosted-component-packs.json"),
+    );
+    const componentContractDigest = await sha256(
+      path.join(rootDir, "config", "hosted-component-packs.json"),
+    );
+    const removedApplicationPaths = await enforceHostedApplicationAllowlist({
+      packageRoot,
+      contract: componentContract,
+    });
+    const removedExtensions = await retainHostedCoreExtensions({
+      extensionsRoot: path.join(packageRoot, "extensions"),
+      contract: componentContract,
+    });
+    console.log(
+      `hosted-artifact: excluded ${removedExtensions.length} optional/test extension directories`,
     );
     await run(
       process.execPath,
@@ -398,14 +372,17 @@ async function main(): Promise<void> {
     console.log(
       `hosted-artifact: dependency budget ${dependencyBudget.files} files, ${(dependencyBudget.bytes / 1024 / 1024).toFixed(1)} MB`,
     );
-    if (
-      dependencyBudget.files > HOSTED_DEPENDENCY_FILE_BUDGET ||
-      dependencyBudget.bytes > HOSTED_DEPENDENCY_BYTE_BUDGET
-    ) {
-      throw new Error(
-        `Hosted dependency layer exceeds budget (${dependencyBudget.files}/${HOSTED_DEPENDENCY_FILE_BUDGET} files, ${(dependencyBudget.bytes / 1024 / 1024).toFixed(1)}/${HOSTED_DEPENDENCY_BYTE_BUDGET / 1024 / 1024} MB).`,
-      );
-    }
+    const applicationBudget = await measureRegularFiles(packageRoot, {
+      excludeTopLevel: new Set(["node_modules"]),
+    });
+    assertHostedCoreBudgets({
+      contract: componentContract,
+      application: applicationBudget,
+      dependencies: dependencyBudget,
+    });
+    console.log(
+      `hosted-artifact: core application budget ${applicationBudget.files} files, ${(applicationBudget.bytes / 1024 / 1024).toFixed(1)} MB`,
+    );
 
     console.log("hosted-artifact: compiling core runtime plugins");
     await run(
@@ -475,6 +452,29 @@ async function main(): Promise<void> {
     const pluginDoctorOutput = `${pluginDoctor.stdout}\n${pluginDoctor.stderr}`;
     if (!pluginDoctorOutput.includes("No plugin issues detected.")) {
       throw new Error(`Hosted core plugin doctor was not clean.\n${pluginDoctorOutput}`);
+    }
+    const enabledPlugins = await run(
+      process.execPath,
+      [path.join(packageRoot, "fased.mjs"), "plugins", "list", "--enabled", "--json"],
+      packageRoot,
+      smokeEnv,
+    );
+    const enabledPluginIds =
+      (
+        JSON.parse(enabledPlugins.stdout) as {
+          plugins?: Array<{ id?: unknown; status?: unknown }>;
+        }
+      ).plugins
+        ?.filter((plugin) => plugin.status === "loaded" && typeof plugin.id === "string")
+        .map((plugin) => plugin.id as string)
+        .toSorted() ?? [];
+    if (
+      JSON.stringify(enabledPluginIds) !==
+      JSON.stringify(componentContract.core.loadedPluginIds.toSorted())
+    ) {
+      throw new Error(
+        `Hosted core loaded plugins differ (actual ${enabledPluginIds.join(", ") || "none"}; expected ${componentContract.core.loadedPluginIds.join(", ")}).`,
+      );
     }
     const satPluginInfo = await run(
       process.execPath,
@@ -552,6 +552,9 @@ async function main(): Promise<void> {
       version,
       commit,
       dependencyHash,
+      componentContractDigest,
+      coreExtensions: componentContract.core.extensionDirectories.toSorted(),
+      loadedPlugins: componentContract.core.loadedPluginIds.toSorted(),
     };
     await fs.writeFile(
       path.join(packageRoot, ".fased-hosted-runtime.json"),
@@ -588,6 +591,33 @@ async function main(): Promise<void> {
     const dependencyStat = await fs.stat(dependencyAssetPath);
     console.log(
       `hosted-artifact: ready ${dependencyAssetName} (${(dependencyStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${dependencyDigest})`,
+    );
+    await fs.writeFile(
+      path.join(outputDir, `${unifiedAppAssetName}.core-receipt.json`),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          type: "fased-hosted-core-receipt",
+          version,
+          commit,
+          architecture: arch,
+          componentContractDigest,
+          retainedExtensions: componentContract.core.extensionDirectories.toSorted(),
+          loadedPlugins: componentContract.core.loadedPluginIds.toSorted(),
+          excludedExtensions: removedExtensions.toSorted(),
+          excludedApplicationPaths: removedApplicationPaths.toSorted(),
+          applicationBudget,
+          dependencyBudget,
+          dependencyCache: {
+            mode: "offline-pnpm-store",
+            downloads: 0,
+            durationMs: deployment.durationMs,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
     );
     await fs.writeFile(
       path.join(outputDir, `${unifiedAppAssetName}.release.json`),

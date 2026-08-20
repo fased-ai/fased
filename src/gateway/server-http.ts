@@ -50,11 +50,6 @@ import type {
   WalletToolAccessMode,
 } from "../config/types.wallet.js";
 import {
-  createAndSubmitFederationBondProof,
-  loadPersistedFederationBondProof,
-  submitFederationBondProof,
-} from "../federation/auto-connect.js";
-import {
   resolveAgentPublicOrigin,
   resolveFederationBaseUrl,
   resolveFederationBondWalletId,
@@ -2457,6 +2452,11 @@ async function runFederationBondProof(params: {
   walletId: string;
   liveBond?: Awaited<ReturnType<typeof inspectSatBondPosition>> | null;
 }) {
+  const {
+    createAndSubmitFederationBondProof,
+    loadPersistedFederationBondProof,
+    submitFederationBondProof,
+  } = await import("../federation/auto-connect.js");
   const bondView =
     params.liveBond ??
     (await resolveFederationBondWallet({
@@ -3351,6 +3351,7 @@ async function readLocalFederationStatus(
   };
   try {
     const cfg = loadConfig();
+    const { loadPersistedFederationBondProof } = await import("../federation/auto-connect.js");
     const proof = await loadPersistedFederationBondProof(env);
     const configuredWalletId = resolveFederationBondDefaultWalletId(cfg);
     const proofWalletId = proof?.walletId?.trim() || undefined;

@@ -46,7 +46,7 @@ describe("capability catalog", () => {
     );
     expect(entries.find((entry) => entry.id === "openai-runtime")).toMatchObject({
       category: "provider",
-      delivery: "core",
+      delivery: "managed-component",
       packageName: "@fased/openai-runtime",
       pluginId: "openai-runtime",
     });
@@ -60,17 +60,19 @@ describe("capability catalog", () => {
     });
     expect(capabilities.summary).toMatchObject({
       total: 22,
-      coreIncluded: 16,
+      coreIncluded: 5,
       externalRequired: 6,
       errors: 0,
     });
-    expect(capabilities.entries.find((entry) => entry.id === "telegram")?.state).toBe("included");
+    expect(capabilities.entries.find((entry) => entry.id === "telegram")?.state).toBe(
+      "not-installed",
+    );
     expect(capabilities.entries.find((entry) => entry.id === "ollama")?.state).toBe(
       "external-required",
     );
   });
 
-  it("keeps bundled channels included while reporting configured external providers", () => {
+  it("reports installed managed channels and configured external providers", () => {
     const config = {
       channels: { telegram: { enabled: true, botToken: "token" } },
       models: { providers: { ollama: { baseUrl: "http://127.0.0.1:11434" } } },
@@ -122,24 +124,24 @@ describe("capability catalog", () => {
     expect(capabilities.summary.errors).toBe(0);
   });
 
-  it("treats disabled bundled channels as included", () => {
+  it("treats an installed disabled channel component as installed", () => {
     const capabilities = buildCapabilityReadinessReport({
       config: {} as FasedAgentConfig,
       pluginReport: report([
         plugin({
           id: "telegram",
-          origin: "bundled",
+          origin: "global",
           status: "disabled",
           loaded: false,
           enabled: false,
-          managed: false,
-          hasInstallRecord: false,
+          managed: true,
+          hasInstallRecord: true,
           channels: ["telegram"],
-          error: "bundled (disabled by default)",
+          error: "disabled by configuration",
         }),
       ]),
     });
-    expect(capabilities.entries.find((entry) => entry.id === "telegram")?.state).toBe("included");
+    expect(capabilities.entries.find((entry) => entry.id === "telegram")?.state).toBe("installed");
     expect(capabilities.summary.errors).toBe(0);
   });
 });

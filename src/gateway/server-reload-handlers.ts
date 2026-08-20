@@ -4,8 +4,6 @@ import type { CliDeps } from "../cli/deps.js";
 import { resolveAgentMaxConcurrent, resolveSubagentMaxConcurrent } from "../config/agent-limits.js";
 import { isRestartEnabled } from "../config/commands.js";
 import type { loadConfig } from "../config/config.js";
-import { startGmailWatcherWithLogs } from "../hooks/gmail-watcher-lifecycle.js";
-import { stopGmailWatcher } from "../hooks/gmail-watcher.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { resetDirectoryCache } from "../infra/outbound/target-resolver.js";
@@ -79,6 +77,7 @@ export function createGatewayReloadHandlers(params: {
       config: ReturnType<typeof loadConfig>,
       phase: "apply" | "rollback",
     ) => {
+      const { startGmailWatcherWithLogs } = await import("../hooks/gmail-watcher-lifecycle.js");
       let failed = false;
       await startGmailWatcherWithLogs({
         cfg: config,
@@ -152,7 +151,7 @@ export function createGatewayReloadHandlers(params: {
 
       if (plan.restartGmailWatcher) {
         gmailMutated = true;
-        await stopGmailWatcher();
+        await (await import("../hooks/gmail-watcher.js")).stopGmailWatcher();
         await startGmailWatcherForReload(nextConfig, "apply");
       }
 
@@ -227,7 +226,9 @@ export function createGatewayReloadHandlers(params: {
       }
 
       if (gmailMutated) {
-        const stopped = await capture(async () => await stopGmailWatcher());
+        const stopped = await capture(async () =>
+          (await import("../hooks/gmail-watcher.js")).stopGmailWatcher(),
+        );
         if (stopped) {
           await capture(async () => await startGmailWatcherForReload(previousConfig, "rollback"));
         }
@@ -262,15 +263,18 @@ export function createGatewayReloadHandlers(params: {
               broadcast: params.broadcast,
             });
           });
-          if (built && restoredCronState) {
+          // The assignment occurs inside capture's callback; preserve the
+          // post-callback runtime narrowing explicitly for the rollback path.
+          const restored = restoredCronState as GatewayCronState | null;
+          if (built && restored) {
             // The original instance is permanently lifecycle-fenced. Restore
             // configuration through a fresh service instead of silently
             // restarting that old object.
-            workingState.cronState = restoredCronState;
+            workingState.cronState = restored;
             publishState();
-            const started = await capture(async () => await restoredCronState.cron.start());
+            const started = await capture(async () => await restored.cron.start());
             if (!started) {
-              await capture(async () => await restoredCronState.cron.stopAndDrainForLifecycle());
+              await capture(async () => await restored.cron.stopAndDrainForLifecycle());
             }
           }
         }
