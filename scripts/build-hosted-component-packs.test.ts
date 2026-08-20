@@ -257,6 +257,14 @@ describe("managed component pack identity", () => {
     }
   });
 
+  it("keeps the CLI process alive until the selected command completes", async () => {
+    const entry = await fs.readFile(path.join(process.cwd(), "src", "entry.ts"), "utf8");
+
+    expect(entry).toContain('const { runCli } = await import("./cli/run-main.js");');
+    expect(entry).toContain("await runCli(process.argv);");
+    expect(entry).not.toContain('import("./cli/run-main.js")\n      .then');
+  });
+
   it("rejects symbolic-link aliases before producing a managed identity", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-component-alias-"));
     roots.push(root);

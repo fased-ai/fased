@@ -128,11 +128,12 @@ if (
       process.argv = parsed.argv;
     }
 
-    import("./cli/run-main.js")
-      .then(({ runCli }) => runCli(process.argv))
-      .catch((error) => {
-        console.error("[fased] Failed to start CLI:", formatUncaughtError(error));
-        process.exitCode = 1;
-      });
+    try {
+      const { runCli } = await import("./cli/run-main.js");
+      await runCli(process.argv);
+    } catch (error) {
+      console.error("[fased] Failed to start CLI:", formatUncaughtError(error));
+      process.exitCode = 1;
+    }
   }
 }
