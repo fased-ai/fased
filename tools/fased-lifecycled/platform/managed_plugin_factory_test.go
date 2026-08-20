@@ -15,7 +15,12 @@ import (
 type schemaOnePluginLockFixtureResolver struct {
 	inventory  bundle.Inventory
 	generation model.Generation
+	manifest   model.Manifest
 	payload    string
+}
+
+func (resolver schemaOnePluginLockFixtureResolver) ReadManifest() (model.Manifest, string, error) {
+	return resolver.manifest, "sha256:" + strings.Repeat("c", 64), nil
 }
 
 func (resolver schemaOnePluginLockFixtureResolver) ReadGenerationContract(string) (bundle.Inventory, model.Generation, error) {
@@ -55,8 +60,10 @@ func TestRC80SchemaOneCoreTransitionImportsOnlyExactVerifiedGenerationPluginLock
 	}
 	root := t.TempDir()
 	ownerRoot := filepath.Join(root, "owner")
+	lifecycleRoot := filepath.Join(root, "lifecycle")
+	installRoot := filepath.Join(root, "install")
 	payload := filepath.Join(root, "generation", "payload")
-	for _, directory := range []string{ownerRoot, filepath.Join(payload, "runtime")} {
+	for _, directory := range []string{ownerRoot, lifecycleRoot, installRoot, filepath.Join(payload, "runtime")} {
 		if err := os.MkdirAll(directory, 0o750); err != nil {
 			t.Fatal(err)
 		}
@@ -79,11 +86,15 @@ func TestRC80SchemaOneCoreTransitionImportsOnlyExactVerifiedGenerationPluginLock
 	resolver := schemaOnePluginLockFixtureResolver{
 		inventory:  bundle.Inventory{PluginLockDigest: digest},
 		generation: model.Generation{ID: generationID, Version: "0.1.76-rc.80", Commit: "ceb0e98275fc00aebbbb8200207012080313e51c", Tree: "3c264f16995f04629a13c73bc1c0899221b8a195"}, // pragma: allowlist secret
+		manifest:   model.Manifest{SchemaVersion: 1, ActiveGeneration: &model.Generation{ID: generationID}},
 		payload:    payload,
 	}
-	config := Config{OwnerStateRoot: ownerRoot, Operator: Principal{UID: uid, GID: gid}}
-	if err := migrateSchemaOneManagedPluginLock(config, generationID, gid, uid, resolver); err != nil {
+	config := Config{OwnerStateRoot: ownerRoot, LifecycleRoot: lifecycleRoot, InstallRoot: installRoot, Operator: Principal{UID: uid, GID: gid}}
+	if err := prepareSchemaOneManagedPluginCoreTransition(config, generationID, gid, uid, gid, resolver); err != nil {
 		t.Fatalf("exact schema-one plugin lock was not imported: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(installRoot, "plugin-code")); !os.IsNotExist(err) {
+		t.Fatalf("pre-P6 bridge created code-store state outside core bootstrap: %v", err)
 	}
 	installed := CanonicalPluginLockPath(config)
 	installedData, err := os.ReadFile(installed)
@@ -97,12 +108,30 @@ func TestRC80SchemaOneCoreTransitionImportsOnlyExactVerifiedGenerationPluginLock
 	if info.Mode().Perm() != 0o640 {
 		t.Fatalf("installed plugin lock mode = %04o, want 0640", info.Mode().Perm())
 	}
+	if err := prepareSchemaOneManagedPluginCoreTransition(config, generationID, gid, uid, gid, resolver); err != nil {
+		t.Fatalf("schema-one plugin lock bridge retry was not idempotent: %v", err)
+	}
+	if err := os.WriteFile(installed, []byte("{}\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSchemaOneManagedPluginCoreTransition(config, generationID, gid, uid, gid, resolver); err == nil || !strings.Contains(err.Error(), "differs from the verified active generation") {
+		t.Fatalf("changed installed schema-one plugin lock was accepted: %v", err)
+	}
 
 	if err := os.Remove(installed); err != nil {
 		t.Fatal(err)
 	}
+	resolver.manifest.SchemaVersion = model.CurrentManifestSchemaVersion
+	if err := prepareSchemaOneManagedPluginCoreTransition(config, generationID, gid, uid, gid, resolver); err == nil || !strings.Contains(err.Error(), "exact active schema-one generation") {
+		t.Fatalf("missing lock in a newer durable manifest was bridged: %v", err)
+	}
+	if _, err := os.Lstat(installed); !os.IsNotExist(err) {
+		t.Fatalf("newer-manifest refusal left an owner plugin lock: %v", err)
+	}
+
+	resolver.manifest.SchemaVersion = 1
 	resolver.inventory.PluginLockDigest = "sha256:" + strings.Repeat("b", 64)
-	if err := migrateSchemaOneManagedPluginLock(config, generationID, gid, uid, resolver); err == nil || !strings.Contains(err.Error(), "does not match") {
+	if _, err := verifiedSchemaOneGenerationPluginLock(generationID, uid, resolver); err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("inventory-mismatched schema-one plugin lock was accepted: %v", err)
 	}
 	if _, err := os.Lstat(installed); !os.IsNotExist(err) {
@@ -145,5 +174,25 @@ func TestSchemaOnePluginLockBridgeNeverReplacesAConcurrentOwnerFile(t *testing.T
 	after, err := os.ReadFile(path)
 	if err != nil || string(after) != string(existing) {
 		t.Fatalf("schema-one collision changed owner bytes: data=%q err=%v", after, err)
+	}
+}
+
+func TestPreP6ManagedPluginBridgeRequiresAnEmptySafeTransactionNamespace(t *testing.T) {
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	root := filepath.Join(t.TempDir(), "plugin-transactions")
+	if err := verifyEmptyPreP6ManagedPluginNamespace(root, uid, gid); err != nil {
+		t.Fatalf("absent pre-P6 namespace was rejected: %v", err)
+	}
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEmptyPreP6ManagedPluginNamespace(root, uid, gid); err != nil {
+		t.Fatalf("empty safe pre-P6 namespace was rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "unexpected"), []byte("journal\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEmptyPreP6ManagedPluginNamespace(root, uid, gid); err == nil || !strings.Contains(err.Error(), "existing plugin transaction") {
+		t.Fatalf("pre-P6 namespace residue was accepted: %v", err)
 	}
 }

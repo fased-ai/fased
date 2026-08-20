@@ -444,12 +444,14 @@ func convergeManagedPluginsBeforeCoreGeneration(ctx context.Context, profile mod
 	if err != nil {
 		return err
 	}
-	production, err := platform.NewManagedPluginProductionForCoreTransition(config, manifest.ActiveGeneration.ID, manifest.SchemaVersion, service)
+	activation, err := platform.PrepareManagedPluginCoreTransition(config, manifest.ActiveGeneration.ID, service)
 	if err != nil {
 		return fmt.Errorf("inspect managed plugin transaction before core generation transition: %w", err)
 	}
-	if err := production.Activation.ConvergeBeforeCoreGeneration(ctx); err != nil {
-		return fmt.Errorf("converge managed plugin transaction before core generation transition: %w", err)
+	if activation != nil {
+		if err := activation.ConvergeBeforeCoreGeneration(ctx); err != nil {
+			return fmt.Errorf("converge managed plugin transaction before core generation transition: %w", err)
+		}
 	}
 	return nil
 }
