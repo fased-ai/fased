@@ -11,9 +11,9 @@ describe("createFasedAgentCodingTools message provider policy", () => {
     },
   );
 
-  it("keeps tts tool for non-voice providers", () => {
+  it("does not expose the optional TTS tool when the speech component is absent", () => {
     const tools = createFasedAgentCodingTools({ messageProvider: "discord" });
     const names = new Set(tools.map((tool) => tool.name));
-    expect(names.has("tts")).toBe(true);
+    expect(names.has("tts")).toBe(false);
   });
 });

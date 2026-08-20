@@ -71,7 +71,6 @@ function createCloseFixture(overrides: Partial<CloseHandlerParams> = {}, events:
         events.push("configReloader.stop");
       },
     },
-    browserControl: null,
     wss: {
       close: (cb: () => void) => {
         events.push("wss.close");
@@ -211,11 +210,6 @@ describe("createGatewayCloseHandler", () => {
           events.push("configReloader.stop");
         },
       },
-      browserControl: {
-        stop: async () => {
-          events.push("browserControl.stop");
-        },
-      },
       wss,
       httpServer,
       onClose: [
@@ -245,7 +239,6 @@ describe("createGatewayCloseHandler", () => {
       "heartbeat.unsub",
       "chat.clear",
       "client.close:1012:service restart",
-      "browserControl.stop",
       "wss.close",
       "http.closeIdleConnections",
       "http.close",

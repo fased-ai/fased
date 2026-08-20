@@ -60,7 +60,6 @@ import { ControlUiLoginService, resolveControlUiPublicHost } from "./control-ui-
 import type { ControlUiRootState } from "./control-ui.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { NodeRegistry } from "./node-registry.js";
-import type { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import { createChannelManager } from "./server-channels.js";
 import { createAgentEventHandler } from "./server-chat.js";
 import { createGatewayCloseHandler } from "./server-close.js";
@@ -900,7 +899,6 @@ async function startGatewayServerInternal(
         }),
       );
 
-  let browserControl: Awaited<ReturnType<typeof startBrowserControlServerIfEnabled>> = null;
   let federationAutoConnect: ReturnType<
     typeof import("../federation/auto-connect.js").startFederationAutoConnect
   > = null;
@@ -916,7 +914,6 @@ async function startGatewayServerInternal(
               hooksConfig,
               heartbeatRunner,
               cronState,
-              browserControl,
             }),
             setState: (nextState) => {
               hooksConfig = nextState.hooksConfig;
@@ -924,7 +921,6 @@ async function startGatewayServerInternal(
               cronState = nextState.cronState;
               cron = cronState.cron;
               cronStorePath = cronState.storePath;
-              browserControl = nextState.browserControl;
             },
             startChannel,
             stopChannel,
@@ -987,10 +983,8 @@ async function startGatewayServerInternal(
         log,
         logHooks,
         logChannels,
-        logBrowser,
       }),
     );
-    browserControl = sidecars.browserControl;
     pluginServices = sidecars.pluginServices;
     federationAutoConnect = sidecars.federationAutoConnect;
     finalizeGatewayPluginStatus({ registry: pluginRegistry, log });
@@ -1027,7 +1021,6 @@ async function startGatewayServerInternal(
     chatRunState,
     clients,
     configReloader,
-    browserControl,
     wss,
     httpServer,
     httpServers,

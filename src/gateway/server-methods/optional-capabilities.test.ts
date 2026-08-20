@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { browserHandlers } from "../../../extensions/runtime-browser/gateway-handlers.js";
+import { ttsHandlers } from "../../../extensions/runtime-speech/tts-handlers.js";
+import { voicewakeHandlers } from "../../../extensions/runtime-speech/voicewake-handlers.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
-import { browserHandlers } from "./browser.js";
 import { channelsHandlers } from "./channels.js";
 import { OPTIONAL_GATEWAY_METHODS, optionalGatewayHandlers } from "./optional-capabilities.js";
-import { ttsHandlers } from "./tts.js";
-import { voicewakeHandlers } from "./voicewake.js";
 
 describe("optional Gateway capability dispatch", () => {
   afterEach(() => resetPluginRuntimeStateForTest());

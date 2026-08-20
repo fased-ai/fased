@@ -492,6 +492,9 @@ importers:
       playwright-core:
         specifier: 1.58.2
         version: 1.58.2
+      ws:
+        specifier: 8.21.0
+        version: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
   extensions/runtime-local-memory:
     dependencies:

@@ -2,15 +2,21 @@ import crypto from "node:crypto";
 import {
   createBrowserControlContext,
   startBrowserControlServiceFromConfig,
-} from "../../browser/control-service.js";
-import { applyBrowserProxyPaths, persistBrowserProxyFiles } from "../../browser/proxy-files.js";
-import { createBrowserRouteDispatcher } from "../../browser/routes/dispatcher.js";
-import { loadConfig } from "../../config/config.js";
-import { isNodeCommandAllowed, resolveNodeCommandAllowlist } from "../node-command-policy.js";
-import type { NodeSession } from "../node-registry.js";
-import { ErrorCodes, errorShape } from "../protocol/index.js";
-import { respondUnavailableOnNodeInvokeError, safeParseJson } from "./nodes.helpers.js";
-import type { GatewayRequestHandlers } from "./types.js";
+} from "../../src/browser/control-service.js";
+import { applyBrowserProxyPaths, persistBrowserProxyFiles } from "../../src/browser/proxy-files.js";
+import { createBrowserRouteDispatcher } from "../../src/browser/routes/dispatcher.js";
+import { loadConfig } from "../../src/config/config.js";
+import {
+  isNodeCommandAllowed,
+  resolveNodeCommandAllowlist,
+} from "../../src/gateway/node-command-policy.js";
+import type { NodeSession } from "../../src/gateway/node-registry.js";
+import { ErrorCodes, errorShape } from "../../src/gateway/protocol/index.js";
+import {
+  respondUnavailableOnNodeInvokeError,
+  safeParseJson,
+} from "../../src/gateway/server-methods/nodes.helpers.js";
+import type { GatewayRequestHandlers } from "../../src/gateway/server-methods/types.js";
 
 type BrowserRequestParams = {
   method?: string;

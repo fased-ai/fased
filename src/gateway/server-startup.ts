@@ -12,16 +12,11 @@ import {
 import {
   areChannelsConfigured,
   areInternalHooksConfigured,
-  isBrowserServiceConfigured,
   isFederationAutoConnectConfigured,
   isGmailWatcherConfigured,
   isOptionalMemoryBackendConfigured,
   isSelectedModelConfigured,
 } from "./startup-selection.js";
-
-type BrowserControlHandle = Awaited<
-  ReturnType<typeof import("./server-browser.js").startBrowserControlServerIfEnabled>
->;
 
 async function prewarmConfiguredPrimaryModel(params: {
   cfg: ReturnType<typeof loadConfig>;
@@ -78,19 +73,7 @@ export async function startGatewaySidecars(params: {
     error: (msg: string) => void;
   };
   logChannels: { info: (msg: string) => void; error: (msg: string) => void };
-  logBrowser: { error: (msg: string) => void };
 }) {
-  // Start FasedAgent browser control server (unless disabled via config).
-  let browserControl: BrowserControlHandle = null;
-  if (isBrowserServiceConfigured(params.cfg)) {
-    try {
-      const { startBrowserControlServerIfEnabled } = await import("./server-browser.js");
-      browserControl = await startBrowserControlServerIfEnabled();
-    } catch (err) {
-      params.logBrowser.error(`server failed to start: ${String(err)}`);
-    }
-  }
-
   // Start Gmail watcher if configured (hooks.gmail.account).
   // Dynamically imported — only loads the Gmail SDK when actually needed.
   if (
@@ -256,7 +239,7 @@ export async function startGatewaySidecars(params: {
       })
     : null;
 
-  return { browserControl, pluginServices, federationAutoConnect };
+  return { pluginServices, federationAutoConnect };
 }
 
 export const __testing = {

@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { rolldown } from "rolldown";
+import { managedRuntimeSpecifier } from "../src/plugins/managed-runtime-aliases.js";
 import {
   assertCompleteExtensionOwnership,
   readHostedComponentContract,
@@ -153,6 +154,23 @@ async function deployComponentPackage(params: {
     const bundle = await rolldown({
       input: path.join(params.extensionRoot, "index.ts"),
       external: (id) => id.startsWith("node:") || (!id.startsWith(".") && !path.isAbsolute(id)),
+      plugins: [
+        {
+          name: "fased-managed-runtime-boundary",
+          async resolveId(source, importer) {
+            if (!importer || !source.startsWith(".")) {
+              return null;
+            }
+            const resolved = await this.resolve(source, importer, { skipSelf: true });
+            if (!resolved) {
+              return null;
+            }
+            const relative = path.relative(rootDir, resolved.id);
+            const specifier = managedRuntimeSpecifier(relative);
+            return specifier ? { id: specifier, external: true } : null;
+          },
+        },
+      ],
     });
     try {
       await bundle.write({

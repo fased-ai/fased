@@ -26,6 +26,33 @@ describe("managed component pack identity", () => {
     expect(source).toContain('extensions: ["./index.mjs"]');
     expect(source).toContain('fs.rm(path.join(params.deployRoot, "index.ts"), { force: true })');
     expect(source).not.toContain('node_modules", ".bin", "esbuild"');
+    const runtimeBrowser = await fs.readFile(
+      path.join(import.meta.dirname, "..", "extensions", "runtime-browser", "index.ts"),
+      "utf8",
+    );
+    expect(runtimeBrowser).toContain('id: "browser-runtime-control"');
+    expect(runtimeBrowser).toContain("api.registerService");
+    const runtimeSpeech = await fs.readFile(
+      path.join(import.meta.dirname, "..", "extensions", "runtime-speech", "index.ts"),
+      "utf8",
+    );
+    expect(runtimeSpeech).toContain("api.registerTool");
+    const coreTools = await fs.readFile(
+      path.join(import.meta.dirname, "..", "src", "agents", "fased-tools.ts"),
+      "utf8",
+    );
+    expect(coreTools).not.toContain("createTtsTool");
+    const browserClient = await fs.readFile(
+      path.join(import.meta.dirname, "..", "src", "browser", "client-fetch.ts"),
+      "utf8",
+    );
+    expect(browserClient).not.toContain('from "./control-service.js"');
+    expect(browserClient).not.toContain('from "./routes/dispatcher.js"');
+    const gatewayStartup = await fs.readFile(
+      path.join(import.meta.dirname, "..", "src", "gateway", "server-startup.ts"),
+      "utf8",
+    );
+    expect(gatewayStartup).not.toContain("server-browser.js");
   });
 
   it("binds normalized immutable extraction modes and exact file bytes", async () => {

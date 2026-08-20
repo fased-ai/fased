@@ -1,6 +1,7 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
-import { ttsHandlers } from "../../src/gateway/server-methods/tts.js";
-import { voicewakeHandlers } from "../../src/gateway/server-methods/voicewake.js";
+import { ttsHandlers } from "./tts-handlers.js";
+import { createTtsTool } from "./tts-tool.js";
+import { voicewakeHandlers } from "./voicewake-handlers.js";
 
 export default {
   id: "speech-runtime",
@@ -8,5 +9,13 @@ export default {
   description: "Optional local Edge TTS dependency.",
   register(api: FasedAgentPluginApi) {
     api.registerCapabilityProvider({ ...ttsHandlers, ...voicewakeHandlers });
+    api.registerTool(
+      (ctx) =>
+        createTtsTool({
+          agentChannel: ctx.messageChannel,
+          config: ctx.config,
+        }),
+      { name: "tts" },
+    );
   },
 };

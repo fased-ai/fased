@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { voicewakeHandlers } from "./voicewake.js";
+import { voicewakeHandlers } from "../../../extensions/runtime-speech/voicewake-handlers.js";
 
 const loadVoiceWakeConfig = vi.hoisted(() => vi.fn(async () => ({ triggers: ["fased"] })));
 const setVoiceWakeTriggers = vi.hoisted(() => vi.fn(async (triggers: string[]) => ({ triggers })));

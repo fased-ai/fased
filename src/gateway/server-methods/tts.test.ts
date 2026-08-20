@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ttsHandlers } from "./tts.js";
+import { ttsHandlers } from "../../../extensions/runtime-speech/tts-handlers.js";
 
 const loadConfig = vi.hoisted(() =>
   vi.fn(() => ({

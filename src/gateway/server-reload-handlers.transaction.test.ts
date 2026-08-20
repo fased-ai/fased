@@ -72,7 +72,6 @@ describe("gateway hot reload transaction", () => {
         storePath: "/tmp/original-cron.json",
         cronEnabled: true,
       },
-      browserControl: null,
     };
     const stopChannel = vi.fn(async () => {});
     const startChannel = vi
@@ -112,7 +111,6 @@ describe("gateway hot reload transaction", () => {
       hotReasons: ["cron.enabled", "channels.telegram.botToken"],
       reloadHooks: false,
       restartGmailWatcher: false,
-      restartBrowserControl: false,
       restartCron: true,
       restartHeartbeat: false,
       restartChannels: new Set(["telegram"]),
@@ -169,7 +167,6 @@ describe("gateway hot reload transaction", () => {
       hooksConfig: null,
       heartbeatRunner: { stop: vi.fn(), updateConfig: vi.fn() },
       cronState: { cron: originalCron, storePath: "/tmp/original-cron.json", cronEnabled: true },
-      browserControl: null,
     };
     const handlers = createGatewayReloadHandlers({
       deps: {} as never,
@@ -193,7 +190,6 @@ describe("gateway hot reload transaction", () => {
       hotReasons: ["cron.enabled"],
       reloadHooks: false,
       restartGmailWatcher: false,
-      restartBrowserControl: false,
       restartCron: true,
       restartHeartbeat: false,
       restartChannels: new Set(),

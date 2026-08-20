@@ -22,6 +22,7 @@
     ],
     "excludedApplicationPaths": [
       "assets/chrome-extension",
+      "dist/gateway/server-browser.js",
       "dist/gateway/server-methods/browser.js",
       "dist/gateway/server-methods/tts.js",
       "dist/gateway/server-methods/voicewake.js"

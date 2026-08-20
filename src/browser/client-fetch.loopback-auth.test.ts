@@ -18,17 +18,6 @@ vi.mock("../config/config.js", async (importOriginal) => {
   };
 });
 
-vi.mock("./control-service.js", () => ({
-  createBrowserControlContext: vi.fn(() => ({})),
-  startBrowserControlServiceFromConfig: vi.fn(async () => ({ ok: true })),
-}));
-
-vi.mock("./routes/dispatcher.js", () => ({
-  createBrowserRouteDispatcher: vi.fn(() => ({
-    dispatch: vi.fn(async () => ({ status: 200, body: { ok: true } })),
-  })),
-}));
-
 import { fetchBrowserJson } from "./client-fetch.js";
 
 function stubJsonFetchOk() {
@@ -68,6 +57,16 @@ describe("fetchBrowserJson loopback auth", () => {
 
     const init = fetchMock.mock.calls[0]?.[1];
     const headers = new Headers(init?.headers);
+    expect(headers.get("authorization")).toBe("Bearer loopback-token");
+  });
+
+  it("routes relative requests to the managed browser service without importing it", async () => {
+    const fetchMock = stubJsonFetchOk();
+
+    await fetchBrowserJson<{ ok: boolean }>("/tabs");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:18791/tabs");
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(headers.get("authorization")).toBe("Bearer loopback-token");
   });
 

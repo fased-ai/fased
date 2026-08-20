@@ -2,12 +2,8 @@ import { formatCliCommand } from "../cli/command-format.js";
 import { loadConfig } from "../config/config.js";
 import { isLoopbackHost } from "../gateway/net.js";
 import { getBridgeAuthForPort } from "./bridge-auth-registry.js";
+import { resolveBrowserConfig } from "./config.js";
 import { resolveBrowserControlAuth } from "./control-auth.js";
-import {
-  createBrowserControlContext,
-  startBrowserControlServiceFromConfig,
-} from "./control-service.js";
-import { createBrowserRouteDispatcher } from "./routes/dispatcher.js";
 
 // Application-level error from the browser control service (service is reachable
 // but returned an error response). Must NOT be wrapped with "Can't reach ..." messaging.
@@ -166,87 +162,11 @@ export async function fetchBrowserJson<T>(
 ): Promise<T> {
   const timeoutMs = init?.timeoutMs ?? 5000;
   try {
-    if (isAbsoluteHttp(url)) {
-      const httpInit = withLoopbackBrowserAuth(url, init);
-      return await fetchHttpJson<T>(url, { ...httpInit, timeoutMs });
-    }
-    const started = await startBrowserControlServiceFromConfig();
-    if (!started) {
-      throw new Error("browser control disabled");
-    }
-    const dispatcher = createBrowserRouteDispatcher(createBrowserControlContext());
-    const parsed = new URL(url, "http://localhost");
-    const query: Record<string, unknown> = {};
-    for (const [key, value] of parsed.searchParams.entries()) {
-      query[key] = value;
-    }
-    let body = init?.body;
-    if (typeof body === "string") {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        // keep as string
-      }
-    }
-
-    const abortCtrl = new AbortController();
-    const upstreamSignal = init?.signal;
-    let upstreamAbortListener: (() => void) | undefined;
-    if (upstreamSignal) {
-      if (upstreamSignal.aborted) {
-        abortCtrl.abort(upstreamSignal.reason);
-      } else {
-        upstreamAbortListener = () => abortCtrl.abort(upstreamSignal.reason);
-        upstreamSignal.addEventListener("abort", upstreamAbortListener, { once: true });
-      }
-    }
-
-    let abortListener: (() => void) | undefined;
-    const abortPromise: Promise<never> = abortCtrl.signal.aborted
-      ? Promise.reject(abortCtrl.signal.reason ?? new Error("aborted"))
-      : new Promise((_, reject) => {
-          abortListener = () => reject(abortCtrl.signal.reason ?? new Error("aborted"));
-          abortCtrl.signal.addEventListener("abort", abortListener, { once: true });
-        });
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    if (timeoutMs) {
-      timer = setTimeout(() => abortCtrl.abort(new Error("timed out")), timeoutMs);
-    }
-
-    const dispatchPromise = dispatcher.dispatch({
-      method:
-        init?.method?.toUpperCase() === "DELETE"
-          ? "DELETE"
-          : init?.method?.toUpperCase() === "POST"
-            ? "POST"
-            : "GET",
-      path: parsed.pathname,
-      query,
-      body,
-      signal: abortCtrl.signal,
-    });
-
-    const result = await Promise.race([dispatchPromise, abortPromise]).finally(() => {
-      if (timer) {
-        clearTimeout(timer);
-      }
-      if (abortListener) {
-        abortCtrl.signal.removeEventListener("abort", abortListener);
-      }
-      if (upstreamSignal && upstreamAbortListener) {
-        upstreamSignal.removeEventListener("abort", upstreamAbortListener);
-      }
-    });
-
-    if (result.status >= 400) {
-      const message =
-        result.body && typeof result.body === "object" && "error" in result.body
-          ? String((result.body as { error?: unknown }).error)
-          : `HTTP ${result.status}`;
-      throw new BrowserServiceError(message);
-    }
-    return result.body as T;
+    const target = isAbsoluteHttp(url)
+      ? url
+      : new URL(url, `http://127.0.0.1:${resolveBrowserConfig(loadConfig()).controlPort}`).href;
+    const httpInit = withLoopbackBrowserAuth(target, init);
+    return await fetchHttpJson<T>(target, { ...httpInit, timeoutMs });
   } catch (err) {
     if (err instanceof BrowserServiceError) {
       throw err;

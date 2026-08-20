@@ -1,5 +1,9 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
-import { browserHandlers } from "../../src/gateway/server-methods/browser.js";
+import {
+  startBrowserControlServiceFromConfig,
+  stopBrowserControlService,
+} from "../../src/browser/control-service.js";
+import { browserHandlers } from "./gateway-handlers.js";
 
 export default {
   id: "browser-runtime",
@@ -7,5 +11,14 @@ export default {
   description: "Optional browser automation and readable-page extraction dependencies.",
   register(api: FasedAgentPluginApi) {
     api.registerCapabilityProvider(browserHandlers);
+    api.registerService({
+      id: "browser-runtime-control",
+      start: async () => {
+        await startBrowserControlServiceFromConfig();
+      },
+      stop: async () => {
+        await stopBrowserControlService();
+      },
+    });
   },
 };

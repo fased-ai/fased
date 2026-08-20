@@ -16,7 +16,6 @@ import { setCommandLaneConcurrency, getTotalQueueSize } from "../process/command
 import { CommandLane } from "../process/lanes.js";
 import type { ChannelKind, GatewayReloadPlan } from "./config-reload.js";
 import { resolveHooksConfig } from "./hooks.js";
-import { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import { buildGatewayCronService, type GatewayCronState } from "./server-cron.js";
 import { markGatewayModelCatalogStaleForReload } from "./server-model-catalog.js";
 
@@ -24,7 +23,6 @@ type GatewayHotReloadState = {
   hooksConfig: ReturnType<typeof resolveHooksConfig>;
   heartbeatRunner: HeartbeatRunner;
   cronState: GatewayCronState;
-  browserControl: Awaited<ReturnType<typeof startBrowserControlServerIfEnabled>> | null;
 };
 
 function shouldInvalidateGatewayModelCatalog(changedPaths: string[]): boolean {
@@ -62,7 +60,6 @@ export function createGatewayReloadHandlers(params: {
     let policyMutated = false;
     let heartbeatMutated = false;
     let cronMutated = false;
-    let browserMutated = false;
     let gmailMutated = false;
     let concurrencyMutated = false;
     const channelsMutated: ChannelKind[] = [];
@@ -135,18 +132,6 @@ export function createGatewayReloadHandlers(params: {
         // cancelled transaction can always stop the exact instance it made.
         publishState();
         await workingState.cronState.cron.start();
-      }
-
-      if (plan.restartBrowserControl) {
-        browserMutated = true;
-        try {
-          await workingState.browserControl?.stop();
-        } finally {
-          workingState.browserControl = null;
-          publishState();
-        }
-        workingState.browserControl = await startBrowserControlServerIfEnabled();
-        publishState();
       }
 
       if (plan.restartGmailWatcher) {
@@ -231,23 +216,6 @@ export function createGatewayReloadHandlers(params: {
         );
         if (stopped) {
           await capture(async () => await startGmailWatcherForReload(previousConfig, "rollback"));
-        }
-      }
-
-      if (browserMutated) {
-        const candidateBrowser = workingState.browserControl;
-        const candidateStopped = await capture(async () => await candidateBrowser?.stop());
-        workingState.browserControl = null;
-        publishState();
-        if (candidateStopped) {
-          let restoredBrowser: GatewayHotReloadState["browserControl"] = null;
-          const restored = await capture(async () => {
-            restoredBrowser = await startBrowserControlServerIfEnabled();
-          });
-          if (restored) {
-            workingState.browserControl = restoredBrowser;
-            publishState();
-          }
         }
       }
 

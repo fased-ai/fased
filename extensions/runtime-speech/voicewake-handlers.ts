@@ -1,8 +1,8 @@
-import { loadVoiceWakeConfig, setVoiceWakeTriggers } from "../../infra/voicewake.js";
-import { ErrorCodes, errorShape } from "../protocol/index.js";
-import { normalizeVoiceWakeTriggers } from "../server-utils.js";
-import { formatForLog } from "../ws-log.js";
-import type { GatewayRequestHandlers } from "./types.js";
+import { ErrorCodes, errorShape } from "../../src/gateway/protocol/index.js";
+import type { GatewayRequestHandlers } from "../../src/gateway/server-methods/types.js";
+import { normalizeVoiceWakeTriggers } from "../../src/gateway/server-utils.js";
+import { formatForLog } from "../../src/gateway/ws-log.js";
+import { loadVoiceWakeConfig, setVoiceWakeTriggers } from "../../src/infra/voicewake.js";
 
 const getVoiceWakeRouting: GatewayRequestHandlers[string] = async ({ respond }) => {
   try {

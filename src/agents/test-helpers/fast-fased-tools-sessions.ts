@@ -35,10 +35,6 @@ vi.mock("../tools/session-status-tool.js", () => ({
   createSessionStatusTool: () => stubTool("session_status"),
 }));
 
-vi.mock("../tools/tts-tool.js", () => ({
-  createTtsTool: () => stubTool("tts"),
-}));
-
 vi.mock("../tools/update-plan-tool.js", () => ({
   createUpdatePlanTool: () => stubTool("update_plan"),
 }));
