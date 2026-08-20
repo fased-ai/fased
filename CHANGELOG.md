@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.104
+
+- Restore frozen dependency setup before candidate finalization so immutable
+  release evidence is generated without rebuilding the proven product bytes.
+- Enforce the install-before-finalize and no-build workflow contract with a
+  focused regression.
+
 ## 0.1.76-rc.103
 
 - Decompose Gateway, Wallet and signer responsibilities behind typed domain and
