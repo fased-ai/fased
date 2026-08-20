@@ -1,8 +1,5 @@
 import { spawnSync } from "node:child_process";
 
-const profile = (process.env.FASED_BUILD_PROFILE ?? "").trim().toLowerCase();
-const isVpsBuild = profile === "vps" || profile === "vps-lite";
-
 function runGraph(graph) {
   const startedAt = Date.now();
   const result = spawnSync("pnpm", ["exec", "tsdown"], {
@@ -21,6 +18,3 @@ function runGraph(graph) {
 
 runGraph("core");
 runGraph("light-cli");
-if (!isVpsBuild) {
-  runGraph("sdk");
-}

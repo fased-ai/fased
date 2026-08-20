@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
 import { rolldown } from "rolldown";
@@ -14,7 +15,6 @@ import { writeReleaseArchive } from "./release-archive.js";
 
 const execFileAsync = promisify(execFile);
 const rootDir = path.resolve(import.meta.dirname, "..");
-const bundledManagedRuntimeComponents = new Set(["browser-runtime", "speech-runtime"]);
 
 type PluginTreeEntry = {
   path: string;
@@ -127,7 +127,6 @@ export function assertManagedComponentPackBudget(params: {
 }
 
 async function deployComponentPackage(params: {
-  componentId: string;
   extensionRoot: string;
   packageName: string;
   deployRoot: string;
@@ -151,10 +150,10 @@ async function deployComponentPackage(params: {
       maxBuffer: 4 * 1024 * 1024,
     },
   );
-  if (bundledManagedRuntimeComponents.has(params.componentId)) {
-    const bundle = await createManagedRuntimeBundle(params.extensionRoot);
+  const bundle = await createManagedRuntimeBundle(params.extensionRoot);
+  const generated = await (async () => {
     try {
-      await bundle.write({
+      return await bundle.write({
         chunkFileNames: "chunks/[name]-[hash].mjs",
         dir: params.deployRoot,
         entryFileNames: "index.mjs",
@@ -163,16 +162,22 @@ async function deployComponentPackage(params: {
     } finally {
       await bundle.close();
     }
-    const manifestPath = path.join(params.deployRoot, "package.json");
-    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
-      files?: string[];
-      fased?: { extensions?: string[] };
-    };
-    manifest.files = ["index.mjs", "fased.plugin.json"];
-    manifest.fased = { ...manifest.fased, extensions: ["./index.mjs"] };
-    await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    await fs.rm(path.join(params.deployRoot, "index.ts"), { force: true });
-  }
+  })();
+  assertManagedRuntimeExternalImportsResolvable({
+    entryPath: path.join(params.deployRoot, "index.mjs"),
+    specifiers: generated.output.flatMap((output) =>
+      output.type === "chunk" ? [...output.imports, ...output.dynamicImports] : [],
+    ),
+  });
+  const manifestPath = path.join(params.deployRoot, "package.json");
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
+    files?: string[];
+    fased?: { extensions?: string[] };
+  };
+  manifest.files = ["index.mjs", "fased.plugin.json"];
+  manifest.fased = { ...manifest.fased, extensions: ["./index.mjs"] };
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await fs.rm(path.join(params.deployRoot, "index.ts"), { force: true });
   await fs.cp(params.deployRoot, params.stagingRoot, {
     recursive: true,
     dereference: true,
@@ -183,9 +188,13 @@ async function deployComponentPackage(params: {
 }
 
 async function createManagedRuntimeBundle(extensionRoot: string) {
+  const manifest = JSON.parse(
+    await fs.readFile(path.join(extensionRoot, "package.json"), "utf8"),
+  ) as { dependencies?: Record<string, string> };
+  const deployedDependencies = new Set(Object.keys(manifest.dependencies ?? {}));
   return await rolldown({
     input: path.join(extensionRoot, "index.ts"),
-    external: (id) => id.startsWith("node:") || (!id.startsWith(".") && !path.isAbsolute(id)),
+    external: (id) => shouldExternalizeManagedRuntimeImport(id, deployedDependencies),
     plugins: [
       {
         name: "fased-managed-runtime-boundary",
@@ -204,6 +213,45 @@ async function createManagedRuntimeBundle(extensionRoot: string) {
       },
     ],
   });
+}
+
+export function shouldExternalizeManagedRuntimeImport(
+  id: string,
+  deployedDependencies: ReadonlySet<string>,
+): boolean {
+  if (id.startsWith("node:") || id === "fased" || id.startsWith("fased/")) {
+    return true;
+  }
+  if (id.startsWith(".") || path.isAbsolute(id)) {
+    return false;
+  }
+  const packageName = id.startsWith("@") ? id.split("/").slice(0, 2).join("/") : id.split("/")[0];
+  return deployedDependencies.has(packageName);
+}
+
+export function assertManagedRuntimeExternalImportsResolvable(params: {
+  entryPath: string;
+  specifiers: Iterable<string>;
+}): void {
+  const resolveFromComponent = createRequire(params.entryPath).resolve;
+  for (const specifier of new Set(params.specifiers)) {
+    if (
+      specifier.startsWith(".") ||
+      path.isAbsolute(specifier) ||
+      specifier.startsWith("node:") ||
+      specifier === "fased" ||
+      specifier.startsWith("fased/")
+    ) {
+      continue;
+    }
+    try {
+      resolveFromComponent(specifier);
+    } catch (error) {
+      throw new Error(`managed component external runtime import is unavailable: ${specifier}`, {
+        cause: error,
+      });
+    }
+  }
 }
 
 function sourceModuleToApplicationPath(moduleId: string): string | null {
@@ -308,7 +356,6 @@ export async function buildHostedComponentPacks(
         await fs.mkdir(path.dirname(deployRoot), { recursive: true });
         await fs.mkdir(stagingParent, { recursive: true });
         const deployDurationMs = await deployComponentPackage({
-          componentId: identity.id,
           extensionRoot,
           packageName: identity.packageName,
           deployRoot,

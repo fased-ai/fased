@@ -192,6 +192,15 @@ describe("hosted component contract", () => {
     expect(artifactSource).toContain(
       "excludedManagedRuntimePaths: managedRuntimeImplementationPaths",
     );
+    const runtimeGraphSource = await fs.readFile(
+      path.join(process.cwd(), "scripts", "build-runtime-graphs.mjs"),
+      "utf8",
+    );
+    expect(runtimeGraphSource).not.toContain('runGraph("sdk")');
+    const tsdownSource = await fs.readFile(path.join(process.cwd(), "tsdown.config.ts"), "utf8");
+    expect(tsdownSource).toContain("pluginSdkEntryMap");
+    expect(tsdownSource).toContain("Object.fromEntries");
+    expect(tsdownSource).toContain("`plugin-sdk/${name}`");
     const rootPackage = JSON.parse(
       await fs.readFile(path.join(process.cwd(), "package.json"), "utf8"),
     ) as { scripts?: Record<string, string>; devDependencies?: Record<string, string> };

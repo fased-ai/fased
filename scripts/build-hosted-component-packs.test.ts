@@ -4,8 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertManagedComponentPackBudget,
+  assertManagedRuntimeExternalImportsResolvable,
   normalizedManagedPluginTreeDigest,
   resolveManagedRuntimeImplementationPaths,
+  shouldExternalizeManagedRuntimeImport,
 } from "./build-hosted-component-packs.js";
 
 const roots: string[] = [];
@@ -21,8 +23,8 @@ describe("managed component pack identity", () => {
       "utf8",
     );
     expect(source).toContain('import { rolldown } from "rolldown"');
-    expect(source).toContain('["browser-runtime", "speech-runtime"]');
-    expect(source).toContain("bundledManagedRuntimeComponents.has(params.componentId)");
+    expect(source).toContain("const bundle = await createManagedRuntimeBundle");
+    expect(source).not.toContain("bundledManagedRuntimeComponents");
     expect(source).toContain('entryFileNames: "index.mjs"');
     expect(source).toContain('extensions: ["./index.mjs"]');
     expect(source).toContain('fs.rm(path.join(params.deployRoot, "index.ts"), { force: true })');
@@ -105,5 +107,48 @@ describe("managed component pack identity", () => {
         usage: { archiveBytes: 10, expandedBytes: 20, tarStreamBytes: 30, entries: 41 },
       }),
     ).toThrow("component pack diagnostics exceeds P6 transaction budgets");
+  });
+
+  it("rejects a bundled component whose external runtime import is not deployed", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-component-imports-"));
+    roots.push(root);
+    const entryPath = path.join(root, "index.mjs");
+    await fs.writeFile(entryPath, "export default {};\n");
+    await fs.mkdir(path.join(root, "node_modules", "declared-runtime"), { recursive: true });
+    await fs.writeFile(
+      path.join(root, "node_modules", "declared-runtime", "package.json"),
+      JSON.stringify({ name: "declared-runtime", version: "1.0.0", main: "index.js" }),
+    );
+    await fs.writeFile(path.join(root, "node_modules", "declared-runtime", "index.js"), "");
+
+    expect(() =>
+      assertManagedRuntimeExternalImportsResolvable({
+        entryPath,
+        specifiers: ["node:fs", "fased/plugin-sdk", "declared-runtime"],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertManagedRuntimeExternalImportsResolvable({
+        entryPath,
+        specifiers: ["missing-runtime/subpath.js"],
+      }),
+    ).toThrow(
+      "managed component external runtime import is unavailable: missing-runtime/subpath.js",
+    );
+  });
+
+  it("bundles undeclared shared dependencies and externalizes deployed pack dependencies", () => {
+    const deployedDependencies = new Set(["acpx", "@line/bot-sdk"]);
+    expect(shouldExternalizeManagedRuntimeImport("node:fs", deployedDependencies)).toBe(true);
+    expect(shouldExternalizeManagedRuntimeImport("fased/plugin-sdk", deployedDependencies)).toBe(
+      true,
+    );
+    expect(shouldExternalizeManagedRuntimeImport("acpx", deployedDependencies)).toBe(true);
+    expect(
+      shouldExternalizeManagedRuntimeImport("@line/bot-sdk/messaging-api", deployedDependencies),
+    ).toBe(true);
+    expect(
+      shouldExternalizeManagedRuntimeImport("@modelcontextprotocol/sdk/server/mcp.js", new Set()),
+    ).toBe(false);
   });
 });
