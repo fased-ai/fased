@@ -4,6 +4,13 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.105
+
+- Bind candidate finalization to the exact downloaded pre-tag P1 evidence path
+  so publication can attest the proven bytes without rebuilding them.
+- Enforce the download-to-finalization receipt path with a focused workflow
+  regression.
+
 ## 0.1.76-rc.104
 
 - Restore frozen dependency setup before candidate finalization so immutable
