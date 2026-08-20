@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"syscall"
@@ -752,7 +753,7 @@ func TestStageAndActivateUseOnlyContentAddressedStorePaths(t *testing.T) {
 	}
 }
 
-func TestActivateAllowsExactSchemaOnePredecessorInventoryWithoutWeakeningTargetPolicy(t *testing.T) {
+func TestRC80LegacyInstalledGenerationContractDoesNotWeakenTargetPolicy(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	installRoot := filepath.Join(root, "install")
@@ -770,7 +771,7 @@ func TestActivateAllowsExactSchemaOnePredecessorInventoryWithoutWeakeningTargetP
 	if err := os.WriteFile(filepath.Join(legacyPayload, "bin", "fased"), []byte("legacy app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	legacyInventory, _, err := bundle.Inspect(legacyPayload, "0.1.76-rc.72", commitA, commitA, stateSchemas, capabilities)
+	legacyInventory, _, err := bundle.Inspect(legacyPayload, "0.1.76-rc.80", commitA, commitA, stateSchemas, capabilities)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -853,6 +854,13 @@ func TestActivateAllowsExactSchemaOnePredecessorInventoryWithoutWeakeningTargetP
 	}
 	if err := os.Symlink(filepath.Join("generations", strings.TrimPrefix(legacyGeneration.ID, "sha256:")), filepath.Join(installRoot, "current")); err != nil {
 		t.Fatal(err)
+	}
+	if _, _, err := store.ReadGenerationContract(legacyGeneration.ID); err == nil || !strings.Contains(err.Error(), "legacy plugin-lock metadata") {
+		t.Fatalf("current-generation reader accepted the rc.80 installed inventory: %v", err)
+	}
+	readInventory, readGeneration, err := store.ReadLegacySchemaOneGenerationContract(legacyGeneration.ID)
+	if err != nil || !reflect.DeepEqual(readInventory, legacyInventory) || readGeneration != legacyGeneration {
+		t.Fatalf("restricted rc.80 installed-generation reader failed: inventory=%+v generation=%+v err=%v", readInventory, readGeneration, err)
 	}
 
 	if err := os.WriteFile(filepath.Join(legacyRoot, generationPayloadName, "bin", "fased-lifecycled"), []byte("substituted"), 0o755); err != nil {

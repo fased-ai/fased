@@ -139,12 +139,12 @@ func verifyEmptyPreP6ManagedPluginNamespace(path string, uid, gid uint32) error 
 
 type schemaOnePluginLockResolver interface {
 	ReadManifest() (model.Manifest, string, error)
-	ReadGenerationContract(string) (bundle.Inventory, model.Generation, error)
+	ReadLegacySchemaOneGenerationContract(string) (bundle.Inventory, model.Generation, error)
 	GenerationPayloadPath(string) (string, error)
 }
 
 func verifiedSchemaOneGenerationPluginLock(generationID string, sourceOwnerUID uint32, resolver schemaOnePluginLockResolver) ([]byte, error) {
-	inventory, generation, err := resolver.ReadGenerationContract(generationID)
+	inventory, generation, err := resolver.ReadLegacySchemaOneGenerationContract(generationID)
 	if err != nil {
 		return nil, fmt.Errorf("verify schema-one active generation contract: %w", err)
 	}
