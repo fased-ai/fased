@@ -339,17 +339,25 @@ async function main(): Promise<void> {
       packageRoot,
       contract: componentContract,
     });
-    const managedRuntimeImplementationPaths = await resolveManagedRuntimeImplementationPaths([
-      "line",
-      "runtime-browser",
-    ]);
-    for (const relative of managedRuntimeImplementationPaths) {
+    const candidateManagedRuntimeImplementationPaths =
+      await resolveManagedRuntimeImplementationPaths(["line", "runtime-browser"]);
+    const managedRuntimeImplementationPaths: string[] = [];
+    for (const relative of candidateManagedRuntimeImplementationPaths) {
       const target = path.join(packageRoot, relative);
-      const stat = await fs.lstat(target);
+      let stat;
+      try {
+        stat = await fs.lstat(target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
       if (!stat.isFile() || stat.isSymbolicLink()) {
         throw new Error(`managed runtime implementation is not a regular file: ${relative}`);
       }
       await fs.rm(target);
+      managedRuntimeImplementationPaths.push(relative);
     }
     const removedExtensions = await retainHostedCoreExtensions({
       extensionsRoot: path.join(packageRoot, "extensions"),

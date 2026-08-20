@@ -192,6 +192,9 @@ describe("hosted component contract", () => {
     expect(artifactSource).toContain(
       "excludedManagedRuntimePaths: managedRuntimeImplementationPaths",
     );
+    expect(artifactSource).toContain("candidateManagedRuntimeImplementationPaths");
+    expect(artifactSource).toContain('code === "ENOENT"');
+    expect(artifactSource).toContain("managedRuntimeImplementationPaths.push(relative)");
     const runtimeGraphSource = await fs.readFile(
       path.join(process.cwd(), "scripts", "build-runtime-graphs.mjs"),
       "utf8",
