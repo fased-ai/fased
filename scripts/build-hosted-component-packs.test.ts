@@ -133,6 +133,11 @@ describe("managed component pack identity", () => {
     );
     expect(pluginLoader).toContain('from "./runtime/factory.js"');
     expect(pluginLoader).not.toContain('from "./runtime/index.js"');
+    const pluginDoctorCli = await fs.readFile(
+      path.join(process.cwd(), "src", "cli", "plugins-doctor-cli.ts"),
+      "utf8",
+    );
+    expect(pluginDoctorCli).toContain("plugins: report.plugins");
     const artifactBuilder = await fs.readFile(
       path.join(process.cwd(), "scripts", "build-hosted-runtime-artifact.ts"),
       "utf8",

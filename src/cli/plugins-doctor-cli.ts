@@ -11,7 +11,12 @@ export async function pluginDoctorCommand(opts: PluginStatusCliOptions = {}): Pr
   if (opts.json) {
     defaultRuntime.log(
       JSON.stringify(
-        { ok: errors.length === 0 && diagnostics.length === 0, errors, diagnostics },
+        {
+          ok: errors.length === 0 && diagnostics.length === 0,
+          plugins: report.plugins,
+          errors,
+          diagnostics,
+        },
         null,
         2,
       ),

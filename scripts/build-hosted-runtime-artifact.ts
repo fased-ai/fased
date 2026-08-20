@@ -481,26 +481,20 @@ async function main(): Promise<void> {
     );
     const pluginDoctor = await run(
       process.execPath,
-      [path.join(packageRoot, "fased.mjs"), "plugins", "doctor"],
+      [path.join(packageRoot, "fased.mjs"), "plugins", "doctor", "--json"],
       packageRoot,
       smokeEnv,
     );
-    const pluginDoctorOutput = `${pluginDoctor.stdout}\n${pluginDoctor.stderr}`;
-    if (!pluginDoctorOutput.includes("No plugin issues detected.")) {
+    const pluginDoctorReport = JSON.parse(pluginDoctor.stdout) as {
+      ok?: unknown;
+      plugins?: Array<{ id?: unknown; status?: unknown }>;
+    };
+    if (pluginDoctorReport.ok !== true) {
+      const pluginDoctorOutput = `${pluginDoctor.stdout}\n${pluginDoctor.stderr}`;
       throw new Error(`Hosted core plugin doctor was not clean.\n${pluginDoctorOutput}`);
     }
-    const enabledPlugins = await run(
-      process.execPath,
-      [path.join(packageRoot, "fased.mjs"), "plugins", "list", "--enabled", "--json"],
-      packageRoot,
-      smokeEnv,
-    );
     const enabledPluginIds =
-      (
-        JSON.parse(enabledPlugins.stdout) as {
-          plugins?: Array<{ id?: unknown; status?: unknown }>;
-        }
-      ).plugins
+      pluginDoctorReport.plugins
         ?.filter((plugin) => plugin.status === "loaded" && typeof plugin.id === "string")
         .map((plugin) => plugin.id as string)
         .toSorted() ?? [];
