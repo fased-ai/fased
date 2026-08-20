@@ -269,6 +269,25 @@ function sourceModuleToApplicationPath(moduleId: string): string | null {
   return path.posix.join("dist", relative.replaceAll(path.sep, "/").replace(/\.tsx?$/u, ".js"));
 }
 
+function isManagedRuntimeImplementationPath(
+  extensionDirectory: "line" | "runtime-browser" | "runtime-speech",
+  applicationPath: string,
+): boolean {
+  if (extensionDirectory === "line") {
+    return applicationPath.startsWith("dist/line/");
+  }
+  if (extensionDirectory === "runtime-browser") {
+    return (
+      applicationPath.startsWith("dist/browser/") ||
+      /^dist\/agents\/tools\/browser-tool(?:\.schema)?\.js$/u.test(applicationPath)
+    );
+  }
+  return (
+    applicationPath.startsWith("dist/tts/") ||
+    /^dist\/agents\/tools\/tts-tool(?:\.schema)?\.js$/u.test(applicationPath)
+  );
+}
+
 /** Exact core dist modules whose implementation bytes are owned by managed packs. */
 export async function resolveManagedRuntimeImplementationPaths(
   extensionDirectories: readonly ("line" | "runtime-browser" | "runtime-speech")[] = [
@@ -290,7 +309,10 @@ export async function resolveManagedRuntimeImplementationPaths(
         }
         for (const moduleId of Object.keys(output.modules)) {
           const applicationPath = sourceModuleToApplicationPath(moduleId);
-          if (applicationPath) {
+          if (
+            applicationPath &&
+            isManagedRuntimeImplementationPath(extensionDirectory, applicationPath)
+          ) {
             paths.add(applicationPath);
           }
         }

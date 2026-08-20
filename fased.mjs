@@ -51,8 +51,13 @@ const tryImport = async (specifier) => {
     await import(specifier);
     return true;
   } catch (err) {
-    // Only swallow missing-module errors; rethrow real runtime errors.
-    if (isModuleNotFoundError(err)) {
+    // Only swallow the exact missing entrypoint. A missing transitive module is
+    // a packaging error and must retain its actionable module identity.
+    if (
+      isModuleNotFoundError(err) &&
+      "url" in err &&
+      err.url === new URL(specifier, import.meta.url).href
+    ) {
       return false;
     }
     throw err;

@@ -84,6 +84,8 @@ describe("managed component pack identity", () => {
     expect(paths).not.toContain("dist/browser/paths.js");
     expect(paths).not.toContain("dist/browser/proxy-files.js");
     expect(paths).not.toContain("dist/tts/tts.js");
+    expect(paths).not.toContain("dist/infra/home-dir.js");
+    expect(paths).not.toContain("dist/plugins/discovery.js");
   });
 
   it("derives LINE implementation paths while retaining shared core facades", async () => {
@@ -112,6 +114,7 @@ describe("managed component pack identity", () => {
     const launcher = await fs.readFile(path.join(process.cwd(), "fased.mjs"), "utf8");
     expect(launcher).toContain('arg === "--version" || arg === "-V"');
     expect(launcher).toContain('await import("./package.json", { with: { type: "json" } })');
+    expect(launcher).toContain("err.url === new URL(specifier, import.meta.url).href");
     const pluginSdk = await fs.readFile(
       path.join(process.cwd(), "src", "plugin-sdk", "index.ts"),
       "utf8",
