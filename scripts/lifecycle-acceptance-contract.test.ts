@@ -614,6 +614,15 @@ describe("lifecycle acceptance contract", () => {
     expect(wrapper).toContain(".performance.installBudgetMs == 60000");
     expect(wrapper).toContain(".performance.noopBudgetMs == 5000");
     expect(wrapper).toContain("managed plugin transaction receipt verified");
+    expect(wrapper).toContain(
+      'if [[ "$MANAGED_PREDECESSOR_CLASS" == "public-stable" ]]; then\n' +
+        '      plugin_receipt="$receipt.plugins"',
+    );
+    expect(wrapper).toContain(
+      "printf 'managed plugin transaction receipt verified: %s\\n' \"$plugin_receipt\"\n" +
+        "    fi\n" +
+        '    if ! run_container exec "$name" /bin/bash',
+    );
   });
 
   it("restores the protected Local system command ancestry after Node extraction", () => {

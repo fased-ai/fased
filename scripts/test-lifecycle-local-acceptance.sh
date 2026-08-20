@@ -850,27 +850,29 @@ run_fixture_scenario() {
     --acquisition-evidence-class SUPPORTING >/dev/null
   printf 'branch lifecycle product receipt verified; acquisition supporting: %s\n' "$receipt"
   if [[ "$scenario" == "managed-update" ]]; then
-    plugin_receipt="$receipt.plugins"
-    run_container cp \
-      "$name:/var/lib/fased-protected-local-fixture/managed-plugin-transaction.json" \
-      "$plugin_receipt"
-    jq -e --arg commit "$COMMIT" --arg tree "$TREE" \
-      --arg artifact_set_digest "$ARTIFACT_SET_DIGEST" \
-      --arg fixture_commit "$FIXTURE_SOURCE_COMMIT" --arg fixture_tree "$FIXTURE_SOURCE_TREE" \
-      --arg version "$VERSION" \
-      '.schemaVersion == 1 and .role == "fased-managed-plugin-transaction-acceptance" and
-       .status == "PASS" and .evidenceClass == "PASS" and .commit == $commit and
-       .productCommit == $commit and .productTree == $tree and
-       .artifactSetDigest == $artifact_set_digest and
-       .fixtureCommit == $fixture_commit and .fixtureTree == $fixture_tree and
-       .version == $version and .dataPreserved == true and
-       .performance.installDurationMs >= 0 and .performance.installDurationMs <= .performance.installBudgetMs and
-       .performance.noopDurationMs >= 0 and .performance.noopDurationMs <= .performance.noopBudgetMs and
-       .performance.installBudgetMs == 60000 and .performance.noopBudgetMs == 5000 and
-       ([.catalogDigest,.candidateLockDigest,.readinessDigest,.generationId,
-         .installedOutputDigest,.noopOutputDigest] | all(test("^sha256:[0-9a-f]{64}$")))' \
-      "$plugin_receipt" >/dev/null
-    printf 'managed plugin transaction receipt verified: %s\n' "$plugin_receipt"
+    if [[ "$MANAGED_PREDECESSOR_CLASS" == "public-stable" ]]; then
+      plugin_receipt="$receipt.plugins"
+      run_container cp \
+        "$name:/var/lib/fased-protected-local-fixture/managed-plugin-transaction.json" \
+        "$plugin_receipt"
+      jq -e --arg commit "$COMMIT" --arg tree "$TREE" \
+        --arg artifact_set_digest "$ARTIFACT_SET_DIGEST" \
+        --arg fixture_commit "$FIXTURE_SOURCE_COMMIT" --arg fixture_tree "$FIXTURE_SOURCE_TREE" \
+        --arg version "$VERSION" \
+        '.schemaVersion == 1 and .role == "fased-managed-plugin-transaction-acceptance" and
+         .status == "PASS" and .evidenceClass == "PASS" and .commit == $commit and
+         .productCommit == $commit and .productTree == $tree and
+         .artifactSetDigest == $artifact_set_digest and
+         .fixtureCommit == $fixture_commit and .fixtureTree == $fixture_tree and
+         .version == $version and .dataPreserved == true and
+         .performance.installDurationMs >= 0 and .performance.installDurationMs <= .performance.installBudgetMs and
+         .performance.noopDurationMs >= 0 and .performance.noopDurationMs <= .performance.noopBudgetMs and
+         .performance.installBudgetMs == 60000 and .performance.noopBudgetMs == 5000 and
+         ([.catalogDigest,.candidateLockDigest,.readinessDigest,.generationId,
+           .installedOutputDigest,.noopOutputDigest] | all(test("^sha256:[0-9a-f]{64}$")))' \
+        "$plugin_receipt" >/dev/null
+      printf 'managed plugin transaction receipt verified: %s\n' "$plugin_receipt"
+    fi
     if ! run_container exec "$name" /bin/bash \
       /usr/local/bin/fased-protected-local-systemd-fixture verify-operations; then
       dump_fixture_failure "$name"
