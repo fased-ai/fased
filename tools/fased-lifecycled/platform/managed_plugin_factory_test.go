@@ -78,7 +78,7 @@ func TestRC80SchemaOneCoreTransitionImportsOnlyExactVerifiedGenerationPluginLock
 	generationID := "sha256:720f0837856f8dfa05225e61fa0fc0cdbe921523d28686f1091e7831d63dc10b"
 	resolver := schemaOnePluginLockFixtureResolver{
 		inventory:  bundle.Inventory{PluginLockDigest: digest},
-		generation: model.Generation{ID: generationID, Version: "0.1.76-rc.80", Commit: "ceb0e98275fc00aebbbb8200207012080313e51c", Tree: "3c264f16995f04629a13c73bc1c0899221b8a195"},
+		generation: model.Generation{ID: generationID, Version: "0.1.76-rc.80", Commit: "ceb0e98275fc00aebbbb8200207012080313e51c", Tree: "3c264f16995f04629a13c73bc1c0899221b8a195"}, // pragma: allowlist secret
 		payload:    payload,
 	}
 	config := Config{OwnerStateRoot: ownerRoot, Operator: Principal{UID: uid, GID: gid}}
