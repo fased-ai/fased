@@ -24,7 +24,7 @@ describe("config pruning defaults", () => {
     });
   });
 
-  it("enables cache-ttl pruning + 1h heartbeat for Anthropic OAuth", async () => {
+  it("enables cache-ttl pruning without implicitly enabling heartbeats for Anthropic OAuth", async () => {
     await withTempHome(async (home) => {
       await writeConfigForTest(home, {
         auth: {
@@ -39,7 +39,7 @@ describe("config pruning defaults", () => {
 
       expect(cfg.agents?.defaults?.contextPruning?.mode).toBe("cache-ttl");
       expect(cfg.agents?.defaults?.contextPruning?.ttl).toBe("1h");
-      expect(cfg.agents?.defaults?.heartbeat?.every).toBe("1h");
+      expect(cfg.agents?.defaults?.heartbeat).toBeUndefined();
     });
   });
 
@@ -62,7 +62,7 @@ describe("config pruning defaults", () => {
 
       expect(cfg.agents?.defaults?.contextPruning?.mode).toBe("cache-ttl");
       expect(cfg.agents?.defaults?.contextPruning?.ttl).toBe("1h");
-      expect(cfg.agents?.defaults?.heartbeat?.every).toBe("30m");
+      expect(cfg.agents?.defaults?.heartbeat).toBeUndefined();
       expect(
         cfg.agents?.defaults?.models?.["anthropic/claude-opus-4-5"]?.params?.cacheRetention,
       ).toBe("short");

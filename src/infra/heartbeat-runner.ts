@@ -118,10 +118,17 @@ function hasExplicitHeartbeatAgents(cfg: FasedAgentConfig) {
   return list.some((entry) => Boolean(entry?.heartbeat));
 }
 
+function hasConfiguredHeartbeat(cfg: FasedAgentConfig) {
+  return Boolean(cfg.agents?.defaults?.heartbeat) || hasExplicitHeartbeatAgents(cfg);
+}
+
 export function isHeartbeatEnabledForAgent(cfg: FasedAgentConfig, agentId?: string): boolean {
   const resolvedAgentId = normalizeAgentId(agentId ?? resolveDefaultAgentId(cfg));
   const list = cfg.agents?.list ?? [];
   const hasExplicit = hasExplicitHeartbeatAgents(cfg);
+  if (!hasConfiguredHeartbeat(cfg)) {
+    return false;
+  }
   if (hasExplicit) {
     return list.some(
       (entry) => Boolean(entry?.heartbeat) && normalizeAgentId(entry?.id) === resolvedAgentId,
@@ -195,6 +202,9 @@ export function resolveHeartbeatSummaryForAgent(
 
 function resolveHeartbeatAgents(cfg: FasedAgentConfig): HeartbeatAgent[] {
   const list = cfg.agents?.list ?? [];
+  if (!hasConfiguredHeartbeat(cfg)) {
+    return [];
+  }
   if (hasExplicitHeartbeatAgents(cfg)) {
     return list
       .filter((entry) => entry?.heartbeat)

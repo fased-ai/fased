@@ -58,7 +58,11 @@ function assertTaskLedgerWriterAvailable(): void {
   }
 }
 
-export type TaskDefinitionCollection = "task_flow" | "standing_order" | "workflow_definition";
+export type TaskDefinitionCollection =
+  | "cron_store"
+  | "task_flow"
+  | "standing_order"
+  | "workflow_definition";
 
 export type TaskDefinitionRecord<T> = {
   collection: TaskDefinitionCollection;

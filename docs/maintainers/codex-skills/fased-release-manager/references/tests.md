@@ -2,6 +2,16 @@
 
 Read this file only to select validation or ship a fix.
 
+## Codex harness validator
+
+For the global harness, this skill, or the installed Local acceptance runner,
+run the single deterministic validator:
+
+`node /home/fc/fasedbot/docs/ops/maintenance/git_manage/codex/scripts/validate-codex-harness.mjs --fased-root /home/fc/fasedbot/fased`
+
+Use `--canonical-only` before synchronizing home configuration. The full form
+must pass afterward; separate greps are not a substitute.
+
 ## Selection
 
 Run the smallest test that can fail for the changed predicate, directly coupled

@@ -19,6 +19,10 @@ const TASKS_DIR = "tasks";
 export type DefinitionCollectionAdapter<T> = {
   collection: TaskDefinitionCollection;
   legacyFileName: string;
+  databasePath?: () => string;
+  legacyPath?: () => string;
+  parseLegacy?: (bytes: string) => unknown;
+  malformedLegacyMessage?: string;
   sanitizeLegacy: (raw: unknown) => T[];
   identity: (record: T) => { scopeKey: string; recordId: string; updatedAt: number };
 };
@@ -49,15 +53,17 @@ export function closeTaskDefinitionLedgerForLifecycle(): void {
   checkpointAndCloseCachedLedgerForLifecycle();
 }
 
-function ledger(): TaskLedgerStore {
-  const databasePath = resolveTaskLedgerPath();
+function ledger(adapter?: DefinitionCollectionAdapter<unknown>): TaskLedgerStore {
+  const databasePath = adapter?.databasePath?.() ?? resolveTaskLedgerPath();
   if (cachedLedger && loadedLedgerPath === databasePath) {
     return cachedLedger;
   }
   closeCachedLedger();
   initializeTaskLedger({
     databasePath,
-    legacyPath: resolveTaskRegistryPath(),
+    legacyPath: adapter?.databasePath
+      ? path.join(path.dirname(databasePath), "tasks.json")
+      : resolveTaskRegistryPath(),
     sanitizeLegacy: (raw) => sanitizeTaskRegistryStore(raw).tasks,
   });
   cachedLedger = openTaskLedgerStore(databasePath);
@@ -66,7 +72,7 @@ function ledger(): TaskLedgerStore {
 }
 
 function legacyPath(adapter: DefinitionCollectionAdapter<unknown>): string {
-  return path.join(resolveStateDir(), TASKS_DIR, adapter.legacyFileName);
+  return adapter.legacyPath?.() ?? path.join(resolveStateDir(), TASKS_DIR, adapter.legacyFileName);
 }
 
 function importedRecords<T>(
@@ -84,7 +90,7 @@ function importedRecords<T>(
  * legacy-file read so post-import operational calls never dual-read JSON.
  */
 export function ensureTaskDefinitionCollection<T>(adapter: DefinitionCollectionAdapter<T>): void {
-  const store = ledger();
+  const store = ledger(adapter as DefinitionCollectionAdapter<unknown>);
   if (store.isDefinitionCollectionImported(adapter.collection)) {
     return;
   }
@@ -92,16 +98,15 @@ export function ensureTaskDefinitionCollection<T>(adapter: DefinitionCollectionA
   let records: T[] = [];
   try {
     const bytes = fs.readFileSync(filePath, "utf8");
-    records = adapter.sanitizeLegacy(JSON.parse(bytes));
+    records = adapter.sanitizeLegacy((adapter.parseLegacy ?? JSON.parse)(bytes));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       records = [];
     } else {
       throw new Error(
-        `Task definition legacy import failed: ${adapter.legacyFileName} is malformed`,
-        {
-          cause: err,
-        },
+        adapter.malformedLegacyMessage ??
+          `Task definition legacy import failed: ${adapter.legacyFileName} is malformed`,
+        { cause: err },
       );
     }
   }
@@ -112,7 +117,9 @@ export function listTaskDefinitionRecords<T>(
   adapter: DefinitionCollectionAdapter<T>,
 ): TaskDefinitionRecord<T>[] {
   ensureTaskDefinitionCollection(adapter);
-  return ledger().listDefinitionRecords<T>(adapter.collection);
+  return ledger(adapter as DefinitionCollectionAdapter<unknown>).listDefinitionRecords<T>(
+    adapter.collection,
+  );
 }
 
 export function updateTaskDefinitionRecord<T>(
@@ -122,7 +129,7 @@ export function updateTaskDefinitionRecord<T>(
   update: (current: T | undefined) => T | undefined,
 ): T | undefined {
   ensureTaskDefinitionCollection(adapter);
-  return ledger().updateDefinitionRecord(
+  return ledger(adapter as DefinitionCollectionAdapter<unknown>).updateDefinitionRecord(
     adapter.collection,
     scopeKey,
     recordId,
@@ -136,7 +143,10 @@ export function replaceTaskDefinitionCollection<T>(
   records: T[],
 ): void {
   ensureTaskDefinitionCollection(adapter);
-  ledger().replaceDefinitionCollection(adapter.collection, importedRecords(adapter, records));
+  ledger(adapter as DefinitionCollectionAdapter<unknown>).replaceDefinitionCollection(
+    adapter.collection,
+    importedRecords(adapter, records),
+  );
 }
 
 /** Test reset hooks close a path-bound handle so a changed FASED_STATE_DIR cannot leak state. */

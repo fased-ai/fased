@@ -792,6 +792,7 @@ Environment=FASED_PLUGIN_LOCK_PATH=%s/plugin.lock.json
 Environment=FASED_GENERATION_ID=%s
 Environment=FASED_MANAGED_RUNTIME_ROOT=%s/runtime
 Environment=FASED_GATEWAY_MODE=managed
+Environment=FASED_GATEWAY_FAST_START=1
 Environment=FASED_MANAGED_INTERNAL=1
 Environment=FASED_GATEWAY_SERVICE=1
 Environment=FASED_RUNTIME_SOURCE=go-lifecycle
@@ -847,7 +848,7 @@ func (adapter *TargetAdapter) renderTargetLaunchdPlists(payload string, target m
 		"FASED_PLUGIN_READINESS_PATH":    filepath.Join(adapter.Config.OwnerStateRoot, "cache/plugin-readiness.json"),
 		"FASED_PLUGIN_CODE_ROOT":         filepath.Join(adapter.Config.InstallRoot, "plugin-code"), "FASED_PLUGIN_DATA_ROOT": filepath.Join(adapter.Config.OwnerStateRoot, "plugin-data"),
 		"FASED_PLUGIN_LOCK_PATH": filepath.Join(adapter.Config.OwnerStateRoot, "plugin.lock.json"), "FASED_GENERATION_ID": target.ID,
-		"FASED_MANAGED_RUNTIME_ROOT": filepath.Join(payload, "runtime"), "FASED_GATEWAY_MODE": "managed", "FASED_MANAGED_INTERNAL": "1",
+		"FASED_MANAGED_RUNTIME_ROOT": filepath.Join(payload, "runtime"), "FASED_GATEWAY_MODE": "managed", "FASED_GATEWAY_FAST_START": "1", "FASED_MANAGED_INTERNAL": "1",
 		"FASED_GATEWAY_SERVICE": "1", "FASED_RUNTIME_SOURCE": "go-lifecycle", "FASED_VERSION": target.Version, "FASED_HOST_PROFILE": "local",
 		"FASED_PROTECTED_LOCAL": "1", "FASED_PROTECTED_LOCAL_INSTANCE": adapter.Config.InstanceID, "FASED_GATEWAY_PORT": fmt.Sprint(adapter.Config.GatewayPort),
 		"FASED_WALLET_LOCAL_SIGNER_SOCKET": adapter.Config.ApplicationSocket(), "FASED_WALLET_LOCAL_SIGNER_LIFECYCLE": "external", "FASED_WALLET_SIGNER_STATE_DIR": signerState,

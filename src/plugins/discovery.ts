@@ -636,6 +636,37 @@ function discoverFromPath(params: {
   }
 }
 
+function discoverBundledLockEntry(params: {
+  entry: PluginLockEntry;
+  bundledRoot: string;
+  ownershipUid?: number | null;
+  candidates: PluginCandidate[];
+  diagnostics: PluginDiagnostic[];
+  seen: Set<string>;
+}) {
+  const rootDir = path.join(params.bundledRoot, params.entry.id);
+  const manifest = loadPluginManifest(rootDir);
+  if (!manifest.ok || manifest.manifest.id !== params.entry.id) {
+    params.diagnostics.push({
+      level: "error",
+      pluginId: params.entry.id,
+      source: manifest.manifestPath,
+      message: manifest.ok
+        ? `bundled plugin identity rejected: lock entry "${params.entry.id}" exports "${manifest.manifest.id}"`
+        : `bundled plugin lock entry is unavailable: ${manifest.error}`,
+    });
+    return;
+  }
+  discoverFromPath({
+    rawPath: rootDir,
+    origin: "bundled",
+    ownershipUid: params.ownershipUid,
+    candidates: params.candidates,
+    diagnostics: params.diagnostics,
+    seen: params.seen,
+  });
+}
+
 /**
  * A managed store digest is a single runtime trust boundary.  Unlike ordinary
  * extension discovery, it may not fan out into several entries, nor may it
@@ -854,14 +885,28 @@ export function discoverFasedAgentPlugins(params: {
 
   const bundledDir = resolveBundledPluginsDir();
   if (bundledDir) {
-    discoverInDirectory({
-      dir: bundledDir,
-      origin: "bundled",
-      ownershipUid: params.ownershipUid,
-      candidates,
-      diagnostics,
-      seen,
-    });
+    const bundledLockEntries = managedLock?.entries.filter((entry) => entry.origin === "bundled");
+    if (bundledLockEntries) {
+      for (const entry of bundledLockEntries) {
+        discoverBundledLockEntry({
+          entry,
+          bundledRoot: bundledDir,
+          ownershipUid: params.ownershipUid,
+          candidates,
+          diagnostics,
+          seen,
+        });
+      }
+    } else {
+      discoverInDirectory({
+        dir: bundledDir,
+        origin: "bundled",
+        ownershipUid: params.ownershipUid,
+        candidates,
+        diagnostics,
+        seen,
+      });
+    }
   }
 
   return { candidates, diagnostics, managedLock, managedCodeRoot };

@@ -377,6 +377,7 @@ func TestTargetAdapterStagesStartsVerifiesAndCommitsCanonicalServices(t *testing
 		!strings.Contains(combined, "Environment=HOME="+adapter.Config.OwnerHome()) ||
 		!strings.Contains(combined, "Environment=FASED_PLUGIN_STATUS_CACHE_PATH="+filepath.Join(adapter.Config.OwnerStateRoot, "cache", "plugin-status.json")) ||
 		!strings.Contains(combined, "Environment=FASED_VERSION=0.1.76") ||
+		!strings.Contains(combined, "Environment=FASED_GATEWAY_FAST_START=1") ||
 		!strings.Contains(combined, "Environment=FASED_HOST_PROFILE=local") ||
 		!strings.Contains(combined, "Environment=FASED_WALLET_LOCAL_SIGNER_LIFECYCLE=external") ||
 		!strings.Contains(combined, "Environment=FASED_WALLET_SIGNER_STATE_DIR="+adapter.Config.SignerStateRoot()) ||

@@ -431,21 +431,12 @@ export function applyContextPruningDefaults(cfg: FasedAgentConfig): FasedAgentCo
   let mutated = false;
   const nextDefaults = { ...defaults };
   const contextPruning = defaults.contextPruning ?? {};
-  const heartbeat = defaults.heartbeat ?? {};
 
   if (defaults.contextPruning?.mode === undefined) {
     nextDefaults.contextPruning = {
       ...contextPruning,
       mode: "cache-ttl",
       ttl: defaults.contextPruning?.ttl ?? "1h",
-    };
-    mutated = true;
-  }
-
-  if (defaults.heartbeat?.every === undefined) {
-    nextDefaults.heartbeat = {
-      ...heartbeat,
-      every: authMode === "oauth" ? "1h" : "30m",
     };
     mutated = true;
   }

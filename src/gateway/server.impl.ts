@@ -109,6 +109,7 @@ import {
   createSessionEventSubscriberRegistry,
   createSessionMessageSubscriberRegistry,
 } from "./session-event-subscribers.js";
+import { isGatewayDiscoveryConfigured } from "./startup-selection.js";
 
 export { __resetModelCatalogCacheForTest } from "./server-model-catalog.js";
 
@@ -669,7 +670,7 @@ async function startGatewayServerInternal(
       getRuntimeSnapshot,
     });
 
-  if (!minimalTestGateway) {
+  if (!minimalTestGateway && isGatewayDiscoveryConfigured(cfgAtStart)) {
     const discovery = await startupTrace.measure("discovery.start", async () => {
       const machineDisplayName = await getMachineDisplayName();
       return startGatewayDiscovery({
@@ -903,35 +904,6 @@ async function startGatewayServerInternal(
   let federationAutoConnect: ReturnType<
     typeof import("../federation/auto-connect.js").startFederationAutoConnect
   > = null;
-  if (!minimalTestGateway) {
-    const sidecars = await startupTrace.measure("sidecars.start", () =>
-      startGatewaySidecars({
-        cfg: cfgAtStart,
-        pluginRegistry,
-        defaultWorkspaceDir,
-        deps,
-        startChannels,
-        log,
-        logHooks,
-        logChannels,
-        logBrowser,
-      }),
-    );
-    browserControl = sidecars.browserControl;
-    pluginServices = sidecars.pluginServices;
-    federationAutoConnect = sidecars.federationAutoConnect;
-    finalizeGatewayPluginStatus({ registry: pluginRegistry, log });
-  }
-
-  // Run gateway_start plugin hook (fire-and-forget)
-  if (!minimalTestGateway) {
-    const hookRunner = getGlobalHookRunner();
-    if (hookRunner?.hasHooks("gateway_start")) {
-      void hookRunner.runGatewayStart({ port }, { port }).catch((err) => {
-        log.warn(`gateway_start hook failed: ${String(err)}`);
-      });
-    }
-  }
 
   const configReloader = minimalTestGateway
     ? { stop: async () => {} }
@@ -1001,6 +973,36 @@ async function startGatewayServerInternal(
 
   ensureTaskLedgerQuiesceCapability();
   gatewayReadiness.markReady();
+
+  // Core is now ready. Configured optional components load after the HTTP/auth,
+  // signer, plugin-lock, and task-ledger boundaries have passed.
+  if (!minimalTestGateway) {
+    const sidecars = await startupTrace.measure("sidecars.start", () =>
+      startGatewaySidecars({
+        cfg: cfgAtStart,
+        pluginRegistry,
+        defaultWorkspaceDir,
+        deps,
+        startChannels,
+        log,
+        logHooks,
+        logChannels,
+        logBrowser,
+      }),
+    );
+    browserControl = sidecars.browserControl;
+    pluginServices = sidecars.pluginServices;
+    federationAutoConnect = sidecars.federationAutoConnect;
+    finalizeGatewayPluginStatus({ registry: pluginRegistry, log });
+
+    // Run gateway_start plugin hook after plugin services have started.
+    const hookRunner = getGlobalHookRunner();
+    if (hookRunner?.hasHooks("gateway_start")) {
+      void hookRunner.runGatewayStart({ port }, { port }).catch((err) => {
+        log.warn(`gateway_start hook failed: ${String(err)}`);
+      });
+    }
+  }
   startupTrace.logSummary(log);
 
   const close = createGatewayCloseHandler({
