@@ -7,7 +7,7 @@ import {
   resolveConfiguredModelRef,
   resolveModelRefFromString,
 } from "../agents/model-selection.js";
-import { resolveSandboxRuntimeStatus } from "../agents/sandbox.js";
+import { resolveSandboxRuntimeStatus } from "../agents/sandbox/runtime-status.js";
 import type { SkillCommandSpec } from "../agents/skills.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../agents/usage.js";
 import { resolveChannelModelOverride } from "../channels/model-overrides.js";

@@ -60,7 +60,7 @@ import {
   resolveToolLoopDetectionConfig,
 } from "../../pi-tools.js";
 import { registerProviderStreamForModel } from "../../provider-stream.js";
-import { resolveSandboxContext } from "../../sandbox.js";
+import { resolveSandboxContext } from "../../sandbox/context.js";
 import { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
 import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
 import { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";

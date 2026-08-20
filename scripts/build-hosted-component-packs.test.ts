@@ -127,6 +127,99 @@ describe("managed component pack identity", () => {
       'import { registerWalletCommands } from "./register.wallet.js"',
     );
     expect(commandRegistry).toContain('await import("./register.wallet.js")');
+    const fasedTools = await fs.readFile(
+      path.join(process.cwd(), "src", "agents", "fased-tools.ts"),
+      "utf8",
+    );
+    expect(fasedTools).not.toContain('from "./tools/browser-tool.js"');
+    const browserRuntime = await fs.readFile(
+      path.join(process.cwd(), "extensions", "runtime-browser", "index.ts"),
+      "utf8",
+    );
+    expect(browserRuntime).toContain("api.registerTool(createBrowserTool(), { optional: true })");
+    const gatewayServer = await fs.readFile(
+      path.join(process.cwd(), "src", "gateway", "server.impl.ts"),
+      "utf8",
+    );
+    expect(gatewayServer).toContain('import("../infra/heartbeat-runner.js")');
+    expect(gatewayServer).not.toContain(
+      'import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js"',
+    );
+    expect(gatewayServer).toContain('import("../wizard/onboarding.js")');
+    expect(gatewayServer).not.toContain('from "../wizard/onboarding.js"');
+    const gatewayCron = await fs.readFile(
+      path.join(process.cwd(), "src", "gateway", "server-cron.ts"),
+      "utf8",
+    );
+    expect(gatewayCron).toContain('import("../infra/heartbeat-runner.js")');
+    expect(gatewayCron).not.toContain('from "../infra/heartbeat-runner.js"');
+    const healthCommand = await fs.readFile(
+      path.join(process.cwd(), "src", "commands", "health.ts"),
+      "utf8",
+    );
+    expect(healthCommand).toContain('from "../infra/heartbeat-summary.js"');
+    const statusSummary = await fs.readFile(
+      path.join(process.cwd(), "src", "commands", "status.summary.ts"),
+      "utf8",
+    );
+    expect(statusSummary).toContain('from "../infra/heartbeat-summary.js"');
+    const systemMethods = await fs.readFile(
+      path.join(process.cwd(), "src", "gateway", "server-methods", "system.ts"),
+      "utf8",
+    );
+    expect(systemMethods).toContain('import("../../infra/heartbeat-runner.js")');
+    expect(systemMethods).not.toContain('from "../../infra/heartbeat-runner.js"');
+    const gatewayHealth = await fs.readFile(
+      path.join(process.cwd(), "src", "gateway", "server-methods", "health.ts"),
+      "utf8",
+    );
+    expect(gatewayHealth).toContain('from "../../commands/status.summary.js"');
+    const embeddedErrors = await fs.readFile(
+      path.join(process.cwd(), "src", "agents", "pi-embedded-helpers", "errors.ts"),
+      "utf8",
+    );
+    expect(embeddedErrors).toContain('from "../sandbox/runtime-status.js"');
+    const sandboxContext = await fs.readFile(
+      path.join(process.cwd(), "src", "agents", "sandbox", "context.ts"),
+      "utf8",
+    );
+    expect(sandboxContext).toContain('import("./browser.js")');
+    expect(sandboxContext).not.toContain('from "./browser.js"');
+    const sandboxPrune = await fs.readFile(
+      path.join(process.cwd(), "src", "agents", "sandbox", "prune.ts"),
+      "utf8",
+    );
+    expect(sandboxPrune).toContain('await import("../../browser/bridge-server.js")');
+    expect(sandboxPrune).not.toContain('from "../../browser/bridge-server.js"');
+    const compactRunner = await fs.readFile(
+      path.join(process.cwd(), "src", "agents", "pi-embedded-runner", "compact.ts"),
+      "utf8",
+    );
+    expect(compactRunner).toContain('from "../sandbox/context.js"');
+    const attemptRunner = await fs.readFile(
+      path.join(process.cwd(), "src", "agents", "pi-embedded-runner", "run", "attempt.ts"),
+      "utf8",
+    );
+    expect(attemptRunner).toContain('from "../../sandbox/context.js"');
+    const autoReplyStatus = await fs.readFile(
+      path.join(process.cwd(), "src", "auto-reply", "status.ts"),
+      "utf8",
+    );
+    expect(autoReplyStatus).toContain('from "../agents/sandbox/runtime-status.js"');
+    for (const replyFile of [
+      "get-reply-directives.ts",
+      "bash-command.ts",
+      "directive-handling.impl.ts",
+      "commands-system-prompt.ts",
+      "agent-runner-memory.ts",
+      "stage-sandbox-media.ts",
+    ]) {
+      const replySource = await fs.readFile(
+        path.join(process.cwd(), "src", "auto-reply", "reply", replyFile),
+        "utf8",
+      );
+      expect(replySource).not.toContain('from "../../agents/sandbox.js"');
+    }
     const pluginLoader = await fs.readFile(
       path.join(process.cwd(), "src", "plugins", "loader.ts"),
       "utf8",

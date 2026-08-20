@@ -1,6 +1,6 @@
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
 import type { ModelAliasIndex } from "../../agents/model-selection.js";
-import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
+import { resolveSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
 import type { SkillCommandSpec } from "../../agents/skills.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";

@@ -21,7 +21,7 @@ import { formatErrorMessage } from "../infra/errors.js";
 import {
   type HeartbeatSummary,
   resolveHeartbeatSummaryForAgent,
-} from "../infra/heartbeat-runner.js";
+} from "../infra/heartbeat-summary.js";
 import { getTailnetHostname, getTailscaleBinary } from "../infra/tailscale.js";
 import { runExec } from "../process/exec.js";
 import { buildChannelAccountBindings, resolvePreferredAccountId } from "../routing/bindings.js";

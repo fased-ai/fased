@@ -28,7 +28,6 @@ import { resolveTaskModelRole, taskExplicitModelRef } from "../cron/task-model-r
 import type { CronJob, CronTaskAccessBlock } from "../cron/types.js";
 import { normalizeHttpWebhookUrl } from "../cron/webhook-url.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 import { SsrFBlockedError } from "../infra/net/ssrf.js";
@@ -286,6 +285,7 @@ export function buildGatewayCronService(params: {
     },
     runHeartbeatOnce: async (opts) => {
       const { runtimeConfig, agentId, sessionKey } = resolveCronWakeTarget(opts);
+      const { runHeartbeatOnce } = await import("../infra/heartbeat-runner.js");
       return await runHeartbeatOnce({
         cfg: runtimeConfig,
         reason: opts?.reason,

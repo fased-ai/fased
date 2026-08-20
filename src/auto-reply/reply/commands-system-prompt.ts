@@ -4,7 +4,7 @@ import { resolveBootstrapContextForRun } from "../../agents/bootstrap-files.js";
 import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import type { EmbeddedContextFile } from "../../agents/pi-embedded-helpers.js";
 import { createFasedAgentCodingTools } from "../../agents/pi-tools.js";
-import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
+import { resolveSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
 import { buildWorkspaceSkillSnapshot } from "../../agents/skills.js";
 import { getSkillsSnapshotVersion } from "../../agents/skills/refresh.js";
 import { buildSystemPromptParams } from "../../agents/system-prompt-params.js";

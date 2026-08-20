@@ -27,7 +27,7 @@ import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
 import { logAcceptedEnvOption } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
-import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
+import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureFasedAgentCliOnPath } from "../infra/path-env.js";
 import { setGatewaySigusr1RestartPolicy, setPreRestartDeferralCheck } from "../infra/restart.js";
@@ -53,7 +53,6 @@ import { ensureTaskLedgerQuiesceCapability } from "../tasks/task-ledger-quiesce.
 import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import { resolveWalletRuntimeConfig } from "../wallet/wallet-runtime-config.js";
-import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
 import { ControlUiLoginService, resolveControlUiPublicHost } from "./control-ui-login.js";
@@ -111,6 +110,50 @@ import {
 import { isGatewayDiscoveryConfigured } from "./startup-selection.js";
 
 export { __resetModelCatalogCacheForTest } from "./server-model-catalog.js";
+
+function hasConfiguredHeartbeat(cfg: ReturnType<typeof loadConfig>): boolean {
+  return (
+    Boolean(cfg.agents?.defaults?.heartbeat) ||
+    (cfg.agents?.list ?? []).some((agent) => Boolean(agent.heartbeat))
+  );
+}
+
+async function createLazyHeartbeatRunner(
+  cfg: ReturnType<typeof loadConfig>,
+): Promise<HeartbeatRunner> {
+  let active: HeartbeatRunner | null = null;
+  let stopped = false;
+  let starting: Promise<void> | null = null;
+  const ensureStarted = (nextConfig: ReturnType<typeof loadConfig>): Promise<void> => {
+    if (stopped || active || !hasConfiguredHeartbeat(nextConfig)) {
+      return Promise.resolve();
+    }
+    starting ??= import("../infra/heartbeat-runner.js")
+      .then((mod) => {
+        if (!stopped && !active) {
+          active = mod.startHeartbeatRunner({ cfg: nextConfig });
+        }
+      })
+      .finally(() => {
+        starting = null;
+      });
+    return starting;
+  };
+  await ensureStarted(cfg);
+  return {
+    stop: () => {
+      stopped = true;
+      active?.stop();
+    },
+    updateConfig: (nextConfig) => {
+      if (active) {
+        active.updateConfig(nextConfig);
+        return;
+      }
+      void ensureStarted(nextConfig);
+    },
+  };
+}
 
 const { createAdapter: createWalletProviderAdapter, resolveId: resolveWalletProviderId } =
   walletProviderFacade;
@@ -521,7 +564,12 @@ async function startGatewayServerInternal(
     }
   });
 
-  const wizardRunner = opts.wizardRunner ?? runOnboardingWizard;
+  const wizardRunner =
+    opts.wizardRunner ??
+    (async (wizardOpts, runtime, prompter) => {
+      const { runOnboardingWizard } = await import("../wizard/onboarding.js");
+      await runOnboardingWizard(wizardOpts, runtime, prompter);
+    });
   const { wizardSessions, findRunningWizard, purgeWizardSession } = createWizardSessionTracker();
 
   const deps = createDefaultDeps();
@@ -775,7 +823,7 @@ async function startGatewayServerInternal(
         stop: () => {},
         updateConfig: () => {},
       }
-    : startHeartbeatRunner({ cfg: cfgAtStart });
+    : await createLazyHeartbeatRunner(cfgAtStart);
 
   if (!minimalTestGateway) {
     void cron.start().catch((err) => logCron.error(`failed to start: ${String(err)}`));

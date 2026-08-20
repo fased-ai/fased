@@ -1,4 +1,5 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
+import { createBrowserTool } from "../../src/agents/tools/browser-tool.js";
 import {
   startBrowserControlServiceFromConfig,
   stopBrowserControlService,
@@ -10,6 +11,7 @@ export default {
   name: "Browser Runtime",
   description: "Optional browser automation and readable-page extraction dependencies.",
   register(api: FasedAgentPluginApi) {
+    api.registerTool(createBrowserTool(), { optional: true });
     api.registerCapabilityProvider(browserHandlers);
     api.registerService({
       id: "browser-runtime-control",

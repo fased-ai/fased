@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertSandboxPath } from "../../agents/sandbox-paths.js";
-import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox.js";
+import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox/context.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { logVerbose } from "../../globals.js";
 import { normalizeScpRemoteHost } from "../../infra/scp-host.js";
