@@ -1,6 +1,6 @@
 import http from "node:http";
 import https from "node:https";
-import { fetchWithSsrFGuard, redactSensitiveUrlLikeString } from "fased/plugin-sdk";
+import { fetchWithSsrFGuard, redactSensitiveUrlLikeString } from "fased/plugin-sdk/sat-runtime";
 
 export type MiningReadRpcConfig = {
   primaryUrl: string;

@@ -143,6 +143,14 @@ describe("managed component pack identity", () => {
     expect(artifactBuilder).toContain("allow: componentContract.core.loadedPluginIds");
     expect(artifactBuilder).toContain("FASED_PLUGIN_LOCK_PATH: smokePluginLockPath");
     expect(artifactBuilder).toContain("FASED_PLUGIN_DATA_ROOT: smokePluginDataRoot");
+    for (const miningRpcFile of ["rpc-read.ts", "rpc-read-service.ts"]) {
+      const miningRpcSource = await fs.readFile(
+        path.join(process.cwd(), "extensions", "sat-mining", "src", miningRpcFile),
+        "utf8",
+      );
+      expect(miningRpcSource).not.toContain('from "fased/plugin-sdk"');
+      expect(miningRpcSource).toContain('from "fased/plugin-sdk/sat-runtime"');
+    }
   });
 
   it("rejects symbolic-link aliases before producing a managed identity", async () => {

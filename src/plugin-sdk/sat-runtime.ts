@@ -59,6 +59,7 @@ export {
   verifyDeviceSignature,
 } from "../infra/device-identity.js";
 export { createSubsystemLogger } from "../logging/subsystem.js";
+export { redactSensitiveUrlLikeString } from "../shared/net/redact-sensitive-url.js";
 export { resolvePreferredFasedAgentTmpDir } from "../infra/tmp-fased-dir.js";
 export { withFileLock } from "./file-lock.js";
 export type { FileLockOptions } from "./file-lock.js";
