@@ -239,6 +239,15 @@ jobs:
         with:
           node-version: 24.x
 
+      - name: Setup pnpm + cache store
+        uses: ./.github/actions/setup-pnpm-store-cache
+        with:
+          pnpm-version: "10.34.5"
+          cache-key-suffix: "candidate-finalization-node24"
+
+      - name: Restore frozen finalizer dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
+
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
