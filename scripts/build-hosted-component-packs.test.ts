@@ -138,6 +138,8 @@ describe("managed component pack identity", () => {
       "utf8",
     );
     expect(pluginDoctorCli).toContain("plugins: report.plugins");
+    expect(pluginDoctorCli).toContain("opts.json");
+    expect(pluginDoctorCli).toContain("logger:");
     const artifactBuilder = await fs.readFile(
       path.join(process.cwd(), "scripts", "build-hosted-runtime-artifact.ts"),
       "utf8",

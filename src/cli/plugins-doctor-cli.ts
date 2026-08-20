@@ -5,7 +5,18 @@ import { theme } from "../terminal/theme.js";
 import type { PluginStatusCliOptions } from "./plugins-info-cli.js";
 
 export async function pluginDoctorCommand(opts: PluginStatusCliOptions = {}): Promise<void> {
-  const report = await buildNativePluginStatusReport();
+  const report = await buildNativePluginStatusReport(
+    opts.json
+      ? {
+          logger: {
+            info: () => {},
+            warn: () => {},
+            error: () => {},
+            debug: () => {},
+          },
+        }
+      : undefined,
+  );
   const errors = report.plugins.filter((plugin) => plugin.status === "error");
   const diagnostics = report.diagnostics.filter((diagnostic) => diagnostic.level === "error");
   if (opts.json) {

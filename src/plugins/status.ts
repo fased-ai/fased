@@ -35,13 +35,14 @@ export function buildPluginStatusReport(params?: {
 export async function buildNativePluginStatusReport(params?: {
   config?: ReturnType<typeof loadConfig>;
   workspaceDir?: string;
+  logger?: ReturnType<typeof createPluginLoaderLogger>;
 }): Promise<PluginStatusReport> {
   const config = params?.config ?? loadConfig();
   const workspaceDir = params?.workspaceDir
     ? params.workspaceDir
     : (resolveAgentWorkspaceDir(config, resolveDefaultAgentId(config)) ??
       resolveDefaultAgentWorkspaceDir());
-  const logger = createPluginLoaderLogger(log);
+  const logger = params?.logger ?? createPluginLoaderLogger(log);
   const preloadedModules = await preloadNativePluginModules({ config, workspaceDir, logger });
   const registry = loadFasedAgentPlugins({ config, workspaceDir, logger, preloadedModules });
   return { workspaceDir, ...registry };
