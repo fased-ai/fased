@@ -105,6 +105,8 @@ describe("managed component pack identity", () => {
     const ttsRuntime = await fs.readFile(path.join(process.cwd(), "src", "tts", "tts.ts"), "utf8");
     expect(ttsRuntime).not.toContain("line/markdown-to-line");
     expect(ttsRuntime).toContain('from "../text/strip-markdown.js"');
+    const buildConfig = await fs.readFile(path.join(process.cwd(), "tsdown.config.ts"), "utf8");
+    expect(buildConfig).toContain('"text/strip-markdown": "src/text/strip-markdown.ts"');
   });
 
   it("rejects symbolic-link aliases before producing a managed identity", async () => {

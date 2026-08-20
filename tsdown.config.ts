@@ -92,6 +92,7 @@ const preservedCoreConfig = {
     entry: "src/entry.ts",
     "daemon-cli": "src/cli/daemon-cli.ts",
     "warning-filter": "src/infra/warning-filter.ts",
+    "text/strip-markdown": "src/text/strip-markdown.ts",
     ...(isVpsBuild
       ? {}
       : {
