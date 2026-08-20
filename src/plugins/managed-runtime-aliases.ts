@@ -74,6 +74,7 @@ export const MANAGED_RUNTIME_CORE_MODULES = [
   "routing/resolve-route",
   "runtime",
   "security/secret-equal",
+  "text/strip-markdown",
   "utils",
   "utils/boolean",
   "utils/with-timeout",

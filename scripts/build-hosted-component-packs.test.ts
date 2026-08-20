@@ -92,6 +92,7 @@ describe("managed component pack identity", () => {
     expect(paths).toContain("dist/line/monitor.js");
     expect(paths).not.toContain("dist/config/config.js");
     expect(paths).not.toContain("dist/auto-reply/chunk.js");
+    expect(paths).not.toContain("dist/text/strip-markdown.js");
     const coreRuntime = await fs.readFile(
       path.join(process.cwd(), "src", "plugins", "runtime", "index.ts"),
       "utf8",
