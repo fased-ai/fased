@@ -10,6 +10,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
+const commitPattern = /^[a-f0-9]{40}$/u;
+const readinessGatePaths = new Set([
+  "scripts/pre-candidate-readiness.mjs",
+  "scripts/pre-candidate-readiness.test.ts",
+]);
 
 function fail(message) {
   throw new Error(`pre-candidate readiness: ${message}`);
@@ -45,8 +50,10 @@ export function validateLocal0Readiness(receipt, expected) {
     fail("LOCAL0 receipt is not one complete PASS");
   }
   if (
-    receipt.source?.commit !== expected.commit ||
-    receipt.source?.tree !== expected.tree ||
+    !commitPattern.test(receipt.source?.commit || "") ||
+    receipt.source?.tree !== expected.receiptCommitTree ||
+    (receipt.source.commit === expected.commit && receipt.source.tree !== expected.tree) ||
+    expected.unexpectedSourcePaths.length !== 0 ||
     receipt.source?.lockfileDigest !== expected.lockfileDigest
   ) {
     fail("LOCAL0 receipt does not bind the exact source identity");
@@ -85,6 +92,8 @@ export function validateLocal0Readiness(receipt, expected) {
   return Object.freeze({
     commit: expected.commit,
     tree: expected.tree,
+    local0SourceCommit: receipt.source.commit,
+    local0SourceTree: receipt.source.tree,
     lockfileDigest: expected.lockfileDigest,
     localEntrypointDigest: expected.localEntrypointDigest,
     hostingEntrypointDigest: expected.hostingEntrypointDigest,
@@ -152,9 +161,28 @@ function main() {
     fail(`unresolved exact-source LOCAL0 failure remains at ${failureMarker}`);
   }
   const receipt = JSON.parse(receiptBytes.toString("utf8"));
+  const receiptCommit = receipt.source?.commit;
+  if (!commitPattern.test(receiptCommit || "")) {
+    fail("LOCAL0 receipt source commit is invalid");
+  }
+  let receiptCommitTree;
+  try {
+    receiptCommitTree = git("rev-parse", `${receiptCommit}^{tree}`);
+  } catch {
+    fail("LOCAL0 receipt source commit is unavailable");
+  }
+  const unexpectedSourcePaths =
+    receiptCommitTree === tree
+      ? []
+      : git("diff", "--name-only", "--no-renames", receiptCommit, commit)
+          .split("\n")
+          .filter(Boolean)
+          .filter((sourcePath) => !readinessGatePaths.has(sourcePath));
   const evidence = validateLocal0Readiness(receipt, {
     commit,
     tree,
+    receiptCommitTree,
+    unexpectedSourcePaths,
     lockfileDigest,
     localEntrypointDigest,
     hostingEntrypointDigest,

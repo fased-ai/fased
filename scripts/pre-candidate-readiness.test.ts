@@ -5,6 +5,8 @@ const digest = `sha256:${"a".repeat(64)}`;
 const expected = {
   commit: "b".repeat(40),
   tree: "c".repeat(40),
+  receiptCommitTree: "c".repeat(40),
+  unexpectedSourcePaths: [] as string[],
   lockfileDigest: `sha256:${"d".repeat(64)}`,
   localEntrypointDigest: digest,
   hostingEntrypointDigest: digest,
@@ -55,7 +57,28 @@ function receipt() {
 describe("pre-candidate local readiness", () => {
   it("accepts one exact complete LOCAL0 receipt with literal Local and Hosting commands", () => {
     expect(validateLocal0Readiness(receipt(), expected)).toMatchObject({
-      ...expected,
+      commit: expected.commit,
+      tree: expected.tree,
+      local0SourceCommit: expected.commit,
+      local0SourceTree: expected.tree,
+      lockfileDigest: expected.lockfileDigest,
+      localEntrypointDigest: expected.localEntrypointDigest,
+      hostingEntrypointDigest: expected.hostingEntrypointDigest,
+      descriptorDigest: digest,
+      acceptanceContractDigest: digest,
+    });
+  });
+
+  it("accepts a content-equivalent squash commit while retaining both identities", () => {
+    const squashedReceipt = receipt();
+    squashedReceipt.source.commit = "e".repeat(40);
+
+    expect(validateLocal0Readiness(squashedReceipt, expected)).toMatchObject({
+      commit: expected.commit,
+      tree: expected.tree,
+      local0SourceCommit: squashedReceipt.source.commit,
+      local0SourceTree: expected.tree,
+      lockfileDigest: expected.lockfileDigest,
       descriptorDigest: digest,
       acceptanceContractDigest: digest,
     });
@@ -69,6 +92,30 @@ describe("pre-candidate local readiness", () => {
     const wrongTree = receipt();
     wrongTree.source.tree = "e".repeat(40);
     expect(() => validateLocal0Readiness(wrongTree, expected)).toThrow("exact source identity");
+
+    const wrongResolvedTree = receipt();
+    expect(() =>
+      validateLocal0Readiness(wrongResolvedTree, {
+        ...expected,
+        receiptCommitTree: "f".repeat(40),
+      }),
+    ).toThrow("exact source identity");
+
+    const unexpectedProductChange = receipt();
+    unexpectedProductChange.source.commit = "e".repeat(40);
+    expect(() =>
+      validateLocal0Readiness(unexpectedProductChange, {
+        ...expected,
+        tree: "f".repeat(40),
+        unexpectedSourcePaths: ["src/index.ts"],
+      }),
+    ).toThrow("exact source identity");
+
+    const malformedCommit = receipt();
+    malformedCommit.source.commit = "not-a-commit";
+    expect(() => validateLocal0Readiness(malformedCommit, expected)).toThrow(
+      "exact source identity",
+    );
 
     const missingCommand = receipt();
     missingCommand.receipts[0].receipt.evidence = [];
