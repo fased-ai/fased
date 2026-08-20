@@ -33,7 +33,7 @@ describe("capability component installation", () => {
     });
   });
 
-  it("requires and completes P6 before enabling a managed component", async () => {
+  it("acquires from signed inventory by default and completes P6 before enabling", async () => {
     loadCapabilityCatalog.mockReturnValue([
       {
         id: "telegram",
@@ -50,10 +50,12 @@ describe("capability component installation", () => {
       archivePath: "/tmp/telegram.tar.gz",
     };
 
-    await expect(
-      installCapabilityComponent({ id: "telegram", config: {}, runManagedTransaction }),
-    ).rejects.toThrow("requires a signed component catalog and archive");
-    expect(finalizeInstalledPluginConfig).not.toHaveBeenCalled();
+    await installCapabilityComponent({ id: "telegram", config: {}, runManagedTransaction });
+    expect(runManagedTransaction).toHaveBeenCalledWith({
+      pluginId: "telegram",
+      transaction: undefined,
+    });
+    expect(finalizeInstalledPluginConfig).toHaveBeenCalledTimes(1);
 
     await installCapabilityComponent({
       id: "telegram",
@@ -62,7 +64,7 @@ describe("capability component installation", () => {
       runManagedTransaction,
     });
     expect(runManagedTransaction).toHaveBeenCalledWith({ pluginId: "telegram", transaction });
-    expect(finalizeInstalledPluginConfig).toHaveBeenCalledTimes(1);
+    expect(finalizeInstalledPluginConfig).toHaveBeenCalledTimes(2);
   });
 
   it("does not enable managed config when P6 fails and rejects unsafe identities", async () => {

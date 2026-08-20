@@ -14,6 +14,20 @@ afterEach(async () => {
 });
 
 describe("managed component pack identity", () => {
+  it("bundles implementation-only runtime entrypoints and removes source entrypoints", async () => {
+    const source = await fs.readFile(
+      path.join(import.meta.dirname, "build-hosted-component-packs.ts"),
+      "utf8",
+    );
+    expect(source).toContain('import { rolldown } from "rolldown"');
+    expect(source).toContain('params.componentId === "browser-runtime"');
+    expect(source).toContain('params.componentId === "speech-runtime"');
+    expect(source).toContain('entryFileNames: "index.mjs"');
+    expect(source).toContain('extensions: ["./index.mjs"]');
+    expect(source).toContain('fs.rm(path.join(params.deployRoot, "index.ts"), { force: true })');
+    expect(source).not.toContain('node_modules", ".bin", "esbuild"');
+  });
+
   it("binds normalized immutable extraction modes and exact file bytes", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-component-identity-"));
     roots.push(root);

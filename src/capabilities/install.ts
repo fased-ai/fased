@@ -17,7 +17,7 @@ export type ManagedComponentTransaction = {
 
 export type ManagedComponentTransactionRunner = (params: {
   pluginId: string;
-  transaction: ManagedComponentTransaction;
+  transaction?: ManagedComponentTransaction;
 }) => Promise<void>;
 
 export type CapabilityComponentInstallResult = {
@@ -44,13 +44,9 @@ export async function installCapabilityComponent(params: {
   }
 
   if (entry.delivery === "managed-component") {
-    if (!params.transaction) {
-      throw new Error(
-        `${entry.label} requires a signed component catalog and archive. ` +
-          `Run \`fased components install ${entry.id} --catalog <path> --catalog-digest sha256:<digest> --archive <path>\`.`,
-      );
+    if (params.transaction) {
+      validateManagedComponentTransaction(params.transaction);
     }
-    validateManagedComponentTransaction(params.transaction);
     await (params.runManagedTransaction ?? runManagedComponentTransaction)({
       pluginId: entry.pluginId,
       transaction: params.transaction,
@@ -88,20 +84,19 @@ export function validateManagedComponentTransaction(
 
 async function runManagedComponentTransaction(params: {
   pluginId: string;
-  transaction: ManagedComponentTransaction;
+  transaction?: ManagedComponentTransaction;
 }): Promise<void> {
-  await execFileAsync(
-    MANAGED_FASED_COMMAND,
-    [
-      "plugins",
-      "install",
-      "--catalog",
-      params.transaction.catalogPath,
-      "--catalog-digest",
-      params.transaction.catalogDigest,
-      "--archive",
-      `${params.pluginId}=${params.transaction.archivePath}`,
-    ],
-    { timeout: 120_000, maxBuffer: 1024 * 1024 },
-  );
+  const args = params.transaction
+    ? [
+        "plugins",
+        "install",
+        "--catalog",
+        params.transaction.catalogPath,
+        "--catalog-digest",
+        params.transaction.catalogDigest,
+        "--archive",
+        `${params.pluginId}=${params.transaction.archivePath}`,
+      ]
+    : ["plugins", "install", "--component", params.pluginId];
+  await execFileAsync(MANAGED_FASED_COMMAND, args, { timeout: 300_000, maxBuffer: 1024 * 1024 });
 }

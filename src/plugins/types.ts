@@ -11,7 +11,10 @@ import type { createVpsAwareOAuthHandlers } from "../commands/oauth-flow.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { ModelProviderConfig } from "../config/types.js";
 import type { OperatorScope } from "../gateway/method-scopes.js";
-import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
+import type {
+  GatewayRequestHandler,
+  GatewayRequestHandlers,
+} from "../gateway/server-methods/types.js";
 import type { InternalHookHandler } from "../hooks/internal-hooks.js";
 import type { HookEntry } from "../hooks/types.js";
 import type { ImageGenerationProvider } from "../image-generation/types.js";
@@ -465,6 +468,8 @@ export type FasedAgentPluginApi = {
     handler: GatewayRequestHandler,
     opts?: { scope?: OperatorScope },
   ) => void;
+  /** Register handlers consumed only by a core optional-capability facade. */
+  registerCapabilityProvider: (handlers: GatewayRequestHandlers) => void;
   registerCli: (registrar: FasedAgentPluginCliRegistrar, opts?: { commands?: string[] }) => void;
   registerService: (service: FasedAgentPluginService) => void;
   registerProvider: (provider: ProviderPlugin) => void;

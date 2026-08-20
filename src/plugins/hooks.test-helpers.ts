@@ -17,6 +17,7 @@ export function createMockPluginRegistry(
     httpRoutes: [],
     channelRegistrations: [],
     gatewayHandlers: {},
+    capabilityProviders: {},
     cliRegistrars: [],
     services: [],
     providers: [],

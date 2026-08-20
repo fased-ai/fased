@@ -32,6 +32,7 @@ const createRegistry = (diagnostics: PluginDiagnostic[]): PluginRegistry => ({
   commands: [],
   providers: [],
   gatewayHandlers: {},
+  capabilityProviders: {},
   gatewayMethodScopes: {},
   httpHandlers: [],
   httpRoutes: [],

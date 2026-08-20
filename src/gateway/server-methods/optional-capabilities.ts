@@ -1,10 +1,11 @@
+import { getActivePluginRegistry } from "../../plugins/runtime.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import type { GatewayRequestHandler, GatewayRequestHandlers } from "./types.js";
 
 type OptionalCapability = {
   id: string;
   methods: readonly string[];
-  load: () => Promise<GatewayRequestHandlers>;
+  load?: () => Promise<GatewayRequestHandlers>;
 };
 
 export const OPTIONAL_GATEWAY_METHODS = {
@@ -24,9 +25,8 @@ export const OPTIONAL_GATEWAY_METHODS = {
 
 const capabilities: OptionalCapability[] = [
   {
-    id: "browser-media-voice",
+    id: "browser-runtime",
     methods: OPTIONAL_GATEWAY_METHODS.browser,
-    load: async () => (await import("./browser.js")).browserHandlers,
   },
   {
     id: "channels",
@@ -34,21 +34,24 @@ const capabilities: OptionalCapability[] = [
     load: async () => (await import("./channels.js")).channelsHandlers,
   },
   {
-    id: "browser-media-voice",
+    id: "speech-runtime",
     methods: OPTIONAL_GATEWAY_METHODS.tts,
-    load: async () => (await import("./tts.js")).ttsHandlers,
   },
   {
-    id: "browser-media-voice",
+    id: "speech-runtime",
     methods: OPTIONAL_GATEWAY_METHODS.voicewake,
-    load: async () => (await import("./voicewake.js")).voicewakeHandlers,
   },
 ];
 
 function lazyHandler(capability: OptionalCapability, method: string): GatewayRequestHandler {
   return async (options) => {
     try {
-      const handlers = await capability.load();
+      const handlers = capability.load
+        ? await capability.load()
+        : getActivePluginRegistry()?.capabilityProviders[capability.id];
+      if (!handlers) {
+        throw new Error(`managed capability provider ${capability.id} is not active`);
+      }
       const handler = handlers[method];
       if (!handler) {
         throw new Error(`optional capability does not implement ${method}`);

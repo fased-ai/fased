@@ -178,6 +178,7 @@ export type PluginRegistry = {
   realtimeTranscriptionProviders: PluginRealtimeTranscriptionProviderRegistration[];
   realtimeVoiceProviders: PluginRealtimeVoiceProviderRegistration[];
   gatewayHandlers: GatewayRequestHandlers;
+  capabilityProviders: Record<string, GatewayRequestHandlers>;
   gatewayMethodScopes: Partial<Record<string, OperatorScope>>;
   httpHandlers: PluginHttpRegistration[];
   httpRoutes: PluginHttpRouteRegistration[];
@@ -207,6 +208,7 @@ export function createEmptyPluginRegistry(): PluginRegistry {
     realtimeTranscriptionProviders: [],
     realtimeVoiceProviders: [],
     gatewayHandlers: {},
+    capabilityProviders: {},
     gatewayMethodScopes: {},
     httpHandlers: [],
     httpRoutes: [],
@@ -355,6 +357,19 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       registry.gatewayMethodScopes[trimmed] = normalizedScope.scope;
     }
     record.gatewayMethods.push(trimmed);
+  };
+
+  const registerCapabilityProvider = (record: PluginRecord, handlers: GatewayRequestHandlers) => {
+    if (registry.capabilityProviders[record.id]) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `capability provider already registered: ${record.id}`,
+      });
+      return;
+    }
+    registry.capabilityProviders[record.id] = Object.freeze({ ...handlers });
   };
 
   const registerHttpHandler = (record: PluginRecord, handler: FasedAgentPluginHttpHandler) => {
@@ -824,6 +839,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       registerRealtimeVoiceProvider: (provider) => registerRealtimeVoiceProvider(record, provider),
       registerGatewayMethod: (method, handler, opts) =>
         registerGatewayMethod(record, method, handler, opts),
+      registerCapabilityProvider: (handlers) => registerCapabilityProvider(record, handlers),
       registerCli: (registrar, opts) => registerCli(record, registrar, opts),
       registerService: (service) => registerService(record, service),
       registerCommand: (command) => registerCommand(record, command),

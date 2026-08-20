@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createEmptyPluginRegistry } from "../../plugins/registry.js";
+import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
 import { browserHandlers } from "./browser.js";
 import { channelsHandlers } from "./channels.js";
 import { OPTIONAL_GATEWAY_METHODS, optionalGatewayHandlers } from "./optional-capabilities.js";
@@ -6,6 +8,8 @@ import { ttsHandlers } from "./tts.js";
 import { voicewakeHandlers } from "./voicewake.js";
 
 describe("optional Gateway capability dispatch", () => {
+  afterEach(() => resetPluginRuntimeStateForTest());
+
   it("keeps schema-only method names exact with their dynamically loaded implementations", () => {
     expect(OPTIONAL_GATEWAY_METHODS.browser).toEqual(Object.keys(browserHandlers).toSorted());
     expect(OPTIONAL_GATEWAY_METHODS.channels).toEqual(Object.keys(channelsHandlers).toSorted());
@@ -14,6 +18,30 @@ describe("optional Gateway capability dispatch", () => {
     expect(Object.keys(optionalGatewayHandlers).toSorted()).toEqual(
       Object.values(OPTIONAL_GATEWAY_METHODS).flat().toSorted(),
     );
+  });
+
+  it("dispatches managed implementation only through the active component provider", async () => {
+    const registry = createEmptyPluginRegistry();
+    const handler = vi.fn(async ({ respond }) => respond(true, { source: "managed" }));
+    registry.capabilityProviders["browser-runtime"] = { "browser.request": handler };
+    setActivePluginRegistry(registry);
+    const respond = vi.fn();
+    await optionalGatewayHandlers["browser.request"]({ respond } as never);
+    expect(handler).toHaveBeenCalledOnce();
+    expect(respond).toHaveBeenCalledWith(true, { source: "managed" });
+  });
+
+  it("binds speech methods to the exact managed plugin identity", async () => {
+    const registry = createEmptyPluginRegistry();
+    const handler = vi.fn(async ({ respond }) => respond(true, { provider: "edge" }));
+    registry.capabilityProviders["speech-runtime"] = { "tts.status": handler };
+    setActivePluginRegistry(registry);
+    const respond = vi.fn();
+
+    await optionalGatewayHandlers["tts.status"]({ respond } as never);
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(respond).toHaveBeenCalledWith(true, { provider: "edge" });
   });
 
   it("keeps optional implementations out of the eager Gateway method graph", async () => {

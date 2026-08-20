@@ -98,6 +98,7 @@ function createLifecycleReport(): PluginLifecycleReport {
     realtimeTranscriptionProviders: [],
     realtimeVoiceProviders: [],
     gatewayHandlers: {},
+    capabilityProviders: {},
     gatewayMethodScopes: {},
     httpHandlers: [],
     httpRoutes: [],

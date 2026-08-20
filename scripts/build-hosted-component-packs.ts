@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { rolldown } from "rolldown";
 import {
   assertCompleteExtensionOwnership,
   readHostedComponentContract,
@@ -41,18 +41,6 @@ function sha256Bytes(value: string | Uint8Array): string {
 
 async function sha256File(filePath: string): Promise<string> {
   return sha256Bytes(await fs.readFile(filePath));
-}
-
-async function activePnpmStore(): Promise<string> {
-  const { stdout } = await execFileAsync("pnpm", ["store", "path"], {
-    cwd: rootDir,
-    maxBuffer: 1024 * 1024,
-  });
-  const reported = stdout.trim();
-  if (!path.isAbsolute(reported)) {
-    throw new Error("pnpm store path is not absolute");
-  }
-  return await fs.realpath(reported);
 }
 
 export async function normalizedManagedPluginTreeDigest(root: string): Promise<string> {
@@ -137,8 +125,9 @@ export function assertManagedComponentPackBudget(params: {
 }
 
 async function deployComponentPackage(params: {
+  componentId: string;
+  extensionRoot: string;
   packageName: string;
-  pnpmStore: string;
   deployRoot: string;
   stagingRoot: string;
 }): Promise<number> {
@@ -146,8 +135,6 @@ async function deployComponentPackage(params: {
   await execFileAsync(
     "pnpm",
     [
-      "--store-dir",
-      params.pnpmStore,
       "--offline",
       "--filter",
       params.packageName,
@@ -162,6 +149,31 @@ async function deployComponentPackage(params: {
       maxBuffer: 4 * 1024 * 1024,
     },
   );
+  if (params.componentId === "browser-runtime" || params.componentId === "speech-runtime") {
+    const bundle = await rolldown({
+      input: path.join(params.extensionRoot, "index.ts"),
+      external: (id) => id.startsWith("node:") || (!id.startsWith(".") && !path.isAbsolute(id)),
+    });
+    try {
+      await bundle.write({
+        chunkFileNames: "chunks/[name]-[hash].mjs",
+        dir: params.deployRoot,
+        entryFileNames: "index.mjs",
+        format: "esm",
+      });
+    } finally {
+      await bundle.close();
+    }
+    const manifestPath = path.join(params.deployRoot, "package.json");
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
+      files?: string[];
+      fased?: { extensions?: string[] };
+    };
+    manifest.files = ["index.mjs", "fased.plugin.json"];
+    manifest.fased = { ...manifest.fased, extensions: ["./index.mjs"] };
+    await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await fs.rm(path.join(params.deployRoot, "index.ts"), { force: true });
+  }
   await fs.cp(params.deployRoot, params.stagingRoot, {
     recursive: true,
     dereference: true,
@@ -199,9 +211,10 @@ export async function buildHostedComponentPacks(
     throw new Error("component packs require an exact package version");
   }
   await fs.mkdir(outputDir, { recursive: true });
-  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fased-component-packs-"));
+  const buildScratchRoot = path.join(rootDir, ".artifacts");
+  await fs.mkdir(buildScratchRoot, { recursive: true });
+  const temporaryRoot = await fs.mkdtemp(path.join(buildScratchRoot, ".component-packs-"));
   try {
-    const pnpmStore = await activePnpmStore();
     for (const pack of contract.packs) {
       const extensionDirectories = options.selectedExtensionDirectories
         ? pack.extensionDirectories.filter((directory) =>
@@ -225,8 +238,9 @@ export async function buildHostedComponentPacks(
         await fs.mkdir(path.dirname(deployRoot), { recursive: true });
         await fs.mkdir(stagingParent, { recursive: true });
         const deployDurationMs = await deployComponentPackage({
+          componentId: identity.id,
+          extensionRoot,
           packageName: identity.packageName,
-          pnpmStore,
           deployRoot,
           stagingRoot,
         });

@@ -304,6 +304,10 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     OWN_ARTIFACT_DIR=1
   fi
   pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
+  # Optional components are separate immutable P6 assets. Building them here
+  # publishes their inventory beside the core bytes without adding them to the
+  # fresh-core generation or its dependency layer.
+  pnpm --dir "$ROOT_DIR" hosted:component-packs --output "$ARTIFACT_DIR"
   cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
   node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
     --source "$ROOT_DIR/install.sh" \

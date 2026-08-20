@@ -19,6 +19,8 @@ const localRunner = read("scripts/docker/protected-local-systemd/lifecycle-accep
 const hostingUbuntu = read("scripts/docker/hosting-systemd/Containerfile.ubuntu");
 const hostingRocky = read("scripts/docker/hosting-systemd/Containerfile.rocky");
 const hostedArtifactBuilder = read("scripts/build-hosted-runtime-artifact.ts");
+const componentPackBuild = 'pnpm --dir "$ROOT_DIR" hosted:component-packs';
+const hostedReleaseManifestBuild = 'node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs"';
 
 const removedMutationOwners = [
   "scripts/fased-managed-updater-core.mjs",
@@ -34,6 +36,13 @@ const removedMutationOwners = [
 ];
 
 describe("attested Go lifecycle artifact layout", () => {
+  it("builds optional component assets beside the core before signing release inventory", () => {
+    expect(localFixture.indexOf(componentPackBuild)).toBeGreaterThan(0);
+    expect(localFixture.indexOf(hostedReleaseManifestBuild)).toBeGreaterThan(
+      localFixture.indexOf(componentPackBuild),
+    );
+  });
+
   it("ships only the acquisition wrappers needed by the public installer and updater", () => {
     expect(files).toContain("install.sh");
     expect(files).not.toContain("scripts/fased-managed-updater.mjs");

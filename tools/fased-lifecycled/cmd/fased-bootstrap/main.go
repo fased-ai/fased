@@ -162,11 +162,11 @@ func run(args []string, output io.Writer) error {
 }
 
 type managedPluginCommand struct {
-	profile, catalog, digest, operation string
-	archives                            map[string]string
+	profile, catalog, digest, operation, component string
+	archives                                       map[string]string
 }
 
-func runManagedPlugins(args []string, output io.Writer) error {
+func runManagedPlugins(args []string, output io.Writer) (returnErr error) {
 	if !managedPluginsSupported(runtime.GOOS) {
 		return errors.New("managed plugin transactions are supported only on Linux")
 	}
@@ -194,14 +194,6 @@ func runManagedPlugins(args []string, output io.Writer) error {
 		return err
 	}
 	defer lock.Release()
-	data, err := readManagedPluginCatalog(command.catalog, operator.UID)
-	if err != nil {
-		return err
-	}
-	sum := sha256.Sum256(data)
-	if command.digest != fmt.Sprintf("sha256:%x", sum) {
-		return errors.New("managed plugin catalog digest mismatch")
-	}
 	configPath, err := installedConfigPath(model.Profile(command.profile), operator)
 	if err != nil {
 		return err
@@ -221,6 +213,28 @@ func runManagedPlugins(args []string, output io.Writer) error {
 	status, err := decodeInstalledLifecycleStatus(config, model.Profile(command.profile), manifestData)
 	if err != nil {
 		return err
+	}
+	if command.component != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		acquired, acquireErr := acquireReleaseManagedComponent(ctx, config, status, command.component)
+		cancel()
+		if acquireErr != nil {
+			return acquireErr
+		}
+		defer func() {
+			returnErr = errors.Join(returnErr, acquired.Cleanup())
+		}()
+		command.catalog = acquired.CatalogPath
+		command.digest = acquired.CatalogDigest
+		command.archives[command.component] = acquired.ArchivePath
+	}
+	data, err := readManagedPluginCatalog(command.catalog, operator.UID)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	if command.digest != fmt.Sprintf("sha256:%x", sum) {
+		return errors.New("managed plugin catalog digest mismatch")
 	}
 	var manifest model.Manifest
 	_ = json.Unmarshal(manifestData, &manifest)
@@ -338,7 +352,7 @@ func acquireManagedPluginMutationLock(path string, expectedUID uint32) (*hostsec
 }
 
 func parseManagedPluginCommand(args []string) (managedPluginCommand, error) {
-	if len(args) < 3 || args[0] != "--profile" || (args[2] != "install" && args[2] != "update") || namedPluginFlagCount(args, "profile") != 1 || namedPluginFlagCount(args, "catalog") != 1 || namedPluginFlagCount(args, "catalog-digest") != 1 {
+	if len(args) < 3 || args[0] != "--profile" || (args[2] != "install" && args[2] != "update") || namedPluginFlagCount(args, "profile") != 1 {
 		return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
 	}
 	command := managedPluginCommand{operation: args[2], archives: map[string]string{}}
@@ -347,7 +361,7 @@ func parseManagedPluginCommand(args []string) (managedPluginCommand, error) {
 			continue
 		}
 		switch args[i] {
-		case "--profile", "--catalog", "--catalog-digest":
+		case "--profile", "--catalog", "--catalog-digest", "--component":
 			if i+1 >= len(args) {
 				return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
 			}
@@ -361,6 +375,9 @@ func parseManagedPluginCommand(args []string) (managedPluginCommand, error) {
 			}
 			if args[i-1] == "--catalog-digest" {
 				command.digest = value
+			}
+			if args[i-1] == "--component" {
+				command.component = value
 			}
 		case "--archive":
 			if i+1 >= len(args) {
@@ -377,7 +394,18 @@ func parseManagedPluginCommand(args []string) (managedPluginCommand, error) {
 			return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
 		}
 	}
-	if (command.profile != "protected-local" && command.profile != "hosting") || !pluginCommandDigest(command.digest) || !filepath.IsAbs(command.catalog) || filepath.Clean(command.catalog) != command.catalog || len(command.archives) == 0 || len(command.archives) > 4096 {
+	localSource := namedPluginFlagCount(args, "catalog") == 1 && namedPluginFlagCount(args, "catalog-digest") == 1 && namedPluginFlagCount(args, "component") == 0
+	releaseSource := namedPluginFlagCount(args, "component") == 1 && namedPluginFlagCount(args, "catalog") == 0 && namedPluginFlagCount(args, "catalog-digest") == 0 && len(command.archives) == 0
+	if command.profile != "protected-local" && command.profile != "hosting" {
+		return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
+	}
+	if localSource && (!pluginCommandDigest(command.digest) || !filepath.IsAbs(command.catalog) || filepath.Clean(command.catalog) != command.catalog || len(command.archives) == 0 || len(command.archives) > 4096) {
+		return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
+	}
+	if releaseSource && !managedComponentIDPattern.MatchString(command.component) {
+		return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
+	}
+	if !localSource && !releaseSource {
 		return managedPluginCommand{}, errors.New("invalid managed plugin arguments")
 	}
 	return command, nil

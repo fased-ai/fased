@@ -84,6 +84,56 @@ async function generationMetadata(directory, version, architecture) {
   }
 }
 
+async function componentAssets(directory, version) {
+  const names = (await fs.readdir(directory))
+    .filter(
+      (name) => name.startsWith("fased-component-") && name.endsWith(`-v${version}.index.json`),
+    )
+    .toSorted((left, right) => left.localeCompare(right));
+  const components = {};
+  for (const name of names) {
+    const indexPath = path.join(directory, name);
+    const info = await fs.lstat(indexPath);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size <= 0) {
+      throw new Error(`release-index component inventory is unsafe: ${name}`);
+    }
+    const index = JSON.parse(await fs.readFile(indexPath, "utf8"));
+    if (
+      index?.schemaVersion !== 1 ||
+      index?.type !== "fased-hosted-component-index" ||
+      index?.version !== version ||
+      !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(index?.pack ?? "") ||
+      !Array.isArray(index?.components)
+    ) {
+      throw new Error(`release-index component inventory is invalid: ${name}`);
+    }
+    for (const component of index.components) {
+      if (
+        !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(component?.id ?? "") ||
+        components[component.id] ||
+        !DIGEST.test(component?.catalog?.sha256 ?? "") ||
+        !DIGEST.test(component?.archive?.sha256 ?? "")
+      ) {
+        throw new Error(`release-index component identity is invalid: ${name}`);
+      }
+      const catalog = await asset(directory, component.catalog.asset);
+      const archive = await asset(directory, component.archive.asset);
+      if (
+        catalog.sha256 !== component.catalog.sha256 ||
+        archive.sha256 !== component.archive.sha256
+      ) {
+        throw new Error(
+          `release-index component assets differ from their inventory: ${component.id}`,
+        );
+      }
+      components[component.id] = { catalog, archive };
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(components).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
 export async function buildLifecycleReleaseIndex(options) {
   const {
     assetsDir,
@@ -159,11 +209,13 @@ export async function buildLifecycleReleaseIndex(options) {
     };
     signer[architecture.name] = await asset(assetsDir, `fased-signerd-linux-${architecture.go}`);
   }
+  const components = await componentAssets(assetsDir, version);
   const boundAssets = {
     application,
     dependencyLayer,
     lifecycleHost,
     signer,
+    ...(Object.keys(components).length > 0 ? { components } : {}),
     stateSchemas: baseline.stateSchemas,
     capabilities: baseline.capabilities,
     pluginLockDigest: records.x64.pluginLockDigest,

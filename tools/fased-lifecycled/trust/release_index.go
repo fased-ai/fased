@@ -17,10 +17,11 @@ import (
 const maxReleaseIndexLifetime = maxRootLifetime
 
 var (
-	digestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	gitPattern       = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	versionPattern   = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$`)
-	assetNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,255}$`)
+	digestPattern      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	gitPattern         = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	versionPattern     = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$`)
+	assetNamePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,255}$`)
+	componentIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 )
 
 type Asset struct {
@@ -29,6 +30,11 @@ type Asset struct {
 	SHA256              string         `json:"sha256"`
 	PrivilegedComponent string         `json:"privilegedComponent,omitempty"`
 	Protocols           *HostProtocols `json:"protocols,omitempty"`
+}
+
+type ComponentAssets struct {
+	Catalog Asset `json:"catalog"`
+	Archive Asset `json:"archive"`
 }
 
 type ProtocolRange struct {
@@ -53,24 +59,25 @@ func (protocols HostProtocols) Validate() error {
 }
 
 type ReleaseIndex struct {
-	SchemaVersion     uint32                 `json:"schemaVersion"`
-	Type              string                 `json:"type"`
-	Channel           string                 `json:"channel"`
-	Version           string                 `json:"version"`
-	ReleaseSequence   uint64                 `json:"releaseSequence"`
-	SecurityEpoch     uint64                 `json:"securityEpoch"`
-	Commit            string                 `json:"commit"`
-	Tree              string                 `json:"tree"`
-	ArtifactSetDigest string                 `json:"artifactSetDigest"`
-	Application       map[string]Asset       `json:"application"`
-	DependencyLayer   map[string]Asset       `json:"dependencyLayer"`
-	LifecycleHost     map[string]Asset       `json:"lifecycleHost"`
-	Signer            map[string]Asset       `json:"signer"`
-	StateSchemas      map[string]uint32      `json:"stateSchemas"`
-	Capabilities      model.CapabilityRanges `json:"capabilities"`
-	PluginLockDigest  string                 `json:"pluginLockDigest"`
-	IssuedAt          string                 `json:"issuedAt"`
-	ExpiresAt         string                 `json:"expiresAt"`
+	SchemaVersion     uint32                     `json:"schemaVersion"`
+	Type              string                     `json:"type"`
+	Channel           string                     `json:"channel"`
+	Version           string                     `json:"version"`
+	ReleaseSequence   uint64                     `json:"releaseSequence"`
+	SecurityEpoch     uint64                     `json:"securityEpoch"`
+	Commit            string                     `json:"commit"`
+	Tree              string                     `json:"tree"`
+	ArtifactSetDigest string                     `json:"artifactSetDigest"`
+	Application       map[string]Asset           `json:"application"`
+	DependencyLayer   map[string]Asset           `json:"dependencyLayer"`
+	LifecycleHost     map[string]Asset           `json:"lifecycleHost"`
+	Signer            map[string]Asset           `json:"signer"`
+	Components        map[string]ComponentAssets `json:"components,omitempty"`
+	StateSchemas      map[string]uint32          `json:"stateSchemas"`
+	Capabilities      model.CapabilityRanges     `json:"capabilities"`
+	PluginLockDigest  string                     `json:"pluginLockDigest"`
+	IssuedAt          string                     `json:"issuedAt"`
+	ExpiresAt         string                     `json:"expiresAt"`
 }
 
 type VerifiedReleaseIndex struct {
@@ -151,6 +158,10 @@ func cloneReleaseIndex(index ReleaseIndex) ReleaseIndex {
 	clone.DependencyLayer = cloneAssets(index.DependencyLayer)
 	clone.LifecycleHost = cloneAssets(index.LifecycleHost)
 	clone.Signer = cloneAssets(index.Signer)
+	clone.Components = make(map[string]ComponentAssets, len(index.Components))
+	for id, assets := range index.Components {
+		clone.Components[id] = assets
+	}
 	clone.StateSchemas = make(map[string]uint32, len(index.StateSchemas))
 	for name, version := range index.StateSchemas {
 		clone.StateSchemas[name] = version
@@ -176,6 +187,22 @@ func validateReleaseIndex(index ReleaseIndex, now time.Time) error {
 	for label, assets := range map[string]map[string]Asset{"application": index.Application, "dependencyLayer": index.DependencyLayer, "lifecycleHost": index.LifecycleHost, "signer": index.Signer} {
 		if err := validateAssets(label, assets); err != nil {
 			return err
+		}
+	}
+	componentIDs := make([]string, 0, len(index.Components))
+	for id := range index.Components {
+		componentIDs = append(componentIDs, id)
+	}
+	sort.Strings(componentIDs)
+	for _, id := range componentIDs {
+		if !componentIDPattern.MatchString(id) {
+			return errors.New("release index component identity is invalid")
+		}
+		assets := index.Components[id]
+		for label, asset := range map[string]Asset{"catalog": assets.Catalog, "archive": assets.Archive} {
+			if !assetNamePattern.MatchString(asset.Name) || asset.Size == 0 || !digestPattern.MatchString(asset.SHA256) || asset.PrivilegedComponent != "" || asset.Protocols != nil {
+				return fmt.Errorf("release index component %q %s asset is invalid", id, label)
+			}
 		}
 	}
 	if len(index.StateSchemas) == 0 {
