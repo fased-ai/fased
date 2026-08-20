@@ -566,6 +566,9 @@ describe("CI workflow routing", () => {
     const preflightText = preflight?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const finalizeText = finalizeCandidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const publishIdentity = publish?.steps?.find(
+      (step) => step.name === "Verify exact candidate identity",
+    );
     const refreshRootHeadText =
       refreshRootHead?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
 
@@ -578,6 +581,7 @@ describe("CI workflow routing", () => {
       "preflight",
       "publish",
       "refresh-root-head",
+      "release-gate",
     ]);
     for (const removed of [
       "build",
@@ -588,7 +592,6 @@ describe("CI workflow routing", () => {
       "predecessor-capsules",
       "p1-local-update",
       "p1-hosting",
-      "release-gate",
       "tag-ready",
     ]) {
       expect(jobs[removed]).toBeUndefined();
@@ -614,13 +617,21 @@ describe("CI workflow routing", () => {
     expect(finalizeText).not.toContain("test-lifecycle-local-acceptance.sh");
     expect(finalizeText).not.toContain("test-lifecycle-hosting-acceptance.sh");
 
-    expect(publish?.needs).toEqual(["finalize-candidate"]);
+    expect(publish?.needs).toEqual(["finalize-candidate", "release-gate"]);
     expect(publish?.environment).toBe("candidate-release");
     expect(publishText).not.toContain("pnpm build");
     expect(publishText).not.toContain("go build");
     expect(publishText).not.toContain("--workflow-run-attempt");
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
+    expect(publishIdentity?.env).toMatchObject({
+      PRE_CANDIDATE_RUN_ID: "${{ inputs.pre_candidate_run_id }}",
+      PRE_TAG_P1_RUN_ID: "${{ inputs.pre_tag_p1_run_id }}",
+    });
+    expect(publishIdentity?.run).toContain('--claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID"');
+    expect(publishIdentity?.run).toContain('--claim "preTagP1RunId=$PRE_TAG_P1_RUN_ID"');
+    expect(publishIdentity?.run).not.toContain("${{ inputs.pre_candidate_run_id }}");
+    expect(publishIdentity?.run).not.toContain("${{ inputs.pre_tag_p1_run_id }}");
     expect(publishText).toContain("git ls-remote --exit-code --tags origin");
     expect(publishText).toContain("release-artifact-set.mjs verify-assets");
     expect(publishText).toContain('gh release create "$RELEASE_TAG"');
@@ -684,16 +695,69 @@ describe("CI workflow routing", () => {
     expect(commands).not.toContain("--verify-public-github");
     expect(commands).toContain("--verify-git");
     expect(commands.match(/--verify-release/g)).toHaveLength(2);
-    expect(commands).toContain("lockfileDigest");
-    expect(commands).toContain("managedPredecessorVersion");
-    expect(commands).toContain("schemaVersion:4");
-    expect(commands).toContain("local0ReceiptSha256");
-    expect(commands).toContain("releaseSequence");
-    expect(commands).toContain("securityEpoch");
+    expect(commands).toContain("node scripts/release-gate.mjs record");
+    expect(commands).toContain("--phase pre-candidate");
+    expect(commands).toContain("--lockfile-digest");
+    expect(commands).toContain("managedPredecessorVersion=");
+    expect(commands).toContain("local0ReceiptDigest=");
+    expect(commands).toContain("releaseSequence=");
+    expect(commands).toContain("securityEpoch=");
     expect(commands).toContain("node scripts/verify-lifecycle-root-pin.mjs");
     expect(
       validate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
     ).toBe("fased-pre-candidate-evidence");
+  });
+
+  it("uses one version-neutral release gate and reusable receipt workflow", async () => {
+    const gateSource = await readFile(resolve(repoRoot, "scripts/release-gate.mjs"), "utf8");
+    const reusable = await readWorkflow(".github/workflows/release-gate-verify.yml");
+    const preCandidate = await readFile(
+      resolve(repoRoot, ".github/workflows/pre-candidate.yml"),
+      "utf8",
+    );
+    const preTag = await readFile(resolve(repoRoot, ".github/workflows/pre-tag-p1.yml"), "utf8");
+    const release = await readFile(
+      resolve(repoRoot, ".github/workflows/hosted-runtime-release.yml"),
+      "utf8",
+    );
+    const replay = await readFile(
+      resolve(repoRoot, ".github/workflows/candidate-p1-replay.yml"),
+      "utf8",
+    );
+    const publication = await readFile(
+      resolve(repoRoot, ".github/workflows/candidate-publication-replay.yml"),
+      "utf8",
+    );
+
+    expect(reusable.on).toHaveProperty("workflow_call");
+    expect(reusable.jobs?.verify?.["timeout-minutes"]).toBeLessThanOrEqual(3);
+    const reusableText = reusable.jobs?.verify?.steps?.map((step) => step.run ?? "").join("\n");
+    expect(reusableText).toContain("node scripts/release-gate.mjs");
+    expect(reusableText).not.toContain("pnpm build");
+    expect(reusableText).not.toContain("go build");
+    expect(gateSource).toContain("role: RELEASE_GATE_ROLE");
+    expect(gateSource).toContain("cacheKey");
+    expect(gateSource).toContain("artifactSetDigest");
+    expect(gateSource).not.toMatch(/\b(?:gh|pnpm|go)\b/u);
+    expect(preCandidate).toContain("./.github/actions/setup-pnpm-store-cache");
+    expect(preTag).toContain("actions/cache@");
+    expect(preTag).toContain("${{ hashFiles(");
+
+    expect(preCandidate).toContain("--phase pre-candidate");
+    expect(preTag).toContain("--phase pre-tag-p1");
+    expect(release).toContain("--phase candidate-finalization");
+    expect(replay).toContain("--phase candidate-p1-replay");
+    expect(publication).toContain("--phase candidate-publication");
+    expect(publication).toContain('"Record exact candidate P1 replay gate"');
+    expect(publication).toContain('"fased-release-gate-candidate-p1-replay"');
+    for (const source of [preTag, release, replay, publication]) {
+      expect(source).toContain("--upstream-receipt");
+    }
+    expect(release).toContain("uses: ./.github/workflows/release-gate-verify.yml");
+    expect(publication).toContain("uses: ./.github/workflows/release-gate-verify.yml");
+    expect(replay).not.toContain("pnpm build");
+    expect(publication).not.toContain("pnpm build");
+    expect(publication).not.toContain("go build");
   });
 
   it("runs candidate-shaped Local and Hosting P1 before the immutable tag", async () => {
@@ -718,6 +782,9 @@ describe("CI workflow routing", () => {
     const evidenceRecord = evidence?.steps?.find(
       (step) => step.name === "Record immutable pre-tag evidence",
     );
+    const evidenceUpstreamDownload = evidence?.steps?.find(
+      (step) => step.name === "Download exact pre-candidate gate receipt",
+    );
     const allText = Object.values(jobs)
       .flatMap((job) => job.steps ?? [])
       .map((step) => step.run ?? "")
@@ -739,6 +806,18 @@ describe("CI workflow routing", () => {
       "local-update",
       "hosting",
     ]);
+    expect(evidenceUpstreamDownload?.with).toMatchObject({
+      name: "fased-pre-candidate-evidence",
+      path: "${{ runner.temp }}/pre-candidate-evidence",
+      "run-id": "${{ inputs.pre_candidate_run_id }}",
+    });
+    expect(
+      localFresh?.steps?.some(
+        (step) =>
+          usesAction(step, "actions/download-artifact") &&
+          step.with?.name === "fased-pre-candidate-evidence",
+      ),
+    ).toBe(false);
     expect(allText).toContain('test "$GITHUB_REF" = "refs/heads/main"');
     expect(allText).toContain("node scripts/ci-version-identity.mjs");
     expect(allText).toContain("node scripts/verify-lifecycle-root-pin.mjs");
@@ -773,16 +852,11 @@ describe("CI workflow routing", () => {
     expect(hostingRun?.env).toMatchObject({
       FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,managed-update",
     });
-    expect(evidenceRecord?.run).toContain(
-      '--arg managedPredecessorInstallationClass "canonical-managed"',
-    );
-    expect(evidenceRecord?.run).toContain(
-      "managedPredecessorInstallationClass:$managedPredecessorInstallationClass",
-    );
-    expect(evidenceRecord?.run).toContain(
-      '--arg managedTransitionStage "pretag-installer-takeover"',
-    );
-    expect(evidenceRecord?.run).toContain("managedTransitionStage:$managedTransitionStage");
+    expect(evidenceRecord?.run).toContain("node scripts/release-gate.mjs record");
+    expect(evidenceRecord?.run).toContain("--phase pre-tag-p1");
+    expect(evidenceRecord?.run).toContain("--candidate-descriptor-digest");
+    expect(evidenceRecord?.run).toContain("--artifact-set-digest");
+    expect(evidenceRecord?.run).toContain("--upstream-receipt");
     expect(allText).toContain('{version:$stable,installationClass:"public-stable"}');
     expect(allText).toContain('{version:$managed,installationClass:"canonical-managed"}');
     expect(allText).not.toContain("gh release create");
@@ -873,7 +947,7 @@ describe("CI workflow routing", () => {
     });
     expect(publicationReplay.permissions).toMatchObject({ actions: "read", contents: "read" });
     expect(publicationReplay.jobs?.publish).toMatchObject({
-      needs: "verify",
+      needs: ["release-gate", "verify"],
       environment: "candidate-release",
       permissions: { actions: "read", contents: "write" },
     });

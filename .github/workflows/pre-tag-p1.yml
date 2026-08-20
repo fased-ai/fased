@@ -93,23 +93,17 @@ jobs:
           gh run download "$PRE_CANDIDATE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name fased-pre-candidate-evidence --dir "$evidence_dir"
           evidence="$evidence_dir/evidence.json"
-          jq -e \
-            --arg sourceCommit "$base_commit" \
-            --arg sourceTree "$(git rev-parse "$base_commit^{tree}")" \
-            --arg lockfileDigest "sha256:$(git show "$base_commit:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
-            --arg releaseVersion "$RELEASE_VERSION" \
-            --arg managedPredecessorVersion "$MANAGED_PREDECESSOR_VERSION" \
-            --arg managedPredecessorInstallationClass "canonical-managed" \
-            --arg predecessorVersion "$PREDECESSOR_VERSION" \
-            --arg workflowRunId "$PRE_CANDIDATE_RUN_ID" \
-            '.schemaVersion == 4 and .sourceCommit == $sourceCommit and .sourceTree == $sourceTree and
-             .lockfileDigest == $lockfileDigest and .nextReleaseVersion == $releaseVersion and
-             .predecessorVersion == $predecessorVersion and
-             .managedPredecessorVersion == $managedPredecessorVersion and
-             (.releaseSequence | type == "number" and . >= 1) and
-             (.securityEpoch | type == "number" and . >= 1) and
-             (.local0ReceiptSha256 | test("^sha256:[a-f0-9]{64}$")) and
-             .workflowRunId == $workflowRunId' "$evidence" >/dev/null
+          node scripts/release-gate.mjs verify \
+            --receipt "$evidence" \
+            --phase pre-candidate \
+            --source-commit "$base_commit" \
+            --source-tree "$(git rev-parse "$base_commit^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$base_commit:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --release-version "$RELEASE_VERSION" \
+            --claim "predecessorVersion=$PREDECESSOR_VERSION" \
+            --claim "managedPredecessorVersion=$MANAGED_PREDECESSOR_VERSION" \
+            --claim "workflowRunId=$PRE_CANDIDATE_RUN_ID" >/dev/null
 
           main_runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT&branch=main&event=push&status=success&per_page=20")"
           jq -e --arg sourceCommit "$SOURCE_COMMIT" \
@@ -131,10 +125,10 @@ jobs:
           hosting_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" '[$stable]')"
           printf 'local_predecessors=%s\n' "$local_predecessors" >>"$GITHUB_OUTPUT"
           printf 'hosting_predecessors=%s\n' "$hosting_predecessors" >>"$GITHUB_OUTPUT"
-          printf 'release_sequence=%s\n' "$(jq -er .releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
-          printf 'security_epoch=%s\n' "$(jq -er .securityEpoch "$evidence")" >>"$GITHUB_OUTPUT"
+          printf 'release_sequence=%s\n' "$(jq -er .claims.releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
+          printf 'security_epoch=%s\n' "$(jq -er .claims.securityEpoch "$evidence")" >>"$GITHUB_OUTPUT"
           printf 'local0_receipt_sha256=%s\n' \
-            "$(jq -er .local0ReceiptSha256 "$evidence")" >>"$GITHUB_OUTPUT"
+            "$(jq -er .claims.local0ReceiptDigest "$evidence")" >>"$GITHUB_OUTPUT"
 
   candidate:
     name: Build one unpublished Linux-x64 candidate-shaped artifact
@@ -143,6 +137,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       descriptor_sha256: ${{ steps.identity.outputs.descriptor_sha256 }}
+      artifact_set_digest: ${{ steps.identity.outputs.artifact_set_digest }}
     steps:
       - name: Checkout exact version-only source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -203,6 +198,9 @@ jobs:
             "$candidate/fased-branch-proof-x64.json" >/dev/null
           digest="sha256:$(sha256sum "$descriptor" | awk '{print $1}')"
           printf 'descriptor_sha256=%s\n' "$digest" >>"$GITHUB_OUTPUT"
+          printf 'artifact_set_digest=%s\n' \
+            "$(jq -er '.artifactSetDigest | select(test("^sha256:[a-f0-9]{64}$"))' "$descriptor")" \
+            >>"$GITHUB_OUTPUT"
 
       - name: Prove nonpublishing finalization before immutable tag
         env:
@@ -398,9 +396,17 @@ jobs:
           ref: ${{ inputs.source_commit }}
           fetch-depth: 0
           submodules: false
+      - name: Download exact pre-candidate gate receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-pre-candidate-evidence
+          path: ${{ runner.temp }}/pre-candidate-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.pre_candidate_run_id }}
       - name: Record immutable pre-tag evidence
         env:
           DESCRIPTOR_SHA256: ${{ needs.candidate.outputs.descriptor_sha256 }}
+          ARTIFACT_SET_DIGEST: ${{ needs.candidate.outputs.artifact_set_digest }}
           MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
           PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
@@ -413,30 +419,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/pre-tag-evidence"
-          jq -n \
-            --arg sourceCommit "$SOURCE_COMMIT" \
-            --arg sourceTree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-            --arg releaseVersion "$RELEASE_VERSION" \
-            --arg predecessorVersion "$PREDECESSOR_VERSION" \
-            --arg managedPredecessorVersion "$MANAGED_PREDECESSOR_VERSION" \
-            --arg managedPredecessorInstallationClass "canonical-managed" \
-            --arg managedTransitionStage "pretag-installer-takeover" \
-            --arg preCandidateRunId "$PRE_CANDIDATE_RUN_ID" \
-            --arg workflowRunId "$GITHUB_RUN_ID" \
-            --arg candidateDescriptorSha256 "$DESCRIPTOR_SHA256" \
-            --arg local0ReceiptSha256 "$LOCAL0_RECEIPT_SHA256" \
-            --argjson releaseSequence "$RELEASE_SEQUENCE" \
-            --argjson securityEpoch "$SECURITY_EPOCH" \
-            '{schemaVersion:4,sourceCommit:$sourceCommit,sourceTree:$sourceTree,
-              releaseVersion:$releaseVersion,predecessorVersion:$predecessorVersion,
-              managedPredecessorVersion:$managedPredecessorVersion,
-              managedPredecessorInstallationClass:$managedPredecessorInstallationClass,
-              managedTransitionStage:$managedTransitionStage,
-              releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,
-              preCandidateRunId:$preCandidateRunId,workflowRunId:$workflowRunId,
-              candidateDescriptorSha256:$candidateDescriptorSha256,
-              local0ReceiptSha256:$local0ReceiptSha256}' \
-            >"$RUNNER_TEMP/pre-tag-evidence/evidence.json"
+          node scripts/release-gate.mjs record \
+            --phase pre-tag-p1 \
+            --source-commit "$SOURCE_COMMIT" \
+            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
+            --release-version "$RELEASE_VERSION" \
+            --candidate-descriptor-digest "$DESCRIPTOR_SHA256" \
+            --artifact-set-digest "$ARTIFACT_SET_DIGEST" \
+            --upstream-receipt "$RUNNER_TEMP/pre-candidate-evidence/evidence.json" \
+            --claim "predecessorVersion=$PREDECESSOR_VERSION" \
+            --claim "managedPredecessorVersion=$MANAGED_PREDECESSOR_VERSION" \
+            --claim "releaseSequence=$RELEASE_SEQUENCE" \
+            --claim "securityEpoch=$SECURITY_EPOCH" \
+            --claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID" \
+            --claim "workflowRunId=$GITHUB_RUN_ID" \
+            --claim "local0ReceiptDigest=$LOCAL0_RECEIPT_SHA256" \
+            --output "$RUNNER_TEMP/pre-tag-evidence/evidence.json"
       - name: Upload protected pre-tag evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
