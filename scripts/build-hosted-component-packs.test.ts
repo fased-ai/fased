@@ -262,6 +262,8 @@ describe("managed component pack identity", () => {
 
     expect(entry).toContain('const { runCli } = await import("./cli/run-main.js");');
     expect(entry).toContain("await runCli(process.argv);");
+    expect(entry).toContain("const cliCompletionKeepAlive = setInterval");
+    expect(entry).toContain("clearInterval(cliCompletionKeepAlive);");
     expect(entry).not.toContain('import("./cli/run-main.js")\n      .then');
   });
 
