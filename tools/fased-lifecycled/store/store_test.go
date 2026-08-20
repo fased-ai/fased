@@ -858,9 +858,13 @@ func TestRC80LegacyInstalledGenerationContractDoesNotWeakenTargetPolicy(t *testi
 	if _, _, err := store.ReadGenerationContract(legacyGeneration.ID); err == nil || !strings.Contains(err.Error(), "legacy plugin-lock metadata") {
 		t.Fatalf("current-generation reader accepted the rc.80 installed inventory: %v", err)
 	}
-	readInventory, readGeneration, err := store.ReadLegacySchemaOneGenerationContract(legacyGeneration.ID)
-	if err != nil || !reflect.DeepEqual(readInventory, legacyInventory) || readGeneration != legacyGeneration {
-		t.Fatalf("restricted rc.80 installed-generation reader failed: inventory=%+v generation=%+v err=%v", readInventory, readGeneration, err)
+	if _, err := store.GenerationPayloadPath(legacyGeneration.ID); err == nil || !strings.Contains(err.Error(), "legacy plugin-lock metadata") {
+		t.Fatalf("current-generation payload reader accepted the rc.80 installed inventory: %v", err)
+	}
+	readInventory, readGeneration, readPayload, err := store.ReadLegacySchemaOneGenerationContract(legacyGeneration.ID)
+	expectedPayload := filepath.Join(legacyRoot, generationPayloadName)
+	if err != nil || !reflect.DeepEqual(readInventory, legacyInventory) || readGeneration != legacyGeneration || readPayload != expectedPayload {
+		t.Fatalf("restricted rc.80 installed-generation reader failed: inventory=%+v generation=%+v payload=%q err=%v", readInventory, readGeneration, readPayload, err)
 	}
 
 	if err := os.WriteFile(filepath.Join(legacyRoot, generationPayloadName, "bin", "fased-lifecycled"), []byte("substituted"), 0o755); err != nil {

@@ -23,12 +23,8 @@ func (resolver schemaOnePluginLockFixtureResolver) ReadManifest() (model.Manifes
 	return resolver.manifest, "sha256:" + strings.Repeat("c", 64), nil
 }
 
-func (resolver schemaOnePluginLockFixtureResolver) ReadLegacySchemaOneGenerationContract(string) (bundle.Inventory, model.Generation, error) {
-	return resolver.inventory, resolver.generation, nil
-}
-
-func (resolver schemaOnePluginLockFixtureResolver) GenerationPayloadPath(string) (string, error) {
-	return resolver.payload, nil
+func (resolver schemaOnePluginLockFixtureResolver) ReadLegacySchemaOneGenerationContract(string) (bundle.Inventory, model.Generation, string, error) {
+	return resolver.inventory, resolver.generation, resolver.payload, nil
 }
 
 func TestManagedPluginProductionBoundaryUsesCanonicalConfigGroup(t *testing.T) {

@@ -468,36 +468,39 @@ func (s *Store) activatePointers(currentPointer, previousPointer, currentID, pre
 // generation shape that predates the current artifact-inventory policy. It is
 // deliberately bound to the exact active generation in a durable schema-one
 // manifest; candidate acquisition and every current-generation caller must use
-// ReadGenerationContract and continue to reject legacy metadata.
-func (s *Store) ReadLegacySchemaOneGenerationContract(generationID string) (bundle.Inventory, model.Generation, error) {
+// ReadGenerationContract and continue to reject legacy metadata. The returned
+// payload path belongs to this same verified contract so callers never re-enter
+// the strict current-generation path resolver for historical bytes.
+func (s *Store) ReadLegacySchemaOneGenerationContract(generationID string) (bundle.Inventory, model.Generation, string, error) {
 	if err := validateGenerationID(generationID); err != nil {
-		return bundle.Inventory{}, model.Generation{}, err
+		return bundle.Inventory{}, model.Generation{}, "", err
 	}
 	manifest, _, err := s.ReadManifest()
 	if err != nil || manifest.SchemaVersion != 1 || manifest.ActiveGeneration == nil || manifest.ActiveGeneration.ID != generationID || !s.declaredActiveGeneration(*manifest.ActiveGeneration) {
-		return bundle.Inventory{}, model.Generation{}, errors.New("legacy predecessor is not the active schema-one generation")
+		return bundle.Inventory{}, model.Generation{}, "", errors.New("legacy predecessor is not the active schema-one generation")
 	}
 	root := s.generationPath(generationID)
 	inventoryJSON, err := readGenerationInventory(filepath.Join(root, generationInventoryName))
 	if err != nil {
-		return bundle.Inventory{}, model.Generation{}, err
+		return bundle.Inventory{}, model.Generation{}, "", err
 	}
 	inventory, err := bundle.DecodeLegacyInstalledInventory(inventoryJSON)
 	if err != nil {
-		return bundle.Inventory{}, model.Generation{}, err
+		return bundle.Inventory{}, model.Generation{}, "", err
 	}
 	generation, err := bundle.IdentityLegacyInstalledInventory(inventory)
 	if err != nil || generation != *manifest.ActiveGeneration || generation.ID != generationID {
-		return bundle.Inventory{}, model.Generation{}, errors.New("legacy predecessor inventory differs from the schema-one manifest")
+		return bundle.Inventory{}, model.Generation{}, "", errors.New("legacy predecessor inventory differs from the schema-one manifest")
 	}
-	if err := bundle.VerifyLegacyInstalled(filepath.Join(root, generationPayloadName), inventory, generation); err != nil {
-		return bundle.Inventory{}, model.Generation{}, err
+	payload := filepath.Join(root, generationPayloadName)
+	if err := bundle.VerifyLegacyInstalled(payload, inventory, generation); err != nil {
+		return bundle.Inventory{}, model.Generation{}, "", err
 	}
-	return inventory, generation, nil
+	return inventory, generation, payload, nil
 }
 
 func (s *Store) verifiedLegacySchemaOnePredecessor(generationID string) (model.Generation, error) {
-	_, generation, err := s.ReadLegacySchemaOneGenerationContract(generationID)
+	_, generation, _, err := s.ReadLegacySchemaOneGenerationContract(generationID)
 	return generation, err
 }
 
