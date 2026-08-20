@@ -93,6 +93,7 @@ describe("managed component pack identity", () => {
     expect(paths).not.toContain("dist/config/config.js");
     expect(paths).not.toContain("dist/auto-reply/chunk.js");
     expect(paths).not.toContain("dist/text/strip-markdown.js");
+    expect(paths).not.toContain("dist/line/flex-templates.js");
     const coreRuntime = await fs.readFile(
       path.join(process.cwd(), "src", "plugins", "runtime", "index.ts"),
       "utf8",
@@ -108,6 +109,40 @@ describe("managed component pack identity", () => {
     expect(ttsRuntime).toContain('from "../text/strip-markdown.js"');
     const buildConfig = await fs.readFile(path.join(process.cwd(), "tsdown.config.ts"), "utf8");
     expect(buildConfig).toContain('"text/strip-markdown": "src/text/strip-markdown.ts"');
+    const launcher = await fs.readFile(path.join(process.cwd(), "fased.mjs"), "utf8");
+    expect(launcher).toContain('arg === "--version" || arg === "-V"');
+    expect(launcher).toContain('await import("./package.json", { with: { type: "json" } })');
+    const pluginSdk = await fs.readFile(
+      path.join(process.cwd(), "src", "plugin-sdk", "index.ts"),
+      "utf8",
+    );
+    expect(pluginSdk).toContain('export { stripMarkdown } from "../text/strip-markdown.js"');
+    expect(pluginSdk).not.toContain('from "../line/markdown-to-line.js"');
+    expect(pluginSdk).not.toContain('from "../line/accounts.js"');
+    const commandRegistry = await fs.readFile(
+      path.join(process.cwd(), "src", "cli", "program", "command-registry.ts"),
+      "utf8",
+    );
+    expect(commandRegistry).not.toContain(
+      'import { registerWalletCommands } from "./register.wallet.js"',
+    );
+    expect(commandRegistry).toContain('await import("./register.wallet.js")');
+    const pluginLoader = await fs.readFile(
+      path.join(process.cwd(), "src", "plugins", "loader.ts"),
+      "utf8",
+    );
+    expect(pluginLoader).toContain('from "./runtime/factory.js"');
+    expect(pluginLoader).not.toContain('from "./runtime/index.js"');
+    const artifactBuilder = await fs.readFile(
+      path.join(process.cwd(), "scripts", "build-hosted-runtime-artifact.ts"),
+      "utf8",
+    );
+    expect(artifactBuilder).toContain('FASED_MANAGED_INTERNAL: "1"');
+    expect(artifactBuilder).toContain("writeBundledPluginLock(packageRoot)");
+    expect(artifactBuilder).not.toContain('type: "fased-plugin-lock", entries: []');
+    expect(artifactBuilder).toContain("allow: componentContract.core.loadedPluginIds");
+    expect(artifactBuilder).toContain("FASED_PLUGIN_LOCK_PATH: smokePluginLockPath");
+    expect(artifactBuilder).toContain("FASED_PLUGIN_DATA_ROOT: smokePluginDataRoot");
   });
 
   it("rejects symbolic-link aliases before producing a managed identity", async () => {

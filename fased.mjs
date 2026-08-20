@@ -68,7 +68,11 @@ const lightweightSpecifier =
       : null;
 
 let handledByLightweightCli = false;
-if (lightweightSpecifier) {
+if (process.argv.slice(2).some((arg) => arg === "--version" || arg === "-V")) {
+  const packageJson = await import("./package.json", { with: { type: "json" } });
+  console.log(packageJson.default.version);
+  handledByLightweightCli = true;
+} else if (lightweightSpecifier) {
   try {
     const mod = await import(lightweightSpecifier);
     handledByLightweightCli = (await mod.run(process.argv)) === true;

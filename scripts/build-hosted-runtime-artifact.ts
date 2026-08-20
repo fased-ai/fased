@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import { writeBundledPluginLock } from "./assemble-lifecycle-generation.mjs";
 import { resolveManagedRuntimeImplementationPaths } from "./build-hosted-component-packs.js";
 import {
   assertHostedCoreBudgets,
@@ -435,12 +436,22 @@ async function main(): Promise<void> {
     await fs.mkdir(smokeHome, { recursive: true });
     const smokeStateDir = path.join(smokeHome, ".fased");
     await fs.mkdir(smokeStateDir, { recursive: true });
+    const smokePluginCodeRoot = path.join(smokeStateDir, "plugin-code");
+    const smokePluginDataRoot = path.join(smokeStateDir, "plugin-data");
+    const smokePluginLockPath = path.join(smokeStateDir, "plugin.lock.json");
+    await Promise.all([
+      fs.mkdir(smokePluginCodeRoot, { recursive: true }),
+      fs.mkdir(smokePluginDataRoot, { recursive: true }),
+    ]);
+    await writeBundledPluginLock(packageRoot);
+    await fs.copyFile(path.join(packageRoot, "plugin.lock.json"), smokePluginLockPath);
+    await fs.rm(path.join(packageRoot, "plugin.lock.json"));
     await fs.writeFile(
       path.join(smokeStateDir, "fased.json"),
       `${JSON.stringify(
         {
           plugins: {
-            allow: ["memory-core", "sat-mining"],
+            allow: componentContract.core.loadedPluginIds,
             entries: { "sat-mining": { enabled: true } },
           },
         },
@@ -453,6 +464,10 @@ async function main(): Promise<void> {
       HOME: smokeHome,
       FASED_STATE_DIR: smokeStateDir,
       FASED_CONFIG_PATH: path.join(smokeStateDir, "fased.json"),
+      FASED_MANAGED_INTERNAL: "1",
+      FASED_PLUGIN_CODE_ROOT: smokePluginCodeRoot,
+      FASED_PLUGIN_DATA_ROOT: smokePluginDataRoot,
+      FASED_PLUGIN_LOCK_PATH: smokePluginLockPath,
       // Vitest suppresses defaultRuntime.log unless this explicit test boundary
       // requests output. Artifact validation must not depend on ambient VITEST.
       FASED_TEST_RUNTIME_LOG: "1",

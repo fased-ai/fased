@@ -28,7 +28,7 @@ import { isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
 import { bindManagedPluginSnapshot, readCanonicalPluginLock } from "./readiness-receipt.js";
 import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./registry.js";
 import { setActivePluginRegistry } from "./runtime.js";
-import { createPluginRuntime } from "./runtime/index.js";
+import { createPluginRuntime } from "./runtime/factory.js";
 import { validateJsonSchemaValue } from "./schema-validator.js";
 import type {
   FasedAgentPluginDefinition,
