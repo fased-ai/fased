@@ -1,10 +1,30 @@
 package platform
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"fased-lifecycled/bundle"
+	"fased-lifecycled/model"
+	stateparticipant "fased-lifecycled/participant"
 )
+
+type schemaOnePluginLockFixtureResolver struct {
+	inventory  bundle.Inventory
+	generation model.Generation
+	payload    string
+}
+
+func (resolver schemaOnePluginLockFixtureResolver) ReadGenerationContract(string) (bundle.Inventory, model.Generation, error) {
+	return resolver.inventory, resolver.generation, nil
+}
+
+func (resolver schemaOnePluginLockFixtureResolver) GenerationPayloadPath(string) (string, error) {
+	return resolver.payload, nil
+}
 
 func TestManagedPluginProductionBoundaryUsesCanonicalConfigGroup(t *testing.T) {
 	uid, canonicalGID := uint32(os.Getuid()), uint32(os.Getgid())
@@ -25,5 +45,105 @@ func TestManagedPluginProductionBoundaryUsesCanonicalConfigGroup(t *testing.T) {
 	boundary := managedPluginProductionBoundary(config, tx, derivedGID)
 	if boundary.ConfigGID != canonicalGID || boundary.ConfigGID == config.Operator.GID {
 		t.Fatalf("plugin boundary config GID = %d, want canonical %d and not operator primary %d", boundary.ConfigGID, canonicalGID, config.Operator.GID)
+	}
+}
+
+func TestRC80SchemaOneCoreTransitionImportsOnlyExactVerifiedGenerationPluginLock(t *testing.T) {
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	if uid == 0 || gid == 0 {
+		t.Skip("schema-one plugin lock ownership proof requires an unprivileged test identity")
+	}
+	root := t.TempDir()
+	ownerRoot := filepath.Join(root, "owner")
+	payload := filepath.Join(root, "generation", "payload")
+	for _, directory := range []string{ownerRoot, filepath.Join(payload, "runtime")} {
+		if err := os.MkdirAll(directory, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lock := stateparticipant.PluginLock{SchemaVersion: stateparticipant.PluginLockSchemaVersion, Type: "fased-plugin-lock"}
+	lockData, err := json.Marshal(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockData = append(lockData, '\n')
+	digest, err := stateparticipant.PluginLockDigest(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationLock := filepath.Join(payload, "runtime", "plugin.lock.json")
+	if err := os.WriteFile(generationLock, lockData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	generationID := "sha256:720f0837856f8dfa05225e61fa0fc0cdbe921523d28686f1091e7831d63dc10b"
+	resolver := schemaOnePluginLockFixtureResolver{
+		inventory:  bundle.Inventory{PluginLockDigest: digest},
+		generation: model.Generation{ID: generationID, Version: "0.1.76-rc.80", Commit: "ceb0e98275fc00aebbbb8200207012080313e51c", Tree: "3c264f16995f04629a13c73bc1c0899221b8a195"}, // pragma: allowlist secret
+		payload:    payload,
+	}
+	config := Config{OwnerStateRoot: ownerRoot, Operator: Principal{UID: uid, GID: gid}}
+	if err := migrateSchemaOneManagedPluginLock(config, generationID, gid, uid, resolver); err != nil {
+		t.Fatalf("exact schema-one plugin lock was not imported: %v", err)
+	}
+	installed := CanonicalPluginLockPath(config)
+	installedData, err := os.ReadFile(installed)
+	if err != nil || string(installedData) != string(lockData) {
+		t.Fatalf("installed plugin lock differs: data=%q err=%v", installedData, err)
+	}
+	info, err := os.Lstat(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("installed plugin lock mode = %04o, want 0640", info.Mode().Perm())
+	}
+
+	if err := os.Remove(installed); err != nil {
+		t.Fatal(err)
+	}
+	resolver.inventory.PluginLockDigest = "sha256:" + strings.Repeat("b", 64)
+	if err := migrateSchemaOneManagedPluginLock(config, generationID, gid, uid, resolver); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("inventory-mismatched schema-one plugin lock was accepted: %v", err)
+	}
+	if _, err := os.Lstat(installed); !os.IsNotExist(err) {
+		t.Fatalf("failed bridge left an owner plugin lock: %v", err)
+	}
+}
+
+func TestRC80SchemaOneCoreTransitionRejectsSubstitutedGenerationPluginLock(t *testing.T) {
+	uid := uint32(os.Getuid())
+	if uid == 0 {
+		t.Skip("schema-one plugin lock ownership proof requires an unprivileged test identity")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "target.json")
+	if err := os.WriteFile(target, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "plugin.lock.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSchemaOneGenerationPluginLock(link, uid); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("substituted schema-one generation lock was accepted: %v", err)
+	}
+}
+
+func TestSchemaOnePluginLockBridgeNeverReplacesAConcurrentOwnerFile(t *testing.T) {
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	if uid == 0 || gid == 0 {
+		t.Skip("schema-one plugin lock ownership proof requires an unprivileged test identity")
+	}
+	path := filepath.Join(t.TempDir(), "plugin.lock.json")
+	existing := []byte("operator collision\n")
+	if err := os.WriteFile(path, existing, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := installSchemaOneManagedPluginLock(path, []byte("verified generation lock\n"), uid, gid); err == nil {
+		t.Fatal("schema-one bridge replaced a concurrent owner file")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(existing) {
+		t.Fatalf("schema-one collision changed owner bytes: data=%q err=%v", after, err)
 	}
 }

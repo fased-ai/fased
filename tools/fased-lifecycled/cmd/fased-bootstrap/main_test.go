@@ -411,7 +411,7 @@ func TestInstalledLifecycleStatusIsBoundToCanonicalPlatformIdentity(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Version != generation.Version || status.ActiveGenerationID != generation.ID || status.ReleaseSequence != 12 || status.SecurityEpoch != 3 {
+	if status.Version != generation.Version || status.ActiveGenerationID != generation.ID || status.ManifestSchema != model.CurrentManifestSchemaVersion || status.ReleaseSequence != 12 || status.SecurityEpoch != 3 {
 		t.Fatalf("installed lifecycle status lost canonical identity: %+v", status)
 	}
 

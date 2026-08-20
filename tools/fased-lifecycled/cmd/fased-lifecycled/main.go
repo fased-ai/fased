@@ -444,7 +444,7 @@ func convergeManagedPluginsBeforeCoreGeneration(ctx context.Context, profile mod
 	if err != nil {
 		return err
 	}
-	production, err := platform.NewManagedPluginProduction(config, manifest.ActiveGeneration.ID, service)
+	production, err := platform.NewManagedPluginProductionForCoreTransition(config, manifest.ActiveGeneration.ID, manifest.SchemaVersion, service)
 	if err != nil {
 		return fmt.Errorf("inspect managed plugin transaction before core generation transition: %w", err)
 	}
