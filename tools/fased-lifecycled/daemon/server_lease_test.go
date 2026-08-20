@@ -138,6 +138,9 @@ func TestSupervisorRetainsReceivedLeaseAfterLifecycleHostCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
+	if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
 	if err := <-serveDone; err != nil {
 		t.Fatal(err)
 	}
