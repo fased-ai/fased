@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   assertManagedComponentPackBudget,
   normalizedManagedPluginTreeDigest,
+  resolveManagedRuntimeImplementationPaths,
 } from "./build-hosted-component-packs.js";
 
 const roots: string[] = [];
@@ -20,8 +21,8 @@ describe("managed component pack identity", () => {
       "utf8",
     );
     expect(source).toContain('import { rolldown } from "rolldown"');
-    expect(source).toContain('params.componentId === "browser-runtime"');
-    expect(source).toContain('params.componentId === "speech-runtime"');
+    expect(source).toContain('["browser-runtime", "speech-runtime"]');
+    expect(source).toContain("bundledManagedRuntimeComponents.has(params.componentId)");
     expect(source).toContain('entryFileNames: "index.mjs"');
     expect(source).toContain('extensions: ["./index.mjs"]');
     expect(source).toContain('fs.rm(path.join(params.deployRoot, "index.ts"), { force: true })');
@@ -68,6 +69,17 @@ describe("managed component pack identity", () => {
     await fs.chmod(path.join(root, "demo", "index.js"), 0o644);
     await fs.writeFile(path.join(root, "demo", "index.js"), "export default { id: 'demo' };\n");
     await expect(normalizedManagedPluginTreeDigest(root)).resolves.not.toBe(first);
+  });
+
+  it("derives exact browser implementation paths while retaining shared core facades", async () => {
+    const paths = await resolveManagedRuntimeImplementationPaths(["runtime-browser"]);
+    expect(paths).toContain("dist/browser/control-service.js");
+    expect(paths).toContain("dist/browser/routes/dispatcher.js");
+    expect(paths).not.toContain("dist/browser/config.js");
+    expect(paths).not.toContain("dist/browser/control-auth.js");
+    expect(paths).not.toContain("dist/browser/paths.js");
+    expect(paths).not.toContain("dist/browser/proxy-files.js");
+    expect(paths).not.toContain("dist/tts/tts.js");
   });
 
   it("rejects symbolic-link aliases before producing a managed identity", async () => {

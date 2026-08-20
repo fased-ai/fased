@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import { resolveManagedRuntimeImplementationPaths } from "./build-hosted-component-packs.js";
 import {
   assertHostedCoreBudgets,
   enforceHostedApplicationAllowlist,
@@ -338,6 +339,17 @@ async function main(): Promise<void> {
       packageRoot,
       contract: componentContract,
     });
+    const managedRuntimeImplementationPaths = await resolveManagedRuntimeImplementationPaths([
+      "runtime-browser",
+    ]);
+    for (const relative of managedRuntimeImplementationPaths) {
+      const target = path.join(packageRoot, relative);
+      const stat = await fs.lstat(target);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`managed runtime implementation is not a regular file: ${relative}`);
+      }
+      await fs.rm(target);
+    }
     const removedExtensions = await retainHostedCoreExtensions({
       extensionsRoot: path.join(packageRoot, "extensions"),
       contract: componentContract,
@@ -606,6 +618,7 @@ async function main(): Promise<void> {
           loadedPlugins: componentContract.core.loadedPluginIds.toSorted(),
           excludedExtensions: removedExtensions.toSorted(),
           excludedApplicationPaths: removedApplicationPaths.toSorted(),
+          excludedManagedRuntimePaths: managedRuntimeImplementationPaths,
           applicationBudget,
           dependencyBudget,
           dependencyCache: {

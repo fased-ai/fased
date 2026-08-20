@@ -14,6 +14,7 @@ import { writeReleaseArchive } from "./release-archive.js";
 
 const execFileAsync = promisify(execFile);
 const rootDir = path.resolve(import.meta.dirname, "..");
+const bundledManagedRuntimeComponents = new Set(["browser-runtime", "speech-runtime"]);
 
 type PluginTreeEntry = {
   path: string;
@@ -150,28 +151,8 @@ async function deployComponentPackage(params: {
       maxBuffer: 4 * 1024 * 1024,
     },
   );
-  if (params.componentId === "browser-runtime" || params.componentId === "speech-runtime") {
-    const bundle = await rolldown({
-      input: path.join(params.extensionRoot, "index.ts"),
-      external: (id) => id.startsWith("node:") || (!id.startsWith(".") && !path.isAbsolute(id)),
-      plugins: [
-        {
-          name: "fased-managed-runtime-boundary",
-          async resolveId(source, importer) {
-            if (!importer || !source.startsWith(".")) {
-              return null;
-            }
-            const resolved = await this.resolve(source, importer, { skipSelf: true });
-            if (!resolved) {
-              return null;
-            }
-            const relative = path.relative(rootDir, resolved.id);
-            const specifier = managedRuntimeSpecifier(relative);
-            return specifier ? { id: specifier, external: true } : null;
-          },
-        },
-      ],
-    });
+  if (bundledManagedRuntimeComponents.has(params.componentId)) {
+    const bundle = await createManagedRuntimeBundle(params.extensionRoot);
     try {
       await bundle.write({
         chunkFileNames: "chunks/[name]-[hash].mjs",
@@ -199,6 +180,77 @@ async function deployComponentPackage(params: {
     force: false,
   });
   return Date.now() - startedAt;
+}
+
+async function createManagedRuntimeBundle(extensionRoot: string) {
+  return await rolldown({
+    input: path.join(extensionRoot, "index.ts"),
+    external: (id) => id.startsWith("node:") || (!id.startsWith(".") && !path.isAbsolute(id)),
+    plugins: [
+      {
+        name: "fased-managed-runtime-boundary",
+        async resolveId(source, importer) {
+          if (!importer || !source.startsWith(".")) {
+            return null;
+          }
+          const resolved = await this.resolve(source, importer, { skipSelf: true });
+          if (!resolved) {
+            return null;
+          }
+          const relative = path.relative(rootDir, resolved.id);
+          const specifier = managedRuntimeSpecifier(relative);
+          return specifier ? { id: specifier, external: true } : null;
+        },
+      },
+    ],
+  });
+}
+
+function sourceModuleToApplicationPath(moduleId: string): string | null {
+  const sourceRoot = path.join(rootDir, "src");
+  const relative = path.relative(sourceRoot, moduleId);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative) ||
+    !/\.tsx?$/u.test(relative)
+  ) {
+    return null;
+  }
+  return path.posix.join("dist", relative.replaceAll(path.sep, "/").replace(/\.tsx?$/u, ".js"));
+}
+
+/** Exact core dist modules whose implementation bytes are owned by managed packs. */
+export async function resolveManagedRuntimeImplementationPaths(
+  extensionDirectories: readonly ("runtime-browser" | "runtime-speech")[] = [
+    "runtime-browser",
+    "runtime-speech",
+  ],
+): Promise<string[]> {
+  const paths = new Set<string>();
+  for (const extensionDirectory of extensionDirectories) {
+    const bundle = await createManagedRuntimeBundle(
+      path.join(rootDir, "extensions", extensionDirectory),
+    );
+    try {
+      const generated = await bundle.generate({ format: "esm" });
+      for (const output of generated.output) {
+        if (output.type !== "chunk") {
+          continue;
+        }
+        for (const moduleId of Object.keys(output.modules)) {
+          const applicationPath = sourceModuleToApplicationPath(moduleId);
+          if (applicationPath) {
+            paths.add(applicationPath);
+          }
+        }
+      }
+    } finally {
+      await bundle.close();
+    }
+  }
+  return [...paths].toSorted();
 }
 
 export async function buildHostedComponentPacks(

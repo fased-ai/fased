@@ -189,6 +189,9 @@ describe("hosted component contract", () => {
     expect(artifactSource).toContain('mode: "offline-pnpm-store"');
     expect(artifactSource).toContain("downloads: 0");
     expect(artifactSource).toContain("excludedExtensions: removedExtensions");
+    expect(artifactSource).toContain(
+      "excludedManagedRuntimePaths: managedRuntimeImplementationPaths",
+    );
     const rootPackage = JSON.parse(
       await fs.readFile(path.join(process.cwd(), "package.json"), "utf8"),
     ) as { scripts?: Record<string, string>; devDependencies?: Record<string, string> };

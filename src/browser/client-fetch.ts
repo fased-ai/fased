@@ -1,8 +1,8 @@
 import { formatCliCommand } from "../cli/command-format.js";
 import { loadConfig } from "../config/config.js";
+import { callGatewayLeastPrivilege } from "../gateway/call.js";
 import { isLoopbackHost } from "../gateway/net.js";
 import { getBridgeAuthForPort } from "./bridge-auth-registry.js";
-import { resolveBrowserConfig } from "./config.js";
 import { resolveBrowserControlAuth } from "./control-auth.js";
 
 // Application-level error from the browser control service (service is reachable
@@ -156,15 +156,44 @@ async function fetchHttpJson<T>(
   }
 }
 
+function parseGatewayBrowserBody(body: BodyInit | null | undefined): unknown {
+  if (body == null) {
+    return undefined;
+  }
+  if (typeof body !== "string") {
+    throw new Error("managed browser requests require a JSON string body");
+  }
+  return body.trim() ? JSON.parse(body) : undefined;
+}
+
+async function fetchManagedBrowserJson<T>(
+  url: string,
+  init: RequestInit & { timeoutMs?: number },
+): Promise<T> {
+  const parsed = new URL(url, "http://fased.invalid");
+  return await callGatewayLeastPrivilege<T>({
+    method: "browser.request",
+    params: {
+      method: init.method ?? "GET",
+      path: parsed.pathname,
+      query: Object.fromEntries(parsed.searchParams.entries()),
+      body: parseGatewayBrowserBody(init.body),
+      timeoutMs: init.timeoutMs,
+    },
+    timeoutMs: init.timeoutMs,
+  });
+}
+
 export async function fetchBrowserJson<T>(
   url: string,
   init?: RequestInit & { timeoutMs?: number },
 ): Promise<T> {
   const timeoutMs = init?.timeoutMs ?? 5000;
   try {
-    const target = isAbsoluteHttp(url)
-      ? url
-      : new URL(url, `http://127.0.0.1:${resolveBrowserConfig(loadConfig()).controlPort}`).href;
+    if (!isAbsoluteHttp(url)) {
+      return await fetchManagedBrowserJson<T>(url, { ...init, timeoutMs });
+    }
+    const target = url;
     const httpInit = withLoopbackBrowserAuth(target, init);
     return await fetchHttpJson<T>(target, { ...httpInit, timeoutMs });
   } catch (err) {
