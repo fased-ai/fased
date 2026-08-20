@@ -4,6 +4,17 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.103
+
+- Decompose Gateway, Wallet and signer responsibilities behind typed domain and
+  security-owned package boundaries.
+- Move durable task and Mining state to bounded SQLite/WAL stores with explicit
+  lifecycle quiescence, migration and rollback contracts.
+- Add digest-bound managed plugin install and update transactions with one
+  shared lifecycle lease, bounded archives and exact runtime identity.
+- Consolidate immutable release gates while retaining fail-closed compatibility
+  for supported pre-bootstrap managed installations.
+
 ## 0.1.76-rc.102
 
 - Prepare the protected candidate output directory before finalization so
