@@ -566,6 +566,9 @@ describe("CI workflow routing", () => {
     const preflightText = preflight?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const finalizeText = finalizeCandidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
     const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
+    const publishIdentity = publish?.steps?.find(
+      (step) => step.name === "Verify exact candidate identity",
+    );
     const refreshRootHeadText =
       refreshRootHead?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
 
@@ -621,6 +624,14 @@ describe("CI workflow routing", () => {
     expect(publishText).not.toContain("--workflow-run-attempt");
     expect(publishText).not.toContain("git tag");
     expect(publishText).not.toContain("git push origin");
+    expect(publishIdentity?.env).toMatchObject({
+      PRE_CANDIDATE_RUN_ID: "${{ inputs.pre_candidate_run_id }}",
+      PRE_TAG_P1_RUN_ID: "${{ inputs.pre_tag_p1_run_id }}",
+    });
+    expect(publishIdentity?.run).toContain('--claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID"');
+    expect(publishIdentity?.run).toContain('--claim "preTagP1RunId=$PRE_TAG_P1_RUN_ID"');
+    expect(publishIdentity?.run).not.toContain("${{ inputs.pre_candidate_run_id }}");
+    expect(publishIdentity?.run).not.toContain("${{ inputs.pre_tag_p1_run_id }}");
     expect(publishText).toContain("git ls-remote --exit-code --tags origin");
     expect(publishText).toContain("release-artifact-set.mjs verify-assets");
     expect(publishText).toContain('gh release create "$RELEASE_TAG"');
