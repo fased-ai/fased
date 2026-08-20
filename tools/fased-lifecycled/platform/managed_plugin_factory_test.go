@@ -23,7 +23,7 @@ func (resolver schemaOnePluginLockFixtureResolver) ReadManifest() (model.Manifes
 	return resolver.manifest, "sha256:" + strings.Repeat("c", 64), nil
 }
 
-func (resolver schemaOnePluginLockFixtureResolver) ReadGenerationContract(string) (bundle.Inventory, model.Generation, error) {
+func (resolver schemaOnePluginLockFixtureResolver) ReadLegacySchemaOneGenerationContract(string) (bundle.Inventory, model.Generation, error) {
 	return resolver.inventory, resolver.generation, nil
 }
 
