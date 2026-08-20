@@ -148,6 +148,7 @@ describe("managed component pack identity", () => {
     expect(artifactBuilder).toContain("writeBundledPluginLock(packageRoot)");
     expect(artifactBuilder).not.toContain('type: "fased-plugin-lock", entries: []');
     expect(artifactBuilder).toContain("allow: componentContract.core.loadedPluginIds");
+    expect(artifactBuilder).not.toContain("Hosted sat-mining plugin did not load");
     expect(artifactBuilder).toContain("FASED_PLUGIN_LOCK_PATH: smokePluginLockPath");
     expect(artifactBuilder).toContain("FASED_PLUGIN_DATA_ROOT: smokePluginDataRoot");
     for (const miningRpcFile of ["rpc-read.ts", "rpc-read-service.ts"]) {

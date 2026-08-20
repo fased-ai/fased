@@ -506,16 +506,6 @@ async function main(): Promise<void> {
         `Hosted core loaded plugins differ (actual ${enabledPluginIds.join(", ") || "none"}; expected ${componentContract.core.loadedPluginIds.join(", ")}).`,
       );
     }
-    const satPluginInfo = await run(
-      process.execPath,
-      [path.join(packageRoot, "fased.mjs"), "plugins", "info", "sat-mining"],
-      packageRoot,
-      smokeEnv,
-    );
-    const satPluginOutput = `${satPluginInfo.stdout}\n${satPluginInfo.stderr}`;
-    if (!satPluginOutput.includes("Status: loaded")) {
-      throw new Error(`Hosted sat-mining plugin did not load.\n${satPluginOutput}`);
-    }
     console.log("hosted-artifact: starting isolated packaged gateway");
     const gatewaySmoke = await smokeGateway(packageRoot, smokeEnv);
     const pluginLoadMs = gatewaySmoke.pluginLoadMs;
