@@ -473,7 +473,7 @@ jobs:
             --candidate-descriptor-digest \
               "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
             --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" \
-            --upstream-receipt "$RUNNER_TEMP/pre-tag-p1-evidence/evidence.json" \
+            --upstream-receipt "$RUNNER_TEMP/fased-pre-tag-p1-evidence/evidence.json" \
             --claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID" \
             --claim "preTagP1RunId=$PRE_TAG_P1_RUN_ID" \
             --claim "workflowRunId=$GITHUB_RUN_ID" \

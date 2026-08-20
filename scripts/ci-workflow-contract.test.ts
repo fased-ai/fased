@@ -569,6 +569,12 @@ describe("CI workflow routing", () => {
     const publishIdentity = publish?.steps?.find(
       (step) => step.name === "Verify exact candidate identity",
     );
+    const preTagReceiptDownload = finalizeCandidate?.steps?.find(
+      (step) => step.name === "Download the exact pre-tag gate receipt",
+    );
+    const finalizationGate = finalizeCandidate?.steps?.find(
+      (step) => step.name === "Record content-addressed candidate finalization gate",
+    );
     const refreshRootHeadText =
       refreshRootHead?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
 
@@ -604,6 +610,14 @@ describe("CI workflow routing", () => {
       name: "fased-pre-tag-candidate",
       "run-id": "${{ inputs.pre_tag_p1_run_id }}",
     });
+    expect(preTagReceiptDownload?.with).toMatchObject({
+      name: "fased-pre-tag-p1-evidence",
+      path: "${{ runner.temp }}/fased-pre-tag-p1-evidence",
+      "run-id": "${{ inputs.pre_tag_p1_run_id }}",
+    });
+    expect(finalizationGate?.run).toContain(
+      '--upstream-receipt "$RUNNER_TEMP/fased-pre-tag-p1-evidence/evidence.json"',
+    );
     const prepareArtifactParent = finalizeText.indexOf(
       'mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts"',
     );
