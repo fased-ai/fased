@@ -62,25 +62,6 @@ import { probeIMessage } from "../../imessage/probe.js";
 import { sendMessageIMessage } from "../../imessage/send.js";
 import { getChannelActivity, recordChannelActivity } from "../../infra/channel-activity.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
-import {
-  listLineAccountIds,
-  normalizeAccountId as normalizeLineAccountId,
-  resolveDefaultLineAccountId,
-  resolveLineAccount,
-} from "../../line/accounts.js";
-import { monitorLineProvider } from "../../line/monitor.js";
-import { probeLineBot } from "../../line/probe.js";
-import {
-  createQuickReplyItems,
-  pushMessageLine,
-  pushMessagesLine,
-  pushFlexMessage,
-  pushTemplateMessage,
-  pushLocationMessage,
-  pushTextMessageWithQuickReplies,
-  sendMessageLine,
-} from "../../line/send.js";
-import { buildTemplateMessageFromPayload } from "../../line/template-messages.js";
 import { getChildLogger } from "../../logging.js";
 import { normalizeLogLevel } from "../../logging/levels.js";
 import { convertMarkdownTables } from "../../markdown/tables.js";
@@ -120,6 +101,28 @@ import { createRuntimeHelpers, type PluginRuntimeOptions } from "./scoped.js";
 import type { PluginRuntime } from "./types.js";
 
 let cachedVersion: string | null = null;
+
+function lineComponentRequired(): never {
+  throw new Error("LINE managed component is not installed");
+}
+
+const unavailableLineRuntime: PluginRuntime["channel"]["line"] = {
+  listLineAccountIds: () => lineComponentRequired(),
+  resolveDefaultLineAccountId: () => lineComponentRequired(),
+  resolveLineAccount: () => lineComponentRequired(),
+  normalizeAccountId: () => lineComponentRequired(),
+  probeLineBot: () => lineComponentRequired(),
+  sendMessageLine: () => lineComponentRequired(),
+  pushMessageLine: () => lineComponentRequired(),
+  pushMessagesLine: () => lineComponentRequired(),
+  pushFlexMessage: () => lineComponentRequired(),
+  pushTemplateMessage: () => lineComponentRequired(),
+  pushLocationMessage: () => lineComponentRequired(),
+  pushTextMessageWithQuickReplies: () => lineComponentRequired(),
+  createQuickReplyItems: () => lineComponentRequired(),
+  buildTemplateMessageFromPayload: () => lineComponentRequired(),
+  monitorLineProvider: () => lineComponentRequired(),
+};
 
 function resolveVersion(): string {
   if (cachedVersion) {
@@ -538,21 +541,7 @@ function createRuntimeChannel(): PluginRuntime["channel"] {
       createLoginTool: createWhatsAppLoginTool,
     },
     line: {
-      listLineAccountIds,
-      resolveDefaultLineAccountId,
-      resolveLineAccount,
-      normalizeAccountId: normalizeLineAccountId,
-      probeLineBot,
-      sendMessageLine,
-      pushMessageLine,
-      pushMessagesLine,
-      pushFlexMessage,
-      pushTemplateMessage,
-      pushLocationMessage,
-      pushTextMessageWithQuickReplies,
-      createQuickReplyItems,
-      buildTemplateMessageFromPayload,
-      monitorLineProvider,
+      ...unavailableLineRuntime,
     },
   };
 }

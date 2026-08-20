@@ -28,6 +28,8 @@ describe("managed component pack identity", () => {
     expect(source).toContain('entryFileNames: "index.mjs"');
     expect(source).toContain('extensions: ["./index.mjs"]');
     expect(source).toContain('fs.rm(path.join(params.deployRoot, "index.ts"), { force: true })');
+    expect(source).not.toContain('"--no-optional"');
+    expect(source).toContain('"--config.node-linker=hoisted"');
     expect(source).not.toContain('node_modules", ".bin", "esbuild"');
     const runtimeBrowser = await fs.readFile(
       path.join(import.meta.dirname, "..", "extensions", "runtime-browser", "index.ts"),
@@ -82,6 +84,24 @@ describe("managed component pack identity", () => {
     expect(paths).not.toContain("dist/browser/paths.js");
     expect(paths).not.toContain("dist/browser/proxy-files.js");
     expect(paths).not.toContain("dist/tts/tts.js");
+  });
+
+  it("derives LINE implementation paths while retaining shared core facades", async () => {
+    const paths = await resolveManagedRuntimeImplementationPaths(["line"]);
+    expect(paths).toContain("dist/line/send.js");
+    expect(paths).toContain("dist/line/monitor.js");
+    expect(paths).not.toContain("dist/config/config.js");
+    expect(paths).not.toContain("dist/auto-reply/chunk.js");
+    const coreRuntime = await fs.readFile(
+      path.join(process.cwd(), "src", "plugins", "runtime", "index.ts"),
+      "utf8",
+    );
+    expect(coreRuntime).not.toContain('from "../../line/send.js"');
+    const componentRuntime = await fs.readFile(
+      path.join(process.cwd(), "extensions", "line", "src", "runtime.ts"),
+      "utf8",
+    );
+    expect(componentRuntime).toContain('from "../../../src/line/send.js"');
   });
 
   it("rejects symbolic-link aliases before producing a managed identity", async () => {

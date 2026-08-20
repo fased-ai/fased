@@ -340,6 +340,7 @@ async function main(): Promise<void> {
       contract: componentContract,
     });
     const managedRuntimeImplementationPaths = await resolveManagedRuntimeImplementationPaths([
+      "line",
       "runtime-browser",
     ]);
     for (const relative of managedRuntimeImplementationPaths) {

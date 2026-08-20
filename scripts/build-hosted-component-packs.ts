@@ -136,12 +136,12 @@ async function deployComponentPackage(params: {
   await execFileAsync(
     "pnpm",
     [
+      "--config.node-linker=hoisted",
       "--offline",
       "--filter",
       params.packageName,
       "deploy",
       "--prod",
-      "--no-optional",
       params.deployRoot,
     ],
     {
@@ -271,7 +271,8 @@ function sourceModuleToApplicationPath(moduleId: string): string | null {
 
 /** Exact core dist modules whose implementation bytes are owned by managed packs. */
 export async function resolveManagedRuntimeImplementationPaths(
-  extensionDirectories: readonly ("runtime-browser" | "runtime-speech")[] = [
+  extensionDirectories: readonly ("line" | "runtime-browser" | "runtime-speech")[] = [
+    "line",
     "runtime-browser",
     "runtime-speech",
   ],
