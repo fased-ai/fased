@@ -416,7 +416,7 @@ func terminalTransactionV1Fixture() transactionV1 {
 	return transactionV1{
 		SchemaVersion: 1, ID: "8d34ccf0-a0d7-47b5-ab8a-3ef84321537a", Profile: model.ProfileProtectedLocal,
 		PlanAction: "UPDATE", Phase: model.PhaseCommitted, Revision: 6,
-		Target: generation(digestB, "0.1.76-rc.72", commitB), Previous: ptrGeneration(generation(digestA, "0.1.76-rc.70", commitA)),
+		Target: generation(digestB, "0.1.76-rc.80", commitB), Previous: ptrGeneration(generation(digestA, "0.1.76-rc.78", commitA)),
 		TargetStateSchemas: map[string]uint32{"signer": 2}, TargetCapabilities: model.CapabilityRanges{
 			Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1},
 			Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 2, Max: 2},
@@ -428,7 +428,7 @@ func terminalTransactionV1Fixture() transactionV1 {
 
 func ptrGeneration(generation model.Generation) *model.Generation { return &generation }
 
-func TestPendingSupervisorTransactionSkipsOnlyValidatedTerminalSchemaOneSets(t *testing.T) {
+func TestRC80PendingSupervisorTransactionSkipsOnlyValidatedTerminalSchemaOneSets(t *testing.T) {
 	state, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

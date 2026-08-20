@@ -46,7 +46,7 @@ func (missing missingCandidateAuthority) ReadCandidateAuthority(string) (store.C
 	return store.CandidateAuthority{}, missing.err
 }
 
-func TestManagedInitializationFastPathAdoptsOnlySchemaOneWithoutCandidateAuthority(t *testing.T) {
+func TestSchemaOneManagedPredecessorSelectsFullBootstrapForStableSupervisorRefresh(t *testing.T) {
 	manifest := model.Manifest{
 		SchemaVersion: 1,
 		ActiveGeneration: &model.Generation{
@@ -54,7 +54,7 @@ func TestManagedInitializationFastPathAdoptsOnlySchemaOneWithoutCandidateAuthori
 		},
 	}
 	if _, bound, err := managedFastPathAuthority(missingCandidateAuthority{err: os.ErrNotExist}, manifest); err != nil || bound {
-		t.Fatalf("schema-one predecessor did not select full initialization: bound=%v err=%v", bound, err)
+		t.Fatalf("schema-one predecessor did not select full bootstrap/stable-supervisor refresh: bound=%v err=%v", bound, err)
 	}
 	manifest.SchemaVersion = model.CurrentManifestSchemaVersion
 	if _, _, err := managedFastPathAuthority(missingCandidateAuthority{err: os.ErrNotExist}, manifest); !errors.Is(err, os.ErrNotExist) {
