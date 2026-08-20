@@ -260,11 +260,11 @@ describe("managed component pack identity", () => {
   it("keeps the CLI process alive until the selected command completes", async () => {
     const entry = await fs.readFile(path.join(process.cwd(), "src", "entry.ts"), "utf8");
 
-    expect(entry).toContain('const { runCli } = await import("./cli/run-main.js");');
-    expect(entry).toContain("await runCli(process.argv);");
+    expect(entry).toContain('void import("./cli/run-main.js")');
+    expect(entry).toContain(".then(({ runCli }) => runCli(process.argv))");
     expect(entry).toContain("const cliCompletionKeepAlive = setInterval");
-    expect(entry).toContain("clearInterval(cliCompletionKeepAlive);");
-    expect(entry).not.toContain('import("./cli/run-main.js")\n      .then');
+    expect(entry).toContain(".finally(() => clearInterval(cliCompletionKeepAlive));");
+    expect(entry).not.toContain('await import("./cli/run-main.js")');
   });
 
   it("rejects symbolic-link aliases before producing a managed identity", async () => {
