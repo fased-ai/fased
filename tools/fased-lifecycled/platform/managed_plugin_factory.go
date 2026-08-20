@@ -139,21 +139,16 @@ func verifyEmptyPreP6ManagedPluginNamespace(path string, uid, gid uint32) error 
 
 type schemaOnePluginLockResolver interface {
 	ReadManifest() (model.Manifest, string, error)
-	ReadLegacySchemaOneGenerationContract(string) (bundle.Inventory, model.Generation, error)
-	GenerationPayloadPath(string) (string, error)
+	ReadLegacySchemaOneGenerationContract(string) (bundle.Inventory, model.Generation, string, error)
 }
 
 func verifiedSchemaOneGenerationPluginLock(generationID string, sourceOwnerUID uint32, resolver schemaOnePluginLockResolver) ([]byte, error) {
-	inventory, generation, err := resolver.ReadLegacySchemaOneGenerationContract(generationID)
+	inventory, generation, payload, err := resolver.ReadLegacySchemaOneGenerationContract(generationID)
 	if err != nil {
 		return nil, fmt.Errorf("verify schema-one active generation contract: %w", err)
 	}
 	if generation.ID != generationID || inventory.PluginLockDigest == "" {
 		return nil, errors.New("schema-one active generation is missing a plugin lock binding")
-	}
-	payload, err := resolver.GenerationPayloadPath(generationID)
-	if err != nil {
-		return nil, fmt.Errorf("verify schema-one active generation payload: %w", err)
 	}
 	data, err := readSchemaOneGenerationPluginLock(filepath.Join(payload, "runtime", "plugin.lock.json"), sourceOwnerUID)
 	if err != nil {
