@@ -160,21 +160,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .artifacts/pre-candidate
-          jq -n \
-            --arg sourceCommit "$SOURCE_COMMIT" \
-            --arg sourceTree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-            --arg lockfileDigest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --arg nextReleaseVersion "$NEXT_RELEASE_VERSION" \
-            --arg managedPredecessorVersion "$MANAGED_PREDECESSOR_VERSION" \
-            --arg predecessorVersion "$PREDECESSOR_VERSION" \
-            --arg mainRunId "$MAIN_RUN_ID" \
-            --arg mainChecksJobId "$MAIN_CHECKS_JOB_ID" \
-            --arg workflowRunId "$GITHUB_RUN_ID" \
-            --arg local0ReceiptSha256 "$LOCAL0_RECEIPT_SHA256" \
-            --argjson releaseSequence "$RELEASE_SEQUENCE" \
-            --argjson securityEpoch "$SECURITY_EPOCH" \
-            '{schemaVersion:4,sourceCommit:$sourceCommit,sourceTree:$sourceTree,lockfileDigest:$lockfileDigest,nextReleaseVersion:$nextReleaseVersion,predecessorVersion:$predecessorVersion,managedPredecessorVersion:$managedPredecessorVersion,releaseSequence:$releaseSequence,securityEpoch:$securityEpoch,mainRunId:$mainRunId,mainChecksJobId:$mainChecksJobId,workflowRunId:$workflowRunId,local0ReceiptSha256:$local0ReceiptSha256}' \
-            >.artifacts/pre-candidate/evidence.json
+          node scripts/release-gate.mjs record \
+            --phase pre-candidate \
+            --source-commit "$SOURCE_COMMIT" \
+            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
+            --release-version "$NEXT_RELEASE_VERSION" \
+            --claim "predecessorVersion=$PREDECESSOR_VERSION" \
+            --claim "managedPredecessorVersion=$MANAGED_PREDECESSOR_VERSION" \
+            --claim "releaseSequence=$RELEASE_SEQUENCE" \
+            --claim "securityEpoch=$SECURITY_EPOCH" \
+            --claim "mainRunId=$MAIN_RUN_ID" \
+            --claim "mainChecksJobId=$MAIN_CHECKS_JOB_ID" \
+            --claim "workflowRunId=$GITHUB_RUN_ID" \
+            --claim "local0ReceiptDigest=$LOCAL0_RECEIPT_SHA256" \
+            --output .artifacts/pre-candidate/evidence.json
 
       - name: Upload pre-candidate evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

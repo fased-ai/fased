@@ -65,6 +65,14 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
 
+      - name: Download exact candidate finalization gate receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-release-gate-candidate-finalization
+          path: ${{ runner.temp }}/candidate-finalization-gate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+
       - name: Verify source run, descriptor digest, and fixture-only correction
         id: identity
         env:
@@ -121,6 +129,16 @@ jobs:
               "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
             --source-ref "refs/tags/v$RELEASE_VERSION" \
             --workflow-run-id "$SOURCE_RUN_ID"
+          node scripts/release-gate.mjs verify \
+            --receipt "$RUNNER_TEMP/candidate-finalization-gate/evidence.json" \
+            --phase candidate-finalization \
+            --source-commit "$SOURCE_COMMIT" \
+            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --release-version "$RELEASE_VERSION" \
+            --candidate-descriptor-digest "$CANDIDATE_DESCRIPTOR_SHA256" \
+            --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" >/dev/null
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$MANAGED_PREDECESSOR_VERSION")"
           local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg managed "$MANAGED_PREDECESSOR_VERSION" \
@@ -260,3 +278,57 @@ jobs:
           name: fased-p1-replay-hosting-${{ matrix.predecessor }}-receipts
           path: ${{ runner.temp }}/receipts/*.json
           if-no-files-found: error
+
+  evidence:
+    name: Record exact candidate P1 replay gate
+    needs: [verify, local-fresh, local-update, hosting]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout fixture correction
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Download exact unmodified replay candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-p1-replay-candidate
+          path: ${{ runner.temp }}/fased-p1-replay-candidate
+      - name: Download exact candidate finalization gate receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-release-gate-candidate-finalization
+          path: ${{ runner.temp }}/candidate-finalization-gate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Record content-addressed P1 replay gate
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          descriptor="$RUNNER_TEMP/fased-p1-replay-candidate/fased-hosting-candidate.json"
+          mkdir -p "$RUNNER_TEMP/p1-replay-gate"
+          node scripts/release-gate.mjs record \
+            --phase candidate-p1-replay \
+            --source-commit "$SOURCE_COMMIT" \
+            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --release-version "$RELEASE_VERSION" \
+            --candidate-descriptor-digest \
+              "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
+            --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" \
+            --upstream-receipt "$RUNNER_TEMP/candidate-finalization-gate/evidence.json" \
+            --claim "p1ReplayRunId=$GITHUB_RUN_ID" \
+            --claim "sourceRunId=$SOURCE_RUN_ID" \
+            --claim "workflowRunId=$GITHUB_RUN_ID" \
+            --output "$RUNNER_TEMP/p1-replay-gate/evidence.json"
+      - name: Upload candidate P1 replay gate receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-release-gate-candidate-p1-replay
+          path: ${{ runner.temp }}/p1-replay-gate/evidence.json
+          if-no-files-found: error
+          retention-days: 30

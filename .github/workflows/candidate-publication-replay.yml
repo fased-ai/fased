@@ -44,8 +44,20 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  release-gate:
+    name: Verify reusable P1 replay gate
+    uses: ./.github/workflows/release-gate-verify.yml
+    with:
+      run_id: ${{ inputs.p1_replay_run_id }}
+      artifact_name: fased-release-gate-candidate-p1-replay
+      receipt_phase: candidate-p1-replay
+      source_commit: ${{ inputs.source_commit }}
+      release_version: ${{ inputs.release_version }}
+      candidate_descriptor_digest: ${{ inputs.candidate_descriptor_sha256 }}
+
   verify:
     name: Verify immutable candidate and replay evidence
+    needs: release-gate
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout publication verifier
@@ -71,6 +83,14 @@ jobs:
         with:
           pattern: fased-p1-replay-*-receipts
           path: ${{ runner.temp }}/fased-p1-replay-receipts
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.p1_replay_run_id }}
+
+      - name: Download exact P1 replay gate receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-release-gate-candidate-p1-replay
+          path: ${{ runner.temp }}/fased-p1-replay-gate
           github-token: ${{ github.token }}
           run-id: ${{ inputs.p1_replay_run_id }}
 
@@ -138,7 +158,8 @@ jobs:
             '["Verify and stage exact candidate replay", "Replay fresh Local P1",
               "Replay Local update P1 (" + $stable + ", public-stable)",
               "Replay Local update P1 (" + $managed + ", canonical-managed)",
-              "Replay Hosting P1 (" + $stable + ")"] | unique | sort')"
+              "Replay Hosting P1 (" + $stable + ")",
+              "Record exact candidate P1 replay gate"] | unique | sort')"
           jobs="$(gh api --paginate \
             "repos/$GITHUB_REPOSITORY/actions/runs/$P1_REPLAY_RUN_ID/jobs?per_page=100" \
             --slurp)"
@@ -153,7 +174,8 @@ jobs:
             '["fased-p1-replay-candidate", "fased-p1-replay-local-fresh-receipts",
               "fased-p1-replay-local-update-" + $stable + "-public-stable-receipts",
               "fased-p1-replay-local-update-" + $managed + "-canonical-managed-receipts",
-              "fased-p1-replay-hosting-" + $stable + "-receipts"] | unique | sort')"
+              "fased-p1-replay-hosting-" + $stable + "-receipts",
+              "fased-release-gate-candidate-p1-replay"] | unique | sort')"
           artifacts="$(gh api \
             "repos/$GITHUB_REPOSITORY/actions/runs/$P1_REPLAY_RUN_ID/artifacts?per_page=100")"
           jq -e --argjson expected "$expected_artifacts" \
@@ -197,6 +219,19 @@ jobs:
             --vex "$candidate/fased-privileged-vex-v1.openvex.json" \
             --version "$RELEASE_VERSION" \
             --commit "$SOURCE_COMMIT"
+          node scripts/release-gate.mjs verify \
+            --receipt "$RUNNER_TEMP/fased-p1-replay-gate/evidence.json" \
+            --phase candidate-p1-replay \
+            --source-commit "$SOURCE_COMMIT" \
+            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --release-version "$RELEASE_VERSION" \
+            --candidate-descriptor-digest "$CANDIDATE_DESCRIPTOR_SHA256" \
+            --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" \
+            --claim "p1ReplayRunId=$P1_REPLAY_RUN_ID" \
+            --claim "sourceRunId=$SOURCE_RUN_ID" \
+            --claim "workflowRunId=$P1_REPLAY_RUN_ID" >/dev/null
 
           receipts="$RUNNER_TEMP/fased-p1-replay-receipts"
           contract="config/lifecycle-acceptance.v2.json"
@@ -272,7 +307,7 @@ jobs:
 
   publish:
     name: Promote replay-proven exact candidate bytes
-    needs: verify
+    needs: [release-gate, verify]
     environment: candidate-release
     permissions:
       actions: read
@@ -296,6 +331,14 @@ jobs:
           path: ${{ runner.temp }}/fased-hosting-candidate
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
+
+      - name: Download exact P1 replay gate receipt again
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-release-gate-candidate-p1-replay
+          path: ${{ runner.temp }}/fased-p1-replay-gate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.p1_replay_run_id }}
 
       - name: Reverify exact candidate before publication
         env:
@@ -346,6 +389,19 @@ jobs:
             --vex "$candidate/fased-privileged-vex-v1.openvex.json" \
             --version "$RELEASE_VERSION" \
             --commit "$SOURCE_COMMIT"
+          node scripts/release-gate.mjs verify \
+            --receipt "$RUNNER_TEMP/fased-p1-replay-gate/evidence.json" \
+            --phase candidate-p1-replay \
+            --source-commit "$SOURCE_COMMIT" \
+            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --release-version "$RELEASE_VERSION" \
+            --candidate-descriptor-digest "$CANDIDATE_DESCRIPTOR_SHA256" \
+            --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" \
+            --claim "p1ReplayRunId=$P1_REPLAY_RUN_ID" \
+            --claim "sourceRunId=$SOURCE_RUN_ID" \
+            --claim "workflowRunId=$P1_REPLAY_RUN_ID" >/dev/null
 
       - name: Publish one draft and expose it only after every byte uploads
         env:
@@ -427,3 +483,37 @@ jobs:
           bash scripts/publish-lifecycle-channel.sh
           "${{ runner.temp }}/fased-hosting-candidate"
           "${SOURCE_COMMIT}"
+
+      - name: Record successful replay publication gate
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/fased-hosting-candidate"
+          descriptor="$candidate/fased-hosting-candidate.json"
+          node scripts/release-gate.mjs record \
+            --phase candidate-publication \
+            --source-commit "$SOURCE_COMMIT" \
+            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest \
+              "sha256:$(git show "$SOURCE_COMMIT:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
+            --release-version "$RELEASE_VERSION" \
+            --candidate-descriptor-digest \
+              "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
+            --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" \
+            --upstream-receipt "$RUNNER_TEMP/fased-p1-replay-gate/evidence.json" \
+            --claim "publicationRunId=$GITHUB_RUN_ID" \
+            --claim "sourceRunId=$SOURCE_RUN_ID" \
+            --claim "workflowRunId=$GITHUB_RUN_ID" \
+            --output "$RUNNER_TEMP/candidate-publication-gate.json"
+
+      - name: Upload replay publication gate receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-release-gate-candidate-publication
+          path: ${{ runner.temp }}/candidate-publication-gate.json
+          if-no-files-found: error
+          retention-days: 30
