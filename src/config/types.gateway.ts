@@ -25,7 +25,7 @@ export type MdnsDiscoveryMode = "off" | "minimal" | "full";
 
 export type MdnsDiscoveryConfig = {
   /**
-   * mDNS/Bonjour discovery broadcast mode (default: minimal).
+   * mDNS/Bonjour discovery broadcast mode (default: off).
    * - off: disable mDNS entirely
    * - minimal: omit cliPath/sshPort from TXT records
    * - full: include cliPath/sshPort in TXT records
@@ -39,6 +39,7 @@ export type DiscoveryConfig = {
 };
 
 export type CanvasHostConfig = {
+  /** Enable the Canvas host (default: false). */
   enabled?: boolean;
   /** Directory to serve (default: ~/.fased/workspace/canvas). */
   root?: string;

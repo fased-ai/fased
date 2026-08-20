@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CronService } from "./service.js";
 import { setupCronServiceSuite } from "./service.test-harness.js";
+import { loadCronStore } from "./store.js";
 
 const { logger: noopLogger, makeStorePath } = setupCronServiceSuite({
   prefix: "fased-cron-",
@@ -31,38 +32,35 @@ describe("CronService store migrations", () => {
   it("migrates legacy top-level agentTurn fields and initializes missing state", async () => {
     const store = await makeStorePath();
     await fs.mkdir(path.dirname(store.storePath), { recursive: true });
-    await fs.writeFile(
-      store.storePath,
-      JSON.stringify(
-        {
-          version: 1,
-          jobs: [
-            {
-              id: "legacy-agentturn-job",
-              name: "legacy agentturn",
-              enabled: true,
-              createdAtMs: Date.parse("2026-02-01T12:00:00.000Z"),
-              updatedAtMs: Date.parse("2026-02-05T12:00:00.000Z"),
-              schedule: { kind: "cron", expr: "0 23 * * *", tz: "UTC" },
-              sessionTarget: "isolated",
-              wakeMode: "next-heartbeat",
-              model: "openrouter/deepseek/deepseek-r1",
-              thinking: "high",
-              timeoutSeconds: 120,
-              allowUnsafeExternalContent: true,
-              deliver: true,
-              channel: "telegram",
-              to: "12345",
-              bestEffortDeliver: true,
-              payload: { kind: "agentTurn", message: "legacy payload fields" },
-            },
-          ],
-        },
-        null,
-        2,
-      ),
-      "utf-8",
+    const legacyBytes = JSON.stringify(
+      {
+        version: 1,
+        jobs: [
+          {
+            id: "legacy-agentturn-job",
+            name: "legacy agentturn",
+            enabled: true,
+            createdAtMs: Date.parse("2026-02-01T12:00:00.000Z"),
+            updatedAtMs: Date.parse("2026-02-05T12:00:00.000Z"),
+            schedule: { kind: "cron", expr: "0 23 * * *", tz: "UTC" },
+            sessionTarget: "isolated",
+            wakeMode: "next-heartbeat",
+            model: "openrouter/deepseek/deepseek-r1",
+            thinking: "high",
+            timeoutSeconds: 120,
+            allowUnsafeExternalContent: true,
+            deliver: true,
+            channel: "telegram",
+            to: "12345",
+            bestEffortDeliver: true,
+            payload: { kind: "agentTurn", message: "legacy payload fields" },
+          },
+        ],
+      },
+      null,
+      2,
     );
+    await fs.writeFile(store.storePath, legacyBytes, "utf-8");
 
     const cron = await createStartedCron(store.storePath).start();
 
@@ -88,9 +86,7 @@ describe("CronService store migrations", () => {
       bestEffort: true,
     });
 
-    const persisted = JSON.parse(await fs.readFile(store.storePath, "utf-8")) as {
-      jobs: Array<Record<string, unknown>>;
-    };
+    const persisted = await loadCronStore(store.storePath);
     const persistedJob = persisted.jobs.find((entry) => entry.id === "legacy-agentturn-job");
     expect(persistedJob).toBeDefined();
     expect(persistedJob?.state).toEqual(expect.any(Object));
@@ -101,6 +97,7 @@ describe("CronService store migrations", () => {
     expect(persistedJob?.channel).toBeUndefined();
     expect(persistedJob?.to).toBeUndefined();
     expect(persistedJob?.bestEffortDeliver).toBeUndefined();
+    expect(await fs.readFile(store.storePath, "utf-8")).toBe(legacyBytes);
 
     cron.stop();
     await store.cleanup();

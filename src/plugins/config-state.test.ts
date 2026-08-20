@@ -200,6 +200,15 @@ describe("resolveEffectiveEnableState", () => {
     ).toEqual({ enabled: true });
   });
 
+  it("keeps phone and voice extras opt-in", () => {
+    const normalized = normalizePluginsConfig({ enabled: true });
+    for (const id of ["phone-control", "talk-voice"]) {
+      expect(
+        resolveEffectiveEnableState({ id, origin: "bundled", config: normalized, rootConfig: {} }),
+      ).toEqual({ enabled: false, reason: "bundled (disabled by default)" });
+    }
+  });
+
   it("keeps bundled chat channel plugins opt-in by default", () => {
     const normalized = normalizePluginsConfig({
       enabled: true,

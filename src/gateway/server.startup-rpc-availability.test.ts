@@ -84,12 +84,12 @@ describe("gateway startup RPC availability", () => {
       expect(serverResolved).toBe(false);
 
       const startingReadiness = await fetch(`http://127.0.0.1:${port}/readyz`);
-      expect(startingReadiness.status).toBe(503);
+      expect(startingReadiness.status).toBe(200);
       await expect(startingReadiness.json()).resolves.toMatchObject({
         ok: true,
         status: "ready",
-        ready: false,
-        failing: ["startup"],
+        ready: true,
+        failing: [],
       });
 
       ws = new WebSocket(`ws://127.0.0.1:${port}`);

@@ -19,6 +19,18 @@ describe("startHeartbeatRunner", () => {
     vi.restoreAllMocks();
   });
 
+  it("does not schedule a heartbeat until one is explicitly configured", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    const runSpy = vi.fn().mockResolvedValue({ status: "ran", durationMs: 1 });
+    const runner = startHeartbeatRunner({ cfg: {}, runOnce: runSpy });
+
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+
+    expect(runSpy).not.toHaveBeenCalled();
+    runner.stop();
+  });
+
   it("updates scheduling when config changes without restart", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));

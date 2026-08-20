@@ -1,7 +1,11 @@
-import fs from "node:fs";
 import path from "node:path";
 import JSON5 from "json5";
 import { expandHomePrefix } from "../infra/home-dir.js";
+import {
+  listTaskDefinitionRecords,
+  replaceTaskDefinitionCollection,
+  type DefinitionCollectionAdapter,
+} from "../tasks/task-definition-ledger.js";
 import { CONFIG_DIR } from "../utils.js";
 import type { CronStoreFile } from "./types.js";
 
@@ -19,52 +23,65 @@ export function resolveCronStorePath(storePath?: string) {
   return DEFAULT_CRON_STORE_PATH;
 }
 
+function sanitizeCronStore(raw: unknown): CronStoreFile {
+  const parsedRecord =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const jobs = Array.isArray(parsedRecord.jobs) ? (parsedRecord.jobs as never[]) : [];
+  const trustedSources = Array.isArray(parsedRecord.trustedSources)
+    ? (parsedRecord.trustedSources.filter(Boolean) as never[])
+    : [];
+  return {
+    version: 1,
+    jobs: jobs.filter(Boolean) as never as CronStoreFile["jobs"],
+    ...(trustedSources.length > 0
+      ? {
+          trustedSources: trustedSources as never as NonNullable<CronStoreFile["trustedSources"]>,
+        }
+      : {}),
+  };
+}
+
+function cronStateRoot(storePath: string): string {
+  const directory = path.dirname(path.resolve(storePath));
+  return path.basename(directory) === "cron" ? path.dirname(directory) : directory;
+}
+
+function cronStoreUpdatedAt(store: CronStoreFile): number {
+  const timestamps = [
+    ...store.jobs.map((job) => job.updatedAtMs ?? job.createdAtMs ?? 0),
+    ...(store.trustedSources ?? []).map((source) => source.updatedAtMs ?? source.createdAtMs ?? 0),
+  ];
+  return Math.max(0, ...timestamps);
+}
+
+function cronStoreAdapter(storePath: string): DefinitionCollectionAdapter<CronStoreFile> {
+  const resolved = path.resolve(storePath);
+  const stateRoot = cronStateRoot(resolved);
+  return {
+    collection: "cron_store",
+    legacyFileName: "jobs.json",
+    databasePath: () => path.join(stateRoot, "tasks", "task-ledger.sqlite"),
+    legacyPath: () => resolved,
+    parseLegacy: (bytes) => JSON5.parse(bytes),
+    malformedLegacyMessage: `Failed to parse cron store at ${resolved}`,
+    sanitizeLegacy: (raw) => [sanitizeCronStore(raw)],
+    identity: (record) => ({
+      scopeKey: "global",
+      recordId: "cron-store",
+      updatedAt: cronStoreUpdatedAt(record),
+    }),
+  };
+}
+
 export async function loadCronStore(storePath: string): Promise<CronStoreFile> {
-  try {
-    const raw = await fs.promises.readFile(storePath, "utf-8");
-    let parsed: unknown;
-    try {
-      parsed = JSON5.parse(raw);
-    } catch (err) {
-      throw new Error(`Failed to parse cron store at ${storePath}: ${String(err)}`, {
-        cause: err,
-      });
-    }
-    const parsedRecord =
-      parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : {};
-    const jobs = Array.isArray(parsedRecord.jobs) ? (parsedRecord.jobs as never[]) : [];
-    const trustedSources = Array.isArray(parsedRecord.trustedSources)
-      ? (parsedRecord.trustedSources.filter(Boolean) as never[])
-      : [];
-    return {
+  return (
+    listTaskDefinitionRecords(cronStoreAdapter(storePath))[0]?.record ?? {
       version: 1,
-      jobs: jobs.filter(Boolean) as never as CronStoreFile["jobs"],
-      ...(trustedSources.length > 0
-        ? {
-            trustedSources: trustedSources as never as NonNullable<CronStoreFile["trustedSources"]>,
-          }
-        : {}),
-    };
-  } catch (err) {
-    if ((err as { code?: unknown })?.code === "ENOENT") {
-      return { version: 1, jobs: [] };
+      jobs: [],
     }
-    throw err;
-  }
+  );
 }
 
 export async function saveCronStore(storePath: string, store: CronStoreFile) {
-  await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
-  const { randomBytes } = await import("node:crypto");
-  const tmp = `${storePath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
-  const json = JSON.stringify(store, null, 2);
-  await fs.promises.writeFile(tmp, json, "utf-8");
-  await fs.promises.rename(tmp, storePath);
-  try {
-    await fs.promises.copyFile(storePath, `${storePath}.bak`);
-  } catch {
-    // best-effort
-  }
+  replaceTaskDefinitionCollection(cronStoreAdapter(storePath), [sanitizeCronStore(store)]);
 }

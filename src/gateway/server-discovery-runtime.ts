@@ -15,12 +15,12 @@ export async function startGatewayDiscovery(params: {
   wideAreaDiscoveryEnabled: boolean;
   wideAreaDiscoveryDomain?: string | null;
   tailscaleMode: "off" | "serve" | "funnel";
-  /** mDNS/Bonjour discovery mode (default: minimal). */
+  /** mDNS/Bonjour discovery mode (default: off). */
   mdnsMode?: "off" | "minimal" | "full";
   logDiscovery: { info: (msg: string) => void; warn: (msg: string) => void };
 }) {
   let bonjourStop: (() => Promise<void>) | null = null;
-  const mdnsMode = params.mdnsMode ?? "minimal";
+  const mdnsMode = params.mdnsMode ?? "off";
   // mDNS can be disabled via config (mdnsMode: off) or env var.
   const bonjourEnabled =
     mdnsMode !== "off" &&

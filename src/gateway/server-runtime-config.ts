@@ -19,6 +19,7 @@ import {
   isValidIPv4,
   resolveGatewayBindHost,
 } from "./net.js";
+import { isCanvasHostConfigured } from "./startup-selection.js";
 
 export type GatewayRuntimeConfig = {
   bindHost: string;
@@ -116,7 +117,7 @@ export async function resolveGatewayRuntimeConfig(params: {
     (authMode === "token" && hasToken) || (authMode === "password" && hasPassword);
   const hooksConfig = resolveHooksConfig(params.cfg);
   const canvasHostEnabled =
-    process.env.FASED_SKIP_CANVAS_HOST !== "1" && params.cfg.canvasHost?.enabled !== false;
+    process.env.FASED_SKIP_CANVAS_HOST !== "1" && isCanvasHostConfigured(params.cfg);
   const strictTransportSecurity =
     params.cfg.gateway?.http?.securityHeaders?.strictTransportSecurity;
   const strictTransportSecurityHeader =

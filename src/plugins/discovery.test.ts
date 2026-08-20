@@ -36,6 +36,112 @@ afterEach(() => {
 });
 
 describe("discoverFasedAgentPlugins", () => {
+  it("uses the managed lock as the bundled plugin index", async () => {
+    const stateDir = makeTempDir();
+    const codeRoot = path.join(stateDir, "managed", "plugin-code");
+    const dataRoot = path.join(stateDir, "plugin-data");
+    const bundledRoot = path.join(stateDir, "bundled");
+    const lockPath = path.join(stateDir, "plugin.lock.json");
+    for (const id of ["indexed", "unindexed"]) {
+      const root = path.join(bundledRoot, id);
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(path.join(root, "index.ts"), "export default function () {}", "utf8");
+      fs.writeFileSync(
+        path.join(root, "fased.plugin.json"),
+        JSON.stringify({ id, configSchema: { type: "object" } }),
+        "utf8",
+      );
+    }
+    fs.mkdirSync(codeRoot, { recursive: true });
+    fs.mkdirSync(dataRoot, { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        type: "fased-plugin-lock",
+        entries: [
+          {
+            id: "indexed",
+            origin: "bundled",
+            digest: `sha256:${"a".repeat(64)}`,
+            apiCapability: "fased.plugin.v1",
+            required: false,
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const result = await withEnvAsync(
+      {
+        FASED_STATE_DIR: stateDir,
+        FASED_BUNDLED_PLUGINS_DIR: bundledRoot,
+        FASED_PLUGIN_CODE_ROOT: codeRoot,
+        FASED_PLUGIN_DATA_ROOT: dataRoot,
+        FASED_PLUGIN_LOCK_PATH: lockPath,
+      },
+      async () => discoverFasedAgentPlugins({}),
+    );
+
+    expect(result.candidates.map((candidate) => candidate.idHint)).toEqual(["indexed"]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("rejects a bundled index identity mismatch", async () => {
+    const stateDir = makeTempDir();
+    const codeRoot = path.join(stateDir, "managed", "plugin-code");
+    const dataRoot = path.join(stateDir, "plugin-data");
+    const bundledRoot = path.join(stateDir, "bundled");
+    const lockPath = path.join(stateDir, "plugin.lock.json");
+    const root = path.join(bundledRoot, "indexed");
+    fs.mkdirSync(root, { recursive: true });
+    fs.mkdirSync(codeRoot, { recursive: true });
+    fs.mkdirSync(dataRoot, { recursive: true });
+    fs.writeFileSync(path.join(root, "index.ts"), "export default function () {}", "utf8");
+    fs.writeFileSync(
+      path.join(root, "fased.plugin.json"),
+      JSON.stringify({ id: "rogue", configSchema: { type: "object" } }),
+      "utf8",
+    );
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        type: "fased-plugin-lock",
+        entries: [
+          {
+            id: "indexed",
+            origin: "bundled",
+            digest: `sha256:${"b".repeat(64)}`,
+            apiCapability: "fased.plugin.v1",
+            required: true,
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const result = await withEnvAsync(
+      {
+        FASED_STATE_DIR: stateDir,
+        FASED_BUNDLED_PLUGINS_DIR: bundledRoot,
+        FASED_PLUGIN_CODE_ROOT: codeRoot,
+        FASED_PLUGIN_DATA_ROOT: dataRoot,
+        FASED_PLUGIN_LOCK_PATH: lockPath,
+      },
+      async () => discoverFasedAgentPlugins({}),
+    );
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        pluginId: "indexed",
+        message: 'bundled plugin identity rejected: lock entry "indexed" exports "rogue"',
+      }),
+    );
+  });
+
   it("loads managed code only from plugin-code and ignores mutable extension paths", async () => {
     const stateDir = makeTempDir();
     const codeRoot = path.join(stateDir, "managed", "plugin-code");

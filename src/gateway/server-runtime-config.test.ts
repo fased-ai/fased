@@ -271,4 +271,23 @@ describe("resolveGatewayRuntimeConfig", () => {
       expect(result.strictTransportSecurityHeader).toBeUndefined();
     });
   });
+
+  describe("optional Canvas host", () => {
+    it("stays disabled unless explicitly enabled", async () => {
+      const base = { gateway: { bind: "loopback" as const, auth: { mode: "none" as const } } };
+      const unconfigured = await resolveGatewayRuntimeConfig({
+        cfg: base,
+        port: 18789,
+        host: "127.0.0.1",
+      });
+      const configured = await resolveGatewayRuntimeConfig({
+        cfg: { ...base, canvasHost: { enabled: true } },
+        port: 18789,
+        host: "127.0.0.1",
+      });
+
+      expect(unconfigured.canvasHostEnabled).toBe(false);
+      expect(configured.canvasHostEnabled).toBe(true);
+    });
+  });
 });

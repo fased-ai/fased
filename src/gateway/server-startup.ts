@@ -2,15 +2,26 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import type { CliDeps } from "../cli/deps.js";
 import type { loadConfig } from "../config/config.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
-import { startFederationAutoConnect } from "../federation/auto-connect.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import type { loadFasedAgentPlugins } from "../plugins/loader.js";
 import { type PluginServicesHandle } from "../plugins/services.js";
-import { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import {
   scheduleRestartSentinelWake,
   shouldWakeFromRestartSentinel,
 } from "./server-restart-sentinel.js";
+import {
+  areChannelsConfigured,
+  areInternalHooksConfigured,
+  isBrowserServiceConfigured,
+  isFederationAutoConnectConfigured,
+  isGmailWatcherConfigured,
+  isOptionalMemoryBackendConfigured,
+  isSelectedModelConfigured,
+} from "./startup-selection.js";
+
+type BrowserControlHandle = Awaited<
+  ReturnType<typeof import("./server-browser.js").startBrowserControlServerIfEnabled>
+>;
 
 async function prewarmConfiguredPrimaryModel(params: {
   cfg: ReturnType<typeof loadConfig>;
@@ -70,26 +81,28 @@ export async function startGatewaySidecars(params: {
   logBrowser: { error: (msg: string) => void };
 }) {
   // Start FasedAgent browser control server (unless disabled via config).
-  let browserControl: Awaited<ReturnType<typeof startBrowserControlServerIfEnabled>> = null;
-  try {
-    browserControl = await startBrowserControlServerIfEnabled();
-  } catch (err) {
-    params.logBrowser.error(`server failed to start: ${String(err)}`);
+  let browserControl: BrowserControlHandle = null;
+  if (isBrowserServiceConfigured(params.cfg)) {
+    try {
+      const { startBrowserControlServerIfEnabled } = await import("./server-browser.js");
+      browserControl = await startBrowserControlServerIfEnabled();
+    } catch (err) {
+      params.logBrowser.error(`server failed to start: ${String(err)}`);
+    }
   }
 
   // Start Gmail watcher if configured (hooks.gmail.account).
   // Dynamically imported — only loads the Gmail SDK when actually needed.
-  if (!isTruthyEnvValue(process.env.FASED_SKIP_GMAIL_WATCHER)) {
+  if (
+    isGmailWatcherConfigured(params.cfg) &&
+    !isTruthyEnvValue(process.env.FASED_SKIP_GMAIL_WATCHER)
+  ) {
     try {
       const { startGmailWatcher } = await import("../hooks/gmail-watcher.js");
       const gmailResult = await startGmailWatcher(params.cfg);
       if (gmailResult.started) {
         params.logHooks.info("gmail watcher started");
-      } else if (
-        gmailResult.reason &&
-        gmailResult.reason !== "hooks not enabled" &&
-        gmailResult.reason !== "no gmail account configured"
-      ) {
+      } else if (gmailResult.reason) {
         params.logHooks.warn(`gmail watcher not started: ${gmailResult.reason}`);
       }
     } catch (err) {
@@ -99,7 +112,7 @@ export async function startGatewaySidecars(params: {
 
   // Validate hooks.gmail.model if configured.
   // Dynamically imported — model catalog is large; only load when a custom model is set.
-  if (params.cfg.hooks?.gmail?.model) {
+  if (isGmailWatcherConfigured(params.cfg) && params.cfg.hooks?.gmail?.model) {
     try {
       const { DEFAULT_MODEL, DEFAULT_PROVIDER } = await import("../agents/defaults.js");
       const { loadModelCatalog } = await import("../agents/model-catalog.js");
@@ -141,36 +154,38 @@ export async function startGatewaySidecars(params: {
 
   // Load internal hook handlers from configuration and directory discovery.
   // Dynamically imported — hook loader reads the filesystem and may pull in SDK code.
-  try {
-    const { clearInternalHooks } = await import("../hooks/internal-hooks.js");
-    const { loadInternalHooks } = await import("../hooks/loader.js");
-    clearInternalHooks();
-    const loadedCount = await loadInternalHooks(params.cfg, params.defaultWorkspaceDir);
-    if (loadedCount > 0) {
-      params.logHooks.info(
-        `loaded ${loadedCount} internal hook handler${loadedCount > 1 ? "s" : ""}`,
-      );
-    }
-
-    if (params.cfg.hooks?.internal?.enabled) {
-      const capturedCfg = params.cfg;
-      const capturedDeps = params.deps;
-      const capturedWorkspaceDir = params.defaultWorkspaceDir;
-      setTimeout(() => {
-        void import("../hooks/internal-hooks.js").then(
-          ({ createInternalHookEvent, triggerInternalHook }) => {
-            const hookEvent = createInternalHookEvent("gateway", "startup", "gateway:startup", {
+  if (areInternalHooksConfigured(params.cfg)) {
+    const capturedCfg = params.cfg;
+    const capturedDeps = params.deps;
+    const capturedWorkspaceDir = params.defaultWorkspaceDir;
+    try {
+      const [internalHooks, hookLoader] = await Promise.all([
+        import("../hooks/internal-hooks.js"),
+        import("../hooks/loader.js"),
+      ]);
+      internalHooks.clearInternalHooks();
+      const loadedCount = await hookLoader.loadInternalHooks(capturedCfg, capturedWorkspaceDir);
+      if (loadedCount > 0) {
+        params.logHooks.info(
+          `loaded ${loadedCount} internal hook handler${loadedCount > 1 ? "s" : ""}`,
+        );
+        setTimeout(() => {
+          const hookEvent = internalHooks.createInternalHookEvent(
+            "gateway",
+            "startup",
+            "gateway:startup",
+            {
               cfg: capturedCfg,
               deps: capturedDeps,
               workspaceDir: capturedWorkspaceDir,
-            });
-            void triggerInternalHook(hookEvent);
-          },
-        );
-      }, 250);
+            },
+          );
+          void internalHooks.triggerInternalHook(hookEvent);
+        }, 250);
+      }
+    } catch (err) {
+      params.logHooks.error(`failed to load hooks: ${String(err)}`);
     }
-  } catch (err) {
-    params.logHooks.error(`failed to load hooks: ${String(err)}`);
   }
 
   // Launch configured channels so gateway replies via the surface the message came from.
@@ -178,20 +193,25 @@ export async function startGatewaySidecars(params: {
   const skipChannels =
     isTruthyEnvValue(process.env.FASED_SKIP_CHANNELS) ||
     isTruthyEnvValue(process.env.FASED_SKIP_PROVIDERS);
-  if (!skipChannels) {
+  const startConfiguredChannels = areChannelsConfigured(params.cfg);
+  const warmSelectedModel = isSelectedModelConfigured(params.cfg);
+  if (!skipChannels && (startConfiguredChannels || warmSelectedModel)) {
     try {
-      await prewarmConfiguredPrimaryModel({
-        cfg: params.cfg,
-        log: params.log,
-      });
-      await params.startChannels();
+      if (warmSelectedModel) {
+        await prewarmConfiguredPrimaryModel({ cfg: params.cfg, log: params.log });
+      }
+      if (startConfiguredChannels) {
+        await params.startChannels();
+      }
     } catch (err) {
       params.logChannels.error(`channel startup failed: ${String(err)}`);
     }
-  } else {
+  } else if (skipChannels) {
     params.logChannels.info(
       "skipping channel start (FASED_SKIP_CHANNELS=1 or FASED_SKIP_PROVIDERS=1)",
     );
+  } else {
+    params.logChannels.info("no configured channels; skipping channel startup");
   }
 
   // Start plugin services — dynamically imported; only meaningful when plugins are registered.
@@ -210,14 +230,14 @@ export async function startGatewaySidecars(params: {
   }
 
   // Start QMD memory backend — dynamically imported; only loads if memory backend is configured.
-  void (async () => {
+  if (isOptionalMemoryBackendConfigured(params.cfg)) {
     try {
       const { startGatewayMemoryBackend } = await import("./server-startup-memory.js");
       await startGatewayMemoryBackend({ cfg: params.cfg, log: params.log });
     } catch (err) {
       params.log.warn(`qmd memory startup initialization failed: ${String(err)}`);
     }
-  })();
+  }
 
   if (shouldWakeFromRestartSentinel()) {
     setTimeout(() => {
@@ -225,14 +245,16 @@ export async function startGatewaySidecars(params: {
     }, 750);
   }
 
-  const federationAutoConnect = startFederationAutoConnect({
-    env: process.env,
-    log: {
-      info: (msg) => params.log.info(msg),
-      warn: (msg) => params.log.warn(msg),
-      error: (msg) => params.log.error(msg),
-    },
-  });
+  const federationAutoConnect = isFederationAutoConnectConfigured(process.env)
+    ? (await import("../federation/auto-connect.js")).startFederationAutoConnect({
+        env: process.env,
+        log: {
+          info: (msg) => params.log.info(msg),
+          warn: (msg) => params.log.warn(msg),
+          error: (msg) => params.log.error(msg),
+        },
+      })
+    : null;
 
   return { browserControl, pluginServices, federationAutoConnect };
 }

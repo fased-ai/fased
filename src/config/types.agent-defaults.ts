@@ -238,7 +238,7 @@ export type AgentDefaultsConfig = {
   typingMode?: TypingMode;
   /** Periodic background heartbeat runs. */
   heartbeat?: {
-    /** Heartbeat interval (duration string, default unit: minutes; default: 30m). */
+    /** Heartbeat interval (duration string, default unit: minutes; default: 30m once heartbeat is configured). */
     every?: string;
     /** Optional active-hours window (local time); heartbeats run only inside this window. */
     activeHours?: {
