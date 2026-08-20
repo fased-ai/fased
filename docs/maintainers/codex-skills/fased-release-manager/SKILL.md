@@ -18,7 +18,10 @@ owner requests that inventory.
 3. Preserve unrelated dirty work. Resume the plan's first incomplete checkpoint;
    superseded plans are evidence only.
 
-Modes:
+The newest owner-selected plan is the sole controlling plan until the owner
+replaces or completes it. Superseded incident plans and reports are evidence
+only; never resume work from them. At every handoff, name the first incomplete
+checkpoint and continue from it.
 
 - `REPORT`: inspect and answer without mutation.
 - `FIX`: one failure, one correction, focused proof. Default mode.
@@ -40,8 +43,6 @@ a source, fixture, or user-visible failure.
   poll unchanged state or repeat an unchanged command.
 - After discovery, target at most twelve additional tool calls for one bounded
   correction.
-- Keep the final handoff under 400 words by default. Expand only for required
-  evidence or an owner-requested report.
 - These are soft limits. Exceed one only with a one-line reason; never omit
   safety or correctness evidence to meet a budget. Do not set a hard token
   budget unless the owner explicitly requests one.
@@ -50,20 +51,21 @@ a source, fixture, or user-visible failure.
 
 ## Follow the plan before release
 
-Release authority permits an action; it never proves readiness. Before
-PRE-CANDIDATE, RC allocation, P1, tag, publication, promotion, or version-only
-change:
+Release authority permits an irreversible action; it never proves readiness or
+overrides the controlling plan. Before PRE-CANDIDATE, RC allocation, P1, tag,
+publication, promotion, or version-only change:
 
 1. Read the controlling plan's ordered checkpoints.
 2. Reconcile them with current failures and unfinished branches/worktrees.
 3. Identify the requested action's immediately preceding predicate.
-4. Proceed only when it and every earlier required predicate are `PASS` for the
-   required commit, tree, artifact, receipt, and environment class.
+4. Proceed only when that predicate and every earlier required predicate are
+   `PASS` for the required commit, tree, artifact, receipt, and environment class.
 
 Any required `FAIL`, `BLOCKED`, `SUPPORTING`, stale receipt, or unclassified
 implementation keeps the task in `FIX` or `LIFECYCLE`. Only an explicit named
-`WAIVED` risk decision can waive a predicate. Never use a candidate, tag, or
-publication to discover whether a fix works.
+`WAIVED` risk decision can waive a predicate. Never use a new RC, tag, or publication to discover
+whether a correction works, and never present release progress as completion
+of later architecture phases.
 
 Continue reversible authorized checkpoints until completion, owner stop or plan
 replacement, one failure requiring a plan change, the same predicate failing
@@ -84,8 +86,6 @@ For install, update, repair, uninstall, onboarding, command, or runtime failures
 4. Make one coherent correction.
 5. Run that test, directly coupled contracts, and changed-file formatting.
 6. Report or continue the active plan.
-
-The normal loop is:
 
 `reproduce -> focused regression -> fix -> focused test -> one literal runtime proof when required -> one PR/CI -> merge`
 
@@ -122,10 +122,10 @@ cached artifacts. When distributable bytes change, build one cached unpublished
 Linux-x64 artifact after focused tests, exercise only the affected topology, and
 reuse those exact bytes. Fixture-only changes reuse prior verified product bytes.
 
-Candidate work starts only after the literal end-user command passes. Reuse
-identical bytes across acceptance, P1, tag, and publication; publication must not
-rebuild. Full `LOCAL0`, PRE-CANDIDATE, P1, tag, and publication belong only to an
-explicit release plan.
+Candidate and release work begins only after the literal end-user command
+passes. Reuse identical bytes across acceptance, P1, tag, and publication;
+publication must not rebuild. Full `LOCAL0`, PRE-CANDIDATE, P1, tag, and
+publication belong only to an explicit release plan.
 
 ## Evidence and authority
 
