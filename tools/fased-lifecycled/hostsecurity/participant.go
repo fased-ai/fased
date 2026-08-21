@@ -314,7 +314,12 @@ func (participant Participant) abort(ctx context.Context, state State, cause err
 	if state.TailscaleInstallStarted {
 		failures = append(failures, participant.Host.RestoreTailscaleInstall(ctx, state.TailscaleInstallSnapshot))
 	}
-	failures = append(failures, participant.Store.RemoveReceiptOwned(state.TransactionID))
+	// The public receipt is first published by MarkRuntimeReady. Earlier phases
+	// cannot own it, so recovery must preserve any predecessor receipt instead
+	// of trying to parse or remove it.
+	if state.RuntimeReady {
+		failures = append(failures, participant.Store.RemoveReceiptOwned(state.TransactionID))
+	}
 	state.Phase = PhaseAborted
 	state.RuntimeReady, state.AccessConfirmed, state.HardeningCommitted = false, false, false
 	state.HardeningAdopted, state.LegacyHardeningAdopted = false, false

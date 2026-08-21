@@ -1,6 +1,7 @@
 package hostsecurity
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -191,6 +192,67 @@ func TestHostingSecurityPrepareFailureRollsBackExternalAccess(t *testing.T) {
 	}
 	if _, err := os.Stat(participant.Store.ReceiptPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("failed transaction retained a public receipt: %v", err)
+	}
+}
+
+func TestHostingSecurityInterruptedPreRuntimeRecoveryDoesNotOwnLegacyReceipt(t *testing.T) {
+	participant, host, request := fixture(t)
+	previous := State{
+		SchemaVersion: CurrentSchemaVersion, TransactionID: request.TransactionID,
+		Release: request.Release, Channel: request.Channel, GatewayPort: request.GatewayPort,
+		OperatorUser: request.OperatorUser, Phase: PhasePreparing,
+	}
+	if err := participant.Store.WriteState(previous); err != nil {
+		t.Fatal(err)
+	}
+	legacyReceipt := []byte("legacy-root-placeholder\n")
+	if err := os.WriteFile(participant.Store.ReceiptPath, legacyReceipt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	prepared, err := participant.Prepare(context.Background(), request)
+	if err != nil || prepared.Phase != PhasePrepared || prepared.TransactionID != request.TransactionID {
+		t.Fatalf("recover pre-runtime transaction: state=%+v err=%v", prepared, err)
+	}
+	beforeReady, err := os.ReadFile(participant.Store.ReceiptPath)
+	if err != nil || !bytes.Equal(beforeReady, legacyReceipt) {
+		t.Fatalf("pre-runtime recovery touched an unowned receipt: %q err=%v", beforeReady, err)
+	}
+
+	host.inspection.SignerReady = true
+	if _, err := participant.MarkRuntimeReady(context.Background(), request.TransactionID); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := os.ReadFile(participant.Store.ReceiptPath)
+	if err != nil || !strings.Contains(string(receipt), "transactionId="+request.TransactionID+"\n") {
+		t.Fatalf("retry did not publish its exact receipt: %q err=%v", receipt, err)
+	}
+	info, err := os.Lstat(participant.Store.ReceiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("retry did not converge receipt metadata: mode=%v", info.Mode().Perm())
+	}
+}
+
+func TestHostingSecurityUnsafeRootFileErrorNamesPathAndMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "active.json")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readSecureRootFile(path, 0o600, uint32(os.Getuid()), maxStateBytes)
+	if err == nil || !strings.Contains(err.Error(), path) ||
+		!strings.Contains(err.Error(), "mode=0666") || !strings.Contains(err.Error(), "mode=0600") {
+		t.Fatalf("unsafe metadata error is not actionable: %v", err)
+	}
+	_, err = readRootReceiptForOwnership(path, uint32(os.Getuid()), 4096)
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "non-writable") {
+		t.Fatalf("unsafe receipt cleanup did not fail closed: %v", err)
 	}
 }
 

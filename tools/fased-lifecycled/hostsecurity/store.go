@@ -187,7 +187,7 @@ func (store Store) WriteReceipt(state State, complete bool) error {
 }
 
 func (store Store) RemoveReceiptOwned(transactionID string) error {
-	data, err := readSecureRootFile(store.ReceiptPath, 0o644, store.ExpectedUID, 4096)
+	data, err := readRootReceiptForOwnership(store.ReceiptPath, store.ExpectedUID, 4096)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -201,14 +201,23 @@ func (store Store) RemoveReceiptOwned(transactionID string) error {
 	return os.Remove(store.ReceiptPath)
 }
 
-func readSecureRootFile(path string, mode os.FileMode, uid uint32, limit int64) ([]byte, error) {
+func readRootReceiptForOwnership(path string, uid uint32, limit int64) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != mode || stat.Uid != uid || stat.Nlink != 1 || info.Size() <= 0 || info.Size() > limit {
-		return nil, errors.New("Hosting security root file is unsafe")
+	if !ok {
+		return nil, fmt.Errorf("Hosting security receipt %q lacks Unix metadata", path)
+	}
+	// Cleanup does not trust this content as a readiness receipt. It only looks
+	// for the exact transaction ID before deletion, so a root-owned legacy mode
+	// or empty placeholder may be inspected and preserved. Writable, linked,
+	// foreign, non-regular, or oversized files remain fail-closed.
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != uid ||
+		stat.Nlink != 1 || info.Mode().Perm()&0o022 != 0 || info.Size() < 0 || info.Size() > limit {
+		return nil, unsafeRootFileMetadataError("receipt", path, info, stat, uid,
+			fmt.Sprintf("regular non-symlink uid=%d non-writable links=1 size=0..%d", uid, limit))
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -217,9 +226,45 @@ func readSecureRootFile(path string, mode os.FileMode, uid uint32, limit int64) 
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil || !os.SameFile(info, opened) {
-		return nil, errors.New("Hosting security root file changed while opening")
+		return nil, errors.Join(err, fmt.Errorf("Hosting security receipt %q changed while opening", path))
 	}
 	return io.ReadAll(io.LimitReader(file, limit+1))
+}
+
+func readSecureRootFile(path string, mode os.FileMode, uid uint32, limit int64) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("Hosting security root file %q lacks Unix metadata", path)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != mode || stat.Uid != uid || stat.Nlink != 1 || info.Size() <= 0 || info.Size() > limit {
+		return nil, unsafeRootFileMetadataError("root file", path, info, stat, uid,
+			fmt.Sprintf("regular non-symlink uid=%d mode=%04o links=1 size=1..%d", uid, mode.Perm(), limit))
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, errors.Join(err, fmt.Errorf("Hosting security root file %q changed while opening", path))
+	}
+	return io.ReadAll(io.LimitReader(file, limit+1))
+}
+
+func unsafeRootFileMetadataError(kind, path string, info os.FileInfo, stat *syscall.Stat_t, uid uint32, expected string) error {
+	actualUID := uid
+	links := uint64(0)
+	if stat != nil {
+		actualUID = stat.Uid
+		links = stat.Nlink
+	}
+	return fmt.Errorf("Hosting security %s %q is unsafe: expected %s; got type=%s uid=%d mode=%04o links=%d size=%d",
+		kind, path, expected, info.Mode().Type(), actualUID, info.Mode().Perm(), links, info.Size())
 }
 
 func writeAtomicRootFile(path string, data []byte, mode os.FileMode, uid uint32) error {
