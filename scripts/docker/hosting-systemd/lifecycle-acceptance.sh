@@ -644,7 +644,7 @@ assert_healthy() {
   ! ss -H -ltn | awk -v port=":${gateway_port}" '$4 ~ port "$" && ($4 ~ /^0\.0\.0\.0:/ || $4 ~ /^\[::\]:/ || $4 ~ /^\*:/) { found=1 } END { exit found ? 0 : 1 }'
 }
 
-configure_fixture_sat_runtime() {
+install_fixture_sat_runtime_environment() {
   local dropin_dir=/etc/systemd/system/fased-gateway.service.d
   install -d -m 0755 -o root -g root "$dropin_dir"
   cat >"$dropin_dir/95-fixture-sat-runtime.conf" <<'EOF_SAT_RUNTIME'
@@ -656,6 +656,10 @@ Environment=FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5D
 EOF_SAT_RUNTIME
   chmod 0644 "$dropin_dir/95-fixture-sat-runtime.conf"
   systemctl daemon-reload
+}
+
+configure_fixture_sat_runtime() {
+  install_fixture_sat_runtime_environment
   systemctl restart fased-gateway.service
   assert_healthy
 }
@@ -845,6 +849,7 @@ case "$phase" in
     install_release_transport_fixture
     install_hosting_package_fixtures
     prepare_provider_access_fixture
+    install_fixture_sat_runtime_environment
     run_public_installer >/tmp/fased-hosting-install.out 2>/tmp/fased-hosting-install.err
     jq -e '.phase == "COMMITTED" and .tailscaleInstalledByTransaction == true and
       .authenticatedByTransaction == true and .tailscaleDns == "fased-fixture.tailnet.ts.net"' \
@@ -896,6 +901,7 @@ case "$phase" in
     prepare_provider_access_fixture
     install_tailscale_fixture
     prepare_legacy_host_security_fixture
+    install_fixture_sat_runtime_environment
     test "$(jq -er .profile /home/app/.fased/install.json)" = hosting
     test "$(jq -er .runtime.activeVersion /home/app/.fased/install.json)" = "$predecessor_version"
     sha256sum \
