@@ -116,21 +116,17 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 }
 
 func (adapter *TargetAdapter) verifyCurrentAfterOnboarding(ctx context.Context, manifest model.Manifest, manifestDigest string) (string, error) {
-	const (
-		readinessDeadline = 30 * time.Second
-		readinessInterval = 100 * time.Millisecond
-	)
-	deadline := time.NewTimer(readinessDeadline)
+	deadline := time.NewTimer(pluginReadinessDeadline)
 	defer deadline.Stop()
 	for {
 		digest, err := adapter.VerifyCurrent(ctx, manifest, manifestDigest)
 		if err == nil {
 			return digest, nil
 		}
-		if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "plugin readiness receipt identity mismatch") {
+		if !retryablePluginReadinessError(err) {
 			return "", err
 		}
-		timer := time.NewTimer(readinessInterval)
+		timer := time.NewTimer(pluginReadinessInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -138,6 +134,39 @@ func (adapter *TargetAdapter) verifyCurrentAfterOnboarding(ctx context.Context, 
 		case <-deadline.C:
 			timer.Stop()
 			return "", fmt.Errorf("onboarding plugin readiness deadline exceeded: %w", err)
+		case <-timer.C:
+		}
+	}
+}
+
+const (
+	pluginReadinessDeadline = 30 * time.Second
+	pluginReadinessInterval = 100 * time.Millisecond
+)
+
+func retryablePluginReadinessError(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "plugin readiness receipt identity mismatch")
+}
+
+func (adapter *TargetAdapter) waitForPluginReadiness(ctx context.Context, target model.Generation) (PluginReadinessReceipt, error) {
+	deadline := time.NewTimer(pluginReadinessDeadline)
+	defer deadline.Stop()
+	for {
+		receipt, err := adapter.Plugins.Verify(ctx, target)
+		if err == nil {
+			return receipt, nil
+		}
+		if !retryablePluginReadinessError(err) {
+			return PluginReadinessReceipt{}, err
+		}
+		timer := time.NewTimer(pluginReadinessInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return PluginReadinessReceipt{}, errors.Join(ctx.Err(), err)
+		case <-deadline.C:
+			timer.Stop()
+			return PluginReadinessReceipt{}, fmt.Errorf("plugin readiness deadline exceeded: %w", err)
 		case <-timer.C:
 		}
 	}
@@ -465,7 +494,7 @@ func (adapter *TargetAdapter) Verify(ctx context.Context, tx model.Transaction) 
 	if _, err := adapter.Health.Verify(ctx, adapter.Config.GatewayPort, tx.Target); err != nil {
 		return engine.ParticipantReceipt{}, err
 	}
-	pluginReceipt, err := adapter.Plugins.Verify(ctx, tx.Target)
+	pluginReceipt, err := adapter.waitForPluginReadiness(ctx, tx.Target)
 	if err != nil {
 		return engine.ParticipantReceipt{}, fmt.Errorf("mandatory plugin readiness failed: %w", err)
 	}
