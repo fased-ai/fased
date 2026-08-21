@@ -1,11 +1,6 @@
 import path from "node:path";
 import type { ZodIssue } from "zod";
 import { normalizeChatChannelId } from "../channels/registry.js";
-import {
-  isNumericTelegramUserId,
-  normalizeTelegramAllowFromEntry,
-} from "../channels/telegram/allow-from.js";
-import { fetchTelegramChatId } from "../channels/telegram/api.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import {
@@ -37,7 +32,6 @@ import {
   isMattermostMutableAllowEntry,
   isSlackMutableAllowEntry,
 } from "../security/mutable-allowlist-detectors.js";
-import { listTelegramAccountIds, resolveTelegramAccount } from "../telegram/accounts.js";
 import { note } from "../terminal/note.js";
 import { isRecord } from "../utils.js";
 import { readWalletApprovalAuthSnapshot } from "../wallet/wallet-approval-auth.js";
@@ -321,6 +315,18 @@ function noteIncludeConfinementWarning(snapshot: {
 
 type TelegramAllowFromUsernameHit = { path: string; entry: string };
 
+function normalizeTelegramAllowFromEntry(raw: unknown): string {
+  const base = typeof raw === "string" ? raw : typeof raw === "number" ? String(raw) : "";
+  return base
+    .trim()
+    .replace(/^(telegram|tg):/i, "")
+    .trim();
+}
+
+function isNumericTelegramUserId(raw: string): boolean {
+  return /^-?\d+$/.test(raw);
+}
+
 type TelegramAllowFromListRef = {
   pathLabel: string;
   holder: Record<string, unknown>;
@@ -537,10 +543,35 @@ async function maybeRepairTelegramAllowFromUsernames(cfg: FasedAgentConfig): Pro
     return { config: cfg, changes: [] };
   }
 
+  let telegramRuntime: {
+    listTelegramAccountIds: typeof import("../telegram/accounts.js").listTelegramAccountIds;
+    resolveTelegramAccount: typeof import("../telegram/accounts.js").resolveTelegramAccount;
+    fetchTelegramChatId: typeof import("../channels/telegram/api.js").fetchTelegramChatId;
+  };
+  try {
+    const [accounts, api] = await Promise.all([
+      import("../telegram/accounts.js"),
+      import("../channels/telegram/api.js"),
+    ]);
+    telegramRuntime = {
+      listTelegramAccountIds: accounts.listTelegramAccountIds,
+      resolveTelegramAccount: accounts.resolveTelegramAccount,
+      fetchTelegramChatId: api.fetchTelegramChatId,
+    };
+  } catch (error) {
+    return {
+      config: cfg,
+      changes: [
+        `- Telegram allowFrom contains @username entries, but the Telegram component pack is unavailable; install it before auto-resolving sender IDs (${error instanceof Error ? error.message : String(error)}).`,
+      ],
+    };
+  }
+
   const tokens = Array.from(
     new Set(
-      listTelegramAccountIds(cfg)
-        .map((accountId) => resolveTelegramAccount({ cfg, accountId }))
+      telegramRuntime
+        .listTelegramAccountIds(cfg)
+        .map((accountId) => telegramRuntime.resolveTelegramAccount({ cfg, accountId }))
         .map((account) => (account.tokenSource === "none" ? "" : account.token))
         .map((token) => token.trim())
         .filter(Boolean),
@@ -576,7 +607,7 @@ async function maybeRepairTelegramAllowFromUsernames(cfg: FasedAgentConfig): Pro
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4000);
       try {
-        const id = await fetchTelegramChatId({
+        const id = await telegramRuntime.fetchTelegramChatId({
           token,
           chatId: username,
           signal: controller.signal,

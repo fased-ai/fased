@@ -218,6 +218,14 @@ describe("hosted component contract", () => {
     }
     expect(artifactSource).toContain('packaging: "upstream-unconditional-dependencies"');
     expect(artifactSource).toContain("gatewayReadyRssBytes");
+    const doctorConfigSource = await fs.readFile(
+      path.join(process.cwd(), "src", "commands", "doctor-config-flow.ts"),
+      "utf8",
+    );
+    expect(doctorConfigSource).not.toContain('from "../telegram/accounts.js"');
+    expect(doctorConfigSource).not.toContain('from "../channels/telegram/api.js"');
+    expect(doctorConfigSource).toContain('import("../telegram/accounts.js")');
+    expect(doctorConfigSource).toContain('import("../channels/telegram/api.js")');
     const runtimeGraphSource = await fs.readFile(
       path.join(process.cwd(), "scripts", "build-runtime-graphs.mjs"),
       "utf8",
