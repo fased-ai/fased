@@ -51,7 +51,7 @@ describe("plugin runtime command execution", () => {
   it("keeps LINE implementation unavailable until its managed component registers", () => {
     const runtime = createPluginRuntime();
     expect(() => runtime.channel.line.listLineAccountIds({})).toThrow(
-      "LINE managed component is not installed",
+      "Channel managed component is not installed",
     );
   });
 

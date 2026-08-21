@@ -514,8 +514,8 @@ describe("lifecycle acceptance contract", () => {
     expect(environmentInstall).toBeGreaterThan(helperStart);
     expect(publicInstall).toBeGreaterThan(environmentInstall);
     expect(helper).toContain("[Manager]");
-    expect(helper).toContain("DefaultEnvironment=FASED_SAT_PROGRAM_ID=");
-    expect(helper).toContain("DefaultEnvironment=FASED_SAT_MINT_ADDRESS=");
+    expect(helper).toContain("DefaultEnvironment=FASED_SAT_PROGRAM_ID="); // pragma: allowlist secret
+    expect(helper).toContain("DefaultEnvironment=FASED_SAT_MINT_ADDRESS="); // pragma: allowlist secret
     expect(helper).not.toContain("systemctl restart");
     expect(local).not.toContain("95-fixture-sat-runtime.conf");
   });

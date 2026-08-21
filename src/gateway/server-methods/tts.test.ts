@@ -8,12 +8,12 @@ const loadConfig = vi.hoisted(() =>
         provider: "openai",
         prefsPath: "/tmp/fased-gateway-tts-personas-test.json",
         openai: {
-          apiKey: "secret-openai-key",
+          apiKey: "secret-openai-key", // pragma: allowlist secret
           model: "tts-1",
           voice: "nova",
         },
         elevenlabs: {
-          apiKey: "secret-eleven-key",
+          apiKey: "secret-eleven-key", // pragma: allowlist secret
           modelId: "eleven_turbo_v2_5",
           voiceId: "pMsXgVXv3BLzUgSXRplE",
         },
