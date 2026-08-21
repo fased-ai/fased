@@ -193,8 +193,20 @@ describe("managed component pack identity", () => {
       path.join(process.cwd(), "src", "agents", "sandbox", "prune.ts"),
       "utf8",
     );
+    const sandboxManage = await fs.readFile(
+      path.join(process.cwd(), "src", "agents", "sandbox", "manage.ts"),
+      "utf8",
+    );
+    const sandboxBrowser = await fs.readFile(
+      path.join(process.cwd(), "src", "agents", "sandbox", "browser.ts"),
+      "utf8",
+    );
     expect(sandboxPrune).toContain('await import("../../browser/bridge-server.js")');
     expect(sandboxPrune).not.toContain('from "../../browser/bridge-server.js"');
+    expect(sandboxManage).toContain('await import("../../browser/bridge-server.js")');
+    expect(sandboxManage).not.toContain('from "../../browser/bridge-server.js"');
+    expect(sandboxBrowser).toContain('await import("../../browser/bridge-server.js")');
+    expect(sandboxBrowser).not.toContain('from "../../browser/bridge-server.js"');
     const compactRunner = await fs.readFile(
       path.join(process.cwd(), "src", "agents", "pi-embedded-runner", "compact.ts"),
       "utf8",
