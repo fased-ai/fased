@@ -445,18 +445,25 @@ describe("managed component pack identity", () => {
     );
     await fs.writeFile(path.join(root, "node_modules", "declared-runtime", "index.js"), "");
 
-    expect(() =>
+    await expect(
       assertManagedRuntimeExternalImportsResolvable({
         entryPath,
-        specifiers: ["node:fs", "fased/plugin-sdk", "declared-runtime"],
+        internalSpecifiers: ["chunks/shared-runtime.mjs"],
+        specifiers: [
+          "chunks/shared-runtime.mjs",
+          "fs",
+          "node:fs",
+          "fased/plugin-sdk",
+          "declared-runtime",
+        ],
       }),
-    ).not.toThrow();
-    expect(() =>
+    ).resolves.toBeUndefined();
+    await expect(
       assertManagedRuntimeExternalImportsResolvable({
         entryPath,
         specifiers: ["missing-runtime/subpath.js"],
       }),
-    ).toThrow(
+    ).rejects.toThrow(
       "managed component external runtime import is unavailable: missing-runtime/subpath.js",
     );
   });

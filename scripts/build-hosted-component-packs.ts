@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
+import { builtinModules } from "node:module";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { rolldown } from "rolldown";
 import { managedRuntimeSpecifier } from "../src/plugins/managed-runtime-aliases.js";
@@ -15,6 +16,10 @@ import { writeReleaseArchive } from "./release-archive.js";
 
 const execFileAsync = promisify(execFile);
 const rootDir = path.resolve(import.meta.dirname, "..");
+const nodeBuiltinSpecifiers = new Set([
+  ...builtinModules,
+  ...builtinModules.map((specifier) => `node:${specifier}`),
+]);
 
 type PluginTreeEntry = {
   path: string;
@@ -163,8 +168,11 @@ async function deployComponentPackage(params: {
       await bundle.close();
     }
   })();
-  assertManagedRuntimeExternalImportsResolvable({
+  await assertManagedRuntimeExternalImportsResolvable({
     entryPath: path.join(params.deployRoot, "index.mjs"),
+    internalSpecifiers: generated.output.flatMap((output) =>
+      output.type === "chunk" ? [output.fileName] : [],
+    ),
     specifiers: generated.output.flatMap((output) =>
       output.type === "chunk" ? [...output.imports, ...output.dynamicImports] : [],
     ),
@@ -229,28 +237,53 @@ export function shouldExternalizeManagedRuntimeImport(
   return deployedDependencies.has(packageName);
 }
 
-export function assertManagedRuntimeExternalImportsResolvable(params: {
+export async function assertManagedRuntimeExternalImportsResolvable(params: {
   entryPath: string;
+  internalSpecifiers?: Iterable<string>;
   specifiers: Iterable<string>;
-}): void {
-  const resolveFromComponent = createRequire(params.entryPath).resolve;
-  for (const specifier of new Set(params.specifiers)) {
-    if (
-      specifier.startsWith(".") ||
-      path.isAbsolute(specifier) ||
-      specifier.startsWith("node:") ||
-      specifier === "fased" ||
-      specifier.startsWith("fased/")
-    ) {
-      continue;
+}): Promise<void> {
+  const resolverRoot = await fs.mkdtemp(
+    path.join(path.dirname(params.entryPath), ".fased-esm-resolver-"),
+  );
+  const resolverPath = path.join(resolverRoot, "resolve.mjs");
+  await fs.writeFile(
+    resolverPath,
+    "export const resolveFromComponent = (specifier) => import.meta.resolve(specifier);\n",
+    { flag: "wx", mode: 0o600 },
+  );
+  const { resolveFromComponent } = (await import(pathToFileURL(resolverPath).href)) as {
+    resolveFromComponent: (specifier: string) => string;
+  };
+  const internalSpecifiers = new Set(params.internalSpecifiers ?? []);
+  try {
+    for (const specifier of new Set(params.specifiers)) {
+      if (
+        internalSpecifiers.has(specifier) ||
+        specifier.startsWith(".") ||
+        path.isAbsolute(specifier) ||
+        nodeBuiltinSpecifiers.has(specifier) ||
+        specifier === "fased" ||
+        specifier.startsWith("fased/")
+      ) {
+        continue;
+      }
+      try {
+        const resolved = resolveFromComponent(specifier);
+        if (!resolved.startsWith("file:")) {
+          throw new Error("external runtime import did not resolve to a file");
+        }
+        const stat = await fs.stat(fileURLToPath(resolved));
+        if (!stat.isFile()) {
+          throw new Error("external runtime import did not resolve to a regular file");
+        }
+      } catch (error) {
+        throw new Error(`managed component external runtime import is unavailable: ${specifier}`, {
+          cause: error,
+        });
+      }
     }
-    try {
-      resolveFromComponent(specifier);
-    } catch (error) {
-      throw new Error(`managed component external runtime import is unavailable: ${specifier}`, {
-        cause: error,
-      });
-    }
+  } finally {
+    await fs.rm(resolverRoot, { recursive: true, force: true });
   }
 }
 
