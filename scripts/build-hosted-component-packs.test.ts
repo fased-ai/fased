@@ -95,6 +95,7 @@ describe("managed component pack identity", () => {
     expect(paths).not.toContain("dist/tts/tts.js");
     expect(paths).not.toContain("dist/infra/home-dir.js");
     expect(paths).not.toContain("dist/plugins/discovery.js");
+    expect(paths).not.toContain("dist/web/qr-image.js");
   });
 
   it("derives LINE implementation paths while retaining shared core facades", async () => {

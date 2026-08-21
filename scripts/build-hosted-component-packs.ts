@@ -289,6 +289,9 @@ function isManagedRuntimeImplementationPath(
     "dist/telegram/token.js",
     "dist/web/accounts.js",
     "dist/web/auth-state.js",
+    // Core device pairing renders a small PNG QR code without loading browser,
+    // channel, or optional media runtime implementations.
+    "dist/web/qr-image.js",
     "dist/whatsapp/normalize.js",
   ]);
   if (coreChannelFacadePaths.has(applicationPath)) {

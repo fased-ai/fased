@@ -263,6 +263,7 @@ describe("hosted component contract", () => {
       "dist/telegram/token.js",
       "dist/web/accounts.js",
       "dist/web/auth-state.js",
+      "dist/web/qr-image.js",
       "dist/whatsapp/normalize.js",
     ]) {
       expect(componentPackSource).toContain(`"${facade}"`);
