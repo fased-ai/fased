@@ -501,23 +501,16 @@ record_three_services() {
   test -s "$output"
 }
 
-configure_fixture_sat_runtime() {
-  local instance="$1"
-  local dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"
-
-  install -d -m 0755 -o root -g root "$dropin_dir"
-  cat >"$dropin_dir/95-fixture-sat-runtime.conf" <<'EOF_SAT_RUNTIME'
-[Service]
-Environment=FASED_SAT_PROGRAM_ID=11111111111111111111111111111111
-Environment=FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111
-Environment=FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112
-Environment=FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+install_fixture_sat_runtime_environment() {
+  install -d -m 0755 -o root -g root /etc/systemd/system.conf.d
+  cat >/etc/systemd/system.conf.d/91-fased-fixture-sat-runtime.conf <<'EOF_SAT_RUNTIME'
+[Manager]
+DefaultEnvironment=FASED_SAT_PROGRAM_ID=11111111111111111111111111111111
+DefaultEnvironment=FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111
+DefaultEnvironment=FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112
+DefaultEnvironment=FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
 EOF_SAT_RUNTIME
-  chmod 0644 "$dropin_dir/95-fixture-sat-runtime.conf"
-  systemctl daemon-reload
-  systemctl restart "fased-gateway-$instance.service"
-  wait_for_service "fased-gateway-$instance.service"
-  wait_for_gateway_version "$version"
+  chmod 0644 /etc/systemd/system.conf.d/91-fased-fixture-sat-runtime.conf
 }
 
 run_operator_acceptance() {
@@ -526,8 +519,6 @@ run_operator_acceptance() {
   local output_prefix="$3"
   local environment_name="$4"
   local -n environment="$environment_name"
-
-  configure_fixture_sat_runtime "$instance"
 
   runuser -u testop -- env "${environment[@]}" \
     /usr/local/bin/node "$runtime_root/fased.mjs" wallet status --json \
@@ -1375,6 +1366,7 @@ cat >/etc/systemd/system.conf.d/90-fased-fixture-ca.conf <<EOF_FIXTURE_SYSTEMD_C
 [Manager]
 DefaultEnvironment=NODE_EXTRA_CA_CERTS=$fixture_tls/ca.crt
 EOF_FIXTURE_SYSTEMD_CA
+install_fixture_sat_runtime_environment
 systemctl daemon-reexec
 
 cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'
