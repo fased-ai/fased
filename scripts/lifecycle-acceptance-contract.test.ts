@@ -547,6 +547,24 @@ describe("lifecycle acceptance contract", () => {
     }
   });
 
+  it("records per-process Local runtime RSS rather than whole-container memory", () => {
+    const local = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const runner = readFileSync(
+      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    expect(local).toContain("record_runtime_process_evidence() {");
+    expect(local).toContain('systemctl show --property MainPID --value "fased-local-controller-');
+    expect(local).toContain('systemctl show --property MainPID --value "fased-signerd-');
+    expect(local).toContain('systemctl show --property MainPID --value "fased-gateway-');
+    expect(local).toContain('record_runtime_process_evidence "$instance"');
+    expect(runner).toContain('runtime_receipt="$receipt.runtime-processes.json"');
+    expect(runner).toContain("all(.pid > 1 and .rssBytes > 0)");
+  });
+
   it("proves a distinct managed-plugin install, digest-changing update, and no-op in protected Local", () => {
     const local = readFileSync(
       new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),

@@ -43,6 +43,7 @@ async function fixture() {
         maximumApplicationBytes: 1024,
         maximumDependencyFiles: 2,
         maximumDependencyBytes: 1024,
+        excludedDependencyPackages: ["typescript"],
         allowedSharedPackDependencies: [],
       },
       managedTransactionBudgets: {
@@ -149,11 +150,16 @@ describe("hosted component contract", () => {
     await fs.writeFile(path.join(modules, "pkg", "index.js"), "runtime");
     await fs.writeFile(path.join(modules, "pkg", "index.d.ts"), "type");
     await fs.writeFile(path.join(modules, "pkg", "index.js.map"), "map");
-    await expect(pruneHostedDependencies(modules, "x64")).resolves.toEqual({
+    await fs.mkdir(path.join(modules, "typescript"), { recursive: true });
+    await fs.writeFile(path.join(modules, "typescript", "typescript.js"), "compiler");
+    await expect(pruneHostedDependencies(modules, "x64", ["typescript"])).resolves.toEqual({
       files: 1,
       bytes: 7,
     });
     await expect(fs.readdir(path.join(modules, "pkg"))).resolves.toEqual(["index.js"]);
+    await expect(fs.stat(path.join(modules, "typescript"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("classifies every repository extension directory exactly once", async () => {
@@ -195,6 +201,21 @@ describe("hosted component contract", () => {
     expect(artifactSource).toContain("candidateManagedRuntimeImplementationPaths");
     expect(artifactSource).toContain('code === "ENOENT"');
     expect(artifactSource).toContain("managedRuntimeImplementationPaths.push(relative)");
+    expect(artifactSource).toContain("componentContract.core.excludedDependencyPackages");
+    expect(artifactSource).toContain('for (const id of ["typescript", "@fedify/vocab-tools"])');
+    expect(artifactSource).toContain("extensions/sat-mining/implementation.js");
+    expect(artifactSource).toContain("Dormant SAT Mining loaded its operational implementation");
+    for (const packageName of [
+      "@anthropic-ai/sdk",
+      "@aws-sdk/client-bedrock-runtime",
+      "@google/genai",
+      "@mistralai/mistralai",
+      "openai",
+    ]) {
+      expect(artifactSource).toContain(`"${packageName}"`);
+    }
+    expect(artifactSource).toContain('packaging: "upstream-unconditional-dependencies"');
+    expect(artifactSource).toContain("gatewayReadyRssBytes");
     const runtimeGraphSource = await fs.readFile(
       path.join(process.cwd(), "scripts", "build-runtime-graphs.mjs"),
       "utf8",

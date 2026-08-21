@@ -270,7 +270,7 @@ function sourceModuleToApplicationPath(moduleId: string): string | null {
 }
 
 function isManagedRuntimeImplementationPath(
-  extensionDirectory: "line" | "runtime-browser" | "runtime-speech",
+  extensionDirectory: string,
   applicationPath: string,
 ): boolean {
   if (extensionDirectory === "line") {
@@ -288,6 +288,35 @@ function isManagedRuntimeImplementationPath(
       /^dist\/agents\/tools\/browser-tool(?:\.schema)?\.js$/u.test(applicationPath)
     );
   }
+  if (extensionDirectory === "acpx") {
+    return applicationPath === "dist/cli/acp-cli.js" || applicationPath.startsWith("dist/acp/");
+  }
+  if (extensionDirectory === "discord") {
+    return applicationPath.startsWith("dist/discord/");
+  }
+  if (extensionDirectory === "slack") {
+    return (
+      applicationPath.startsWith("dist/slack/") ||
+      applicationPath.startsWith("dist/agents/tools/slack-actions")
+    );
+  }
+  if (extensionDirectory === "telegram") {
+    return applicationPath.startsWith("dist/telegram/");
+  }
+  if (extensionDirectory === "signal") {
+    return applicationPath.startsWith("dist/signal/");
+  }
+  if (extensionDirectory === "imessage") {
+    return applicationPath.startsWith("dist/imessage/");
+  }
+  if (extensionDirectory === "whatsapp") {
+    return (
+      applicationPath.startsWith("dist/web/") ||
+      applicationPath.startsWith("dist/whatsapp/") ||
+      applicationPath.startsWith("dist/channels/web/") ||
+      applicationPath.startsWith("dist/agents/tools/whatsapp-actions")
+    );
+  }
   return (
     applicationPath.startsWith("dist/tts/") ||
     /^dist\/agents\/tools\/tts-tool(?:\.schema)?\.js$/u.test(applicationPath)
@@ -296,11 +325,7 @@ function isManagedRuntimeImplementationPath(
 
 /** Exact core dist modules whose implementation bytes are owned by managed packs. */
 export async function resolveManagedRuntimeImplementationPaths(
-  extensionDirectories: readonly ("line" | "runtime-browser" | "runtime-speech")[] = [
-    "line",
-    "runtime-browser",
-    "runtime-speech",
-  ],
+  extensionDirectories: readonly string[] = ["line", "runtime-browser", "runtime-speech"],
 ): Promise<string[]> {
   const paths = new Set<string>();
   for (const extensionDirectory of extensionDirectories) {

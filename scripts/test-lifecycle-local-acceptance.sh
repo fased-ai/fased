@@ -834,6 +834,18 @@ run_fixture_scenario() {
   run_container cp \
     "$name:/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${scenario}.json" \
     "$receipt"
+  if [[ "$scenario" == "fresh-install" ]]; then
+    runtime_receipt="$receipt.runtime-processes.json"
+    run_container cp \
+      "$name:/var/lib/fased-protected-local-fixture/runtime-process-evidence.json" \
+      "$runtime_receipt"
+    jq -e \
+      '.schemaVersion == 1 and .role == "fased-runtime-process-evidence" and
+       ([.processes.lifecycle,.processes.signer,.processes.gateway] |
+        all(.pid > 1 and .rssBytes > 0))' \
+      "$runtime_receipt" >/dev/null
+    printf 'runtime process evidence verified: %s\n' "$runtime_receipt"
+  fi
   descriptor_digest="sha256:$(sha256sum "$ARTIFACT_DIR/fased-hosting-candidate.json" | awk '{print $1}')"
   capsule_digest=""
   installation_class_digest=""

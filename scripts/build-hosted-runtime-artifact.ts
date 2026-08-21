@@ -6,6 +6,7 @@ import { createConnection, createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { writeBundledPluginLock } from "./assemble-lifecycle-generation.mjs";
 import { resolveManagedRuntimeImplementationPaths } from "./build-hosted-component-packs.js";
@@ -222,12 +223,21 @@ async function canConnect(port: number): Promise<boolean> {
 async function smokeGateway(
   packageRoot: string,
   smokeEnv: NodeJS.ProcessEnv,
-): Promise<{ pluginLoadMs: number; output: string }> {
+  tracePath: string,
+): Promise<{
+  pluginLoadMs: number;
+  output: string;
+  gatewayRssBytes: number;
+  applicationModules: string[];
+  dependencyPackages: string[];
+}> {
   const port = await reserveLoopbackPort();
   const output: string[] = [];
   const child = spawn(
     process.execPath,
     [
+      "--import",
+      path.join(rootDir, "scripts", "trace-runtime-modules.mjs"),
       path.join(packageRoot, "dist", "entry.js"),
       "gateway",
       "--allow-unconfigured",
@@ -242,6 +252,7 @@ async function smokeGateway(
         ...process.env,
         ...smokeEnv,
         FASED_NO_RESPAWN: "1",
+        FASED_RUNTIME_MODULE_TRACE: tracePath,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -262,7 +273,45 @@ async function smokeGateway(
       const combinedOutput = output.join("");
       const timingMatch = combinedOutput.match(/plugins\.load(?:\.deferred)?=(\d+)ms/);
       if (listening && timingMatch?.[1]) {
-        return { pluginLoadMs: Number.parseInt(timingMatch[1], 10), output: combinedOutput };
+        const status = await fs.readFile(`/proc/${child.pid}/status`, "utf8");
+        const rssKiB = Number.parseInt(status.match(/^VmRSS:\s+(\d+)\s+kB$/mu)?.[1] ?? "0", 10);
+        if (!Number.isSafeInteger(rssKiB) || rssKiB <= 0) {
+          throw new Error("Hosted Gateway RSS is unavailable");
+        }
+        const traced = new Set(
+          (await fs.readFile(tracePath, "utf8"))
+            .split("\n")
+            .map((value) => value.trim())
+            .filter(Boolean),
+        );
+        const applicationModules = new Set<string>();
+        const dependencyPackages = new Set<string>();
+        for (const url of traced) {
+          const filePath = fileURLToPath(url);
+          const relative = path.relative(packageRoot, filePath);
+          if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+            continue;
+          }
+          const normalized = relative.replaceAll(path.sep, "/");
+          if (!normalized.startsWith("node_modules/")) {
+            applicationModules.add(normalized);
+            continue;
+          }
+          const parts = normalized.split("/");
+          const nodeModulesIndex = parts.lastIndexOf("node_modules");
+          const first = parts[nodeModulesIndex + 1];
+          const second = first?.startsWith("@") ? parts[nodeModulesIndex + 2] : undefined;
+          if (first) {
+            dependencyPackages.add(second ? `${first}/${second}` : first);
+          }
+        }
+        return {
+          pluginLoadMs: Number.parseInt(timingMatch[1], 10),
+          output: combinedOutput,
+          gatewayRssBytes: rssKiB * 1024,
+          applicationModules: [...applicationModules].toSorted(),
+          dependencyPackages: [...dependencyPackages].toSorted(),
+        };
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -341,7 +390,18 @@ async function main(): Promise<void> {
       contract: componentContract,
     });
     const candidateManagedRuntimeImplementationPaths =
-      await resolveManagedRuntimeImplementationPaths(["line", "runtime-browser"]);
+      await resolveManagedRuntimeImplementationPaths([
+        "line",
+        "runtime-browser",
+        "runtime-speech",
+        "acpx",
+        "discord",
+        "slack",
+        "telegram",
+        "signal",
+        "imessage",
+        "whatsapp",
+      ]);
     const managedRuntimeImplementationPaths: string[] = [];
     for (const relative of candidateManagedRuntimeImplementationPaths) {
       const target = path.join(packageRoot, relative);
@@ -390,6 +450,7 @@ async function main(): Promise<void> {
     const dependencyBudget = await pruneHostedDependencies(
       path.join(packageRoot, "node_modules"),
       arch,
+      componentContract.core.excludedDependencyPackages,
     );
     console.log(
       `hosted-artifact: dependency budget ${dependencyBudget.files} files, ${(dependencyBudget.bytes / 1024 / 1024).toFixed(1)} MB`,
@@ -404,6 +465,25 @@ async function main(): Promise<void> {
     });
     console.log(
       `hosted-artifact: core application budget ${applicationBudget.files} files, ${(applicationBudget.bytes / 1024 / 1024).toFixed(1)} MB`,
+    );
+    await run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        [
+          'await import("@solana/web3.js")',
+          'await import("viem")',
+          'await import("@fedify/fedify")',
+          'await import("@mariozechner/pi-ai")',
+          'await import("@mariozechner/pi-ai/compat")',
+          'for (const id of ["typescript", "@fedify/vocab-tools"]) {',
+          "  try { await import(id); throw new Error(`excluded dependency resolved: ${id}`); }",
+          '  catch (error) { if (String(error).includes("excluded dependency resolved")) throw error; }',
+          "}",
+        ].join(";"),
+      ],
+      packageRoot,
     );
 
     console.log("hosted-artifact: compiling core runtime plugins");
@@ -507,8 +587,27 @@ async function main(): Promise<void> {
       );
     }
     console.log("hosted-artifact: starting isolated packaged gateway");
-    const gatewaySmoke = await smokeGateway(packageRoot, smokeEnv);
+    const moduleTracePath = path.join(tempRoot, "gateway-module-trace.log");
+    const gatewaySmoke = await smokeGateway(packageRoot, smokeEnv, moduleTracePath);
     const pluginLoadMs = gatewaySmoke.pluginLoadMs;
+    if (gatewaySmoke.applicationModules.includes("extensions/sat-mining/implementation.js")) {
+      throw new Error("Dormant SAT Mining loaded its operational implementation");
+    }
+    const piAiProviderSdkPackages = [
+      "@anthropic-ai/sdk",
+      "@aws-sdk/client-bedrock-runtime",
+      "@google/genai",
+      "@mistralai/mistralai",
+      "openai",
+    ];
+    const idleLoadedPiAiProviderSdkPackages = piAiProviderSdkPackages.filter((packageName) =>
+      gatewaySmoke.dependencyPackages.includes(packageName),
+    );
+    if (idleLoadedPiAiProviderSdkPackages.length > 0) {
+      throw new Error(
+        `Dormant Gateway loaded pi-ai provider SDKs: ${idleLoadedPiAiProviderSdkPackages.join(", ")}`,
+      );
+    }
     for (const pluginId of ["memory-core", "sat-mining"]) {
       if (!gatewaySmoke.output.includes(`[plugins] ${pluginId} native preload `)) {
         throw new Error(
@@ -530,6 +629,34 @@ async function main(): Promise<void> {
     }
     console.log(
       `hosted-artifact: core plugins loaded in ${pluginLoadMs}ms (budget ${corePluginBudgetMs}ms)`,
+    );
+    console.log(
+      `hosted-artifact: Gateway ready RSS ${(gatewaySmoke.gatewayRssBytes / 1024 / 1024).toFixed(1)} MB; loaded ${gatewaySmoke.applicationModules.length} application modules and ${gatewaySmoke.dependencyPackages.length} dependency packages`,
+    );
+    const runtimeEvidenceName = `fased-hosted-core-runtime-linux-${arch}-v${version}.json`;
+    await fs.writeFile(
+      path.join(outputDir, runtimeEvidenceName),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          type: "fased-hosted-core-runtime-evidence",
+          version,
+          commit,
+          architecture: arch,
+          pluginLoadMs,
+          gatewayReadyRssBytes: gatewaySmoke.gatewayRssBytes,
+          applicationModules: gatewaySmoke.applicationModules,
+          dependencyPackages: gatewaySmoke.dependencyPackages,
+          piAiProviderBundle: {
+            packaging: "upstream-unconditional-dependencies",
+            installedSdkPackages: piAiProviderSdkPackages,
+            idleLoadedSdkPackages: idleLoadedPiAiProviderSdkPackages,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
     );
     const cachedPluginInfo = await run(
       process.execPath,
@@ -627,12 +754,22 @@ async function main(): Promise<void> {
           excludedExtensions: removedExtensions.toSorted(),
           excludedApplicationPaths: removedApplicationPaths.toSorted(),
           excludedManagedRuntimePaths: managedRuntimeImplementationPaths,
+          excludedDependencyPackages: componentContract.core.excludedDependencyPackages,
           applicationBudget,
           dependencyBudget,
           dependencyCache: {
             mode: "offline-pnpm-store",
             downloads: 0,
             durationMs: deployment.durationMs,
+          },
+          runtimeEvidence: {
+            asset: runtimeEvidenceName,
+            pluginLoadMs,
+            gatewayReadyRssBytes: gatewaySmoke.gatewayRssBytes,
+            applicationModules: gatewaySmoke.applicationModules.length,
+            dependencyPackages: gatewaySmoke.dependencyPackages.length,
+            dormantMiningImplementationLoaded: false,
+            idleLoadedPiAiProviderSdkPackages,
           },
         },
         null,

@@ -12,7 +12,8 @@
   ],
   "type": "module",
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc12"
+    "@whiskeysockets/baileys": "7.0.0-rc12",
+    "qrcode-terminal": "^0.12.0"
   },
   "peerDependencies": {
     "@fased/fased": "^0.1.76-rc.105"

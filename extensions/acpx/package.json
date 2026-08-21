@@ -4,6 +4,7 @@
   "description": "FasedAgent ACP runtime backend via acpx",
   "type": "module",
   "dependencies": {
+    "@agentclientprotocol/sdk": "0.14.1",
     "acpx": "^0.1.13"
   },
   "fased": {

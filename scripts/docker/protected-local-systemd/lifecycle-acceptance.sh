@@ -46,6 +46,7 @@ gateway_port=19456
 rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
 snapshot=/var/lib/fased-protected-local-fixture.json
+runtime_process_evidence=/var/lib/fased-protected-local-fixture/runtime-process-evidence.json
 selected_target=/var/lib/fased-protected-local-fixture/selected-target-version
 predecessor_target=/var/lib/fased-protected-local-fixture/predecessor-version
 release_assets=/var/lib/fased-protected-local-fixture/release-assets
@@ -67,6 +68,38 @@ assert_public_command_projection() {
   test -f /usr/local/bin/fased
   test ! -L /usr/local/bin/fased
   test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"
+}
+
+record_runtime_process_evidence() {
+  local instance_id="${1:?instance id is required}"
+  local controller_pid signer_pid gateway_pid
+  local controller_rss_kib signer_rss_kib gateway_rss_kib
+  controller_pid="$(systemctl show --property MainPID --value "fased-local-controller-$instance_id.service")"
+  signer_pid="$(systemctl show --property MainPID --value "fased-signerd-$instance_id.service")"
+  gateway_pid="$(systemctl show --property MainPID --value "fased-gateway-$instance_id.service")"
+  for pid in "$controller_pid" "$signer_pid" "$gateway_pid"; do
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+    test -r "/proc/$pid/status"
+  done
+  controller_rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$controller_pid/status")"
+  signer_rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$signer_pid/status")"
+  gateway_rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$gateway_pid/status")"
+  for rss_kib in "$controller_rss_kib" "$signer_rss_kib" "$gateway_rss_kib"; do
+    [[ "$rss_kib" =~ ^[1-9][0-9]*$ ]]
+  done
+  jq -n \
+    --arg instanceId "$instance_id" \
+    --argjson controllerPid "$controller_pid" \
+    --argjson signerPid "$signer_pid" \
+    --argjson gatewayPid "$gateway_pid" \
+    --argjson controllerRssBytes "$((controller_rss_kib * 1024))" \
+    --argjson signerRssBytes "$((signer_rss_kib * 1024))" \
+    --argjson gatewayRssBytes "$((gateway_rss_kib * 1024))" \
+    '{schemaVersion:1,role:"fased-runtime-process-evidence",instanceId:$instanceId,processes:{lifecycle:{pid:$controllerPid,rssBytes:$controllerRssBytes},signer:{pid:$signerPid,rssBytes:$signerRssBytes},gateway:{pid:$gatewayPid,rssBytes:$gatewayRssBytes}}}' \
+    >"$runtime_process_evidence"
+  chmod 0600 "$runtime_process_evidence"
+  printf 'runtime process RSS: lifecycle=%sB signer=%sB gateway=%sB\n' \
+    "$((controller_rss_kib * 1024))" "$((signer_rss_kib * 1024))" "$((gateway_rss_kib * 1024))"
 }
 
 managed_plugin_tree_digest() {
@@ -1720,6 +1753,7 @@ if [[ "$phase" == "fresh-install" ]]; then
       <(jq -S . "/tmp/fresh-${wallet_id}-restart.json")
   done
   acceptance_mark state-preservation "$fresh_restart_manifest"
+  record_runtime_process_evidence "$instance"
   restart_elapsed="$((SECONDS - restart_started))"
 
   noop_started="$SECONDS"

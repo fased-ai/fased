@@ -270,6 +270,68 @@ describe("managed component pack identity", () => {
     }
   });
 
+  it("derives speech implementation paths for exclusion from the base artifact", async () => {
+    const paths = await resolveManagedRuntimeImplementationPaths(["runtime-speech"]);
+    expect(paths).toContain("dist/tts/tts.js");
+    expect(paths).toContain("dist/tts/tts-core.js");
+    expect(paths).not.toContain("dist/plugin-sdk/speech-runtime.js");
+  });
+
+  it("moves the ACP protocol bridge and SDK ownership into the acpx component", async () => {
+    const paths = await resolveManagedRuntimeImplementationPaths(["acpx"]);
+    expect(paths).toContain("dist/cli/acp-cli.js");
+    expect(paths).toContain("dist/acp/client.js");
+    expect(paths).toContain("dist/acp/server.js");
+    expect(paths).toContain("dist/acp/translator.js");
+    expect(paths).not.toContain("dist/acp/control-plane/manager.js");
+
+    const rootPackage = JSON.parse(
+      await fs.readFile(path.join(process.cwd(), "package.json"), "utf8"),
+    ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    const acpxPackage = JSON.parse(
+      await fs.readFile(path.join(process.cwd(), "extensions", "acpx", "package.json"), "utf8"),
+    ) as { dependencies?: Record<string, string> };
+    expect(rootPackage.dependencies).not.toHaveProperty("@agentclientprotocol/sdk");
+    expect(rootPackage.devDependencies).toHaveProperty("@agentclientprotocol/sdk", "0.14.1");
+    expect(acpxPackage.dependencies).toHaveProperty("@agentclientprotocol/sdk", "0.14.1");
+
+    const coreSubcommands = await fs.readFile(
+      path.join(process.cwd(), "src", "cli", "program", "register.subclis.ts"),
+      "utf8",
+    );
+    expect(coreSubcommands).not.toContain('name: "acp"');
+    const acpxEntrypoint = await fs.readFile(
+      path.join(process.cwd(), "extensions", "acpx", "index.ts"),
+      "utf8",
+    );
+    expect(acpxEntrypoint).toContain('commands: ["acp"]');
+  });
+
+  it("binds channel-specific runtime implementations into their managed archives", async () => {
+    const expectations = new Map([
+      ["discord", "dist/discord/send.js"],
+      ["slack", "dist/slack/send.js"],
+      ["telegram", "dist/telegram/send.js"],
+      ["signal", "dist/signal/send.js"],
+      ["imessage", "dist/imessage/send.js"],
+      ["whatsapp", "dist/web/outbound.js"],
+    ]);
+    for (const [extension, expectedPath] of expectations) {
+      const paths = await resolveManagedRuntimeImplementationPaths([extension]);
+      expect(paths, extension).toContain(expectedPath);
+    }
+    const coreRuntime = await fs.readFile(
+      path.join(process.cwd(), "src", "plugins", "runtime", "index.ts"),
+      "utf8",
+    );
+    expect(coreRuntime).not.toContain('import("../../discord/send.js")');
+    expect(coreRuntime).not.toContain('import("../../slack/send.js")');
+    expect(coreRuntime).not.toContain('import("../../telegram/send.js")');
+    expect(coreRuntime).not.toContain('from "../../signal/send.js"');
+    expect(coreRuntime).not.toContain('from "../../imessage/send.js"');
+    expect(coreRuntime).not.toContain('import("../../web/outbound.js")');
+  });
+
   it("keeps the CLI process alive until the selected command completes", async () => {
     const entry = await fs.readFile(path.join(process.cwd(), "src", "entry.ts"), "utf8");
     const runMain = await fs.readFile(

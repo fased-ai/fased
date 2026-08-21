@@ -11,6 +11,7 @@ type CoreContract = {
   maximumApplicationBytes: number;
   maximumDependencyFiles: number;
   maximumDependencyBytes: number;
+  excludedDependencyPackages: string[];
   allowedSharedPackDependencies: string[];
 };
 
@@ -34,6 +35,7 @@ export type HostedComponentContract = {
 
 const identifier = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const topLevelEntry = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const packageName = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u;
 
 function assertPositiveInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -86,6 +88,12 @@ export async function readHostedComponentContract(
   assertPositiveInteger(value.core.maximumApplicationBytes, "maximumApplicationBytes");
   assertPositiveInteger(value.core.maximumDependencyFiles, "maximumDependencyFiles");
   assertPositiveInteger(value.core.maximumDependencyBytes, "maximumDependencyBytes");
+  if (
+    !Array.isArray(value.core.excludedDependencyPackages) ||
+    value.core.excludedDependencyPackages.some((entry) => !packageName.test(entry))
+  ) {
+    throw new Error("excludedDependencyPackages must contain exact package names");
+  }
   if (!Array.isArray(value.core.allowedSharedPackDependencies)) {
     throw new Error("allowedSharedPackDependencies must be an array");
   }
@@ -332,6 +340,7 @@ export function assertHostedCoreBudgets(params: {
 export async function pruneHostedDependencies(
   nodeModulesRoot: string,
   arch: string,
+  excludedPackageNames: readonly string[] = [],
 ): Promise<{ files: number; bytes: number }> {
   const keepClipboardPackages = new Set([
     `clipboard-linux-${arch}-gnu`,
@@ -340,7 +349,18 @@ export async function pruneHostedDependencies(
   let retainedFiles = 0;
   let retainedBytes = 0;
 
+  const removeExcludedPackages = async (directory: string): Promise<void> => {
+    if (path.basename(directory) !== "node_modules") {
+      return;
+    }
+    for (const dependency of excludedPackageNames) {
+      const target = path.join(directory, ...dependency.split("/"));
+      await fs.rm(target, { recursive: true, force: true });
+    }
+  };
+
   const visit = async (directory: string): Promise<void> => {
+    await removeExcludedPackages(directory);
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) {

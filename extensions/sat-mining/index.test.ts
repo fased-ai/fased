@@ -367,7 +367,7 @@ type RegisteredGatewayMethod = {
 
 describe("sat-mining plugin chat tool boundaries", () => {
   it("registers low-level status diagnostics as optional", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const toolOptions = new Map<string, RegisteredToolOptions | undefined>();
 
     satMiningPlugin.register({
@@ -415,7 +415,7 @@ describe("sat-mining plugin chat tool boundaries", () => {
 
 describe("sat-mining plugin config persistence", () => {
   it("persists config updates from commands and tool actions", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const commands = new Map<
       string,
       { handler: (ctx: { args?: string }) => Promise<{ text: string }> }
@@ -502,7 +502,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("includes resolved validator authority in attestation submission responses", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const tools = new Map<string, RegisteredTool>();
 
     satMiningPlugin.register({
@@ -568,7 +568,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("fails closed before gateway attestation persistence is initialized", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
     satMiningPlugin.register({
@@ -631,7 +631,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("fails closed before gateway dispute persistence is initialized", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
     satMiningPlugin.register({
@@ -691,7 +691,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("returns SAT epoch visibility through gateway inspection", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
     satMiningPlugin.register({
@@ -754,7 +754,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("returns SAT status gateway payload with epoch health rollup", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
     satMiningPlugin.register({
@@ -831,7 +831,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("resolves readiness through the selected wallet without scanning every wallet", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const walletResolver = await import("../../src/wallet/wallet-provider-resolver.js");
     const createWalletProviderAdapter = vi.mocked(walletResolver.createWalletProviderAdapter);
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
@@ -906,7 +906,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("treats a missing miner-capital PDA as fundable instead of a separate setup step", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const rpcRead = await import("./src/rpc-read.js");
     vi.mocked(rpcRead.inspectSatMinerCapital).mockResolvedValueOnce(null);
     vi.mocked(rpcRead.inspectSatMinerCapitalAccountStatus).mockResolvedValueOnce({
@@ -996,7 +996,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("returns unified SAT recovery summary across command, tool, and gateway", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const commands = new Map<
       string,
       { handler: (ctx: { args?: string }) => Promise<{ text: string }> }
@@ -1085,7 +1085,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("surfaces dispute list status and epoch claim summaries", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const commands = new Map<
       string,
       { handler: (ctx: { args?: string }) => Promise<{ text: string }> }
@@ -1188,7 +1188,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("surfaces attestation list decision and epoch claim summaries", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const commands = new Map<
       string,
       { handler: (ctx: { args?: string }) => Promise<{ text: string }> }
@@ -1295,7 +1295,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("surfaces blocked epoch summary in command and status tool output", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const commands = new Map<
       string,
       { handler: (ctx: { args?: string }) => Promise<{ text: string }> }
@@ -1389,7 +1389,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("fails closed for dispute resolution and corrected root republish before startup", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
     satMiningPlugin.register({
@@ -1466,7 +1466,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("returns republish preflight reasons when corrected roots would be rejected", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const commands = new Map<
       string,
       { handler: (ctx: { args?: string }) => Promise<{ text: string }> }
@@ -1565,7 +1565,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("returns mining readiness with real stake and payout probes", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
     satMiningPlugin.register({
@@ -1630,7 +1630,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("starts mining through the runtime-backed gateway method", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
       id: string;
@@ -1715,7 +1715,7 @@ describe("sat-mining plugin config persistence", () => {
     vi.mocked(rpcRead.inspectSatPayoutReadiness).mockRejectedValueOnce(
       new Error("payout probe timeout"),
     );
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
       id: string;
@@ -1795,7 +1795,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("returns a fresh non-clearing status when startMining resumes from drain mode", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
       id: string;
@@ -1896,7 +1896,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("marks drain mode complete when miner capital is clear", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
       id: string;
@@ -1990,7 +1990,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("starts mining when the wallet provider balance probe is temporarily unavailable", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const walletResolvers = await import("../../src/wallet/wallet-provider-resolver.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
@@ -2130,7 +2130,7 @@ describe("sat-mining plugin config persistence", () => {
         }) as never,
     );
 
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
       id: string;
@@ -2210,7 +2210,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("preserves unresolved SAT backlog across startMining so recovery context survives restart", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
       id: string;
@@ -2368,7 +2368,7 @@ describe("sat-mining plugin config persistence", () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-mining-bootstrap-wait-"));
     inspectSatChainUnixTimeMock.mockRejectedValue(new Error("chain time unavailable"));
     try {
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -2453,7 +2453,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("does not auto-bind the registry default wallet during service startup when config omits walletId", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const services: Array<{
       id: string;
       start?: (ctx?: unknown) => Promise<void>;
@@ -2524,7 +2524,7 @@ describe("sat-mining plugin config persistence", () => {
   it("stays stopped on first startup until the user explicitly starts mining", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-first-start-"));
     try {
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -2618,7 +2618,7 @@ describe("sat-mining plugin config persistence", () => {
         enabledWanted: true,
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -2780,7 +2780,7 @@ describe("sat-mining plugin config persistence", () => {
           lastPendingCycleId: 5932694,
         });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -2921,7 +2921,7 @@ describe("sat-mining plugin config persistence", () => {
         lastPendingCycleId: 5933662,
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -3054,7 +3054,7 @@ describe("sat-mining plugin config persistence", () => {
         pendingPayoutRaw: "0",
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -3181,7 +3181,7 @@ describe("sat-mining plugin config persistence", () => {
         enabledWanted: true,
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -3301,7 +3301,7 @@ describe("sat-mining plugin config persistence", () => {
         enabledWanted: true,
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -3463,7 +3463,7 @@ describe("sat-mining plugin config persistence", () => {
         return null;
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -3609,7 +3609,7 @@ describe("sat-mining plugin config persistence", () => {
         },
       );
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -3717,7 +3717,7 @@ describe("sat-mining plugin config persistence", () => {
         lastPendingCycleId: 5918142,
       }));
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -3830,7 +3830,7 @@ describe("sat-mining plugin config persistence", () => {
         },
       ]);
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -3951,7 +3951,7 @@ describe("sat-mining plugin config persistence", () => {
         },
       );
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -4066,7 +4066,7 @@ describe("sat-mining plugin config persistence", () => {
         },
       ]);
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -4168,7 +4168,7 @@ describe("sat-mining plugin config persistence", () => {
         enabledWanted: false,
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -4267,7 +4267,7 @@ describe("sat-mining plugin config persistence", () => {
         enabledWanted: true,
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -4360,7 +4360,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("returns a stopped fallback status when stopMining succeeds but status refresh fails", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const { satOps } = await import("./src/sat-ops.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
@@ -4456,7 +4456,7 @@ describe("sat-mining plugin config persistence", () => {
 
   it("resolves mining status against the refreshed local-signer wallet address", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-refreshed-wallet-address-"));
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const { satOps } = await import("./src/sat-ops.js");
     const walletRegistry = await import("../../src/wallet/wallet-provider-registry.js");
     const walletResolvers = await import("../../src/wallet/wallet-provider-resolver.js");
@@ -4708,7 +4708,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("returns a gateway error shape when stopMining persistence fails", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{ id: string; start?: (ctx: unknown) => Promise<void> | void }> = [];
     const writeConfigFile = vi.fn(async () => {
@@ -4783,7 +4783,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("persists commitLamports after setActiveCommit succeeds", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{ id: string; start?: (ctx: unknown) => Promise<void> | void }> = [];
     const writeConfigFile = vi.fn(async () => {});
@@ -4876,7 +4876,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("does not persist commitLamports when setActiveCommit is used for a one-cycle auto adjustment", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{ id: string; start?: (ctx: unknown) => Promise<void> | void }> = [];
     const writeConfigFile = vi.fn(async () => {});
@@ -4957,7 +4957,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("auto-initializes SAT miner capital before funding when the capital PDA is missing", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{ id: string; start?: (ctx: unknown) => Promise<void> | void }> = [];
     const solanaSubmit = await import("./src/solana-submit.js");
@@ -5038,7 +5038,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("surfaces a capital-owner mismatch clearly in mining readiness", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const rpcRead = await import("./src/rpc-read.js");
     const capitalStatusMock = vi.mocked(rpcRead.inspectSatMinerCapitalAccountStatus);
@@ -5121,7 +5121,7 @@ describe("sat-mining plugin config persistence", () => {
   it("persists round execution immediately after openCycle and commitCycle succeed", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-submit-persist-"));
     try {
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{ id: string; start?: (ctx: unknown) => Promise<void> | void }> = [];
 
@@ -5225,7 +5225,7 @@ describe("sat-mining plugin config persistence", () => {
       ),
     );
     try {
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{ id: string; start?: (ctx: unknown) => Promise<void> | void }> = [];
 
@@ -5320,7 +5320,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("reports unattached readiness without mutating persisted config first", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const writeConfigFile = vi.fn(async () => {});
 
@@ -5405,7 +5405,7 @@ describe("sat-mining plugin config persistence", () => {
     } as never);
 
     try {
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const configState = {
         plugins: {
@@ -5529,7 +5529,7 @@ describe("sat-mining plugin config persistence", () => {
       ],
     } as never);
 
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
 
     satMiningPlugin.register({
@@ -5609,7 +5609,7 @@ describe("sat-mining plugin config persistence", () => {
     vi.mocked(solanaSubmit.submitSatSetActiveCommit)
       .mockRejectedValueOnce(new Error("set active commit transaction failed"))
       .mockRejectedValueOnce(new Error("profile commit transaction failed"));
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const writeConfigFile = vi.fn(async () => {});
 
@@ -5678,7 +5678,7 @@ describe("sat-mining plugin config persistence", () => {
   });
 
   it("keeps mining wallet attachment read-only through gateway methods", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const writes: unknown[] = [];
     const configState = {
@@ -5771,7 +5771,7 @@ describe("sat-mining plugin config persistence", () => {
         },
       ]);
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -5999,7 +5999,7 @@ describe("sat-mining plugin config persistence", () => {
         }
         return await readFile(file, ...args);
       });
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -6120,7 +6120,7 @@ describe("sat-mining plugin config persistence", () => {
         enabledWanted: true,
       });
 
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
       const services: Array<{
         id: string;
@@ -6280,7 +6280,7 @@ describe("sat-mining plugin config persistence", () => {
         start?: (ctx?: unknown) => Promise<void>;
         stop?: (ctx?: unknown) => Promise<void>;
       }> = [];
-      const { default: satMiningPlugin } = await import("./index.js");
+      const { default: satMiningPlugin } = await import("./implementation.js");
       satMiningPlugin.register({
         id: "sat-mining",
         name: "SAT Mining",
@@ -6367,7 +6367,7 @@ describe("sat-mining plugin config persistence", () => {
 
 describe("sat-mining cycle gateway integration", () => {
   it("registers and executes cycle-native gateway methods", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const services: Array<{
       id: string;
@@ -6486,7 +6486,7 @@ describe("sat-mining cycle gateway integration", () => {
 
 describe("sat-mining capital signer guard", () => {
   it("refuses capital actions when the running local signer does not allow solana", async () => {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const { readWalletProviderRegistry } =
       await import("../../src/wallet/wallet-provider-registry.js");
     const { probeLocalSocketSignerHealth } =
@@ -6594,7 +6594,7 @@ describe("sat-mining durable history startup", () => {
     walletId: string,
     opts?: { enabled?: boolean; persistedConfig?: Record<string, unknown> },
   ) {
-    const { default: satMiningPlugin } = await import("./index.js");
+    const { default: satMiningPlugin } = await import("./implementation.js");
     const gatewayMethods = new Map<string, RegisteredGatewayMethod>();
     const enabled = opts?.enabled ?? false;
     const configState = {

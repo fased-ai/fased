@@ -1,4 +1,5 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
+import { registerAcpCli } from "../../src/cli/acp-cli.js";
 import { createAcpxPluginConfigSchema } from "./src/config.js";
 import { createAcpxRuntimeService } from "./src/service.js";
 
@@ -8,6 +9,7 @@ const plugin = {
   description: "ACP runtime backend powered by the acpx CLI.",
   configSchema: createAcpxPluginConfigSchema(),
   register(api: FasedAgentPluginApi) {
+    api.registerCli(({ program }) => registerAcpCli(program), { commands: ["acp"] });
     api.registerService(
       createAcpxRuntimeService({
         pluginConfig: api.pluginConfig,
