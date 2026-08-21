@@ -45,6 +45,13 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(localFixture.indexOf(hostedReleaseManifestBuild)).toBeGreaterThan(
       localFixture.indexOf(componentPackBuild),
     );
+    expect(localFixture).toContain(
+      'HOSTED_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_HOSTED_ARTIFACT_DIR:-}"',
+    );
+    expect(localFixture).toContain('copy_verified_hosted_artifact "$HOSTED_ARTIFACT_DIR"');
+    expect(localFixture).toContain(".dependencyCache.downloads == 0");
+    expect(localFixture).toContain('.loadedPlugins == ["device-pair","memory-core","sat-mining"]');
+    expect(localFixture).toContain("runtimeEvidence.dormantMiningImplementationLoaded == false");
   });
 
   it("ships only the acquisition wrappers needed by the public installer and updater", () => {
@@ -306,7 +313,7 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(hostedArtifactBuilder).toContain('VITEST: ""');
     expect(hostedArtifactBuilder).toContain("stdoutHandle.fd");
     expect(hostedArtifactBuilder).toContain("stderrHandle.fd");
-    expect(hostedArtifactBuilder).toContain('includes("No plugin issues detected.")');
+    expect(hostedArtifactBuilder).toContain("pluginDoctorReport.ok !== true");
   });
 
   it("does not route merged-main CI through the deleted legacy Hosting runner", () => {
