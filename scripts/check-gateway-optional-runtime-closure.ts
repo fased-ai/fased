@@ -8,7 +8,9 @@ const rootDir = path.resolve(import.meta.dirname, "..");
 const roots = ["src/gateway/server.impl.ts", "src/plugins/runtime/index.ts"] as const;
 
 const forbidden = new Map([
+  ["src/media/audio.ts", "media audio implementation"],
   ["src/media/fetch.ts", "media fetch implementation"],
+  ["src/media/image-ops.ts", "media image implementation"],
   ["src/media/store.ts", "media store implementation"],
   ["src/web/media.ts", "web media implementation"],
   ["src/tts/tts.ts", "speech implementation"],

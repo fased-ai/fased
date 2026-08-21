@@ -11,6 +11,7 @@ describe("Gateway optional-runtime static closure", () => {
     expect(closure).toContain("src/tts/runtime-service.ts");
     expect(closure).toContain("src/infra/outbound/deliver.ts");
     expect(closure).not.toContain("src/media/fetch.ts");
+    expect(closure).not.toContain("src/media/image-ops.ts");
     expect(closure).not.toContain("src/media/store.ts");
     expect(closure).not.toContain("src/web/media.ts");
     expect(closure).not.toContain("src/tts/tts.ts");

@@ -314,7 +314,6 @@ function isManagedRuntimeImplementationPath(
       "dist/media/audio.js",
       "dist/media/fetch.js",
       "dist/media/image-ops.js",
-      "dist/media/read-response-with-limit.js",
       "dist/media/store.js",
       "dist/web/media.js",
     ]).has(applicationPath);

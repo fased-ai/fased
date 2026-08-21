@@ -4,10 +4,9 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { canonicalizeBase64 } from "../media/base64.js";
 import {
   buildImageResizeSideGrid,
-  getImageMetadata,
   IMAGE_REDUCE_QUALITY_STEPS,
-  resizeToJpeg,
-} from "../media/image-ops.js";
+} from "../media/image-ops-contract.js";
+import { getImageMetadata, resizeToJpeg } from "../media/runtime-service.js";
 import {
   DEFAULT_IMAGE_MAX_BYTES,
   DEFAULT_IMAGE_MAX_DIMENSION_PX,
