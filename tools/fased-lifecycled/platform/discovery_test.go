@@ -232,3 +232,54 @@ func TestDiscoveryClassifiesMixedOrPrivateControlAsRepairRequiredInput(t *testin
 		t.Fatalf("private control residue was not classified as ambiguous: %+v err=%v", result, err)
 	}
 }
+
+func TestDiscoveryRetriesOnlyExactFreshHostingSupervisorProjection(t *testing.T) {
+	request := discoveryRequest(t, model.ProfileHosting)
+	ownerStateRoot, ok := unrootDiscoveryPath(request.SystemRootPrefix, request.OwnerStateRoot)
+	if !ok {
+		t.Fatal("test owner state root is not beneath the fake system root")
+	}
+	config, err := NewConfig(model.ProfileHosting, "hosting", ownerStateRoot,
+		Principal{UID: 1000, GID: 1000}, Principal{UID: 1001, GID: 1001}, Principal{UID: 1002, GID: 1002})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit, err := RenderSupervisorUnit(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unitPath := rooted(request.SystemRootPrefix, "/etc/systemd/system/fased-host-updater.service")
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, unit, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationEmpty {
+		t.Fatalf("exact fresh Hosting supervisor projection was not retryable: %+v err=%v", result, err)
+	}
+
+	altered := append([]byte(nil), unit...)
+	altered[len(altered)-1] = '#'
+	if err := os.WriteFile(unitPath, altered, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err = DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationAmbiguous {
+		t.Fatalf("altered Hosting supervisor projection was accepted: %+v err=%v", result, err)
+	}
+
+	if err := os.WriteFile(unitPath, unit, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gatewayUnit := rooted(request.SystemRootPrefix, "/etc/systemd/system/fased-gateway.service")
+	if err := os.WriteFile(gatewayUnit, []byte("[Service]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err = DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationAmbiguous {
+		t.Fatalf("mixed Hosting service residue was accepted: %+v err=%v", result, err)
+	}
+}

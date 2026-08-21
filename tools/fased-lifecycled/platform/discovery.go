@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"fased-lifecycled/model"
 	"fased-lifecycled/planner"
@@ -297,7 +298,7 @@ func selectedReleaseName(runtimeRoot, releasesRoot, target string) (string, erro
 
 func hasKnownControlResidue(request DiscoveryRequest) bool {
 	paths := []string{filepath.Join(request.OwnerStateRoot, "runtime"), filepath.Join(request.OwnerStateRoot, "updater")}
-	for _, unit := range []string{"fased-host-updater.service", "fased-host-controller.service", "fased-gateway.service", "fased-signerd.service"} {
+	for _, unit := range []string{"fased-host-controller.service", "fased-gateway.service", "fased-signerd.service"} {
 		paths = append(paths, rooted(request.SystemRootPrefix, filepath.Join("/etc/systemd/system", unit)))
 	}
 	for _, path := range paths {
@@ -305,7 +306,98 @@ func hasKnownControlResidue(request DiscoveryRequest) bool {
 			return true
 		}
 	}
-	return false
+	supervisorPath := rooted(request.SystemRootPrefix, "/etc/systemd/system/fased-host-updater.service")
+	if _, err := os.Lstat(supervisorPath); errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	return !hasExactHostingBootstrapSupervisor(request, supervisorPath)
+}
+
+// hasExactHostingBootstrapSupervisor recognizes the sole idempotent projection
+// that a failed fresh Hosting bootstrap may leave before the installation
+// manifest exists. It deliberately does not forgive any owner runtime, updater,
+// target-service residue, or a supervisor unit that differs by even one byte.
+func hasExactHostingBootstrapSupervisor(request DiscoveryRequest, path string) bool {
+	if request.Profile != model.ProfileHosting {
+		return false
+	}
+	ownerStateRoot, ok := unrootDiscoveryPath(request.SystemRootPrefix, request.OwnerStateRoot)
+	if !ok {
+		return false
+	}
+	config, err := NewConfig(model.ProfileHosting, "hosting", ownerStateRoot,
+		Principal{UID: 1, GID: 1}, Principal{UID: 2, GID: 2}, Principal{UID: 3, GID: 3})
+	if err != nil {
+		return false
+	}
+	expected, err := RenderSupervisorUnit(config)
+	if err != nil {
+		return false
+	}
+	expectedUID, expectedGID := expectedDiscoverySystemOwner(request)
+	actual, err := readExactBootstrapProjection(path, 0o644, expectedUID, expectedGID, int64(len(expected)))
+	return err == nil && bytes.Equal(actual, expected)
+}
+
+func unrootDiscoveryPath(prefix, path string) (string, bool) {
+	if prefix == "" {
+		return path, true
+	}
+	relative, err := filepath.Rel(prefix, path)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return "", false
+	}
+	return filepath.Join(string(filepath.Separator), relative), true
+}
+
+func expectedDiscoverySystemOwner(request DiscoveryRequest) (uint32, uint32) {
+	if request.SystemRootPrefix == "" {
+		return 0, 0
+	}
+	info, err := os.Lstat(request.SystemRootPrefix)
+	if err != nil {
+		return ^uint32(0), ^uint32(0)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ^uint32(0), ^uint32(0)
+	}
+	return stat.Uid, stat.Gid
+}
+
+func readExactBootstrapProjection(path string, mode os.FileMode, uid, gid uint32, size int64) ([]byte, error) {
+	before, err := os.Lstat(path)
+	stat, ok := beforeSyscallStat(before)
+	if err != nil || !ok || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Mode().Perm() != mode || stat.Nlink != 1 || stat.Uid != uid || stat.Gid != gid || before.Size() != size {
+		return nil, errors.New("bootstrap supervisor projection is unsafe")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("bootstrap supervisor projection is unsafe")
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(before, after) {
+		return nil, errors.New("bootstrap supervisor projection changed while reading")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, size+1))
+	if err != nil || int64(len(data)) != size {
+		return nil, errors.New("bootstrap supervisor projection is unsafe")
+	}
+	finalDescriptor, descriptorErr := file.Stat()
+	finalPath, pathErr := os.Lstat(path)
+	if descriptorErr != nil || pathErr != nil || !os.SameFile(before, finalDescriptor) || !os.SameFile(before, finalPath) {
+		return nil, errors.New("bootstrap supervisor projection changed while reading")
+	}
+	return data, nil
+}
+
+func beforeSyscallStat(info os.FileInfo) (*syscall.Stat_t, bool) {
+	if info == nil {
+		return nil, false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return stat, ok
 }
 
 func hasExactHostingStableUnits(request DiscoveryRequest) bool {
