@@ -1,6 +1,6 @@
 {
   "name": "@fased/fased-federation",
-  "version": "0.1.76-rc.109",
+  "version": "0.1.76-rc.110",
   "private": true,
   "description": "Fased federation adapter package scaffold (A2A + admission helpers)",
   "type": "module",
