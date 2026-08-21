@@ -294,6 +294,8 @@ describe("managed component pack identity", () => {
     expect(paths).toContain("dist/media/image-ops.js");
     expect(paths).not.toContain("dist/media/runtime-service.js");
     expect(paths).not.toContain("dist/plugins/runtime-provider-runtime.js");
+    expect(paths).not.toContain("dist/infra/home-dir.js");
+    expect(paths).not.toContain("dist/media/mime.js");
   });
 
   it("moves the ACP protocol bridge and SDK ownership into the acpx component", async () => {

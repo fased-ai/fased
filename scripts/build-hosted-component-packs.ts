@@ -310,9 +310,14 @@ function isManagedRuntimeImplementationPath(
     );
   }
   if (extensionDirectory === "runtime-media") {
-    // The bundle externalizes every approved core facade. Every remaining src
-    // module in this graph is therefore implementation owned by runtime-media.
-    return true;
+    return new Set([
+      "dist/media/audio.js",
+      "dist/media/fetch.js",
+      "dist/media/image-ops.js",
+      "dist/media/read-response-with-limit.js",
+      "dist/media/store.js",
+      "dist/web/media.js",
+    ]).has(applicationPath);
   }
   if (extensionDirectory === "acpx") {
     return applicationPath === "dist/cli/acp-cli.js" || applicationPath.startsWith("dist/acp/");
