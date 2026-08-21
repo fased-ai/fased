@@ -108,6 +108,7 @@ describe("version-neutral lifecycle acceptance", () => {
       );
       await writeFile(resolve(repo, "src/product.txt"), "identical product bytes\n");
       await writeFile(resolve(repo, "scripts/run-lifecycle-local0.sh"), "fixture v2\n");
+      await writeFile(resolve(repo, "scripts/local0-receipt-inventory.sh"), "fixture helper\n");
       git(repo, "add", ".");
       git(repo, "commit", "--quiet", "-m", "squashed fixture correction");
       const squashCommit = git(repo, "rev-parse", "HEAD");
