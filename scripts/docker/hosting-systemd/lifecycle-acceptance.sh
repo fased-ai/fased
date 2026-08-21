@@ -37,15 +37,36 @@ assert_public_command_projection() {
   test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"
 }
 
+restart_managed_services_after_fixture_churn() {
+  systemctl reset-failed \
+    fased-host-updater.service fased-signerd.service fased-gateway.service
+  systemctl restart \
+    fased-host-updater.service fased-signerd.service fased-gateway.service
+}
+
 diagnostics() {
   local status=$?
   if [[ "$status" -ne 0 ]]; then
-    for receipt in /tmp/fased-hosting-{install,noop,update-noop,reboot-noop}.{out,err}; do
+    for receipt in /tmp/fased-hosting-{install,noop,update-failure,update,update-installer-noop,update-noop,reboot-noop}.{out,err}; do
       if [[ -f "$receipt" ]]; then
         printf '\n--- %s ---\n' "$receipt" >&2
         sed -n '1,120p' "$receipt" >&2
       fi
     done
+    if [[ -f /var/log/fased/hosting-security.log ]]; then
+      printf '\n--- /var/log/fased/hosting-security.log ---\n' >&2
+      sed -n '1,200p' /var/log/fased/hosting-security.log >&2
+    fi
+    if [[ -x /usr/sbin/sshd ]]; then
+      local sshd_status=0
+      /usr/sbin/sshd -t \
+        >/tmp/fased-hosting-sshd-diagnostic.out \
+        2>/tmp/fased-hosting-sshd-diagnostic.err || sshd_status=$?
+      printf '\n--- Hosting sshd diagnostic (exit=%s) ---\n' "$sshd_status" >&2
+      sed -n '1,80p' /tmp/fased-hosting-sshd-diagnostic.out >&2
+      sed -n '1,80p' /tmp/fased-hosting-sshd-diagnostic.err >&2
+      stat -c '%U:%G:%a %n' /run/sshd /etc/ssh/ssh_host_*_key >&2 || true
+    fi
     systemctl --failed --no-pager >&2 || true
     systemctl status fased-host-updater.service fased-signerd.service fased-gateway.service --no-pager >&2 || true
     journalctl -u fased-host-updater.service -u fased-signerd.service -u fased-gateway.service -n 160 --no-pager >&2 || true
@@ -53,6 +74,36 @@ diagnostics() {
   exit "$status"
 }
 trap diagnostics EXIT
+
+verify_sshd_runtime_prerequisites() {
+  local host_key=""
+  local host_key_count=0
+  local sshd_status=0
+
+  test -f /usr/sbin/sshd
+  test ! -L /usr/sbin/sshd
+  test "$(stat -c '%U:%G:%a' /usr/sbin/sshd)" = "root:root:755"
+  test -d /run/sshd
+  test ! -L /run/sshd
+  test "$(stat -c '%U:%G:%a' /run/sshd)" = "root:root:755"
+  for host_key in /etc/ssh/ssh_host_*_key; do
+    test -f "$host_key"
+    test ! -L "$host_key"
+    test "$(stat -c '%U:%G:%a' "$host_key")" = "root:root:600"
+    host_key_count=$((host_key_count + 1))
+  done
+  test "$host_key_count" -gt 0
+
+  /usr/sbin/sshd -t \
+    >/tmp/fased-hosting-sshd-preflight.out \
+    2>/tmp/fased-hosting-sshd-preflight.err || sshd_status=$?
+  if [[ "$sshd_status" -ne 0 ]]; then
+    printf 'Hosting fixture sshd preflight failed (exit=%s).\n' "$sshd_status" >&2
+    sed -n '1,80p' /tmp/fased-hosting-sshd-preflight.out >&2
+    sed -n '1,80p' /tmp/fased-hosting-sshd-preflight.err >&2
+    return "$sshd_status"
+  fi
+}
 
 install_hosting_package_fixtures() {
   install -d -m 0755 -o root -g root /usr/local/libexec
@@ -202,6 +253,7 @@ install_tailscale_fixture() {
 prepare_provider_access_fixture() {
   systemctl enable --now ssh.service >/dev/null
   systemctl is-active --quiet ssh.service
+  verify_sshd_runtime_prerequisites
 }
 
 prepare_legacy_host_security_fixture() {
@@ -814,7 +866,7 @@ case "$phase" in
     run_operator_acceptance
     sha256sum /var/lib/fased-lifecycled/installation-manifest.json \
       /home/app/.fased/fased.json >/tmp/fased-hosting-state-before.sha256
-    systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service
+    restart_managed_services_after_fixture_churn
     assert_healthy
     acceptance_mark restart-health /var/lib/fased-lifecycled/installation-manifest.json \
       "restart health verified"
@@ -921,7 +973,7 @@ EOF_TARGET_DROPIN
         --target-version "$version" \
         --profile hosting
     } >/tmp/fased-hosting-update-state-preservation.out
-    systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service
+    restart_managed_services_after_fixture_churn
     assert_healthy
     acceptance_mark restart-health /var/lib/fased-lifecycled/installation-manifest.json \
       "restart health verified"

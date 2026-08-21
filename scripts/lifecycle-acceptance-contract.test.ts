@@ -441,6 +441,65 @@ describe("lifecycle acceptance contract", () => {
     expect(readiness).not.toContain("for _ in {1..40}");
   });
 
+  it("captures exact Hosting sshd diagnostics and verifies runtime prerequisites", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const diagnostics = hosting.slice(
+      hosting.indexOf("diagnostics() {"),
+      hosting.indexOf("trap diagnostics EXIT"),
+    );
+    const prerequisites = hosting.slice(
+      hosting.indexOf("verify_sshd_runtime_prerequisites() {"),
+      hosting.indexOf("install_hosting_package_fixtures() {"),
+    );
+    const providerAccess = hosting.slice(
+      hosting.indexOf("prepare_provider_access_fixture() {"),
+      hosting.indexOf("prepare_legacy_host_security_fixture() {"),
+    );
+
+    expect(diagnostics).toContain("/var/log/fased/hosting-security.log");
+    expect(diagnostics).toContain(
+      "/tmp/fased-hosting-{install,noop,update-failure,update,update-installer-noop,update-noop,reboot-noop}.{out,err}",
+    );
+    expect(diagnostics).toContain("Hosting sshd diagnostic (exit=%s)");
+    expect(diagnostics).toContain("/tmp/fased-hosting-sshd-diagnostic.err");
+    expect(diagnostics).toContain("stat -c '%U:%G:%a %n' /run/sshd /etc/ssh/ssh_host_*_key");
+    expect(prerequisites).toContain(
+      'test "$(stat -c \'%U:%G:%a\' /usr/sbin/sshd)" = "root:root:755"',
+    );
+    expect(prerequisites).toContain('test "$(stat -c \'%U:%G:%a\' /run/sshd)" = "root:root:755"');
+    expect(prerequisites).toContain('test "$(stat -c \'%U:%G:%a\' "$host_key")" = "root:root:600"');
+    expect(prerequisites).toContain("/usr/sbin/sshd -t");
+    expect(prerequisites).toContain("Hosting fixture sshd preflight failed (exit=%s)");
+    expect(providerAccess).toContain("systemctl is-active --quiet ssh.service");
+    expect(providerAccess).toContain("verify_sshd_runtime_prerequisites");
+  });
+
+  it("clears fixture-induced systemd rate limits before explicit restart proof", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const helper = hosting.slice(
+      hosting.indexOf("restart_managed_services_after_fixture_churn() {"),
+      hosting.indexOf("diagnostics() {"),
+    );
+
+    expect(helper.indexOf("systemctl reset-failed")).toBeGreaterThanOrEqual(0);
+    expect(helper.indexOf("systemctl restart")).toBeGreaterThan(
+      helper.indexOf("systemctl reset-failed"),
+    );
+    expect(helper).toContain(
+      "fased-host-updater.service fased-signerd.service fased-gateway.service",
+    );
+    expect(hosting.match(/restart_managed_services_after_fixture_churn/gu)?.length).toBe(3);
+    expect(hosting).not.toContain(
+      "systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service",
+    );
+  });
+
   it("preserves installer transfer evidence through the Hosting curl adapter", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),

@@ -414,6 +414,52 @@ func TestTargetAdapterRequiresPluginLockBeforeMutationAndReadinessBeforeCommit(t
 	}
 }
 
+func TestTargetAdapterWaitsOnlyForTransientPluginReadiness(t *testing.T) {
+	adapter, tx, calls := targetAdapter(t)
+	tx.Phase = model.PhasePrepared
+	readinessErrors := []error{
+		fmt.Errorf("read plugin readiness receipt: %w", os.ErrNotExist),
+		errors.New("plugin readiness receipt identity mismatch"),
+		nil,
+	}
+	adapter.Plugins = fakePlugins{calls: calls, verifyErrs: &readinessErrors}
+	if _, err := adapter.Verify(context.Background(), tx); err != nil {
+		t.Fatalf("transient plugin readiness did not converge: %v", err)
+	}
+	verifyCalls := 0
+	for _, call := range *calls {
+		if call == "plugins.verify:"+tx.Target.ID {
+			verifyCalls++
+		}
+	}
+	if verifyCalls != 3 {
+		t.Fatalf("plugin readiness attempts=%d, want 3: %v", verifyCalls, *calls)
+	}
+
+	*calls = nil
+	adapter.Plugins = fakePlugins{calls: calls, verifyErr: errors.New("mandatory plugin missing")}
+	if _, err := adapter.Verify(context.Background(), tx); err == nil || !strings.Contains(err.Error(), "mandatory plugin missing") {
+		t.Fatalf("non-transient plugin readiness error was retried or lost: %v", err)
+	}
+	verifyCalls = 0
+	for _, call := range *calls {
+		if call == "plugins.verify:"+tx.Target.ID {
+			verifyCalls++
+		}
+	}
+	if verifyCalls != 1 {
+		t.Fatalf("non-transient plugin readiness attempts=%d, want 1: %v", verifyCalls, *calls)
+	}
+
+	*calls = nil
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	adapter.Plugins = fakePlugins{calls: calls, verifyErr: fmt.Errorf("read plugin readiness receipt: %w", os.ErrNotExist)}
+	if _, err := adapter.Verify(canceled, tx); err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled plugin readiness wait did not stop: %v", err)
+	}
+}
+
 func TestTargetAdapterQuiesceStopsSignerAfterGatewayStopFailure(t *testing.T) {
 	adapter, tx, calls := targetAdapter(t)
 	tx.Phase = model.PhaseSwitched
