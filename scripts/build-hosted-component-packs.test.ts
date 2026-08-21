@@ -7,6 +7,7 @@ import {
   assertManagedRuntimeExternalImportsResolvable,
   normalizedManagedPluginTreeDigest,
   resolveManagedRuntimeImplementationPaths,
+  selectedComponentDirectoriesFromArgv,
   shouldExternalizeManagedRuntimeImport,
 } from "./build-hosted-component-packs.js";
 
@@ -17,6 +18,27 @@ afterEach(async () => {
 });
 
 describe("managed component pack identity", () => {
+  it("does not treat the runtime executable as a component selection when the flag is absent", () => {
+    expect(
+      selectedComponentDirectoriesFromArgv([
+        "/opt/fased/node/bin/node",
+        "/opt/fased/scripts/build-hosted-component-packs.ts",
+        "--output",
+        "/tmp/fased-components",
+      ]),
+    ).toBeUndefined();
+    expect([
+      ...(selectedComponentDirectoriesFromArgv([
+        "/opt/fased/node/bin/node",
+        "/opt/fased/scripts/build-hosted-component-packs.ts",
+        "--output",
+        "/tmp/fased-components",
+        "--components",
+        "runtime-media, runtime-speech",
+      ]) ?? []),
+    ]).toEqual(["runtime-media", "runtime-speech"]);
+  });
+
   it("bundles implementation-only runtime entrypoints and removes source entrypoints", async () => {
     const source = await fs.readFile(
       path.join(import.meta.dirname, "build-hosted-component-packs.ts"),
