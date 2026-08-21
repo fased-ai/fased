@@ -273,6 +273,27 @@ function isManagedRuntimeImplementationPath(
   extensionDirectory: string,
   applicationPath: string,
 ): boolean {
+  // These are configuration/identity/target facades consumed by the core
+  // channel registry. They contain no transport, listener, media, or send
+  // implementation and remain available before an optional pack is installed.
+  const coreChannelFacadePaths = new Set([
+    "dist/discord/accounts.js",
+    "dist/discord/token.js",
+    "dist/imessage/accounts.js",
+    "dist/signal/accounts.js",
+    "dist/slack/accounts.js",
+    "dist/slack/token.js",
+    "dist/slack/targets.js",
+    "dist/slack/threading-tool-context.js",
+    "dist/telegram/accounts.js",
+    "dist/telegram/token.js",
+    "dist/web/accounts.js",
+    "dist/web/auth-state.js",
+    "dist/whatsapp/normalize.js",
+  ]);
+  if (coreChannelFacadePaths.has(applicationPath)) {
+    return false;
+  }
   if (extensionDirectory === "line") {
     return applicationPath.startsWith("dist/line/");
   }

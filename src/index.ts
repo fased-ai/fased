@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { getReplyFromConfig } from "./auto-reply/reply.js";
 import { applyTemplate } from "./auto-reply/templating.js";
 import { createDefaultDeps } from "./cli/deps.js";
 import { promptYesNo } from "./cli/prompt.js";
@@ -50,6 +49,12 @@ type MonitorWebChannel = typeof import("./channel-web.js").monitorWebChannel;
 const monitorWebChannel: MonitorWebChannel = async (...args) => {
   const channelWeb = await import("./channel-web.js");
   return await channelWeb.monitorWebChannel(...args);
+};
+
+type GetReplyFromConfig = typeof import("./auto-reply/reply.js").getReplyFromConfig;
+const getReplyFromConfig: GetReplyFromConfig = async (...args) => {
+  const reply = await import("./auto-reply/reply.js");
+  return await reply.getReplyFromConfig(...args);
 };
 
 export {

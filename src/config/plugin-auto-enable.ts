@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import {
   getChannelPluginCatalogEntry,
@@ -12,9 +14,11 @@ import {
   loadPluginManifestRegistry,
   type PluginManifestRegistry,
 } from "../plugins/manifest-registry.js";
+import { normalizeAccountId } from "../routing/session-key.js";
 import { isRecord } from "../utils.js";
-import { hasAnyWhatsAppAuth } from "../web/accounts.js";
+import { resolveUserPath } from "../utils.js";
 import type { FasedAgentConfig } from "./config.js";
+import { resolveOAuthDir } from "./paths.js";
 import { ensurePluginAllowlisted } from "./plugins-allowlist.js";
 
 type PluginEnableChange = {
@@ -173,7 +177,37 @@ function isStructuredChannelConfigured(
 }
 
 function isWhatsAppConfigured(cfg: FasedAgentConfig): boolean {
-  if (hasAnyWhatsAppAuth(cfg)) {
+  const oauthDir = resolveOAuthDir();
+  const whatsappDir = path.join(oauthDir, "whatsapp");
+  const authDirs = new Set<string>([oauthDir, path.join(whatsappDir, "default")]);
+  const configuredAccounts = cfg.channels?.whatsapp?.accounts;
+  if (configuredAccounts && typeof configuredAccounts === "object") {
+    for (const [accountId, account] of Object.entries(configuredAccounts)) {
+      const authDir = account?.authDir?.trim();
+      authDirs.add(
+        authDir ? resolveUserPath(authDir) : path.join(whatsappDir, normalizeAccountId(accountId)),
+      );
+    }
+  }
+  try {
+    for (const entry of fs.readdirSync(whatsappDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        authDirs.add(path.join(whatsappDir, entry.name));
+      }
+    }
+  } catch {
+    // Missing optional-component state is the normal fresh-core case.
+  }
+  if (
+    [...authDirs].some((authDir) => {
+      try {
+        const stat = fs.statSync(path.join(authDir, "creds.json"));
+        return stat.isFile() && stat.size > 1;
+      } catch {
+        return false;
+      }
+    })
+  ) {
     return true;
   }
   const entry = resolveChannelConfig(cfg, "whatsapp");

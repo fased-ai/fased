@@ -226,6 +226,47 @@ describe("hosted component contract", () => {
     expect(doctorConfigSource).not.toContain('from "../channels/telegram/api.js"');
     expect(doctorConfigSource).toContain('import("../telegram/accounts.js")');
     expect(doctorConfigSource).toContain('import("../channels/telegram/api.js")');
+    const pluginAutoEnableSource = await fs.readFile(
+      path.join(process.cwd(), "src", "config", "plugin-auto-enable.ts"),
+      "utf8",
+    );
+    expect(pluginAutoEnableSource).not.toContain('from "../web/accounts.js"');
+    expect(pluginAutoEnableSource).toContain('path.join(authDir, "creds.json")');
+    const packageEntrypointSource = await fs.readFile(
+      path.join(process.cwd(), "src", "index.ts"),
+      "utf8",
+    );
+    expect(packageEntrypointSource).not.toContain(
+      'import { getReplyFromConfig } from "./auto-reply/reply.js"',
+    );
+    expect(packageEntrypointSource).toContain('await import("./auto-reply/reply.js")');
+    const cliDepsSource = await fs.readFile(
+      path.join(process.cwd(), "src", "cli", "deps.ts"),
+      "utf8",
+    );
+    expect(cliDepsSource).not.toContain('export { logWebSelfId } from "../web/auth-store.js"');
+    const componentPackSource = await fs.readFile(
+      path.join(process.cwd(), "scripts", "build-hosted-component-packs.ts"),
+      "utf8",
+    );
+    expect(componentPackSource).toContain("const coreChannelFacadePaths = new Set(");
+    for (const facade of [
+      "dist/discord/accounts.js",
+      "dist/discord/token.js",
+      "dist/imessage/accounts.js",
+      "dist/signal/accounts.js",
+      "dist/slack/accounts.js",
+      "dist/slack/token.js",
+      "dist/slack/targets.js",
+      "dist/slack/threading-tool-context.js",
+      "dist/telegram/accounts.js",
+      "dist/telegram/token.js",
+      "dist/web/accounts.js",
+      "dist/web/auth-state.js",
+      "dist/whatsapp/normalize.js",
+    ]) {
+      expect(componentPackSource).toContain(`"${facade}"`);
+    }
     const runtimeGraphSource = await fs.readFile(
       path.join(process.cwd(), "scripts", "build-runtime-graphs.mjs"),
       "utf8",

@@ -48,5 +48,3 @@ export function createDefaultDeps(): CliDeps {
 export function createOutboundSendDeps(deps: CliDeps): OutboundSendDeps {
   return createOutboundSendDepsFromCliSource(deps);
 }
-
-export { logWebSelfId } from "../web/auth-store.js";
