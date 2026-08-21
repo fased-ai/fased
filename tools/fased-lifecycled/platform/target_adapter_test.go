@@ -212,6 +212,7 @@ type fakePlugins struct {
 	calls      *[]string
 	prepareErr error
 	verifyErr  error
+	verifyErrs *[]error
 }
 
 func (plugins fakePlugins) Prepare(_ context.Context, tx model.Transaction) (PreparedPluginLock, error) {
@@ -236,6 +237,11 @@ func (plugins fakePlugins) Discard(tx model.Transaction) error {
 
 func (plugins fakePlugins) Verify(_ context.Context, target model.Generation) (PluginReadinessReceipt, error) {
 	*plugins.calls = append(*plugins.calls, "plugins.verify:"+target.ID)
+	if plugins.verifyErrs != nil && len(*plugins.verifyErrs) > 0 {
+		err := (*plugins.verifyErrs)[0]
+		*plugins.verifyErrs = (*plugins.verifyErrs)[1:]
+		return PluginReadinessReceipt{Digest: digestA}, err
+	}
 	return PluginReadinessReceipt{Digest: digestA}, plugins.verifyErr
 }
 
@@ -609,6 +615,44 @@ func TestHostingCompleteOnboardingReturnsAlreadyCurrentForHealthyGateway(t *test
 	}
 	if got := strings.Join(calls, ","); strings.Contains(got, "systemd.start:") {
 		t.Fatalf("healthy Gateway was restarted during identical onboarding: %s", got)
+	}
+}
+
+func TestCompleteOnboardingWaitsForGenerationBoundPluginReadiness(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), ".fased")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateRoot, "fased.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operator := Principal{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	config, err := NewConfig(model.ProfileProtectedLocal, "example", stateRoot, operator,
+		Principal{UID: operator.UID + 1, GID: operator.GID + 1}, Principal{UID: operator.UID + 2, GID: operator.GID + 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := config.Identity()
+	active := model.Generation{ID: digestB, Version: "0.1.76", Commit: commitB, Tree: commitB, ArtifactSetDigest: digestB}
+	manifest := model.Manifest{SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform: identity, ActiveGeneration: &active, StateSchemas: map[string]uint32{"signer": 2},
+		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}}, ReleaseSequence: 12, SecurityEpoch: 3}
+	calls := []string{}
+	payload := t.TempDir()
+	readinessErrors := []error{fmt.Errorf("read plugin readiness receipt: %w", os.ErrNotExist), nil}
+	adapter := TargetAdapter{Config: config, Identity: identity, TypedState: fakeTypedState{calls: &calls}, Systemd: fakeSystemd{calls: &calls, payload: payload}, Generations: fakeGenerations{root: payload, calls: &calls, current: active}, Health: fakeHealth{calls: &calls}, Manifest: fakeManifestReader{manifest: manifest}, Plugins: fakePlugins{calls: &calls, verifyErrs: &readinessErrors}}
+	result, err := adapter.CompleteOnboarding(context.Background())
+	if err != nil || result.Outcome != engine.OutcomeAlreadyCurrent {
+		t.Fatalf("transient readiness did not converge: result=%+v err=%v", result, err)
+	}
+	verifyCalls := 0
+	for _, call := range calls {
+		if call == "plugins.verify:"+digestB {
+			verifyCalls++
+		}
+	}
+	if verifyCalls != 2 {
+		t.Fatalf("plugin readiness attempts=%d, want 2: %v", verifyCalls, calls)
 	}
 }
 
