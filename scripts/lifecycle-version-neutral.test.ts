@@ -8,6 +8,7 @@ import { parse } from "yaml";
 
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const fixtureOnlyHelper = resolve(repoRoot, "scripts/lifecycle-fixture-only-paths.sh");
+const local0ReceiptInventoryHelper = resolve(repoRoot, "scripts/local0-receipt-inventory.sh");
 
 function git(repo: string, ...args: string[]): string {
   return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
@@ -33,6 +34,7 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(local0).toContain("crosses the fixture-only reuse boundary");
     expect(local0).not.toContain("merge-base --is-ancestor");
     expect(local0).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
+    expect(local0).toContain('source "$ROOT_DIR/scripts/local0-receipt-inventory.sh"');
     expect(local0).toContain('.evidenceClass == "PASS" and .commit == $commit');
     expect(local0).toContain(
       "LOCAL0 refused a false PASS without every exact verified child receipt.",
@@ -41,6 +43,39 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(local0).not.toMatch(/all\)\s+run_serial\s+run_concurrent/);
     expect(local0).toContain("--lane is valid only with --mode serial.");
     expect(local0).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
+  });
+
+  it("counts only primary lifecycle acceptance receipts", async () => {
+    const receipts = await mkdtemp(join(tmpdir(), "fased-local0-receipts-"));
+    try {
+      await writeFile(
+        resolve(receipts, "accepted.json"),
+        JSON.stringify({ role: "fased-lifecycle-acceptance-receipt", evidenceClass: "PASS" }),
+      );
+      await writeFile(
+        resolve(receipts, "accepted.json.runtime-processes.json"),
+        JSON.stringify({ role: "fased-runtime-process-evidence", schemaVersion: 1 }),
+      );
+      await writeFile(
+        resolve(receipts, "failed.partial.json"),
+        JSON.stringify({ role: "fased-lifecycle-acceptance-receipt", evidenceClass: "FAIL" }),
+      );
+
+      const result = execFileSync(
+        "bash",
+        [
+          "-c",
+          'source "$1"; while IFS= read -r -d "" receipt; do basename "$receipt"; done < <(local0_acceptance_receipt_paths "$2")',
+          "bash",
+          local0ReceiptInventoryHelper,
+          receipts,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.trim()).toBe("accepted.json");
+    } finally {
+      await rm(receipts, { recursive: true, force: true });
+    }
   });
 
   it("accepts content-equivalent squash trees and rejects product differences", async () => {

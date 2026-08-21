@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"
+source "$ROOT_DIR/scripts/local0-receipt-inventory.sh"
 MODE="all"
 ONLY_LANE=""
 SUPPLIED_ARTIFACT_DIR=""
@@ -121,23 +122,21 @@ trap cleanup_interrupted_build INT TERM HUP
 collect_receipts() {
   local output="$1"
   local receipt relative digest
+  local -a acceptance_receipts=()
   : >"$output"
-  while IFS= read -r -d '' receipt; do
+  mapfile -d '' -t acceptance_receipts < <(local0_acceptance_receipt_paths "$lane_receipt_root")
+  for receipt in "${acceptance_receipts[@]}"; do
     relative="${receipt#"$receipt_root/"}"
     digest="sha256:$(sha256sum "$receipt" | awk '{print $1}')"
-    if jq -e . "$receipt" >/dev/null 2>&1; then
-      jq -c --arg path "$relative" --arg sha256 "$digest" \
-        '{path:$path,sha256:$sha256,receipt:.}' "$receipt" >>"$output"
-    else
-      jq -cn --arg path "$relative" --arg sha256 "$digest" \
-        '{path:$path,sha256:$sha256,receipt:null}' >>"$output"
-    fi
-  done < <(find "$lane_receipt_root" -type f -name '*.json' -print0 | sort -z)
+    jq -c --arg path "$relative" --arg sha256 "$digest" \
+      '{path:$path,sha256:$sha256,receipt:.}' "$receipt" >>"$output"
+  done
 }
 
 validate_receipt_set() {
   local distro_count expected_count actual_count partial_count receipt receipt_commit
   local -a configured_distros
+  local -a acceptance_receipts=()
   IFS=',' read -r -a configured_distros <<<"$DISTROS"
   distro_count="${#configured_distros[@]}"
   case "$MODE" in
@@ -151,20 +150,21 @@ validate_receipt_set() {
       ;;
     concurrent|all) expected_count="$((distro_count * 5))" ;;
   esac
-  actual_count="$(find "$lane_receipt_root" -type f -name '*.json' ! -name '*.partial.json' -print | wc -l)"
+  mapfile -d '' -t acceptance_receipts < <(local0_acceptance_receipt_paths "$lane_receipt_root")
+  actual_count="${#acceptance_receipts[@]}"
   partial_count="$(find "$lane_receipt_root" -type f -name '*.partial.json' -print | wc -l)"
   [[ "$actual_count" -eq "$expected_count" && "$partial_count" -eq 0 ]] || {
     echo "LOCAL0 receipt set is incomplete: expected=$expected_count actual=$actual_count partial=$partial_count" >&2
     return 1
   }
   receipt_commit="$(jq -er .commit "$artifact_dir/fased-lifecycled-release.json")"
-  while IFS= read -r -d '' receipt; do
+  for receipt in "${acceptance_receipts[@]}"; do
     jq -e --arg commit "$receipt_commit" \
       '.evidenceClass == "PASS" and .commit == $commit and
        (.profile == "protected-local" or .profile == "hosting") and
        (.scenario == "fresh-install" or .scenario == "managed-update")' \
       "$receipt" >/dev/null || return 1
-  done < <(find "$lane_receipt_root" -type f -name '*.json' -print0)
+  done
 }
 
 write_receipt() {
