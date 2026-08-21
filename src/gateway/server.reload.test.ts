@@ -17,11 +17,15 @@ const hoisted = vi.hoisted(() => {
   const cronInstances: Array<{
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
+    stopAndDrainForLifecycle: ReturnType<typeof vi.fn>;
   }> = [];
 
   class CronServiceMock {
     start = vi.fn(async () => {});
     stop = vi.fn();
+    stopAndDrainForLifecycle = vi.fn(async () => {
+      lifecycleEvents.push("cron.stopAndDrainForLifecycle");
+    });
     constructor() {
       cronInstances.push(this);
     }
@@ -355,11 +359,12 @@ describe("gateway hot reload", () => {
       expect(appliedConfig).toMatchObject(nextConfig);
 
       expect(hoisted.startHeartbeatRunner).toHaveBeenCalledTimes(1);
-      expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledTimes(1);
-      expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledWith(appliedConfig);
+      expect(hoisted.startHeartbeatRunner).toHaveBeenCalledWith({ cfg: appliedConfig });
+      expect(hoisted.heartbeatUpdateConfig).not.toHaveBeenCalled();
 
       expect(hoisted.cronInstances.length).toBe(2);
-      expect(hoisted.cronInstances[0].stop).toHaveBeenCalledTimes(1);
+      expect(hoisted.cronInstances[0].stopAndDrainForLifecycle).toHaveBeenCalledTimes(1);
+      expect(hoisted.cronInstances[0].stop).not.toHaveBeenCalled();
       expect(hoisted.cronInstances[1].start).toHaveBeenCalledTimes(1);
 
       expect(hoisted.providerManager.stopChannel).toHaveBeenCalledTimes(5);
@@ -507,7 +512,7 @@ describe("gateway hot reload", () => {
       1,
     );
     expect(hoisted.lifecycleEvents.indexOf("configReloader.stop")).toBeLessThan(
-      hoisted.lifecycleEvents.indexOf("browser.stop"),
+      hoisted.lifecycleEvents.indexOf("cron.stopAndDrainForLifecycle"),
     );
   });
 });
