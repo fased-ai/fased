@@ -98,6 +98,14 @@ describe("managed component pack identity", () => {
     expect(paths).not.toContain("dist/web/qr-image.js");
   });
 
+  it("retains Discord target parsing while packing live directory resolution", async () => {
+    const paths = await resolveManagedRuntimeImplementationPaths(["discord"]);
+    expect(paths).not.toContain("dist/discord/targets.js");
+    expect(paths).toContain("dist/discord/targets-live.js");
+    expect(paths).toContain("dist/discord/directory-live.js");
+    expect(paths).toContain("dist/discord/api.js");
+  });
+
   it("derives LINE implementation paths while retaining shared core facades", async () => {
     const paths = await resolveManagedRuntimeImplementationPaths(["line"]);
     expect(paths).toContain("dist/line/send.js");
