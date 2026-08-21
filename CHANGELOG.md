@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.106
+
+- Ship the optimized Go-managed core with modular signer, Wallet and Mining
+  boundaries, durable SQLite/WAL task state and lazy optional runtime services.
+- Move browser, media, speech, channel and optional-provider implementations
+  behind digest-bound managed component packs and enforce the minimal core
+  artifact inventory.
+- Harden generation-bound plugin readiness and exact Local/Hosting lifecycle
+  receipt accounting before candidate allocation.
+
 ## 0.1.76-rc.105
 
 - Bind candidate finalization to the exact downloaded pre-tag P1 evidence path
