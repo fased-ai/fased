@@ -80,6 +80,7 @@ describe("managed component pack identity", () => {
     expect(paths).toContain("dist/browser/control-service.js");
     expect(paths).toContain("dist/browser/routes/dispatcher.js");
     expect(paths).not.toContain("dist/browser/config.js");
+    expect(paths).not.toContain("dist/browser/profiles.js");
     expect(paths).not.toContain("dist/browser/control-auth.js");
     expect(paths).not.toContain("dist/browser/paths.js");
     expect(paths).not.toContain("dist/browser/proxy-files.js");

@@ -277,6 +277,12 @@ function isManagedRuntimeImplementationPath(
     return applicationPath.startsWith("dist/line/");
   }
   if (extensionDirectory === "runtime-browser") {
+    // Browser profile validation and port allocation are shared configuration
+    // semantics used during core onboarding. They do not load browser runtime
+    // implementations and must remain available when the optional pack is absent.
+    if (applicationPath === "dist/browser/profiles.js") {
+      return false;
+    }
     return (
       applicationPath.startsWith("dist/browser/") ||
       /^dist\/agents\/tools\/browser-tool(?:\.schema)?\.js$/u.test(applicationPath)
