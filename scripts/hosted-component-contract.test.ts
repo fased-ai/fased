@@ -217,6 +217,11 @@ describe("hosted component contract", () => {
       expect(artifactSource).toContain(`"${packageName}"`);
     }
     expect(artifactSource).toContain('packaging: "upstream-unconditional-dependencies"');
+    expect(artifactSource).toContain('allowedIdlePiAiProviderSdkPackages = ["openai"]');
+    expect(artifactSource).toContain("unexpectedIdlePiAiProviderSdkPackages");
+    expect(artifactSource).toContain(
+      "The upstream OpenAI message converter shares an SDK-bearing provider entrypoint",
+    );
     expect(artifactSource).toContain("gatewayReadyRssBytes");
     const doctorConfigSource = await fs.readFile(
       path.join(process.cwd(), "src", "commands", "doctor-config-flow.ts"),

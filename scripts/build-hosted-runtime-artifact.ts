@@ -608,9 +608,13 @@ async function main(): Promise<void> {
     const idleLoadedPiAiProviderSdkPackages = piAiProviderSdkPackages.filter((packageName) =>
       gatewaySmoke.dependencyPackages.includes(packageName),
     );
-    if (idleLoadedPiAiProviderSdkPackages.length > 0) {
+    const allowedIdlePiAiProviderSdkPackages = ["openai"];
+    const unexpectedIdlePiAiProviderSdkPackages = idleLoadedPiAiProviderSdkPackages.filter(
+      (packageName) => !allowedIdlePiAiProviderSdkPackages.includes(packageName),
+    );
+    if (unexpectedIdlePiAiProviderSdkPackages.length > 0) {
       throw new Error(
-        `Dormant Gateway loaded pi-ai provider SDKs: ${idleLoadedPiAiProviderSdkPackages.join(", ")}`,
+        `Dormant Gateway loaded forbidden pi-ai provider SDKs: ${unexpectedIdlePiAiProviderSdkPackages.join(", ")}`,
       );
     }
     for (const pluginId of ["memory-core", "sat-mining"]) {
@@ -656,6 +660,9 @@ async function main(): Promise<void> {
             packaging: "upstream-unconditional-dependencies",
             installedSdkPackages: piAiProviderSdkPackages,
             idleLoadedSdkPackages: idleLoadedPiAiProviderSdkPackages,
+            allowedIdleSdkPackages: allowedIdlePiAiProviderSdkPackages,
+            limitation:
+              "The upstream OpenAI message converter shares an SDK-bearing provider entrypoint; all other provider SDKs must remain dormant.",
           },
         },
         null,
@@ -775,6 +782,7 @@ async function main(): Promise<void> {
             dependencyPackages: gatewaySmoke.dependencyPackages.length,
             dormantMiningImplementationLoaded: false,
             idleLoadedPiAiProviderSdkPackages,
+            allowedIdlePiAiProviderSdkPackages,
           },
         },
         null,

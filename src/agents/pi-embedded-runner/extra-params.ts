@@ -1,6 +1,5 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { ProviderHeaders, SimpleStreamOptions } from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai/compat";
 import WebSocket from "ws";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { loadConfig, writeConfigFile, type FasedAgentConfig } from "../../config/config.js";
@@ -12,6 +11,7 @@ import {
 } from "../auth-profiles.js";
 import { createOpenAICodexAppServerStreamFn } from "../openai-codex-app-server.js";
 import { ensureOpenAICodexRuntimeComponent } from "../openai-codex-runtime-component.js";
+import { streamSimple } from "../pi-ai-compat-runtime.js";
 import { mergeTransportHeaders } from "../transport-stream-shared.js";
 import { log } from "./logger.js";
 import {

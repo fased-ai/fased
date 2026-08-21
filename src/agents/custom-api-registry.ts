@@ -1,6 +1,6 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Api, StreamOptions } from "@mariozechner/pi-ai";
-import { getApiProvider, registerApiProvider } from "@mariozechner/pi-ai/compat";
+import type { Api } from "@mariozechner/pi-ai";
+import { ensureLazyCompatApiRegistered } from "./pi-ai-compat-runtime.js";
 
 const CUSTOM_API_SOURCE_PREFIX = "fased-custom-api:";
 
@@ -9,23 +9,5 @@ export function getCustomApiRegistrySourceId(api: Api): string {
 }
 
 export function ensureCustomApiRegistered(api: Api, streamFn: StreamFn): boolean {
-  if (getApiProvider(api)) {
-    return false;
-  }
-
-  registerApiProvider(
-    {
-      api,
-      stream: (model, context, options) =>
-        streamFn(model, context, options) as unknown as ReturnType<
-          NonNullable<ReturnType<typeof getApiProvider>>["stream"]
-        >,
-      streamSimple: (model, context, options) =>
-        streamFn(model, context, options as StreamOptions) as unknown as ReturnType<
-          NonNullable<ReturnType<typeof getApiProvider>>["stream"]
-        >,
-    },
-    getCustomApiRegistrySourceId(api),
-  );
-  return true;
+  return ensureLazyCompatApiRegistered(api, streamFn);
 }

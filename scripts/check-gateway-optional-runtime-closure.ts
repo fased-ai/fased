@@ -17,6 +17,10 @@ const forbidden = new Map([
   ["src/signal/send.ts", "Signal transport implementation"],
 ]);
 
+const forbiddenStaticPackages = new Map([
+  ["@mariozechner/pi-ai/compat", "eager pi-ai provider catalog"],
+]);
+
 function hasRuntimeImport(node: ts.ImportDeclaration): boolean {
   const clause = node.importClause;
   if (!clause) {
@@ -110,6 +114,17 @@ export async function assertGatewayOptionalRuntimeClosure(): Promise<string[]> {
   const failures = closure
     .filter((entry) => forbidden.has(entry))
     .map((entry) => `${entry} (${forbidden.get(entry)})`);
+  for (const entry of closure) {
+    const sourcePath = path.join(rootDir, entry);
+    const sourceText = await fs.readFile(sourcePath, "utf8");
+    const source = ts.createSourceFile(sourcePath, sourceText, ts.ScriptTarget.Latest, true);
+    for (const specifier of runtimeSpecifiers(source)) {
+      const reason = forbiddenStaticPackages.get(specifier);
+      if (reason) {
+        failures.push(`${entry} -> ${specifier} (${reason})`);
+      }
+    }
+  }
   if (failures.length > 0) {
     throw new Error(
       `Gateway static closure contains optional implementations: ${failures.join(", ")}`,

@@ -10,6 +10,7 @@ describe("Gateway optional-runtime static closure", () => {
     expect(closure).toContain("src/media/runtime-service.ts");
     expect(closure).toContain("src/tts/runtime-service.ts");
     expect(closure).toContain("src/infra/outbound/deliver.ts");
+    expect(closure).toContain("src/agents/pi-ai-compat-runtime.ts");
     expect(closure).not.toContain("src/media/fetch.ts");
     expect(closure).not.toContain("src/media/image-ops.ts");
     expect(closure).not.toContain("src/media/store.ts");

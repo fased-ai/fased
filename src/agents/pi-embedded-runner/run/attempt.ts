@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai/compat";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -42,6 +41,7 @@ import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import { resolveOwnerDisplaySetting } from "../../owner-display.js";
+import { streamSimple } from "../../pi-ai-compat-runtime.js";
 import { createBundleMcpToolRuntime } from "../../pi-bundle-mcp-tools.js";
 import type { BundleMcpToolRuntime } from "../../pi-bundle-mcp-tools.js";
 import {
