@@ -18,12 +18,18 @@ func renderSignerWebAuthn(dns string) ([]byte, error) {
 }
 
 func (host LinuxHost) SnapshotSignerWebAuthn(context.Context) (string, bool, error) {
-	data, err := readSecureRootFile(host.path(signerWebAuthnPath), 0o644, uint32(os.Getuid()), 4096)
+	data, err := readSecureRootFileRange(host.path(signerWebAuthnPath), 0o644, uint32(os.Getuid()), 0, 4096)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
 	}
 	if err != nil {
 		return "", false, err
+	}
+	if len(data) == 0 {
+		// Some supported Hosting predecessors created this exact root-owned
+		// placeholder before signer identity was available. It has no state to
+		// preserve, so initialize it transactionally and remove it on rollback.
+		return "", false, nil
 	}
 	return string(data), true, nil
 }
@@ -33,8 +39,12 @@ func (host LinuxHost) ConfigureSignerWebAuthn(ctx context.Context, dns string, r
 	if err != nil {
 		return err
 	}
-	if current, readErr := readSecureRootFile(host.path(signerWebAuthnPath), 0o644, uint32(os.Getuid()), 4096); readErr == nil && bytes.Equal(current, data) {
+	current, readErr := readSecureRootFileRange(host.path(signerWebAuthnPath), 0o644, uint32(os.Getuid()), 0, 4096)
+	if readErr == nil && bytes.Equal(current, data) {
 		return nil
+	}
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return readErr
 	}
 	if err := writeAtomicRootFile(host.path(signerWebAuthnPath), data, 0o644, uint32(os.Getuid())); err != nil {
 		return err
