@@ -18,6 +18,7 @@ import {
   readHostedComponentContract,
   retainHostedCoreExtensions,
 } from "./hosted-component-contract.js";
+import { selectPnpmStorePath } from "./pnpm-store-path.js";
 import { writeReleaseArchive } from "./release-archive.js";
 
 const execFileAsync = promisify(execFile);
@@ -155,10 +156,13 @@ async function activePnpmStore(): Promise<string> {
     cwd: rootDir,
     maxBuffer: 1024 * 1024,
   });
-  const reported = stdout.trim();
-  if (!path.isAbsolute(reported)) {
-    throw new Error("pnpm store path is not absolute");
-  }
+  const reported = selectPnpmStorePath({
+    reported: stdout,
+    workspaceModulesMetadata: await fs.readFile(
+      path.join(rootDir, "node_modules", ".modules.yaml"),
+      "utf8",
+    ),
+  });
   const canonical = await fs.realpath(reported);
   if (!(await fs.stat(canonical)).isDirectory()) {
     throw new Error("pnpm store path is not a directory");

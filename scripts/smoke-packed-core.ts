@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as tar from "tar";
+import { selectPnpmStorePath } from "./pnpm-store-path.js";
 
 type PackageJson = {
   version?: string;
@@ -37,14 +38,17 @@ type SignerReleaseIdentity = {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function activePnpmStore(): string {
-  const reported = execFileSync("pnpm", ["store", "path"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
-  if (!path.isAbsolute(reported)) {
-    throw new Error("pnpm store path is not absolute");
-  }
+  const reported = selectPnpmStorePath({
+    reported: execFileSync("pnpm", ["store", "path"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+    workspaceModulesMetadata: readFileSync(
+      path.join(repoRoot, "node_modules", ".modules.yaml"),
+      "utf8",
+    ),
+  });
   const canonical = realpathSync(reported);
   if (!statSync(canonical).isDirectory()) {
     throw new Error("pnpm store path is not a directory");
