@@ -390,6 +390,44 @@ func TestSignerWebAuthnConfigurationIsNoopAndExactlyRollbackable(t *testing.T) {
 	}
 }
 
+func TestSignerWebAuthnConvergesOnlySafeEmptyPredecessorPlaceholder(t *testing.T) {
+	host, _, root := linuxHostFixture(t)
+	path := filepath.Join(root, "etc/fased/signerd-webauthn.env")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	previous, existed, err := host.SnapshotSignerWebAuthn(context.Background())
+	if err != nil || existed || previous != "" {
+		t.Fatalf("safe empty predecessor placeholder was not treated as absent: previous=%q existed=%v err=%v", previous, existed, err)
+	}
+	if err := host.ConfigureSignerWebAuthn(context.Background(), "fased.tailnet.ts.net", false); err != nil {
+		t.Fatal(err)
+	}
+	if !host.signerWebAuthnReady("fased.tailnet.ts.net") {
+		t.Fatal("safe empty predecessor placeholder did not converge to the exact signer identity")
+	}
+	if err := host.RestoreSignerWebAuthn(context.Background(), previous, existed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("placeholder-derived signer identity survived rollback: %v", err)
+	}
+
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := host.SnapshotSignerWebAuthn(context.Background()); err == nil || !strings.Contains(err.Error(), "mode=0600") {
+		t.Fatalf("unsafe empty predecessor placeholder was accepted: %v", err)
+	}
+	if err := host.ConfigureSignerWebAuthn(context.Background(), "fased.tailnet.ts.net", false); err == nil {
+		t.Fatal("unsafe empty predecessor placeholder was overwritten")
+	}
+}
+
 func TestSignerWebAuthnRepairRestartsAndRestoresActiveSigner(t *testing.T) {
 	host, runner, root := linuxHostFixture(t)
 	path := filepath.Join(root, "etc/fased/signerd-webauthn.env")

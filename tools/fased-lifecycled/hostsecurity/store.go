@@ -232,6 +232,13 @@ func readRootReceiptForOwnership(path string, uid uint32, limit int64) ([]byte, 
 }
 
 func readSecureRootFile(path string, mode os.FileMode, uid uint32, limit int64) ([]byte, error) {
+	return readSecureRootFileRange(path, mode, uid, 1, limit)
+}
+
+func readSecureRootFileRange(path string, mode os.FileMode, uid uint32, minimum, limit int64) ([]byte, error) {
+	if minimum < 0 || limit < minimum {
+		return nil, errors.New("Hosting security root file size range is invalid")
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -240,9 +247,9 @@ func readSecureRootFile(path string, mode os.FileMode, uid uint32, limit int64) 
 	if !ok {
 		return nil, fmt.Errorf("Hosting security root file %q lacks Unix metadata", path)
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != mode || stat.Uid != uid || stat.Nlink != 1 || info.Size() <= 0 || info.Size() > limit {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != mode || stat.Uid != uid || stat.Nlink != 1 || info.Size() < minimum || info.Size() > limit {
 		return nil, unsafeRootFileMetadataError("root file", path, info, stat, uid,
-			fmt.Sprintf("regular non-symlink uid=%d mode=%04o links=1 size=1..%d", uid, mode.Perm(), limit))
+			fmt.Sprintf("regular non-symlink uid=%d mode=%04o links=1 size=%d..%d", uid, mode.Perm(), minimum, limit))
 	}
 	file, err := os.Open(path)
 	if err != nil {
