@@ -1,6 +1,6 @@
 {
   "name": "@fased/line",
-  "version": "0.1.76-rc.108",
+  "version": "0.1.76-rc.109",
   "private": true,
   "description": "FasedAgent LINE channel plugin",
   "type": "module",

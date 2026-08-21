@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.109
+
+- Preserve the complete optimized Go-managed core, modular Wallet, signer,
+  Mining, task-ledger and digest-bound optional component architecture.
+- Permanently converge the safe empty Hosting WebAuthn prerequisite placeholder
+  left by an interrupted predecessor before strict security verification.
+- Keep Protected Local behavior unchanged while advancing the signed lifecycle
+  authority to release sequence 17 and security epoch 1.
+
 ## 0.1.76-rc.108
 
 - Preserve the complete optimized Go-managed core, modular Wallet, signer,
