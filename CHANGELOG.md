@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.107
+
+- Carry forward the complete optimized Go-managed core, modular Wallet,
+  signer, Mining and SQLite task-ledger work from rc.106.
+- Advance the signed lifecycle authority to the next monotonic release
+  sequence without weakening generation replay protection.
+- Preserve the minimal core and digest-bound optional component-pack contract
+  proven by the exact Local and Hosting fixture inventory.
+
 ## 0.1.76-rc.106
 
 - Ship the optimized Go-managed core with modular signer, Wallet and Mining
