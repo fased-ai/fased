@@ -33,8 +33,12 @@ import {
 } from "../../media-understanding/runner.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import type { RuntimeEnv } from "../../runtime.js";
+import {
+  resolveTtsConfig,
+  textToSpeech,
+  type ResolvedTtsConfig,
+} from "../../tts/runtime-service.js";
 import { parseTtsDirectives } from "../../tts/tts-core.js";
-import { resolveTtsConfig, textToSpeech, type ResolvedTtsConfig } from "../../tts/tts.js";
 
 const require = createRequire(import.meta.url);
 

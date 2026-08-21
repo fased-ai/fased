@@ -88,6 +88,7 @@ func TestRootDelegationAndReleaseIndexVerification(t *testing.T) {
 		ArtifactSetDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PluginLockDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		IssuedAt: now.Add(-time.Minute).Format(time.RFC3339), ExpiresAt: now.Add(30 * time.Minute).Format(time.RFC3339),
 		Application: testAssets(), DependencyLayer: testAssets(), LifecycleHost: testHostAssets(), Signer: testAssets(), StateSchemas: map[string]uint32{"signer": 2},
+		Components:   map[string]ComponentAssets{"browser-runtime": {Catalog: testAssets()["x64"], Archive: testAssets()["x64"]}},
 		Capabilities: model.CapabilityRanges{Supervisor: model.CapabilityRange{Min: 1, Max: 1}, Controller: model.CapabilityRange{Min: 1, Max: 1}, Migrator: model.CapabilityRange{Min: 1, Max: 1}, Signer: model.CapabilityRange{Min: 1, Max: 1}},
 	}
 	indexJSON, err := SignReleaseIndex(index, SigningKey{KeyID: releaseKey.id, PrivateKey: releaseKey.private})
@@ -99,8 +100,12 @@ func TestRootDelegationAndReleaseIndexVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifiedIndex := verified.Index()
-	if verifiedIndex.ReleaseSequence != 12 || verifiedIndex.SecurityEpoch != 3 {
+	if verifiedIndex.ReleaseSequence != 12 || verifiedIndex.SecurityEpoch != 3 || verifiedIndex.Components["browser-runtime"].Catalog.Name == "" {
 		t.Fatalf("authority lost: %+v", verifiedIndex)
+	}
+	delete(verifiedIndex.Components, "browser-runtime")
+	if len(verified.Index().Components) != 1 {
+		t.Fatal("verified component inventory was not cloned")
 	}
 
 	tampered := append([]byte(nil), indexJSON...)

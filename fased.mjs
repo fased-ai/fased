@@ -51,8 +51,13 @@ const tryImport = async (specifier) => {
     await import(specifier);
     return true;
   } catch (err) {
-    // Only swallow missing-module errors; rethrow real runtime errors.
-    if (isModuleNotFoundError(err)) {
+    // Only swallow the exact missing entrypoint. A missing transitive module is
+    // a packaging error and must retain its actionable module identity.
+    if (
+      isModuleNotFoundError(err) &&
+      "url" in err &&
+      err.url === new URL(specifier, import.meta.url).href
+    ) {
       return false;
     }
     throw err;
@@ -68,7 +73,11 @@ const lightweightSpecifier =
       : null;
 
 let handledByLightweightCli = false;
-if (lightweightSpecifier) {
+if (process.argv.slice(2).some((arg) => arg === "--version" || arg === "-V")) {
+  const packageJson = await import("./package.json", { with: { type: "json" } });
+  console.log(packageJson.default.version);
+  handledByLightweightCli = true;
+} else if (lightweightSpecifier) {
   try {
     const mod = await import(lightweightSpecifier);
     handledByLightweightCli = (await mod.run(process.argv)) === true;

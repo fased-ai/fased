@@ -19,7 +19,7 @@ export const CAPABILITY_STATES = [
 ] as const;
 
 export type CapabilityState = (typeof CAPABILITY_STATES)[number];
-export type CapabilityDelivery = "core" | "external-runtime";
+export type CapabilityDelivery = "core" | "managed-component" | "external-runtime";
 export type CapabilityCategory = "core" | "crypto" | "channel" | "provider" | "runtime";
 export type CapabilityAction = "none" | "install" | "connect" | "configure" | "test" | "repair";
 
@@ -59,7 +59,11 @@ export type CapabilityReadinessReport = {
 };
 
 const CATALOG_RELATIVE_PATH = path.join("config", "capability-catalog.json");
-const DELIVERY_VALUES = new Set<CapabilityDelivery>(["core", "external-runtime"]);
+const DELIVERY_VALUES = new Set<CapabilityDelivery>([
+  "core",
+  "managed-component",
+  "external-runtime",
+]);
 const CATEGORY_VALUES = new Set<CapabilityCategory>([
   "core",
   "crypto",
@@ -262,6 +266,46 @@ function resolveExternalCapability(
   };
 }
 
+function resolveManagedComponentCapability(
+  entry: CapabilityCatalogEntry,
+  config: FasedAgentConfig,
+  plugins: PluginMarketplaceReport,
+): Pick<CapabilityReadinessEntry, "state" | "detail"> {
+  const plugin = entry.pluginId
+    ? plugins.plugins.find((candidate) => candidate.id === entry.pluginId)
+    : undefined;
+  if (!plugin?.discovered) {
+    return {
+      state: "not-installed",
+      detail: "Install this optional component through the signed Fased plugin transaction.",
+    };
+  }
+  if (plugin.status === "error") {
+    return { state: "error", detail: plugin.error ?? `${entry.label} failed to load.` };
+  }
+  const configured = entry.channelId
+    ? channelConfigured(config, entry.channelId)
+    : entry.providerId
+      ? providerConfigured(config, entry.providerId)
+      : entry.externalKind === "browser"
+        ? browserConfigured(config)
+        : entry.externalKind === "local-embeddings"
+          ? localMemoryConfigured(config)
+          : false;
+  if (configured && plugin.loaded && plugin.enabled) {
+    return {
+      state: "configured",
+      detail: "The signed optional component is installed, enabled, and configured.",
+    };
+  }
+  return {
+    state: "installed",
+    detail: plugin.enabled
+      ? "The signed optional component is installed. Complete its configuration if required."
+      : "The signed optional component is installed and currently disabled.",
+  };
+}
+
 function summarize(entries: CapabilityReadinessEntry[]): CapabilityReadinessSummary {
   return {
     total: entries.length,
@@ -282,7 +326,9 @@ export function buildCapabilityReadinessReport(params?: {
     const resolved =
       entry.delivery === "core"
         ? resolveCoreCapability(entry, config, pluginReport)
-        : resolveExternalCapability(entry, config);
+        : entry.delivery === "managed-component"
+          ? resolveManagedComponentCapability(entry, config, pluginReport)
+          : resolveExternalCapability(entry, config);
     return {
       ...entry,
       ...resolved,

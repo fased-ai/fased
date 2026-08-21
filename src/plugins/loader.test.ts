@@ -545,6 +545,45 @@ describe("loadFasedAgentPlugins", () => {
     expect(record?.error).toBeUndefined();
   });
 
+  it("loads an exact managed-runtime core facade alias", () => {
+    const bundledDir = makeTempDir();
+    const pluginDir = path.join(bundledDir, "managed-runtime-probe");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginDir, "package.json"),
+      JSON.stringify({ name: "@fased/managed-runtime-probe", version: "1.0.0", type: "module" }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(pluginDir, "fased.plugin.json"),
+      JSON.stringify({ id: "managed-runtime-probe", configSchema: EMPTY_PLUGIN_SCHEMA }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(pluginDir, "index.ts"),
+      [
+        'import { DEFAULT_BROWSER_CONTROL_PORT } from "fased/managed-runtime/config/port-defaults";',
+        'export default { id: "managed-runtime-probe", register(api) { api.logger.info(String(DEFAULT_BROWSER_CONTROL_PORT)); } };',
+      ].join("\n"),
+      "utf-8",
+    );
+    process.env.FASED_BUNDLED_PLUGINS_DIR = bundledDir;
+
+    const registry = loadFasedAgentPlugins({
+      cache: false,
+      config: {
+        plugins: {
+          allow: ["managed-runtime-probe"],
+          entries: { "managed-runtime-probe": { enabled: true } },
+        },
+      },
+    });
+
+    const record = registry.plugins.find((entry) => entry.id === "managed-runtime-probe");
+    expect(record?.status).toBe("loaded");
+    expect(record?.error).toBeUndefined();
+  });
+
   it("loads bundled channel plugins when channels.<id>.enabled=true", () => {
     setupBundledTelegramPlugin();
 

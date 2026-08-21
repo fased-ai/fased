@@ -2,7 +2,6 @@ import type { Server as HttpServer } from "node:http";
 import type { WebSocketServer } from "ws";
 import type { CanvasHostHandler, CanvasHostServer } from "../canvas-host/server.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
-import { stopGmailWatcher } from "../hooks/gmail-watcher.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { checkpointAndCloseTaskLedgersForLifecycle } from "../tasks/task-ledger-lifecycle.js";
@@ -26,7 +25,6 @@ export function createGatewayCloseHandler(params: {
   chatRunState: { clear: () => void };
   clients: Set<{ socket: { close: (code: number, reason: string) => void } }>;
   configReloader: { stop: () => Promise<void> };
-  browserControl: { stop: () => Promise<void> } | null;
   wss: WebSocketServer;
   httpServer: HttpServer;
   httpServers?: HttpServer[];
@@ -83,7 +81,7 @@ export function createGatewayCloseHandler(params: {
         managedStopFailure = error;
       }
     }
-    await stopGmailWatcher();
+    await (await import("../hooks/gmail-watcher.js")).stopGmailWatcher();
     // Freeze and await an in-flight reload before selecting the final Cron
     // instance. Otherwise reload could publish a replacement after its drain.
     await params.configReloader.stop();
@@ -123,9 +121,6 @@ export function createGatewayCloseHandler(params: {
       }
     }
     params.clients.clear();
-    if (params.browserControl) {
-      await params.browserControl.stop().catch(() => {});
-    }
     await new Promise<void>((resolve) => params.wss.close(() => resolve()));
     const servers =
       params.httpServers && params.httpServers.length > 0

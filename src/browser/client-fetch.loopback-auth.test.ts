@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  callGatewayLeastPrivilege: vi.fn(async () => ({ ok: true })),
   loadConfig: vi.fn(() => ({
     gateway: {
       auth: {
@@ -10,6 +11,11 @@ const mocks = vi.hoisted(() => ({
   })),
 }));
 
+vi.mock("../gateway/call.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../gateway/call.js")>()),
+  callGatewayLeastPrivilege: mocks.callGatewayLeastPrivilege,
+}));
+
 vi.mock("../config/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/config.js")>();
   return {
@@ -17,17 +23,6 @@ vi.mock("../config/config.js", async (importOriginal) => {
     loadConfig: mocks.loadConfig,
   };
 });
-
-vi.mock("./control-service.js", () => ({
-  createBrowserControlContext: vi.fn(() => ({})),
-  startBrowserControlServiceFromConfig: vi.fn(async () => ({ ok: true })),
-}));
-
-vi.mock("./routes/dispatcher.js", () => ({
-  createBrowserRouteDispatcher: vi.fn(() => ({
-    dispatch: vi.fn(async () => ({ status: 200, body: { ok: true } })),
-  })),
-}));
 
 import { fetchBrowserJson } from "./client-fetch.js";
 
@@ -47,6 +42,7 @@ describe("fetchBrowserJson loopback auth", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mocks.loadConfig.mockClear();
+    mocks.callGatewayLeastPrivilege.mockClear();
     mocks.loadConfig.mockReturnValue({
       gateway: {
         auth: {
@@ -69,6 +65,29 @@ describe("fetchBrowserJson loopback auth", () => {
     const init = fetchMock.mock.calls[0]?.[1];
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer loopback-token");
+  });
+
+  it("routes relative requests to the managed browser service without importing it", async () => {
+    const fetchMock = stubJsonFetchOk();
+
+    await fetchBrowserJson<{ ok: boolean }>("/tabs?profile=work", {
+      method: "POST",
+      body: JSON.stringify({ action: "open" }),
+      timeoutMs: 7000,
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.callGatewayLeastPrivilege).toHaveBeenCalledWith({
+      method: "browser.request",
+      params: {
+        method: "POST",
+        path: "/tabs",
+        query: { profile: "work" },
+        body: { action: "open" },
+        timeoutMs: 7000,
+      },
+      timeoutMs: 7000,
+    });
   });
 
   it("does not inject auth for non-loopback absolute URLs", async () => {

@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { startBrowserBridgeServer, stopBrowserBridgeServer } from "../../browser/bridge-server.js";
 import { type ResolvedBrowserConfig, resolveProfile } from "../../browser/config.js";
 import {
   DEFAULT_BROWSER_EVALUATE_ENABLED,
@@ -310,10 +309,12 @@ export async function ensureSandboxBrowser(params: {
     !existing ||
     (existing.authToken === desiredAuthToken && existing.authPassword === desiredAuthPassword);
   if (existing && !shouldReuse) {
+    const { stopBrowserBridgeServer } = await import("../../browser/bridge-server.js");
     await stopBrowserBridgeServer(existing.bridge.server).catch(() => undefined);
     BROWSER_BRIDGES.delete(params.scopeKey);
   }
   if (existing && shouldReuse && !authMatches) {
+    const { stopBrowserBridgeServer } = await import("../../browser/bridge-server.js");
     await stopBrowserBridgeServer(existing.bridge.server).catch(() => undefined);
     BROWSER_BRIDGES.delete(params.scopeKey);
   }
@@ -348,6 +349,7 @@ export async function ensureSandboxBrowser(params: {
         }
       : undefined;
 
+    const { startBrowserBridgeServer } = await import("../../browser/bridge-server.js");
     return await startBrowserBridgeServer({
       resolved: buildSandboxBrowserResolvedConfig({
         controlPort: 0,

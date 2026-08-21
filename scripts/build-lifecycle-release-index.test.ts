@@ -85,6 +85,53 @@ async function fixture() {
 }
 
 describe("production lifecycle release index", () => {
+  it("binds optional component catalogs and archives from the exact release inventory", async () => {
+    const assetsDir = await fixture();
+    const catalogAsset = `fased-component-browser-media-voice-runtime-browser-v${version}.catalog.json`;
+    const archiveAsset = `fased-component-browser-media-voice-runtime-browser-v${version}.tar.gz`;
+    const catalogBody = "catalog\n";
+    const archiveBody = "archive\n";
+    await fs.writeFile(path.join(assetsDir, catalogAsset), catalogBody);
+    await fs.writeFile(path.join(assetsDir, archiveAsset), archiveBody);
+    await fs.writeFile(
+      path.join(assetsDir, `fased-component-browser-media-voice-v${version}.index.json`),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        type: "fased-hosted-component-index",
+        version,
+        pack: "browser-media-voice",
+        components: [
+          {
+            id: "runtime-browser",
+            catalog: { asset: catalogAsset, sha256: digest(catalogBody) },
+            archive: {
+              asset: archiveAsset,
+              sha256: digest(archiveBody),
+              bytes: archiveBody.length,
+            },
+          },
+        ],
+      })}\n`,
+    );
+    const index = await buildLifecycleReleaseIndex({
+      assetsDir,
+      channel: "beta",
+      commit,
+      expiresAt: "2031-07-29T20:37:38.000Z",
+      issuedAt: "2026-08-12T20:00:00.000Z",
+      releaseSequence: 1,
+      securityEpoch: 1,
+      tree,
+      version,
+    });
+    expect(index.components).toEqual({
+      "runtime-browser": {
+        catalog: expect.objectContaining({ name: catalogAsset, sha256: digest(catalogBody) }),
+        archive: expect.objectContaining({ name: archiveAsset, sha256: digest(archiveBody) }),
+      },
+    });
+  });
+
   it("binds the retained x64 architecture and monotonic authority without a private release key", async () => {
     const assetsDir = await fixture();
     const index = await buildLifecycleReleaseIndex({

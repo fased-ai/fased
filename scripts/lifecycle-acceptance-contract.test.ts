@@ -501,6 +501,25 @@ describe("lifecycle acceptance contract", () => {
     expect(hosting).not.toContain("/home/app/.fased/bin/fased update");
   });
 
+  it("binds the Local SAT fixture identity before the first Gateway start", () => {
+    const local = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const environmentInstall = local.indexOf("install_fixture_sat_runtime_environment\n");
+    const publicInstall = local.indexOf('runuser -u testop -- env "${fresh_env[@]}"');
+    const helperStart = local.indexOf("install_fixture_sat_runtime_environment() {");
+    const helper = local.slice(helperStart, local.indexOf("\n}\n", helperStart));
+
+    expect(environmentInstall).toBeGreaterThan(helperStart);
+    expect(publicInstall).toBeGreaterThan(environmentInstall);
+    expect(helper).toContain("[Manager]");
+    expect(helper).toContain("DefaultEnvironment=FASED_SAT_PROGRAM_ID="); // pragma: allowlist secret
+    expect(helper).toContain("DefaultEnvironment=FASED_SAT_MINT_ADDRESS="); // pragma: allowlist secret
+    expect(helper).not.toContain("systemctl restart");
+    expect(local).not.toContain("95-fixture-sat-runtime.conf");
+  });
+
   it("records exact bounded lifecycle performance evidence in Local and Hosting receipts", () => {
     const local = readFileSync(
       new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
@@ -545,6 +564,24 @@ describe("lifecycle acceptance contract", () => {
         expect(contract().profiles[profile][scenario]).toContain("updater-noop-performance");
       }
     }
+  });
+
+  it("records per-process Local runtime RSS rather than whole-container memory", () => {
+    const local = readFileSync(
+      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const runner = readFileSync(
+      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    expect(local).toContain("record_runtime_process_evidence() {");
+    expect(local).toContain('systemctl show --property MainPID --value "fased-local-controller-');
+    expect(local).toContain('systemctl show --property MainPID --value "fased-signerd-');
+    expect(local).toContain('systemctl show --property MainPID --value "fased-gateway-');
+    expect(local).toContain('record_runtime_process_evidence "$instance"');
+    expect(runner).toContain('runtime_receipt="$receipt.runtime-processes.json"');
+    expect(runner).toContain("all(.pid > 1 and .rssBytes > 0)");
   });
 
   it("proves a distinct managed-plugin install, digest-changing update, and no-op in protected Local", () => {

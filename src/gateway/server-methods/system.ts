@@ -1,6 +1,5 @@
 import { resolveMainSessionKeyFromConfig } from "../../config/sessions.js";
 import { getLastHeartbeatEvent } from "../../infra/heartbeat-events.js";
-import { setHeartbeatsEnabled } from "../../infra/heartbeat-runner.js";
 import { enqueueSystemEvent, isSystemEventContextChanged } from "../../infra/system-events.js";
 import { listSystemPresence, updateSystemPresence } from "../../infra/system-presence.js";
 import { getPublicGatewayIdentity } from "../gateway-identity.js";
@@ -15,7 +14,7 @@ export const systemHandlers: GatewayRequestHandlers = {
   "last-heartbeat": ({ respond }) => {
     respond(true, getLastHeartbeatEvent(), undefined);
   },
-  "set-heartbeats": ({ params, respond }) => {
+  "set-heartbeats": async ({ params, respond }) => {
     const enabled = params.enabled;
     if (typeof enabled !== "boolean") {
       respond(
@@ -28,6 +27,7 @@ export const systemHandlers: GatewayRequestHandlers = {
       );
       return;
     }
+    const { setHeartbeatsEnabled } = await import("../../infra/heartbeat-runner.js");
     setHeartbeatsEnabled(enabled);
     respond(true, { ok: true, enabled }, undefined);
   },

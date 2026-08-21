@@ -4,6 +4,9 @@
   "private": true,
   "description": "FasedAgent LINE channel plugin",
   "type": "module",
+  "dependencies": {
+    "@line/bot-sdk": "^10.6.0"
+  },
   "fased": {
     "extensions": [
       "./index.ts"

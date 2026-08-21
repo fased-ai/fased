@@ -852,5 +852,6 @@ export function registerPluginsCli(program: Command) {
   plugins
     .command("doctor")
     .description("Report plugin load issues")
-    .action(async () => await pluginDoctorCommand());
+    .option("--json", "Print JSON")
+    .action(async (opts: PluginInfoOptions) => await pluginDoctorCommand(opts));
 }

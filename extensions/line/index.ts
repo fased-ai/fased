@@ -2,7 +2,7 @@ import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { emptyPluginConfigSchema } from "fased/plugin-sdk";
 import { registerLineCardCommand } from "./src/card-command.js";
 import { linePlugin } from "./src/channel.js";
-import { setLineRuntime } from "./src/runtime.js";
+import { setManagedLineRuntime } from "./src/runtime.js";
 
 const plugin = {
   id: "line",
@@ -10,7 +10,7 @@ const plugin = {
   description: "LINE Messaging API channel plugin",
   configSchema: emptyPluginConfigSchema(),
   register(api: FasedAgentPluginApi) {
-    setLineRuntime(api.runtime);
+    setManagedLineRuntime(api.runtime);
     api.registerChannel({ plugin: linePlugin });
     registerLineCardCommand(api);
   },

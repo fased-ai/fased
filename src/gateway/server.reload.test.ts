@@ -17,22 +17,19 @@ const hoisted = vi.hoisted(() => {
   const cronInstances: Array<{
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
+    stopAndDrainForLifecycle: ReturnType<typeof vi.fn>;
   }> = [];
 
   class CronServiceMock {
     start = vi.fn(async () => {});
     stop = vi.fn();
+    stopAndDrainForLifecycle = vi.fn(async () => {
+      lifecycleEvents.push("cron.stopAndDrainForLifecycle");
+    });
     constructor() {
       cronInstances.push(this);
     }
   }
-
-  const browserStop = vi.fn(async () => {
-    lifecycleEvents.push("browser.stop");
-  });
-  const startBrowserControlServerIfEnabled = vi.fn(async () => ({
-    stop: browserStop,
-  }));
 
   const heartbeatStop = vi.fn();
   const heartbeatUpdateConfig = vi.fn();
@@ -151,8 +148,6 @@ const hoisted = vi.hoisted(() => {
     CronService: CronServiceMock,
     cronInstances,
     lifecycleEvents,
-    browserStop,
-    startBrowserControlServerIfEnabled,
     heartbeatStop,
     heartbeatUpdateConfig,
     startHeartbeatRunner,
@@ -169,10 +164,6 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock("../cron/service.js", () => ({
   CronService: hoisted.CronService,
-}));
-
-vi.mock("./server-browser.js", () => ({
-  startBrowserControlServerIfEnabled: hoisted.startBrowserControlServerIfEnabled,
 }));
 
 vi.mock("../infra/heartbeat-runner.js", () => ({
@@ -343,7 +334,6 @@ describe("gateway hot reload", () => {
             "hooks.gmail.account",
             "cron.enabled",
             "agents.defaults.heartbeat.every",
-            "browser.enabled",
             "web.enabled",
             "channels.telegram.botToken",
             "channels.discord.token",
@@ -355,7 +345,6 @@ describe("gateway hot reload", () => {
           hotReasons: ["web.enabled"],
           reloadHooks: true,
           restartGmailWatcher: true,
-          restartBrowserControl: true,
           restartCron: true,
           restartHeartbeat: true,
           restartChannels: new Set(["whatsapp", "telegram", "discord", "signal", "imessage"]),
@@ -369,15 +358,13 @@ describe("gateway hot reload", () => {
       const appliedConfig = hoisted.startGmailWatcher.mock.calls.at(-1)?.[0];
       expect(appliedConfig).toMatchObject(nextConfig);
 
-      expect(hoisted.browserStop).toHaveBeenCalledTimes(1);
-      expect(hoisted.startBrowserControlServerIfEnabled).toHaveBeenCalledTimes(2);
-
       expect(hoisted.startHeartbeatRunner).toHaveBeenCalledTimes(1);
-      expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledTimes(1);
-      expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledWith(appliedConfig);
+      expect(hoisted.startHeartbeatRunner).toHaveBeenCalledWith({ cfg: appliedConfig });
+      expect(hoisted.heartbeatUpdateConfig).not.toHaveBeenCalled();
 
       expect(hoisted.cronInstances.length).toBe(2);
-      expect(hoisted.cronInstances[0].stop).toHaveBeenCalledTimes(1);
+      expect(hoisted.cronInstances[0].stopAndDrainForLifecycle).toHaveBeenCalledTimes(1);
+      expect(hoisted.cronInstances[0].stop).not.toHaveBeenCalled();
       expect(hoisted.cronInstances[1].start).toHaveBeenCalledTimes(1);
 
       expect(hoisted.providerManager.stopChannel).toHaveBeenCalledTimes(5);
@@ -409,7 +396,6 @@ describe("gateway hot reload", () => {
           hotReasons: [],
           reloadHooks: false,
           restartGmailWatcher: false,
-          restartBrowserControl: false,
           restartCron: false,
           restartHeartbeat: false,
           restartChannels: new Set(),
@@ -444,7 +430,7 @@ describe("gateway hot reload", () => {
 
   it("emits one-shot degraded and recovered system events during secret reload transitions", async () => {
     await writeEnvRefConfig();
-    process.env.OPENAI_API_KEY = "sk-startup";
+    process.env.OPENAI_API_KEY = "sk-startup"; // pragma: allowlist secret
 
     await withGatewayServer(async () => {
       const onHotReload = hoisted.getOnHotReload();
@@ -457,7 +443,6 @@ describe("gateway hot reload", () => {
         hotReasons: ["models.providers.openai.apiKey"],
         reloadHooks: false,
         restartGmailWatcher: false,
-        restartBrowserControl: false,
         restartCron: false,
         restartHeartbeat: false,
         restartChannels: new Set(),
@@ -490,7 +475,7 @@ describe("gateway hot reload", () => {
       });
       expect(drainSystemEvents(sessionKey)).toEqual([]);
 
-      process.env.OPENAI_API_KEY = "sk-recovered";
+      process.env.OPENAI_API_KEY = "sk-recovered"; // pragma: allowlist secret
       await expect(onHotReload?.(plan, nextConfig, nextSnapshot)).resolves.toBeUndefined();
       const recoveredEvents = drainSystemEvents(sessionKey);
       expect(recoveredEvents.some((event) => event.includes("[SECRETS_RELOADER_RECOVERED]"))).toBe(
@@ -501,7 +486,7 @@ describe("gateway hot reload", () => {
 
   it("serves secrets.reload immediately after startup without race failures", async () => {
     await writeEnvRefConfig();
-    process.env.OPENAI_API_KEY = "sk-startup";
+    process.env.OPENAI_API_KEY = "sk-startup"; // pragma: allowlist secret
     const { server, ws } = await startServerWithClient();
     try {
       await connectOk(ws);
@@ -527,7 +512,7 @@ describe("gateway hot reload", () => {
       1,
     );
     expect(hoisted.lifecycleEvents.indexOf("configReloader.stop")).toBeLessThan(
-      hoisted.lifecycleEvents.indexOf("browser.stop"),
+      hoisted.lifecycleEvents.indexOf("cron.stopAndDrainForLifecycle"),
     );
   });
 });

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertSandboxPath } from "../../agents/sandbox-paths.js";
-import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox.js";
+import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox/context.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { logVerbose } from "../../globals.js";
 import { normalizeScpRemoteHost } from "../../infra/scp-host.js";
@@ -11,7 +11,7 @@ import {
   isInboundPathAllowed,
   resolveIMessageRemoteAttachmentRoots,
 } from "../../media/inbound-path-policy.js";
-import { getMediaDir } from "../../media/store.js";
+import { getMediaDir } from "../../media/runtime-service.js";
 import { CONFIG_DIR } from "../../utils.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 

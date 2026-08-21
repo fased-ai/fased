@@ -1,9 +1,8 @@
 import type { Api, Context, Model } from "@mariozechner/pi-ai";
-import { complete } from "@mariozechner/pi-ai/compat";
 import { Type } from "@sinclair/typebox";
 import type { FasedAgentConfig } from "../../config/config.js";
+import { getDefaultLocalRoots, loadWebMedia } from "../../media/runtime-service.js";
 import { resolveUserPath } from "../../utils.js";
-import { getDefaultLocalRoots, loadWebMedia } from "../../web/media.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "../auth-profiles.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { minimaxUnderstandImage } from "../minimax-vlm.js";
@@ -11,6 +10,7 @@ import { getApiKeyForModel, requireApiKey, resolveEnvApiKey } from "../model-aut
 import { runWithImageModelFallback } from "../model-fallback.js";
 import { resolveConfiguredModelRef } from "../model-selection.js";
 import { ensureFasedAgentModelsJson } from "../models-config.js";
+import { complete } from "../pi-ai-compat-runtime.js";
 import { discoverAuthStorage, discoverModels } from "../pi-model-discovery.js";
 import {
   resolveSandboxedBridgeMediaPath,

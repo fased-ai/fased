@@ -46,6 +46,7 @@ gateway_port=19456
 rpc_port=19457
 gateway_token=fased-protected-local-fixture-token
 snapshot=/var/lib/fased-protected-local-fixture.json
+runtime_process_evidence=/var/lib/fased-protected-local-fixture/runtime-process-evidence.json
 selected_target=/var/lib/fased-protected-local-fixture/selected-target-version
 predecessor_target=/var/lib/fased-protected-local-fixture/predecessor-version
 release_assets=/var/lib/fased-protected-local-fixture/release-assets
@@ -67,6 +68,38 @@ assert_public_command_projection() {
   test -f /usr/local/bin/fased
   test ! -L /usr/local/bin/fased
   test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"
+}
+
+record_runtime_process_evidence() {
+  local instance_id="${1:?instance id is required}"
+  local controller_pid signer_pid gateway_pid
+  local controller_rss_kib signer_rss_kib gateway_rss_kib
+  controller_pid="$(systemctl show --property MainPID --value "fased-local-controller-$instance_id.service")"
+  signer_pid="$(systemctl show --property MainPID --value "fased-signerd-$instance_id.service")"
+  gateway_pid="$(systemctl show --property MainPID --value "fased-gateway-$instance_id.service")"
+  for pid in "$controller_pid" "$signer_pid" "$gateway_pid"; do
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+    test -r "/proc/$pid/status"
+  done
+  controller_rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$controller_pid/status")"
+  signer_rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$signer_pid/status")"
+  gateway_rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$gateway_pid/status")"
+  for rss_kib in "$controller_rss_kib" "$signer_rss_kib" "$gateway_rss_kib"; do
+    [[ "$rss_kib" =~ ^[1-9][0-9]*$ ]]
+  done
+  jq -n \
+    --arg instanceId "$instance_id" \
+    --argjson controllerPid "$controller_pid" \
+    --argjson signerPid "$signer_pid" \
+    --argjson gatewayPid "$gateway_pid" \
+    --argjson controllerRssBytes "$((controller_rss_kib * 1024))" \
+    --argjson signerRssBytes "$((signer_rss_kib * 1024))" \
+    --argjson gatewayRssBytes "$((gateway_rss_kib * 1024))" \
+    '{schemaVersion:1,role:"fased-runtime-process-evidence",instanceId:$instanceId,processes:{lifecycle:{pid:$controllerPid,rssBytes:$controllerRssBytes},signer:{pid:$signerPid,rssBytes:$signerRssBytes},gateway:{pid:$gatewayPid,rssBytes:$gatewayRssBytes}}}' \
+    >"$runtime_process_evidence"
+  chmod 0600 "$runtime_process_evidence"
+  printf 'runtime process RSS: lifecycle=%sB signer=%sB gateway=%sB\n' \
+    "$((controller_rss_kib * 1024))" "$((signer_rss_kib * 1024))" "$((gateway_rss_kib * 1024))"
 }
 
 managed_plugin_tree_digest() {
@@ -468,23 +501,16 @@ record_three_services() {
   test -s "$output"
 }
 
-configure_fixture_sat_runtime() {
-  local instance="$1"
-  local dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"
-
-  install -d -m 0755 -o root -g root "$dropin_dir"
-  cat >"$dropin_dir/95-fixture-sat-runtime.conf" <<'EOF_SAT_RUNTIME'
-[Service]
-Environment=FASED_SAT_PROGRAM_ID=11111111111111111111111111111111
-Environment=FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111
-Environment=FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112
-Environment=FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+install_fixture_sat_runtime_environment() {
+  install -d -m 0755 -o root -g root /etc/systemd/system.conf.d
+  cat >/etc/systemd/system.conf.d/91-fased-fixture-sat-runtime.conf <<'EOF_SAT_RUNTIME'
+[Manager]
+DefaultEnvironment=FASED_SAT_PROGRAM_ID=11111111111111111111111111111111
+DefaultEnvironment=FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111
+DefaultEnvironment=FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112
+DefaultEnvironment=FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
 EOF_SAT_RUNTIME
-  chmod 0644 "$dropin_dir/95-fixture-sat-runtime.conf"
-  systemctl daemon-reload
-  systemctl restart "fased-gateway-$instance.service"
-  wait_for_service "fased-gateway-$instance.service"
-  wait_for_gateway_version "$version"
+  chmod 0644 /etc/systemd/system.conf.d/91-fased-fixture-sat-runtime.conf
 }
 
 run_operator_acceptance() {
@@ -493,8 +519,6 @@ run_operator_acceptance() {
   local output_prefix="$3"
   local environment_name="$4"
   local -n environment="$environment_name"
-
-  configure_fixture_sat_runtime "$instance"
 
   runuser -u testop -- env "${environment[@]}" \
     /usr/local/bin/node "$runtime_root/fased.mjs" wallet status --json \
@@ -1342,6 +1366,7 @@ cat >/etc/systemd/system.conf.d/90-fased-fixture-ca.conf <<EOF_FIXTURE_SYSTEMD_C
 [Manager]
 DefaultEnvironment=NODE_EXTRA_CA_CERTS=$fixture_tls/ca.crt
 EOF_FIXTURE_SYSTEMD_CA
+install_fixture_sat_runtime_environment
 systemctl daemon-reexec
 
 cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'
@@ -1720,6 +1745,7 @@ if [[ "$phase" == "fresh-install" ]]; then
       <(jq -S . "/tmp/fresh-${wallet_id}-restart.json")
   done
   acceptance_mark state-preservation "$fresh_restart_manifest"
+  record_runtime_process_evidence "$instance"
   restart_elapsed="$((SECONDS - restart_started))"
 
   noop_started="$SECONDS"

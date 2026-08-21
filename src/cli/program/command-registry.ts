@@ -4,7 +4,6 @@ import { reparseProgramFromActionArgs } from "./action-reparse.js";
 import { removeCommandByName } from "./command-tree.js";
 import type { ProgramContext } from "./context.js";
 import { registerSubCliCommands } from "./register.subclis.js";
-import { registerWalletCommands } from "./register.wallet.js";
 
 type CommandRegisterParams = {
   program: Command;
@@ -216,8 +215,9 @@ const coreEntries: CoreCliEntry[] = [
         hasSubcommands: true,
       },
     ],
-    register: ({ program }) => {
-      registerWalletCommands(program);
+    register: async ({ program }) => {
+      const mod = await import("./register.wallet.js");
+      mod.registerWalletCommands(program);
     },
   },
 ];

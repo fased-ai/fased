@@ -32,6 +32,8 @@ PUBLIC_ACQUISITION="${FASED_SYSTEMD_FIXTURE_PUBLIC_ACQUISITION:-0}"
 RELEASE_SEQUENCE="${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}"
 SECURITY_EPOCH="${FASED_LIFECYCLE_SECURITY_EPOCH:-1}"
 BUILD_ONLY="${FASED_SYSTEMD_FIXTURE_BUILD_ONLY:-0}"
+BUILD_COMPONENT_PACKS="${FASED_SYSTEMD_FIXTURE_BUILD_COMPONENT_PACKS:-1}"
+HOSTED_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_HOSTED_ARTIFACT_DIR:-}"
 ARTIFACT_OUTPUT_DIR="${FASED_SYSTEMD_FIXTURE_OUTPUT_DIR:-}"
 ARTIFACT_PROFILE="${FASED_SYSTEMD_FIXTURE_ARTIFACT_PROFILE:-branch-x64}"
 RECEIPT_DIR="${FASED_SYSTEMD_FIXTURE_RECEIPT_DIR:-}"
@@ -183,6 +185,10 @@ fi
   echo "FASED_SYSTEMD_FIXTURE_BUILD_ONLY must be 0 or 1." >&2
   exit 1
 }
+[[ "$BUILD_COMPONENT_PACKS" == "0" || "$BUILD_COMPONENT_PACKS" == "1" ]] || {
+  echo "FASED_SYSTEMD_FIXTURE_BUILD_COMPONENT_PACKS must be 0 or 1." >&2
+  exit 1
+}
 if [[ "$BUILD_ONLY" == "1" ]]; then
   [[ -z "$ARTIFACT_DIR" && "$ARTIFACT_OUTPUT_DIR" == /* ]] || {
     echo "Build-only mode requires one absolute FASED_SYSTEMD_FIXTURE_OUTPUT_DIR." >&2
@@ -258,10 +264,73 @@ clear_branch_fixture_native_outputs() {
   )
 }
 
+copy_verified_hosted_artifact() {
+  local source_dir="$1"
+  local output_dir="$2"
+  local app_identity app_asset dependency_asset runtime_evidence core_receipt
+  local expected_inventory actual_inventory
+
+  [[ "$source_dir" == /* && -d "$source_dir" ]] || {
+    echo "FASED_SYSTEMD_FIXTURE_HOSTED_ARTIFACT_DIR must be one absolute directory." >&2
+    return 1
+  }
+  app_identity="$source_dir/fased-hosted-app-v2-linux-x64-v${VERSION}.tar.gz.release.json"
+  core_receipt="$source_dir/fased-hosted-app-v2-linux-x64-v${VERSION}.tar.gz.core-receipt.json"
+  runtime_evidence="$source_dir/fased-hosted-core-runtime-linux-x64-v${VERSION}.json"
+  [[ -f "$app_identity" && ! -L "$app_identity" &&
+    -f "$core_receipt" && ! -L "$core_receipt" &&
+    -f "$runtime_evidence" && ! -L "$runtime_evidence" ]] || {
+    echo "The reusable hosted artifact is missing its exact identity receipts." >&2
+    return 1
+  }
+  app_asset="$(jq -er .app.asset "$app_identity")"
+  dependency_asset="$(jq -er .dependencies.asset "$app_identity")"
+  [[ "$app_asset" == "fased-hosted-app-v2-linux-x64-v${VERSION}.tar.gz" &&
+    "$dependency_asset" =~ ^fased-hosted-deps-linux-x64-[0-9a-f]{64}\.tar\.gz$ ]] || {
+    echo "The reusable hosted artifact names are not canonical." >&2
+    return 1
+  }
+  jq -e --arg version "$VERSION" --arg commit "$COMMIT" \
+    '.version == $version and .commit == $commit' "$app_identity" >/dev/null
+  jq -e --arg version "$VERSION" --arg commit "$COMMIT" \
+    '.type == "fased-hosted-core-receipt" and .version == $version and .commit == $commit and
+     .dependencyCache.downloads == 0 and .loadedPlugins == ["device-pair","memory-core","sat-mining"] and
+     .runtimeEvidence.dormantMiningImplementationLoaded == false' "$core_receipt" >/dev/null
+  jq -e --arg version "$VERSION" --arg commit "$COMMIT" \
+    '.type == "fased-hosted-core-runtime-evidence" and .version == $version and .commit == $commit' \
+    "$runtime_evidence" >/dev/null
+  [[ -f "$source_dir/$app_asset" && ! -L "$source_dir/$app_asset" &&
+    -f "$source_dir/$dependency_asset" && ! -L "$source_dir/$dependency_asset" &&
+    "$(sha256sum "$source_dir/$app_asset" | awk '{print $1}')" == "$(jq -er .app.sha256 "$app_identity")" &&
+    "$(sha256sum "$source_dir/$dependency_asset" | awk '{print $1}')" == "$(jq -er .dependencies.sha256 "$app_identity")" ]] || {
+    echo "The reusable hosted artifact bytes do not match their identity receipt." >&2
+    return 1
+  }
+  expected_inventory="$({
+    printf '%s\n' \
+      "$app_asset" "$app_asset.sha256" "$app_asset.core-receipt.json" "$app_asset.release.json" \
+      "$dependency_asset" "$dependency_asset.sha256" \
+      "fased-hosted-components-linux-x64-v${VERSION}.spdx.json" \
+      "fased-hosted-core-runtime-linux-x64-v${VERSION}.json"
+  } | sort)"
+  actual_inventory="$(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort)"
+  [[ -z "$(find "$source_dir" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" &&
+    "$actual_inventory" == "$expected_inventory" ]] || {
+    echo "The reusable hosted artifact directory is not an exact closed inventory." >&2
+    return 1
+  }
+  cp -a --reflink=auto "$source_dir/." "$output_dir/"
+  echo "hosted artifact reuse: commit=$COMMIT app=$app_asset dependencies=$dependency_asset"
+}
+
 if [[ -z "$ARTIFACT_DIR" ]]; then
   PUBLIC_ACQUISITION=1
-  [[ "$(git -C "$ROOT_DIR" rev-parse HEAD)" == "$COMMIT" &&
-    -z "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]] || {
+  current_source_commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  unexpected_fixture_changes="$(lifecycle_unexpected_fixture_changes \
+    "$ROOT_DIR" "$COMMIT" "$current_source_commit")"
+  [[ -z "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" &&
+    ( "$current_source_commit" == "$COMMIT" ||
+      ( -n "$HOSTED_ARTIFACT_DIR" && -z "$unexpected_fixture_changes" ) ) ]] || {
     echo "The branch artifact builder requires one exact clean product commit." >&2
     echo "Fixture-only changes must reuse its cached artifact instead of rebuilding." >&2
     exit 1
@@ -291,7 +360,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
   FASED_SIGNER_TARGETS="linux/amd64" \
   FASED_LIFECYCLE_BUILD_COMMIT="$COMMIT" \
-  FASED_LIFECYCLE_BUILD_TREE="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
+  FASED_LIFECYCLE_BUILD_TREE="$TREE" \
   FASED_LIFECYCLE_TARGETS="linux/amd64" \
     bash "$ROOT_DIR/scripts/build-native-release-assets.sh"
   if [[ "$BUILD_ONLY" == "1" ]]; then
@@ -303,7 +372,17 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fased-protected-local-artifact.XXXXXX")"
     OWN_ARTIFACT_DIR=1
   fi
-  pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
+  if [[ -n "$HOSTED_ARTIFACT_DIR" ]]; then
+    copy_verified_hosted_artifact "$HOSTED_ARTIFACT_DIR" "$ARTIFACT_DIR"
+  else
+    pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$ARTIFACT_DIR"
+  fi
+  # Optional components are separate immutable P6 assets. A literal fresh-core
+  # proof skips them entirely; release evidence may opt in to build their
+  # inventory beside the same core bytes.
+  if [[ "$BUILD_COMPONENT_PACKS" == "1" ]]; then
+    pnpm --dir "$ROOT_DIR" hosted:component-packs --output "$ARTIFACT_DIR"
+  fi
   cp -a "$ROOT_DIR/dist-native/release/." "$ARTIFACT_DIR/"
   node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
     --source "$ROOT_DIR/install.sh" \
@@ -330,7 +409,7 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
     --output-dir "$ARTIFACT_DIR" \
     --version "$VERSION" \
     --commit "$COMMIT" \
-    --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
+    --tree "$TREE" \
     --architecture x64
   # Build-only mode emits the production product bytes. LOCAL0 and pre-tag P1
   # derive a separate branch-trust overlay in a new directory, preserving the
@@ -400,13 +479,13 @@ if [[ -z "$ARTIFACT_DIR" ]]; then
   node "$ROOT_DIR/scripts/lifecycle-release-compatibility.mjs" build \
     --version "$VERSION" \
     --commit "$COMMIT" \
-    --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
+    --tree "$TREE" \
     --output "$ARTIFACT_DIR/fased-lifecycle-release-compatibility-v1.json"
   node "$ROOT_DIR/scripts/release-artifact-set.mjs" build \
     --directory "$ARTIFACT_DIR" \
     --version "$VERSION" \
     --commit "$COMMIT" \
-    --tree "$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')" \
+    --tree "$TREE" \
     --lockfile-digest "sha256:$(sha256sum "$ROOT_DIR/pnpm-lock.yaml" | awk '{print $1}')" \
     --source-ref "refs/tags/v${VERSION}" \
     --workflow-run-id 1 \
@@ -823,6 +902,18 @@ run_fixture_scenario() {
   run_container cp \
     "$name:/var/lib/fased-protected-local-fixture/lifecycle-acceptance-${scenario}.json" \
     "$receipt"
+  if [[ "$scenario" == "fresh-install" ]]; then
+    runtime_receipt="$receipt.runtime-processes.json"
+    run_container cp \
+      "$name:/var/lib/fased-protected-local-fixture/runtime-process-evidence.json" \
+      "$runtime_receipt"
+    jq -e \
+      '.schemaVersion == 1 and .role == "fased-runtime-process-evidence" and
+       ([.processes.lifecycle,.processes.signer,.processes.gateway] |
+        all(.pid > 1 and .rssBytes > 0))' \
+      "$runtime_receipt" >/dev/null
+    printf 'runtime process evidence verified: %s\n' "$runtime_receipt"
+  fi
   descriptor_digest="sha256:$(sha256sum "$ARTIFACT_DIR/fased-hosting-candidate.json" | awk '{print $1}')"
   capsule_digest=""
   installation_class_digest=""

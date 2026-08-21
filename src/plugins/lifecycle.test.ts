@@ -84,6 +84,7 @@ function createBaseReport(): PluginStatusReport {
     realtimeTranscriptionProviders: [],
     realtimeVoiceProviders: [],
     gatewayHandlers: {},
+    capabilityProviders: {},
     gatewayMethodScopes: {},
     httpHandlers: [],
     httpRoutes: [],

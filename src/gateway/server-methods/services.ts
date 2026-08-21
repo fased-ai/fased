@@ -81,13 +81,28 @@ export const servicesHandlers: GatewayRequestHandlers = {
         );
         return;
       }
+      const entry = loadCapabilityCatalog().find((candidate) => candidate.id === id);
+      if (entry?.delivery === "managed-component") {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.UNAVAILABLE,
+            `Install ${entry.label} through the owner CLI so the signed P6 transaction can restart Gateway safely.`,
+          ),
+        );
+        return;
+      }
       const result = await installCapabilityComponent({ id, config: loadConfig() });
       await writeConfigFile(result.config);
       respond(true, {
         ok: true,
         id,
         pluginId: result.pluginId,
-        message: `Enabled bundled component ${result.entry.label}.`,
+        message:
+          result.entry.delivery === "managed-component"
+            ? `Installed signed component ${result.entry.label}.`
+            : `Enabled core component ${result.entry.label}.`,
         restartRequired: result.entry.restartRequired !== false,
         warnings: result.slotWarnings,
         report: buildCapabilityReadinessReport({ config: result.config }),

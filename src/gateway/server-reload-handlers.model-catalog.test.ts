@@ -19,7 +19,6 @@ function createPlan(changedPaths: string[]): GatewayReloadPlan {
     hotReasons: changedPaths,
     reloadHooks: false,
     restartGmailWatcher: false,
-    restartBrowserControl: false,
     restartCron: false,
     restartHeartbeat: false,
     restartChannels: new Set<ChannelKind>(),
@@ -40,7 +39,6 @@ function createHandlers() {
         stop: vi.fn(),
       },
     },
-    browserControl: null,
   };
   return createGatewayReloadHandlers({
     deps: {} as never,

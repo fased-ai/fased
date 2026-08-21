@@ -6,7 +6,19 @@ import { createConnection, createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { writeBundledPluginLock } from "./assemble-lifecycle-generation.mjs";
+import { resolveManagedRuntimeImplementationPaths } from "./build-hosted-component-packs.js";
+import {
+  assertHostedCoreBudgets,
+  enforceHostedApplicationAllowlist,
+  measureRegularFiles,
+  pruneHostedDependencies,
+  readHostedComponentContract,
+  retainHostedCoreExtensions,
+} from "./hosted-component-contract.js";
+import { selectPnpmStorePath } from "./pnpm-store-path.js";
 import { writeReleaseArchive } from "./release-archive.js";
 
 const execFileAsync = promisify(execFile);
@@ -23,6 +35,9 @@ type HostedRuntimeMetadata = {
   version: string;
   commit: string;
   dependencyHash: string;
+  componentContractDigest: string;
+  coreExtensions: string[];
+  loadedPlugins: string[];
 };
 
 type RunResult = {
@@ -32,8 +47,6 @@ type RunResult = {
 };
 
 const HOSTED_DEPENDENCY_LAYER_SCHEMA = 2;
-const HOSTED_DEPENDENCY_FILE_BUDGET = 40_000;
-const HOSTED_DEPENDENCY_BYTE_BUDGET = 350 * 1024 * 1024;
 
 function parseOutputDir(): string {
   const outputFlag = process.argv.indexOf("--output");
@@ -143,67 +156,18 @@ async function activePnpmStore(): Promise<string> {
     cwd: rootDir,
     maxBuffer: 1024 * 1024,
   });
-  const reported = stdout.trim();
-  if (!path.isAbsolute(reported)) {
-    throw new Error("pnpm store path is not absolute");
-  }
+  const reported = selectPnpmStorePath({
+    reported: stdout,
+    workspaceModulesMetadata: await fs.readFile(
+      path.join(rootDir, "node_modules", ".modules.yaml"),
+      "utf8",
+    ),
+  });
   const canonical = await fs.realpath(reported);
   if (!(await fs.stat(canonical)).isDirectory()) {
     throw new Error("pnpm store path is not a directory");
   }
   return canonical;
-}
-
-async function pruneHostedDependencies(
-  nodeModulesRoot: string,
-  arch: string,
-): Promise<{ files: number; bytes: number }> {
-  const keepClipboardPackages = new Set([
-    `clipboard-linux-${arch}-gnu`,
-    `clipboard-linux-${arch}-musl`,
-  ]);
-  let removedFiles = 0;
-  let removedBytes = 0;
-  let removedDirectories = 0;
-  let retainedFiles = 0;
-  let retainedBytes = 0;
-
-  const visit = async (dir: string): Promise<void> => {
-    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        const isForeignClipboardPackage =
-          path.basename(dir) === "@mariozechner" &&
-          entry.name.startsWith("clipboard-") &&
-          !keepClipboardPackages.has(entry.name);
-        if (isForeignClipboardPackage) {
-          await fs.rm(fullPath, { recursive: true, force: true });
-          removedDirectories += 1;
-          continue;
-        }
-        await visit(fullPath);
-        continue;
-      }
-      if (!entry.isFile() || (!entry.name.endsWith(".map") && !entry.name.endsWith(".d.ts"))) {
-        if (entry.isFile()) {
-          const stat = await fs.stat(fullPath);
-          retainedFiles += 1;
-          retainedBytes += stat.size;
-        }
-        continue;
-      }
-      const stat = await fs.stat(fullPath);
-      await fs.rm(fullPath, { force: true });
-      removedFiles += 1;
-      removedBytes += stat.size;
-    }
-  };
-
-  await visit(nodeModulesRoot);
-  console.log(
-    `hosted-artifact: pruned ${removedFiles} runtime-irrelevant files and ${removedDirectories} foreign-platform directories (${(removedBytes / 1024 / 1024).toFixed(1)} MB)`,
-  );
-  return { files: retainedFiles, bytes: retainedBytes };
 }
 
 async function writeChecksum(assetPath: string): Promise<string> {
@@ -263,12 +227,21 @@ async function canConnect(port: number): Promise<boolean> {
 async function smokeGateway(
   packageRoot: string,
   smokeEnv: NodeJS.ProcessEnv,
-): Promise<{ pluginLoadMs: number; output: string }> {
+  tracePath: string,
+): Promise<{
+  pluginLoadMs: number;
+  output: string;
+  gatewayRssBytes: number;
+  applicationModules: string[];
+  dependencyPackages: string[];
+}> {
   const port = await reserveLoopbackPort();
   const output: string[] = [];
   const child = spawn(
     process.execPath,
     [
+      "--import",
+      path.join(rootDir, "scripts", "trace-runtime-modules.mjs"),
       path.join(packageRoot, "dist", "entry.js"),
       "gateway",
       "--allow-unconfigured",
@@ -283,6 +256,7 @@ async function smokeGateway(
         ...process.env,
         ...smokeEnv,
         FASED_NO_RESPAWN: "1",
+        FASED_RUNTIME_MODULE_TRACE: tracePath,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -303,7 +277,45 @@ async function smokeGateway(
       const combinedOutput = output.join("");
       const timingMatch = combinedOutput.match(/plugins\.load(?:\.deferred)?=(\d+)ms/);
       if (listening && timingMatch?.[1]) {
-        return { pluginLoadMs: Number.parseInt(timingMatch[1], 10), output: combinedOutput };
+        const status = await fs.readFile(`/proc/${child.pid}/status`, "utf8");
+        const rssKiB = Number.parseInt(status.match(/^VmRSS:\s+(\d+)\s+kB$/mu)?.[1] ?? "0", 10);
+        if (!Number.isSafeInteger(rssKiB) || rssKiB <= 0) {
+          throw new Error("Hosted Gateway RSS is unavailable");
+        }
+        const traced = new Set(
+          (await fs.readFile(tracePath, "utf8"))
+            .split("\n")
+            .map((value) => value.trim())
+            .filter(Boolean),
+        );
+        const applicationModules = new Set<string>();
+        const dependencyPackages = new Set<string>();
+        for (const url of traced) {
+          const filePath = fileURLToPath(url);
+          const relative = path.relative(packageRoot, filePath);
+          if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+            continue;
+          }
+          const normalized = relative.replaceAll(path.sep, "/");
+          if (!normalized.startsWith("node_modules/")) {
+            applicationModules.add(normalized);
+            continue;
+          }
+          const parts = normalized.split("/");
+          const nodeModulesIndex = parts.lastIndexOf("node_modules");
+          const first = parts[nodeModulesIndex + 1];
+          const second = first?.startsWith("@") ? parts[nodeModulesIndex + 2] : undefined;
+          if (first) {
+            dependencyPackages.add(second ? `${first}/${second}` : first);
+          }
+        }
+        return {
+          pluginLoadMs: Number.parseInt(timingMatch[1], 10),
+          output: combinedOutput,
+          gatewayRssBytes: rssKiB * 1024,
+          applicationModules: [...applicationModules].toSorted(),
+          dependencyPackages: [...dependencyPackages].toSorted(),
+        };
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -355,7 +367,7 @@ async function main(): Promise<void> {
 
     console.log(`hosted-artifact: deploying @fased/fased@${version} with pnpm`);
     const pnpmStore = await activePnpmStore();
-    await run(
+    const deployment = await run(
       "pnpm",
       [
         "--store-dir",
@@ -370,6 +382,55 @@ async function main(): Promise<void> {
       ],
       rootDir,
       { npm_config_ignore_scripts: "true" },
+    );
+    const componentContract = await readHostedComponentContract(
+      path.join(rootDir, "config", "hosted-component-packs.json"),
+    );
+    const componentContractDigest = await sha256(
+      path.join(rootDir, "config", "hosted-component-packs.json"),
+    );
+    const removedApplicationPaths = await enforceHostedApplicationAllowlist({
+      packageRoot,
+      contract: componentContract,
+    });
+    const candidateManagedRuntimeImplementationPaths =
+      await resolveManagedRuntimeImplementationPaths([
+        "line",
+        "runtime-browser",
+        "runtime-media",
+        "runtime-speech",
+        "acpx",
+        "discord",
+        "slack",
+        "telegram",
+        "signal",
+        "imessage",
+        "whatsapp",
+      ]);
+    const managedRuntimeImplementationPaths: string[] = [];
+    for (const relative of candidateManagedRuntimeImplementationPaths) {
+      const target = path.join(packageRoot, relative);
+      let stat;
+      try {
+        stat = await fs.lstat(target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`managed runtime implementation is not a regular file: ${relative}`);
+      }
+      await fs.rm(target);
+      managedRuntimeImplementationPaths.push(relative);
+    }
+    const removedExtensions = await retainHostedCoreExtensions({
+      extensionsRoot: path.join(packageRoot, "extensions"),
+      contract: componentContract,
+    });
+    console.log(
+      `hosted-artifact: excluded ${removedExtensions.length} optional/test extension directories`,
     );
     await run(
       process.execPath,
@@ -394,18 +455,41 @@ async function main(): Promise<void> {
     const dependencyBudget = await pruneHostedDependencies(
       path.join(packageRoot, "node_modules"),
       arch,
+      componentContract.core.excludedDependencyPackages,
     );
     console.log(
       `hosted-artifact: dependency budget ${dependencyBudget.files} files, ${(dependencyBudget.bytes / 1024 / 1024).toFixed(1)} MB`,
     );
-    if (
-      dependencyBudget.files > HOSTED_DEPENDENCY_FILE_BUDGET ||
-      dependencyBudget.bytes > HOSTED_DEPENDENCY_BYTE_BUDGET
-    ) {
-      throw new Error(
-        `Hosted dependency layer exceeds budget (${dependencyBudget.files}/${HOSTED_DEPENDENCY_FILE_BUDGET} files, ${(dependencyBudget.bytes / 1024 / 1024).toFixed(1)}/${HOSTED_DEPENDENCY_BYTE_BUDGET / 1024 / 1024} MB).`,
-      );
-    }
+    const applicationBudget = await measureRegularFiles(packageRoot, {
+      excludeTopLevel: new Set(["node_modules"]),
+    });
+    assertHostedCoreBudgets({
+      contract: componentContract,
+      application: applicationBudget,
+      dependencies: dependencyBudget,
+    });
+    console.log(
+      `hosted-artifact: core application budget ${applicationBudget.files} files, ${(applicationBudget.bytes / 1024 / 1024).toFixed(1)} MB`,
+    );
+    await run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        [
+          'await import("@solana/web3.js")',
+          'await import("viem")',
+          'await import("@fedify/fedify")',
+          'await import("@mariozechner/pi-ai")',
+          'await import("@mariozechner/pi-ai/compat")',
+          'for (const id of ["typescript", "@fedify/vocab-tools"]) {',
+          "  try { await import(id); throw new Error(`excluded dependency resolved: ${id}`); }",
+          '  catch (error) { if (String(error).includes("excluded dependency resolved")) throw error; }',
+          "}",
+        ].join("\n"),
+      ],
+      packageRoot,
+    );
 
     console.log("hosted-artifact: compiling core runtime plugins");
     await run(
@@ -437,12 +521,22 @@ async function main(): Promise<void> {
     await fs.mkdir(smokeHome, { recursive: true });
     const smokeStateDir = path.join(smokeHome, ".fased");
     await fs.mkdir(smokeStateDir, { recursive: true });
+    const smokePluginCodeRoot = path.join(smokeStateDir, "plugin-code");
+    const smokePluginDataRoot = path.join(smokeStateDir, "plugin-data");
+    const smokePluginLockPath = path.join(smokeStateDir, "plugin.lock.json");
+    await Promise.all([
+      fs.mkdir(smokePluginCodeRoot, { recursive: true }),
+      fs.mkdir(smokePluginDataRoot, { recursive: true }),
+    ]);
+    await writeBundledPluginLock(packageRoot);
+    await fs.copyFile(path.join(packageRoot, "plugin.lock.json"), smokePluginLockPath);
+    await fs.rm(path.join(packageRoot, "plugin.lock.json"));
     await fs.writeFile(
       path.join(smokeStateDir, "fased.json"),
       `${JSON.stringify(
         {
           plugins: {
-            allow: ["memory-core", "sat-mining"],
+            allow: componentContract.core.loadedPluginIds,
             entries: { "sat-mining": { enabled: true } },
           },
         },
@@ -455,6 +549,10 @@ async function main(): Promise<void> {
       HOME: smokeHome,
       FASED_STATE_DIR: smokeStateDir,
       FASED_CONFIG_PATH: path.join(smokeStateDir, "fased.json"),
+      FASED_MANAGED_INTERNAL: "1",
+      FASED_PLUGIN_CODE_ROOT: smokePluginCodeRoot,
+      FASED_PLUGIN_DATA_ROOT: smokePluginDataRoot,
+      FASED_PLUGIN_LOCK_PATH: smokePluginLockPath,
       // Vitest suppresses defaultRuntime.log unless this explicit test boundary
       // requests output. Artifact validation must not depend on ambient VITEST.
       FASED_TEST_RUNTIME_LOG: "1",
@@ -468,27 +566,57 @@ async function main(): Promise<void> {
     );
     const pluginDoctor = await run(
       process.execPath,
-      [path.join(packageRoot, "fased.mjs"), "plugins", "doctor"],
+      [path.join(packageRoot, "fased.mjs"), "plugins", "doctor", "--json"],
       packageRoot,
       smokeEnv,
     );
-    const pluginDoctorOutput = `${pluginDoctor.stdout}\n${pluginDoctor.stderr}`;
-    if (!pluginDoctorOutput.includes("No plugin issues detected.")) {
+    const pluginDoctorReport = JSON.parse(pluginDoctor.stdout) as {
+      ok?: unknown;
+      plugins?: Array<{ id?: unknown; status?: unknown }>;
+    };
+    if (pluginDoctorReport.ok !== true) {
+      const pluginDoctorOutput = `${pluginDoctor.stdout}\n${pluginDoctor.stderr}`;
       throw new Error(`Hosted core plugin doctor was not clean.\n${pluginDoctorOutput}`);
     }
-    const satPluginInfo = await run(
-      process.execPath,
-      [path.join(packageRoot, "fased.mjs"), "plugins", "info", "sat-mining"],
-      packageRoot,
-      smokeEnv,
-    );
-    const satPluginOutput = `${satPluginInfo.stdout}\n${satPluginInfo.stderr}`;
-    if (!satPluginOutput.includes("Status: loaded")) {
-      throw new Error(`Hosted sat-mining plugin did not load.\n${satPluginOutput}`);
+    const enabledPluginIds =
+      pluginDoctorReport.plugins
+        ?.filter((plugin) => plugin.status === "loaded" && typeof plugin.id === "string")
+        .map((plugin) => plugin.id as string)
+        .toSorted() ?? [];
+    if (
+      JSON.stringify(enabledPluginIds) !==
+      JSON.stringify(componentContract.core.loadedPluginIds.toSorted())
+    ) {
+      throw new Error(
+        `Hosted core loaded plugins differ (actual ${enabledPluginIds.join(", ") || "none"}; expected ${componentContract.core.loadedPluginIds.join(", ")}).`,
+      );
     }
     console.log("hosted-artifact: starting isolated packaged gateway");
-    const gatewaySmoke = await smokeGateway(packageRoot, smokeEnv);
+    const moduleTracePath = path.join(tempRoot, "gateway-module-trace.log");
+    const gatewaySmoke = await smokeGateway(packageRoot, smokeEnv, moduleTracePath);
     const pluginLoadMs = gatewaySmoke.pluginLoadMs;
+    if (gatewaySmoke.applicationModules.includes("extensions/sat-mining/implementation.js")) {
+      throw new Error("Dormant SAT Mining loaded its operational implementation");
+    }
+    const piAiProviderSdkPackages = [
+      "@anthropic-ai/sdk",
+      "@aws-sdk/client-bedrock-runtime",
+      "@google/genai",
+      "@mistralai/mistralai",
+      "openai",
+    ];
+    const idleLoadedPiAiProviderSdkPackages = piAiProviderSdkPackages.filter((packageName) =>
+      gatewaySmoke.dependencyPackages.includes(packageName),
+    );
+    const allowedIdlePiAiProviderSdkPackages = ["openai"];
+    const unexpectedIdlePiAiProviderSdkPackages = idleLoadedPiAiProviderSdkPackages.filter(
+      (packageName) => !allowedIdlePiAiProviderSdkPackages.includes(packageName),
+    );
+    if (unexpectedIdlePiAiProviderSdkPackages.length > 0) {
+      throw new Error(
+        `Dormant Gateway loaded forbidden pi-ai provider SDKs: ${unexpectedIdlePiAiProviderSdkPackages.join(", ")}`,
+      );
+    }
     for (const pluginId of ["memory-core", "sat-mining"]) {
       if (!gatewaySmoke.output.includes(`[plugins] ${pluginId} native preload `)) {
         throw new Error(
@@ -510,6 +638,37 @@ async function main(): Promise<void> {
     }
     console.log(
       `hosted-artifact: core plugins loaded in ${pluginLoadMs}ms (budget ${corePluginBudgetMs}ms)`,
+    );
+    console.log(
+      `hosted-artifact: Gateway ready RSS ${(gatewaySmoke.gatewayRssBytes / 1024 / 1024).toFixed(1)} MB; loaded ${gatewaySmoke.applicationModules.length} application modules and ${gatewaySmoke.dependencyPackages.length} dependency packages`,
+    );
+    const runtimeEvidenceName = `fased-hosted-core-runtime-linux-${arch}-v${version}.json`;
+    await fs.writeFile(
+      path.join(outputDir, runtimeEvidenceName),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          type: "fased-hosted-core-runtime-evidence",
+          version,
+          commit,
+          architecture: arch,
+          pluginLoadMs,
+          gatewayReadyRssBytes: gatewaySmoke.gatewayRssBytes,
+          applicationModules: gatewaySmoke.applicationModules,
+          dependencyPackages: gatewaySmoke.dependencyPackages,
+          piAiProviderBundle: {
+            packaging: "upstream-unconditional-dependencies",
+            installedSdkPackages: piAiProviderSdkPackages,
+            idleLoadedSdkPackages: idleLoadedPiAiProviderSdkPackages,
+            allowedIdleSdkPackages: allowedIdlePiAiProviderSdkPackages,
+            limitation:
+              "The upstream OpenAI message converter shares an SDK-bearing provider entrypoint; all other provider SDKs must remain dormant.",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
     );
     const cachedPluginInfo = await run(
       process.execPath,
@@ -552,6 +711,9 @@ async function main(): Promise<void> {
       version,
       commit,
       dependencyHash,
+      componentContractDigest,
+      coreExtensions: componentContract.core.extensionDirectories.toSorted(),
+      loadedPlugins: componentContract.core.loadedPluginIds.toSorted(),
     };
     await fs.writeFile(
       path.join(packageRoot, ".fased-hosted-runtime.json"),
@@ -588,6 +750,45 @@ async function main(): Promise<void> {
     const dependencyStat = await fs.stat(dependencyAssetPath);
     console.log(
       `hosted-artifact: ready ${dependencyAssetName} (${(dependencyStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${dependencyDigest})`,
+    );
+    await fs.writeFile(
+      path.join(outputDir, `${unifiedAppAssetName}.core-receipt.json`),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          type: "fased-hosted-core-receipt",
+          version,
+          commit,
+          architecture: arch,
+          componentContractDigest,
+          retainedExtensions: componentContract.core.extensionDirectories.toSorted(),
+          loadedPlugins: componentContract.core.loadedPluginIds.toSorted(),
+          excludedExtensions: removedExtensions.toSorted(),
+          excludedApplicationPaths: removedApplicationPaths.toSorted(),
+          excludedManagedRuntimePaths: managedRuntimeImplementationPaths,
+          excludedDependencyPackages: componentContract.core.excludedDependencyPackages,
+          applicationBudget,
+          dependencyBudget,
+          dependencyCache: {
+            mode: "offline-pnpm-store",
+            downloads: 0,
+            durationMs: deployment.durationMs,
+          },
+          runtimeEvidence: {
+            asset: runtimeEvidenceName,
+            pluginLoadMs,
+            gatewayReadyRssBytes: gatewaySmoke.gatewayRssBytes,
+            applicationModules: gatewaySmoke.applicationModules.length,
+            dependencyPackages: gatewaySmoke.dependencyPackages.length,
+            dormantMiningImplementationLoaded: false,
+            idleLoadedPiAiProviderSdkPackages,
+            allowedIdlePiAiProviderSdkPackages,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
     );
     await fs.writeFile(
       path.join(outputDir, `${unifiedAppAssetName}.release.json`),

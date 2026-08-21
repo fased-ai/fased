@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Api, Context, Model, ProviderHeaders } from "@mariozechner/pi-ai";
-import { convertMessages } from "@mariozechner/pi-ai/api/openai-completions";
 import {
   calculateCost,
   createAssistantMessageEventStream,
-  getEnvApiKey,
   parseStreamingJson,
-} from "@mariozechner/pi-ai/compat";
+} from "@mariozechner/pi-ai";
+import { convertMessages } from "@mariozechner/pi-ai/api/openai-completions";
 import { resolveProviderTransportTurnStateWithPlugin } from "../plugins/provider-runtime.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./copilot-dynamic-headers.js";
 import { detectOpenAICompletionsCompat } from "./openai-completions-compat.js";
@@ -20,6 +19,7 @@ import {
   resolveOpenAIStrictToolFlagForInventory,
   resolveOpenAIStrictToolSetting,
 } from "./openai-tool-schema.js";
+import { getEnvApiKey } from "./pi-ai-compat-runtime.js";
 import { buildGuardedModelFetch } from "./provider-transport-fetch.js";
 import { stripSystemPromptCacheBoundary } from "./system-prompt-cache-boundary.js";
 import { transformTransportMessages } from "./transport-message-transform.js";
@@ -793,7 +793,7 @@ export function createOpenAIResponsesTransportStreamFn(): StreamFn {
         timestamp: Date.now(),
       };
       try {
-        const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
+        const apiKey = options?.apiKey || (await getEnvApiKey(model.provider)) || "";
         const turnState = resolveProviderTransportTurnState(model, {
           sessionId: options?.sessionId,
           turnId: randomUUID(),
@@ -971,7 +971,7 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
         timestamp: Date.now(),
       };
       try {
-        const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
+        const apiKey = options?.apiKey || (await getEnvApiKey(model.provider)) || "";
         const client = createOpenAICompletionsClient(model, context, apiKey, options?.headers);
         let params = buildOpenAICompletionsParams(
           model as OpenAIModeModel,

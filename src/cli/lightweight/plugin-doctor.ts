@@ -18,7 +18,12 @@ export async function run(argv: string[] = process.argv): Promise<boolean> {
   if (argv.includes("--json")) {
     console.log(
       JSON.stringify(
-        { ok: errors.length === 0 && diagnostics.length === 0, errors, diagnostics },
+        {
+          ok: errors.length === 0 && diagnostics.length === 0,
+          plugins: cache.plugins,
+          errors,
+          diagnostics,
+        },
         null,
         2,
       ),

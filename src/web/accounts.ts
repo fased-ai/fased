@@ -7,7 +7,7 @@ import type { DmPolicy, GroupPolicy, WhatsAppAccountConfig } from "../config/typ
 import { resolveAccountEntry } from "../routing/account-lookup.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../routing/session-key.js";
 import { resolveUserPath } from "../utils.js";
-import { hasWebCredsSync } from "./auth-store.js";
+import { hasWebCredsSync } from "./auth-state.js";
 
 export type ResolvedWhatsAppAccount = {
   accountId: string;

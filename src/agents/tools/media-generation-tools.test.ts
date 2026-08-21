@@ -38,7 +38,7 @@ vi.mock("../../video-generation/runtime.js", () => ({
   generateVideo: mocks.generateVideo,
 }));
 
-vi.mock("../../media/store.js", () => ({
+vi.mock("../../media/runtime-service.js", () => ({
   saveMediaBuffer: mocks.saveMediaBuffer,
 }));
 

@@ -19,7 +19,8 @@ import { chunkDiscordTextWithMode } from "./chunk.js";
 import { createDiscordClient, resolveDiscordRest } from "./client.js";
 import { fetchChannelPermissionsDiscord, isThreadChannelType } from "./send.permissions.js";
 import { DiscordSendError } from "./send.types.js";
-import { parseDiscordTarget, resolveDiscordTarget } from "./targets.js";
+import { resolveDiscordTarget } from "./targets-live.js";
+import { parseDiscordTarget } from "./targets.js";
 
 const DISCORD_TEXT_LIMIT = 2000;
 const DISCORD_MAX_STICKERS = 3;

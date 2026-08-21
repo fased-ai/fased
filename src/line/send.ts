@@ -6,7 +6,10 @@ import { formatErrorMessage } from "../infra/errors.js";
 import { resolveLineAccount } from "./accounts.js";
 import { resolveLineChannelAccessToken } from "./channel-access-token.js";
 import { formatLineIdForLog } from "./logging.js";
+import { createTextMessageWithQuickReplies } from "./quick-replies.js";
 import type { LineSendResult } from "./types.js";
+
+export { createQuickReplyItems, createTextMessageWithQuickReplies } from "./quick-replies.js";
 
 // Use the messaging API types directly
 type Message = messagingApi.Message;
@@ -16,8 +19,6 @@ type LocationMessage = messagingApi.LocationMessage;
 type FlexMessage = messagingApi.FlexMessage;
 type FlexContainer = messagingApi.FlexContainer;
 type TemplateMessage = messagingApi.TemplateMessage;
-type QuickReply = messagingApi.QuickReply;
-type QuickReplyItem = messagingApi.QuickReplyItem;
 
 // Cache for user profiles
 const userProfileCache = new Map<
@@ -373,35 +374,6 @@ export async function pushTextMessageWithQuickReplies(
     verboseMessage: (chatId) =>
       `line: pushed message with quick replies to ${formatLineIdForLog(chatId)}`,
   });
-}
-
-/**
- * Create quick reply buttons to attach to a message
- */
-export function createQuickReplyItems(labels: string[]): QuickReply {
-  const items: QuickReplyItem[] = labels.slice(0, 13).map((label) => ({
-    type: "action",
-    action: {
-      type: "message",
-      label: label.slice(0, 20), // LINE limit: 20 chars
-      text: label,
-    },
-  }));
-  return { items };
-}
-
-/**
- * Create a text message with quick reply buttons
- */
-export function createTextMessageWithQuickReplies(
-  text: string,
-  quickReplyLabels: string[],
-): TextMessage & { quickReply: QuickReply } {
-  return {
-    type: "text",
-    text,
-    quickReply: createQuickReplyItems(quickReplyLabels),
-  };
 }
 
 /**

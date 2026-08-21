@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+	"time"
 
 	"fased-lifecycled/engine"
 	"fased-lifecycled/model"
@@ -101,7 +102,7 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	}
 	gateway := adapter.Identity.Services["gateway"]
 	if err := adapter.Systemd.IsActive(ctx, gateway); err == nil {
-		digest, err := adapter.VerifyCurrent(ctx, manifest, manifestDigest)
+		digest, err := adapter.verifyCurrentAfterOnboarding(ctx, manifest, manifestDigest)
 		return engine.Result{Outcome: engine.OutcomeAlreadyCurrent, Phase: model.PhaseCommitted, ActiveGenerationID: manifest.ActiveGeneration.ID, ConvergenceReceiptDigest: digest}, err
 	}
 	if err := adapter.Systemd.Start(ctx, gateway); err != nil {
@@ -110,8 +111,36 @@ func (adapter *TargetAdapter) CompleteOnboarding(ctx context.Context) (engine.Re
 	if err := adapter.Systemd.IsActive(ctx, gateway); err != nil {
 		return engine.Result{}, fmt.Errorf("Gateway is not active after onboarding completion: %w", err)
 	}
-	digest, err := adapter.VerifyCurrent(ctx, manifest, manifestDigest)
+	digest, err := adapter.verifyCurrentAfterOnboarding(ctx, manifest, manifestDigest)
 	return engine.Result{Outcome: engine.OutcomeUpdated, Phase: model.PhaseCommitted, ActiveGenerationID: manifest.ActiveGeneration.ID, ConvergenceReceiptDigest: digest}, err
+}
+
+func (adapter *TargetAdapter) verifyCurrentAfterOnboarding(ctx context.Context, manifest model.Manifest, manifestDigest string) (string, error) {
+	const (
+		readinessDeadline = 30 * time.Second
+		readinessInterval = 100 * time.Millisecond
+	)
+	deadline := time.NewTimer(readinessDeadline)
+	defer deadline.Stop()
+	for {
+		digest, err := adapter.VerifyCurrent(ctx, manifest, manifestDigest)
+		if err == nil {
+			return digest, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "plugin readiness receipt identity mismatch") {
+			return "", err
+		}
+		timer := time.NewTimer(readinessInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", errors.Join(ctx.Err(), err)
+		case <-deadline.C:
+			timer.Stop()
+			return "", fmt.Errorf("onboarding plugin readiness deadline exceeded: %w", err)
+		case <-timer.C:
+		}
+	}
 }
 
 func validateOnboardingConfig(config Config) error {
@@ -570,7 +599,10 @@ func (adapter *TargetAdapter) currentConvergenceEvidence(ctx context.Context, ma
 		return terminalConvergenceEvidence{}, errors.New("Gateway readiness process differs from the service-manager process identity")
 	}
 	plugin, err := adapter.Plugins.Verify(ctx, current)
-	if err != nil || !validDigest(plugin.Digest) {
+	if err != nil {
+		return terminalConvergenceEvidence{}, fmt.Errorf("plugin readiness is not bound to the current generation: %w", err)
+	}
+	if !validDigest(plugin.Digest) {
 		return terminalConvergenceEvidence{}, errors.New("plugin readiness is not bound to the current generation")
 	}
 	evidence.Gateway = &readiness

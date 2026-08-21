@@ -4,8 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Api, Context, Model, Usage } from "@mariozechner/pi-ai";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai/compat";
+import {
+  createAssistantMessageEventStream,
+  type Api,
+  type Context,
+  type Model,
+  type Usage,
+} from "@mariozechner/pi-ai";
 import { resolveFasedAgentPackageRootSync } from "../infra/fased-root.js";
 import { resolvePluginInstallDir } from "../plugins/install.js";
 

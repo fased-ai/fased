@@ -15,7 +15,7 @@ import { getSessionBindingService } from "../../infra/outbound/session-binding-s
 import { generateSecureUuid } from "../../infra/secure-random.js";
 import { prefixSystemMessage } from "../../infra/system-message.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
-import { maybeApplyTtsToPayload, resolveTtsConfig } from "../../tts/tts.js";
+import { maybeApplyTtsToPayload, resolveTtsConfig } from "../../tts/runtime-service.js";
 import {
   isCommandEnabled,
   maybeResolveTextAlias,

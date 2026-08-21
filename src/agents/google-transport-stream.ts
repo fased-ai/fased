@@ -6,9 +6,10 @@ import type {
   SimpleStreamOptions,
   ThinkingLevel,
 } from "@mariozechner/pi-ai";
-import { calculateCost, getEnvApiKey } from "@mariozechner/pi-ai/compat";
+import { calculateCost } from "@mariozechner/pi-ai";
 import { parseGeminiAuth } from "../infra/gemini-auth.js";
 import { normalizeGoogleApiBaseUrl } from "../infra/google-api-base-url.js";
+import { getEnvApiKey } from "./pi-ai-compat-runtime.js";
 import { buildGuardedModelFetch } from "./provider-transport-fetch.js";
 import { stripSystemPromptCacheBoundary } from "./system-prompt-cache-boundary.js";
 import { transformTransportMessages } from "./transport-message-transform.js";
@@ -602,7 +603,7 @@ export function createGoogleGenerativeAiTransportStreamFn(): StreamFn {
         timestamp: Date.now(),
       };
       try {
-        const apiKey = options?.apiKey ?? getEnvApiKey(model.provider) ?? undefined;
+        const apiKey = options?.apiKey ?? (await getEnvApiKey(model.provider)) ?? undefined;
         const fetch = buildGuardedModelFetch(model);
         const params = buildGoogleGenerativeAiParams(model, context, options);
         await Promise.resolve(options?.onPayload?.(params, model));

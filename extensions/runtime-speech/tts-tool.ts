@@ -1,11 +1,11 @@
 import { Type } from "@sinclair/typebox";
-import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
-import type { FasedAgentConfig } from "../../config/config.js";
-import { loadConfig } from "../../config/config.js";
-import { textToSpeech } from "../../tts/tts.js";
-import type { GatewayMessageChannel } from "../../utils/message-channel.js";
-import type { AnyAgentTool } from "./common.js";
-import { readStringParam } from "./common.js";
+import type { AnyAgentTool } from "../../src/agents/tools/common.js";
+import { readStringParam } from "../../src/agents/tools/common.js";
+import { SILENT_REPLY_TOKEN } from "../../src/auto-reply/tokens.js";
+import type { FasedAgentConfig } from "../../src/config/config.js";
+import { loadConfig } from "../../src/config/config.js";
+import { textToSpeech } from "../../src/tts/tts.js";
+import type { GatewayMessageChannel } from "../../src/utils/message-channel.js";
 
 const TtsToolSchema = Type.Object({
   text: Type.String({ description: "Text to convert to speech." }),
@@ -36,7 +36,6 @@ export function createTtsTool(opts?: {
 
       if (result.success && result.audioPath) {
         const lines: string[] = [];
-        // Tag Telegram Opus output as a voice bubble instead of a file attachment.
         if (result.voiceCompatible) {
           lines.push("[[audio_as_voice]]");
         }

@@ -38,7 +38,7 @@ export async function ensureOpenAICodexRuntimeComponent(params: {
   const executable = resolveExecutable();
   if (!executable) {
     throw new Error(
-      "The signed Fased generation is missing the bundled OpenAI sign-in executable. Rerun the verified installer or `fased update`, then retry.",
+      "The signed OpenAI runtime component did not provide its executable. Reinstall openai-runtime through `fased components install` and retry.",
     );
   }
   return {

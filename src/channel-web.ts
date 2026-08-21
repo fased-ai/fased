@@ -18,7 +18,7 @@ export {
   type WebListenerCloseReason,
 } from "./web/inbound.js";
 export { loginWeb } from "./web/login.js";
-export { loadWebMedia, optimizeImageToJpeg } from "./web/media.js";
+export { loadWebMedia, optimizeImageToJpeg } from "./media/runtime-service.js";
 export { sendMessageWhatsApp } from "./web/outbound.js";
 export {
   createWaSocket,

@@ -1,6 +1,4 @@
 import { rmSync } from "node:fs";
-import type { TextContent } from "@mariozechner/pi-ai";
-import { completeSimple } from "@mariozechner/pi-ai/compat";
 import { getApiKeyForModel, requireApiKey } from "../agents/model-auth.js";
 import {
   buildModelAliasIndex,
@@ -11,6 +9,7 @@ import {
 import { resolveModel } from "../agents/pi-embedded-runner/model.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import { importOptionalRuntimeDependency } from "../infra/optional-runtime-dependency.js";
+import { completeSimple, type TextContent } from "../plugin-sdk/speech-runtime.js";
 import type {
   ResolvedTtsConfig,
   ResolvedTtsModelOverrides,

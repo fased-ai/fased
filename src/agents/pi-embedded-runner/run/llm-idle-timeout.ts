@@ -1,6 +1,6 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai/compat";
 import type { FasedAgentConfig } from "../../../config/config.js";
+import { streamSimple } from "../../pi-ai-compat-runtime.js";
 import type { EmbeddedRunTrigger } from "./params.js";
 
 export const DEFAULT_LLM_IDLE_TIMEOUT_MS = 60_000;

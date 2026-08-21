@@ -145,16 +145,19 @@ describe("services.webSearch.test handler", () => {
     const config = { plugins: { entries: { telegram: { enabled: true } } } };
     const report = { entries: [{ id: "telegram", state: "installed" }], summary: { total: 1 } };
     mocks.loadConfig.mockReturnValue({});
+    mocks.loadCapabilityCatalog.mockReturnValue([
+      { id: "sat-mining", label: "SAT Mining", delivery: "core" },
+    ]);
     mocks.installCapabilityComponent.mockResolvedValue({
       config,
-      entry: { id: "telegram", label: "Telegram", restartRequired: true },
-      pluginId: "telegram",
+      entry: { id: "sat-mining", label: "SAT Mining", delivery: "core", restartRequired: true },
+      pluginId: "sat-mining",
       slotWarnings: [],
     });
     mocks.buildCapabilityReadinessReport.mockReturnValue(report);
     const respond = vi.fn();
     await servicesHandlers["services.component.install"]({
-      params: { id: "telegram" },
+      params: { id: "sat-mining" },
       respond: respond as never,
       context: {} as never,
       frame: {} as never,
@@ -165,10 +168,29 @@ describe("services.webSearch.test handler", () => {
     expect(mocks.writeConfigFile).toHaveBeenCalledWith(config);
     expect(respond.mock.calls[0]?.[0]).toBe(true);
     expect(respond.mock.calls[0]?.[1]).toMatchObject({
-      id: "telegram",
+      id: "sat-mining",
       restartRequired: true,
       report,
     });
+  });
+
+  it("requires the owner CLI for a managed component that restarts Gateway", async () => {
+    mocks.loadCapabilityCatalog.mockReturnValue([
+      { id: "telegram", label: "Telegram", delivery: "managed-component" },
+    ]);
+    const respond = vi.fn();
+    await servicesHandlers["services.component.install"]({
+      params: { id: "telegram" },
+      respond: respond as never,
+      context: {} as never,
+      frame: {} as never,
+      client: {} as never,
+      req: { type: "req", id: "req-1", method: "services.component.install" },
+      isWebchatConnect: () => false,
+    });
+    expect(mocks.installCapabilityComponent).not.toHaveBeenCalled();
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(respond.mock.calls[0]?.[2]?.message).toContain("owner CLI");
   });
 
   it("restarts only a known catalog component", async () => {

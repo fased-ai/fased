@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "core": {
+    "allowedApplicationTopLevelEntries": [
+      "CHANGELOG.md",
+      "LICENSE",
+      "README.md",
+      "assets",
+      "config",
+      "dist",
+      "docs",
+      "extensions",
+      "fased.mjs",
+      "install.sh",
+      "node_modules",
+      "package.json",
+      "pnpm-lock.yaml",
+      "release",
+      "scripts",
+      "shared",
+      "skills"
+    ],
+    "excludedApplicationPaths": ["assets/chrome-extension"],
+    "extensionDirectories": [
+      "device-pair",
+      "fased-federation",
+      "llm-task",
+      "memory-core",
+      "sat-mining",
+      "thread-ownership"
+    ],
+    "sharedDirectories": ["shared"],
+    "loadedPluginIds": ["device-pair", "memory-core", "sat-mining"],
+    "maximumApplicationFiles": 4000,
+    "maximumApplicationBytes": 33554432,
+    "maximumDependencyFiles": 28000,
+    "maximumDependencyBytes": 167772160,
+    "excludedDependencyPackages": ["@fedify/vocab-tools", "typescript"],
+    "allowedSharedPackDependencies": [
+      "@sinclair/typebox",
+      "express",
+      "markdown-it",
+      "qrcode-terminal",
+      "undici",
+      "ws",
+      "zod"
+    ]
+  },
+  "managedTransactionBudgets": {
+    "maximumArchiveBytes": 268435456,
+    "maximumExpandedBytes": 536870912,
+    "maximumTarStreamBytes": 671088640,
+    "maximumEntries": 100000
+  },
+  "packs": [
+    {
+      "id": "channels",
+      "extensionDirectories": [
+        "bluebubbles",
+        "discord",
+        "feishu",
+        "googlechat",
+        "imessage",
+        "irc",
+        "line",
+        "matrix",
+        "mattermost",
+        "msteams",
+        "nextcloud-talk",
+        "nostr",
+        "signal",
+        "slack",
+        "synology-chat",
+        "telegram",
+        "tlon",
+        "twitch",
+        "whatsapp",
+        "zalo",
+        "zalouser"
+      ]
+    },
+    {
+      "id": "browser-media-voice",
+      "extensionDirectories": [
+        "phone-control",
+        "runtime-browser",
+        "runtime-media",
+        "runtime-speech",
+        "talk-voice",
+        "voice-call"
+      ]
+    },
+    {
+      "id": "enterprise-connectors",
+      "extensionDirectories": ["acpx", "diagnostics-otel", "lobster", "open-prose"]
+    },
+    {
+      "id": "model-providers",
+      "extensionDirectories": [
+        "copilot-proxy",
+        "google-gemini-cli-auth",
+        "minimax-portal-auth",
+        "qwen-portal-auth",
+        "runtime-openai"
+      ]
+    },
+    {
+      "id": "memory-backends",
+      "extensionDirectories": ["memory-lancedb", "runtime-local-memory"]
+    }
+  ],
+  "ignoredDirectories": ["test-utils"]
+}

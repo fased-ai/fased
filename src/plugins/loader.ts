@@ -19,12 +19,16 @@ import {
 import { discoverFasedAgentPlugins } from "./discovery.js";
 import { initializeGlobalHookRunner } from "./hook-runner-global.js";
 import { repairUpdateOwnedPluginInstallState } from "./installs.js";
+import {
+  MANAGED_RUNTIME_CORE_MODULES,
+  MANAGED_RUNTIME_SPECIFIER_PREFIX,
+} from "./managed-runtime-aliases.js";
 import { loadPluginManifestRegistry } from "./manifest-registry.js";
 import { isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
 import { bindManagedPluginSnapshot, readCanonicalPluginLock } from "./readiness-receipt.js";
 import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./registry.js";
 import { setActivePluginRegistry } from "./runtime.js";
-import { createPluginRuntime } from "./runtime/index.js";
+import { createPluginRuntime } from "./runtime/factory.js";
 import { validateJsonSchemaValue } from "./schema-validator.js";
 import type {
   FasedAgentPluginDefinition,
@@ -249,6 +253,20 @@ function resolvePluginSdkAliases(): Record<string, string> {
     }
     for (const request of spec.requests) {
       aliases[request] = resolved;
+    }
+  }
+  const modulePath = fileURLToPath(import.meta.url);
+  const coreRoot = resolveFasedAgentPackageRootSync({ moduleUrl: import.meta.url });
+  if (coreRoot) {
+    const useDist = modulePath.replace(/\\/gu, "/").includes("/dist/");
+    for (const moduleId of MANAGED_RUNTIME_CORE_MODULES) {
+      const source = path.join(coreRoot, "src", `${moduleId}.ts`);
+      const compiled = path.join(coreRoot, "dist", `${moduleId}.js`);
+      const candidates = useDist ? [compiled, source] : [source, compiled];
+      const resolved = candidates.find((candidate) => fs.existsSync(candidate));
+      if (resolved) {
+        aliases[`${MANAGED_RUNTIME_SPECIFIER_PREFIX}${moduleId}`] = resolved;
+      }
     }
   }
   return aliases;

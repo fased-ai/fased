@@ -16,7 +16,6 @@ import {
   normalizeE164,
   normalizeSignalMessagingTarget,
   PAIRING_APPROVED_MESSAGE,
-  resolveChannelMediaMaxBytes,
   resolveDefaultSignalAccountId,
   resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy,
@@ -28,6 +27,7 @@ import {
   type ChannelPlugin,
   type ResolvedSignalAccount,
 } from "fased/plugin-sdk";
+import { signalOutbound } from "./outbound.js";
 import { getSignalRuntime } from "./runtime.js";
 
 const signalMessageActions: ChannelMessageActionAdapter = {
@@ -223,43 +223,7 @@ export const signalPlugin: ChannelPlugin<ResolvedSignalAccount> = {
       };
     },
   },
-  outbound: {
-    deliveryMode: "direct",
-    chunker: (text, limit) => getSignalRuntime().channel.text.chunkText(text, limit),
-    chunkerMode: "text",
-    textChunkLimit: 4000,
-    sendText: async ({ cfg, to, text, accountId, deps }) => {
-      const send = deps?.sendSignal ?? getSignalRuntime().channel.signal.sendMessageSignal;
-      const maxBytes = resolveChannelMediaMaxBytes({
-        cfg,
-        resolveChannelLimitMb: ({ cfg, accountId }) =>
-          cfg.channels?.signal?.accounts?.[accountId]?.mediaMaxMb ??
-          cfg.channels?.signal?.mediaMaxMb,
-        accountId,
-      });
-      const result = await send(to, text, {
-        maxBytes,
-        accountId: accountId ?? undefined,
-      });
-      return { channel: "signal", ...result };
-    },
-    sendMedia: async ({ cfg, to, text, mediaUrl, accountId, deps }) => {
-      const send = deps?.sendSignal ?? getSignalRuntime().channel.signal.sendMessageSignal;
-      const maxBytes = resolveChannelMediaMaxBytes({
-        cfg,
-        resolveChannelLimitMb: ({ cfg, accountId }) =>
-          cfg.channels?.signal?.accounts?.[accountId]?.mediaMaxMb ??
-          cfg.channels?.signal?.mediaMaxMb,
-        accountId,
-      });
-      const result = await send(to, text, {
-        mediaUrl,
-        maxBytes,
-        accountId: accountId ?? undefined,
-      });
-      return { channel: "signal", ...result };
-    },
-  },
+  outbound: signalOutbound,
   status: {
     defaultRuntime: createDefaultChannelRuntimeState(DEFAULT_ACCOUNT_ID),
     collectStatusIssues: (accounts) => collectStatusIssuesFromLastError("signal", accounts),

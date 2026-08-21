@@ -6,7 +6,6 @@ const moduleLoads = vi.hoisted(() => ({
   telegram: vi.fn(),
   discord: vi.fn(),
   slack: vi.fn(),
-  signal: vi.fn(),
   imessage: vi.fn(),
 }));
 
@@ -15,7 +14,6 @@ const sendFns = vi.hoisted(() => ({
   telegram: vi.fn(async () => ({ messageId: "t1", chatId: "telegram:1" })),
   discord: vi.fn(async () => ({ messageId: "d1", channelId: "discord:1" })),
   slack: vi.fn(async () => ({ messageId: "s1", channelId: "slack:1" })),
-  signal: vi.fn(async () => ({ messageId: "sg1", conversationId: "signal:1" })),
   imessage: vi.fn(async () => ({ messageId: "i1", chatId: "imessage:1" })),
 }));
 
@@ -37,11 +35,6 @@ vi.mock("../discord/send.js", () => {
 vi.mock("../slack/send.js", () => {
   moduleLoads.slack();
   return { sendMessageSlack: sendFns.slack };
-});
-
-vi.mock("../signal/send.js", () => {
-  moduleLoads.signal();
-  return { sendMessageSignal: sendFns.signal };
 });
 
 vi.mock("../imessage/send.js", () => {
@@ -71,7 +64,6 @@ describe("createDefaultDeps", () => {
     expect(moduleLoads.telegram).not.toHaveBeenCalled();
     expect(moduleLoads.discord).not.toHaveBeenCalled();
     expect(moduleLoads.slack).not.toHaveBeenCalled();
-    expect(moduleLoads.signal).not.toHaveBeenCalled();
     expect(moduleLoads.imessage).not.toHaveBeenCalled();
 
     const sendTelegram = deps.sendMessageTelegram as unknown as (

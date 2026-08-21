@@ -1,12 +1,13 @@
-import { completeSimple, type AssistantMessage } from "@mariozechner/pi-ai/compat";
+import type { AssistantMessage } from "@mariozechner/pi-ai/compat";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { getApiKeyForModel } from "../agents/model-auth.js";
 import { resolveModel } from "../agents/pi-embedded-runner/model.js";
 import type { FasedAgentConfig } from "../config/config.js";
+import { completeSimple } from "../plugin-sdk/speech-runtime.js";
 import { withEnv } from "../test-utils/env.js";
 import * as tts from "./tts.js";
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("../plugin-sdk/speech-runtime.js", () => ({
   completeSimple: vi.fn(),
   // Some auth helpers import oauth provider metadata at module load time.
   getOAuthProviders: () => [],
@@ -161,12 +162,12 @@ describe("tts", () => {
             provider: "openai",
             prefsPath: "/tmp/fased-tts-personas-test.json",
             openai: {
-              apiKey: "secret-openai-key",
+              apiKey: "secret-openai-key", // pragma: allowlist secret
               model: "tts-1",
               voice: "nova",
             },
             elevenlabs: {
-              apiKey: "secret-eleven-key",
+              apiKey: "secret-eleven-key", // pragma: allowlist secret
               modelId: "eleven_turbo_v2_5",
               voiceId: "pMsXgVXv3BLzUgSXRplE",
             },

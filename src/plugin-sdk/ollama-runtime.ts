@@ -9,8 +9,9 @@ import type {
   ToolCall,
   Usage,
 } from "@mariozechner/pi-ai";
-import { createAssistantMessageEventStream, streamSimple } from "@mariozechner/pi-ai/compat";
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { DEFAULT_CONTEXT_TOKENS } from "../agents/defaults.js";
+import { streamSimple } from "../agents/pi-ai-compat-runtime.js";
 import { normalizeProviderId } from "../agents/provider-id.js";
 import { formatErrorMessage } from "../infra/errors.js";
 

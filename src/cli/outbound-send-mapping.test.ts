@@ -11,7 +11,6 @@ describe("createOutboundSendDepsFromCliSource", () => {
       sendMessageTelegram: vi.fn() as CliOutboundSendSource["sendMessageTelegram"],
       sendMessageDiscord: vi.fn() as CliOutboundSendSource["sendMessageDiscord"],
       sendMessageSlack: vi.fn() as CliOutboundSendSource["sendMessageSlack"],
-      sendMessageSignal: vi.fn() as CliOutboundSendSource["sendMessageSignal"],
       sendMessageIMessage: vi.fn() as CliOutboundSendSource["sendMessageIMessage"],
     };
 
@@ -22,7 +21,6 @@ describe("createOutboundSendDepsFromCliSource", () => {
       sendTelegram: deps.sendMessageTelegram,
       sendDiscord: deps.sendMessageDiscord,
       sendSlack: deps.sendMessageSlack,
-      sendSignal: deps.sendMessageSignal,
       sendIMessage: deps.sendMessageIMessage,
     });
   });

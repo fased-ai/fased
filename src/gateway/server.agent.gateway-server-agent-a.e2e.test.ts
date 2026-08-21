@@ -55,6 +55,7 @@ const createRegistry = (channels: PluginRegistry["channels"]): PluginRegistry =>
   realtimeTranscriptionProviders: [],
   realtimeVoiceProviders: [],
   gatewayHandlers: {},
+  capabilityProviders: {},
   gatewayMethodScopes: {},
   httpHandlers: [],
   httpRoutes: [],

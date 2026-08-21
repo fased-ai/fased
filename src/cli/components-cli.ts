@@ -34,20 +34,41 @@ export function registerComponentsCli(program: Command) {
 
   components
     .command("install")
-    .description("Enable a cataloged bundled component")
+    .description("Enable a core component or install a signed managed component")
     .argument("<id>", "Component id from `fased components`")
-    .action(async (id: string) => {
-      await installComponentCommand(id);
+    .option("--catalog <path>", "Exact local P6 component catalog")
+    .option("--catalog-digest <sha256>", "Exact canonical catalog digest")
+    .option("--archive <path>", "Exact local P6 component archive")
+    .action(async (id: string, options: ComponentInstallOptions) => {
+      await installComponentCommand(id, options);
     });
 }
 
-export async function installComponentCommand(id: string) {
-  const result = await installCapabilityComponent({ id, config: loadConfig() });
+type ComponentInstallOptions = {
+  catalog?: string;
+  catalogDigest?: string;
+  archive?: string;
+};
+
+export async function installComponentCommand(id: string, options: ComponentInstallOptions = {}) {
+  const transaction =
+    options.catalog || options.catalogDigest || options.archive
+      ? {
+          catalogPath: options.catalog ?? "",
+          catalogDigest: options.catalogDigest ?? "",
+          archivePath: options.archive ?? "",
+        }
+      : undefined;
+  const result = await installCapabilityComponent({ id, config: loadConfig(), transaction });
   await writeConfigFile(result.config);
   for (const warning of result.slotWarnings) {
     defaultRuntime.log(theme.warn(warning));
   }
-  defaultRuntime.log(`Enabled bundled component: ${result.entry.label}`);
+  defaultRuntime.log(
+    result.entry.delivery === "managed-component"
+      ? `Installed signed component: ${result.entry.label}`
+      : `Enabled core component: ${result.entry.label}`,
+  );
   if (result.entry.restartRequired !== false) {
     defaultRuntime.log("Restart the gateway to apply the component.");
   }

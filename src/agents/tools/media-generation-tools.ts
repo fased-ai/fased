@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { generateImage } from "../../image-generation/runtime.js";
-import { saveMediaBuffer } from "../../media/store.js";
+import { saveMediaBuffer } from "../../media/runtime-service.js";
 import {
   completeTaskRunByRunId,
   createRunningTaskRun,

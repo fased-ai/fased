@@ -1,5 +1,8 @@
 import type { messagingApi } from "@line/bot-sdk";
+import { stripMarkdown } from "../text/strip-markdown.js";
 import { createReceiptCard, toFlexMessage, type FlexBubble } from "./flex-templates.js";
+
+export { stripMarkdown } from "../text/strip-markdown.js";
 
 type FlexMessage = messagingApi.FlexMessage;
 type FlexComponent = messagingApi.FlexComponent;
@@ -335,43 +338,6 @@ export function convertLinksToFlexBubble(links: MarkdownLink[]): FlexBubble {
       paddingAll: "md",
     },
   };
-}
-
-/**
- * Strip markdown formatting from text (for plain text output)
- * Handles: bold, italic, strikethrough, headers, blockquotes, horizontal rules
- */
-export function stripMarkdown(text: string): string {
-  let result = text;
-
-  // Remove bold: **text** or __text__
-  result = result.replace(/\*\*(.+?)\*\*/g, "$1");
-  result = result.replace(/__(.+?)__/g, "$1");
-
-  // Remove italic: *text* or _text_ (but not already processed)
-  result = result.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "$1");
-  result = result.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, "$1");
-
-  // Remove strikethrough: ~~text~~
-  result = result.replace(/~~(.+?)~~/g, "$1");
-
-  // Remove headers: # Title, ## Title, etc.
-  result = result.replace(/^#{1,6}\s+(.+)$/gm, "$1");
-
-  // Remove blockquotes: > text
-  result = result.replace(/^>\s?(.*)$/gm, "$1");
-
-  // Remove horizontal rules: ---, ***, ___
-  result = result.replace(/^[-*_]{3,}$/gm, "");
-
-  // Remove inline code: `code`
-  result = result.replace(/`([^`]+)`/g, "$1");
-
-  // Clean up extra whitespace
-  result = result.replace(/\n{3,}/g, "\n\n");
-  result = result.trim();
-
-  return result;
 }
 
 /**

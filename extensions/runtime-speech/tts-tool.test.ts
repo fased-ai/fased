@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../../auto-reply/tokens.js", () => ({
+vi.mock("../../src/auto-reply/tokens.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/auto-reply/tokens.js")>()),
   SILENT_REPLY_TOKEN: "QUIET_TOKEN",
 }));
 

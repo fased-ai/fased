@@ -1,5 +1,4 @@
-import type { ProviderHeaders } from "@mariozechner/pi-ai";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai/compat";
+import { createAssistantMessageEventStream, type ProviderHeaders } from "@mariozechner/pi-ai";
 
 export type TransportUsage = {
   input: number;

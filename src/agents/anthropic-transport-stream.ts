@@ -6,12 +6,13 @@ import type {
   SimpleStreamOptions,
   ThinkingLevel,
 } from "@mariozechner/pi-ai";
-import { calculateCost, getEnvApiKey, parseStreamingJson } from "@mariozechner/pi-ai/compat";
+import { calculateCost, parseStreamingJson } from "@mariozechner/pi-ai";
 import {
   applyAnthropicPayloadPolicyToParams,
   resolveAnthropicPayloadPolicy,
 } from "./anthropic-payload-policy.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./copilot-dynamic-headers.js";
+import { getEnvApiKey } from "./pi-ai-compat-runtime.js";
 import { buildGuardedModelFetch } from "./provider-transport-fetch.js";
 import { transformTransportMessages } from "./transport-message-transform.js";
 import {
@@ -712,7 +713,7 @@ export function createAnthropicMessagesTransportStreamFn(): StreamFn {
         timestamp: Date.now(),
       };
       try {
-        const apiKey = options?.apiKey ?? getEnvApiKey(model.provider) ?? "";
+        const apiKey = options?.apiKey ?? (await getEnvApiKey(model.provider)) ?? "";
         if (!apiKey) {
           throw new Error(`No API key for provider: ${model.provider}`);
         }

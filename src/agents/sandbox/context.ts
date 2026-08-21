@@ -1,6 +1,4 @@
 import fs from "node:fs/promises";
-import { DEFAULT_BROWSER_EVALUATE_ENABLED } from "../../browser/constants.js";
-import { ensureBrowserControlAuth, resolveBrowserControlAuth } from "../../browser/control-auth.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -8,7 +6,6 @@ import { resolveUserPath } from "../../utils.js";
 import { syncSkillsToWorkspace } from "../skills.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR } from "../workspace.js";
 import { resolveSandboxBackend } from "./backend.js";
-import { ensureSandboxBrowser } from "./browser.js";
 import { resolveSandboxConfigForAgent } from "./config.js";
 import { ensureSandboxContainer } from "./docker.js";
 import { createSandboxFsBridge } from "./fs-bridge.js";
@@ -191,33 +188,37 @@ export async function resolveSandboxContext(params: {
     cfg: resolvedCfg,
   });
 
-  const evaluateEnabled =
-    params.config?.browser?.evaluateEnabled ?? DEFAULT_BROWSER_EVALUATE_ENABLED;
-
-  const bridgeAuth = cfg.browser.enabled
-    ? await (async () => {
-        // Sandbox browser bridge server runs on a loopback TCP port; always wire up
-        // the same auth that loopback browser clients will send (token/password).
-        const cfgForAuth = params.config ?? loadConfig();
-        let browserAuth = resolveBrowserControlAuth(cfgForAuth);
-        try {
-          const ensured = await ensureBrowserControlAuth({ cfg: cfgForAuth });
-          browserAuth = ensured.auth;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : JSON.stringify(error);
-          defaultRuntime.error?.(`Sandbox browser auth ensure failed: ${message}`);
-        }
-        return browserAuth;
-      })()
-    : undefined;
-  const browser = await ensureSandboxBrowser({
-    scopeKey,
-    workspaceDir,
-    agentWorkspaceDir,
-    cfg: resolvedCfg,
-    evaluateEnabled,
-    bridgeAuth,
-  });
+  let browser: SandboxContext["browser"];
+  if (cfg.browser.enabled) {
+    const [{ DEFAULT_BROWSER_EVALUATE_ENABLED }, controlAuth, { ensureSandboxBrowser }] =
+      await Promise.all([
+        import("../../browser/constants.js"),
+        import("../../browser/control-auth.js"),
+        import("./browser.js"),
+      ]);
+    const evaluateEnabled =
+      params.config?.browser?.evaluateEnabled ?? DEFAULT_BROWSER_EVALUATE_ENABLED;
+    // Sandbox browser bridge server runs on a loopback TCP port; always wire up
+    // the same auth that loopback browser clients will send (token/password).
+    const cfgForAuth = params.config ?? loadConfig();
+    let browserAuth = controlAuth.resolveBrowserControlAuth(cfgForAuth);
+    try {
+      const ensured = await controlAuth.ensureBrowserControlAuth({ cfg: cfgForAuth });
+      browserAuth = ensured.auth;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : JSON.stringify(error);
+      defaultRuntime.error?.(`Sandbox browser auth ensure failed: ${message}`);
+    }
+    browser =
+      (await ensureSandboxBrowser({
+        scopeKey,
+        workspaceDir,
+        agentWorkspaceDir,
+        cfg: resolvedCfg,
+        evaluateEnabled,
+        bridgeAuth: browserAuth,
+      })) ?? undefined;
+  }
 
   const sandboxContext: SandboxContext = {
     enabled: true,
@@ -230,7 +231,7 @@ export async function resolveSandboxContext(params: {
     docker: resolvedCfg.docker,
     tools: resolvedCfg.tools,
     browserAllowHostControl: resolvedCfg.browser.allowHostControl,
-    browser: browser ?? undefined,
+    browser,
   };
 
   sandboxContext.fsBridge = createSandboxFsBridge({ sandbox: sandboxContext });

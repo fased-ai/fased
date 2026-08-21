@@ -4,8 +4,6 @@ import type { CliDeps } from "../cli/deps.js";
 import { resolveAgentMaxConcurrent, resolveSubagentMaxConcurrent } from "../config/agent-limits.js";
 import { isRestartEnabled } from "../config/commands.js";
 import type { loadConfig } from "../config/config.js";
-import { startGmailWatcherWithLogs } from "../hooks/gmail-watcher-lifecycle.js";
-import { stopGmailWatcher } from "../hooks/gmail-watcher.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { resetDirectoryCache } from "../infra/outbound/target-resolver.js";
@@ -18,7 +16,6 @@ import { setCommandLaneConcurrency, getTotalQueueSize } from "../process/command
 import { CommandLane } from "../process/lanes.js";
 import type { ChannelKind, GatewayReloadPlan } from "./config-reload.js";
 import { resolveHooksConfig } from "./hooks.js";
-import { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import { buildGatewayCronService, type GatewayCronState } from "./server-cron.js";
 import { markGatewayModelCatalogStaleForReload } from "./server-model-catalog.js";
 
@@ -26,7 +23,6 @@ type GatewayHotReloadState = {
   hooksConfig: ReturnType<typeof resolveHooksConfig>;
   heartbeatRunner: HeartbeatRunner;
   cronState: GatewayCronState;
-  browserControl: Awaited<ReturnType<typeof startBrowserControlServerIfEnabled>> | null;
 };
 
 function shouldInvalidateGatewayModelCatalog(changedPaths: string[]): boolean {
@@ -64,7 +60,6 @@ export function createGatewayReloadHandlers(params: {
     let policyMutated = false;
     let heartbeatMutated = false;
     let cronMutated = false;
-    let browserMutated = false;
     let gmailMutated = false;
     let concurrencyMutated = false;
     const channelsMutated: ChannelKind[] = [];
@@ -79,6 +74,7 @@ export function createGatewayReloadHandlers(params: {
       config: ReturnType<typeof loadConfig>,
       phase: "apply" | "rollback",
     ) => {
+      const { startGmailWatcherWithLogs } = await import("../hooks/gmail-watcher-lifecycle.js");
       let failed = false;
       await startGmailWatcherWithLogs({
         cfg: config,
@@ -138,21 +134,9 @@ export function createGatewayReloadHandlers(params: {
         await workingState.cronState.cron.start();
       }
 
-      if (plan.restartBrowserControl) {
-        browserMutated = true;
-        try {
-          await workingState.browserControl?.stop();
-        } finally {
-          workingState.browserControl = null;
-          publishState();
-        }
-        workingState.browserControl = await startBrowserControlServerIfEnabled();
-        publishState();
-      }
-
       if (plan.restartGmailWatcher) {
         gmailMutated = true;
-        await stopGmailWatcher();
+        await (await import("../hooks/gmail-watcher.js")).stopGmailWatcher();
         await startGmailWatcherForReload(nextConfig, "apply");
       }
 
@@ -227,26 +211,11 @@ export function createGatewayReloadHandlers(params: {
       }
 
       if (gmailMutated) {
-        const stopped = await capture(async () => await stopGmailWatcher());
+        const stopped = await capture(async () =>
+          (await import("../hooks/gmail-watcher.js")).stopGmailWatcher(),
+        );
         if (stopped) {
           await capture(async () => await startGmailWatcherForReload(previousConfig, "rollback"));
-        }
-      }
-
-      if (browserMutated) {
-        const candidateBrowser = workingState.browserControl;
-        const candidateStopped = await capture(async () => await candidateBrowser?.stop());
-        workingState.browserControl = null;
-        publishState();
-        if (candidateStopped) {
-          let restoredBrowser: GatewayHotReloadState["browserControl"] = null;
-          const restored = await capture(async () => {
-            restoredBrowser = await startBrowserControlServerIfEnabled();
-          });
-          if (restored) {
-            workingState.browserControl = restoredBrowser;
-            publishState();
-          }
         }
       }
 
@@ -262,15 +231,18 @@ export function createGatewayReloadHandlers(params: {
               broadcast: params.broadcast,
             });
           });
-          if (built && restoredCronState) {
+          // The assignment occurs inside capture's callback; preserve the
+          // post-callback runtime narrowing explicitly for the rollback path.
+          const restored = restoredCronState as GatewayCronState | null;
+          if (built && restored) {
             // The original instance is permanently lifecycle-fenced. Restore
             // configuration through a fresh service instead of silently
             // restarting that old object.
-            workingState.cronState = restoredCronState;
+            workingState.cronState = restored;
             publishState();
-            const started = await capture(async () => await restoredCronState.cron.start());
+            const started = await capture(async () => await restored.cron.start());
             if (!started) {
-              await capture(async () => await restoredCronState.cron.stopAndDrainForLifecycle());
+              await capture(async () => await restored.cron.stopAndDrainForLifecycle());
             }
           }
         }

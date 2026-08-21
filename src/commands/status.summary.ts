@@ -16,7 +16,7 @@ import {
   resolveSessionModelRef,
 } from "../gateway/session-utils.js";
 import { buildChannelSummary } from "../infra/channel-summary.js";
-import { resolveHeartbeatSummaryForAgent } from "../infra/heartbeat-runner.js";
+import { resolveHeartbeatSummaryForAgent } from "../infra/heartbeat-summary.js";
 import { peekSystemEvents } from "../infra/system-events.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveAcpxMcpBridgeStatus } from "./status.acpx-bridge.js";

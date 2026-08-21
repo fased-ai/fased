@@ -132,7 +132,6 @@ function planNeedsHotApply(plan: GatewayReloadPlan): boolean {
     plan.hotReasons.length > 0 ||
     plan.reloadHooks ||
     plan.restartGmailWatcher ||
-    plan.restartBrowserControl ||
     plan.restartCron ||
     plan.restartHeartbeat ||
     plan.restartChannels.size > 0

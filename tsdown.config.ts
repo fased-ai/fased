@@ -11,6 +11,7 @@ const channelRuntimeExternals = [
   /^@buape\/carbon(?:\/.*)?$/,
   /^@discordjs\/(?:opus|voice)(?:\/.*)?$/,
   /^@grammyjs\/(?:runner|transformer-throttler)(?:\/.*)?$/,
+  /^@line\/bot-sdk(?:\/.*)?$/,
   /^@slack\/(?:bolt|web-api)(?:\/.*)?$/,
   /^@snazzah\/davey(?:\/.*)?$/,
   /^@whiskeysockets\/baileys(?:\/.*)?$/,
@@ -46,22 +47,23 @@ const baseEntries = [
   },
 ] as const;
 
+const pluginSdkEntryMap = {
+  index: "src/plugin-sdk/index.ts",
+  "account-id": "src/plugin-sdk/account-id.ts",
+  "channel-plugin-common": "src/plugin-sdk/channel-plugin-common.ts",
+  "command-status": "src/plugin-sdk/command-status.ts",
+  "device-pair": "src/plugin-sdk/device-pair.ts",
+  discord: "src/plugin-sdk/discord.ts",
+  "provider-web-search-config-contract": "src/plugin-sdk/provider-web-search-config-contract.ts",
+  "sat-runtime": "src/plugin-sdk/sat-runtime.ts",
+  slack: "src/plugin-sdk/slack.ts",
+  telegram: "src/plugin-sdk/telegram.ts",
+  whatsapp: "src/plugin-sdk/whatsapp.ts",
+} as const;
+
 const pluginSdkEntries = [
   {
-    entry: {
-      index: "src/plugin-sdk/index.ts",
-      "account-id": "src/plugin-sdk/account-id.ts",
-      "channel-plugin-common": "src/plugin-sdk/channel-plugin-common.ts",
-      "command-status": "src/plugin-sdk/command-status.ts",
-      "device-pair": "src/plugin-sdk/device-pair.ts",
-      discord: "src/plugin-sdk/discord.ts",
-      "provider-web-search-config-contract":
-        "src/plugin-sdk/provider-web-search-config-contract.ts",
-      "sat-runtime": "src/plugin-sdk/sat-runtime.ts",
-      slack: "src/plugin-sdk/slack.ts",
-      telegram: "src/plugin-sdk/telegram.ts",
-      whatsapp: "src/plugin-sdk/whatsapp.ts",
-    },
+    entry: pluginSdkEntryMap,
     outDir: "dist/plugin-sdk",
     env,
     fixedExtension: false,
@@ -90,9 +92,13 @@ const preservedCoreConfig = {
     entry: "src/entry.ts",
     "daemon-cli": "src/cli/daemon-cli.ts",
     "warning-filter": "src/infra/warning-filter.ts",
+    "text/strip-markdown": "src/text/strip-markdown.ts",
     ...(isVpsBuild
       ? {}
       : {
+          ...Object.fromEntries(
+            Object.entries(pluginSdkEntryMap).map(([name, entry]) => [`plugin-sdk/${name}`, entry]),
+          ),
           extensionAPI: "src/extensionAPI.ts",
           "llm-slug-generator": "src/hooks/llm-slug-generator.ts",
           "bundled/boot-md/handler": "src/hooks/bundled/boot-md/handler.ts",
@@ -128,18 +134,11 @@ const lightweightCliConfigs = [
 const defaultEntries = (
   isVpsBuild ? [...baseEntries] : [...baseEntries, ...pluginSdkEntries, ...fullRuntimeEntries]
 ).map((entry) => ({ ...entry, external: channelRuntimeExternals }));
-const isolatedSdkEntries = pluginSdkEntries.map((entry) => ({
-  ...entry,
-  clean: false,
-  external: channelRuntimeExternals,
-}));
 
 export default defineConfig(
   buildGraph === "core"
     ? [preservedCoreConfig]
     : buildGraph === "light-cli"
       ? lightweightCliConfigs
-      : buildGraph === "sdk"
-        ? isolatedSdkEntries
-        : defaultEntries,
+      : defaultEntries,
 );

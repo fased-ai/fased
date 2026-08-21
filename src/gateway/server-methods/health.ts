@@ -1,5 +1,5 @@
 import { getGatewayLivenessHealthSnapshot } from "../../commands/health.js";
-import { getStatusSummary } from "../../commands/status.js";
+import { getStatusSummary } from "../../commands/status.summary.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { formatError } from "../server-utils.js";
 import { formatForLog } from "../ws-log.js";

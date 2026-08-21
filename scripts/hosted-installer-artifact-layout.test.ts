@@ -19,6 +19,8 @@ const localRunner = read("scripts/docker/protected-local-systemd/lifecycle-accep
 const hostingUbuntu = read("scripts/docker/hosting-systemd/Containerfile.ubuntu");
 const hostingRocky = read("scripts/docker/hosting-systemd/Containerfile.rocky");
 const hostedArtifactBuilder = read("scripts/build-hosted-runtime-artifact.ts");
+const componentPackBuild = 'pnpm --dir "$ROOT_DIR" hosted:component-packs';
+const hostedReleaseManifestBuild = 'node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs"';
 
 const removedMutationOwners = [
   "scripts/fased-managed-updater-core.mjs",
@@ -34,6 +36,24 @@ const removedMutationOwners = [
 ];
 
 describe("attested Go lifecycle artifact layout", () => {
+  it("allows fresh-core proof to skip optional packs without changing core bytes", () => {
+    expect(localFixture).toContain(
+      'BUILD_COMPONENT_PACKS="${FASED_SYSTEMD_FIXTURE_BUILD_COMPONENT_PACKS:-1}"',
+    );
+    expect(localFixture.indexOf(componentPackBuild)).toBeGreaterThan(0);
+    expect(localFixture).toContain('if [[ "$BUILD_COMPONENT_PACKS" == "1" ]]');
+    expect(localFixture.indexOf(hostedReleaseManifestBuild)).toBeGreaterThan(
+      localFixture.indexOf(componentPackBuild),
+    );
+    expect(localFixture).toContain(
+      'HOSTED_ARTIFACT_DIR="${FASED_SYSTEMD_FIXTURE_HOSTED_ARTIFACT_DIR:-}"',
+    );
+    expect(localFixture).toContain('copy_verified_hosted_artifact "$HOSTED_ARTIFACT_DIR"');
+    expect(localFixture).toContain(".dependencyCache.downloads == 0");
+    expect(localFixture).toContain('.loadedPlugins == ["device-pair","memory-core","sat-mining"]');
+    expect(localFixture).toContain("runtimeEvidence.dormantMiningImplementationLoaded == false");
+  });
+
   it("ships only the acquisition wrappers needed by the public installer and updater", () => {
     expect(files).toContain("install.sh");
     expect(files).not.toContain("scripts/fased-managed-updater.mjs");
@@ -293,7 +313,7 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(hostedArtifactBuilder).toContain('VITEST: ""');
     expect(hostedArtifactBuilder).toContain("stdoutHandle.fd");
     expect(hostedArtifactBuilder).toContain("stderrHandle.fd");
-    expect(hostedArtifactBuilder).toContain('includes("No plugin issues detected.")');
+    expect(hostedArtifactBuilder).toContain("pluginDoctorReport.ok !== true");
   });
 
   it("does not route merged-main CI through the deleted legacy Hosting runner", () => {

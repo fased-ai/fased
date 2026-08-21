@@ -128,11 +128,16 @@ if (
       process.argv = parsed.argv;
     }
 
-    import("./cli/run-main.js")
+    // A command can await lifecycle IPC that deliberately uses unref'd handles.
+    // Keep the main CLI process referenced until the selected command settles;
+    // otherwise Node exits with code 13 for an unsettled top-level await.
+    const cliCompletionKeepAlive = setInterval(() => undefined, 1_000);
+    void import("./cli/run-main.js")
       .then(({ runCli }) => runCli(process.argv))
       .catch((error) => {
         console.error("[fased] Failed to start CLI:", formatUncaughtError(error));
         process.exitCode = 1;
-      });
+      })
+      .finally(() => clearInterval(cliCompletionKeepAlive));
   }
 }

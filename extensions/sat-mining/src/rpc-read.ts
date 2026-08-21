@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { redactSensitiveUrlLikeString } from "fased/plugin-sdk";
 import {
   loadConfig,
   loadWalletProviderSecret,
+  redactSensitiveUrlLikeString,
   readWalletProviderRegistry,
   resolveSatBondProgramIdFromEnv,
   resolveSatMintAddressFromEnv,

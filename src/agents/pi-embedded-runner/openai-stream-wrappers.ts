@@ -1,5 +1,5 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai/compat";
+import { streamSimple } from "../pi-ai-compat-runtime.js";
 import { log } from "./logger.js";
 
 type OpenAIServiceTier = "default" | "auto" | "priority" | "standard_only";

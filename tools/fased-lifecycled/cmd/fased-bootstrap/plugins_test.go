@@ -343,6 +343,10 @@ func TestManagedPluginParserRejectsLegacyAndAcceptsExactCatalog(t *testing.T) {
 	if command.operation != "install" || command.profile != "protected-local" || command.catalog != catalog || command.archives["demo"] != archive {
 		t.Fatalf("unexpected parsed command: %+v", command)
 	}
+	releaseCommand, err := parseManagedPluginCommand([]string{"--profile", "protected-local", "install", "--component", "browser-runtime"})
+	if err != nil || releaseCommand.component != "browser-runtime" || len(releaseCommand.archives) != 0 {
+		t.Fatalf("signed-inventory component route did not parse: %+v err=%v", releaseCommand, err)
+	}
 	for _, invalid := range [][]string{{"install", "--profile", "protected-local"}, {"--profile", "protected-local", "install", "demo"}, {"--profile", "protected-local", "install", "--profile", "hosting"}, {"--profile", "protected-local", "install", "--catalog", "https://example.invalid/a"}, {"--profile", "protected-local", "list", "--catalog", catalog}} {
 		if _, err := parseManagedPluginCommand(invalid); err == nil {
 			t.Fatalf("legacy plugin input was accepted: %v", invalid)

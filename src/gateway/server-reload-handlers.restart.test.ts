@@ -60,7 +60,6 @@ describe("Gateway config restart cancellation", () => {
         storePath: "/tmp/cron.json",
         cronEnabled: true,
       },
-      browserControl: null,
     };
     const handlers = createGatewayReloadHandlers({
       deps: {} as never,
@@ -85,7 +84,6 @@ describe("Gateway config restart cancellation", () => {
       hotReasons: [],
       reloadHooks: false,
       restartGmailWatcher: false,
-      restartBrowserControl: false,
       restartCron: false,
       restartHeartbeat: false,
       restartChannels: new Set(),

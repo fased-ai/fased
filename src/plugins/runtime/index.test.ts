@@ -48,6 +48,13 @@ describe("plugin runtime command execution", () => {
     expect(runtime.gateway).toBeUndefined();
   });
 
+  it("keeps LINE implementation unavailable until its managed component registers", () => {
+    const runtime = createPluginRuntime();
+    expect(() => runtime.channel.line.listLineAccountIds({})).toThrow(
+      "Channel managed component is not installed",
+    );
+  });
+
   it("exposes only fixed plugin admin RPC wrappers, never a generic dispatcher", () => {
     const runtime = createPluginRuntime();
     const helpers = runtime.helpers as Record<string, unknown>;

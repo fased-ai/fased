@@ -265,6 +265,58 @@ func TestManagedPluginTransactionStagesImmutableCandidateWithoutLiveMutation(t *
 	}
 }
 
+func TestManagedPluginTransactionInstallUpdateRollbackCoversEveryComponentPackClass(t *testing.T) {
+	classes := []struct {
+		name string
+		id   string
+	}{
+		{name: "channels", id: "line"},
+		{name: "browser-media-voice", id: "browser-runtime"},
+		{name: "enterprise-connectors", id: "diagnostics-otel"},
+		{name: "model-providers", id: "openai-runtime"},
+		{name: "memory-backends", id: "local-memory-runtime"},
+	}
+	for _, componentClass := range classes {
+		t.Run(componentClass.name, func(t *testing.T) {
+			transaction, request, _, digest := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
+			request.TransactionID = "component-" + componentClass.id
+			catalog, err := stateparticipant.DecodeManagedPluginCatalog(request.CatalogData)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalog.Entries[0].ID = componentClass.id
+			request.CatalogData, err = json.Marshal(catalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.ExpectedCatalogDigest, err = stateparticipant.ManagedPluginCatalogDigest(catalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Archives[0].ID = componentClass.id
+
+			if _, err := transaction.Stage(request); err != nil {
+				t.Fatalf("%s component install stage failed: %v", componentClass.name, err)
+			}
+			if _, err := transaction.Activate(request.TransactionID); err != nil {
+				t.Fatalf("%s component activation failed: %v", componentClass.name, err)
+			}
+			if _, err := transaction.Stage(request); err != nil {
+				t.Fatalf("%s identical update was not idempotent: %v", componentClass.name, err)
+			}
+			if err := transaction.Rollback(request.TransactionID); err != nil {
+				t.Fatalf("%s component rollback failed: %v", componentClass.name, err)
+			}
+			if _, err := os.Lstat(transaction.objectPath(digest)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s rollback retained component bytes: %v", componentClass.name, err)
+			}
+			if err := transaction.Discard(request.TransactionID); err != nil {
+				t.Fatalf("%s component transaction cleanup failed: %v", componentClass.name, err)
+			}
+		})
+	}
+}
+
 func TestManagedPluginTransactionRefusesUnsafeNamespace(t *testing.T) {
 	transaction, _, _, _ := managedTransactionFixture(t, []managedArchiveMember{{header: tar.Header{Name: "index.js", Typeflag: tar.TypeReg, Mode: 0o644}, data: "export default 1\n"}})
 	t.Cleanup(func() { _ = makePluginTreeRemovable(transaction.CodeRoot) })

@@ -1,6 +1,10 @@
 import sharp from "sharp";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { sanitizeContentBlocksImages, sanitizeImageBlocks } from "./tool-images.js";
+
+vi.mock("../media/runtime-service.js", async () =>
+  vi.importActual<typeof import("../media/image-ops.js")>("../media/image-ops.js"),
+);
 
 describe("tool image sanitizing", () => {
   const getImageBlock = (
