@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 import type { LookupFn, SsrFPolicy } from "../infra/net/ssrf.js";
+import { MediaFetchError } from "./fetch-error.js";
 import { detectMime, extensionForMime } from "./mime.js";
 import { readResponseWithLimit } from "./read-response-with-limit.js";
 
@@ -10,17 +11,8 @@ type FetchMediaResult = {
   fileName?: string;
 };
 
-export type MediaFetchErrorCode = "max_bytes" | "http_error" | "fetch_failed";
-
-export class MediaFetchError extends Error {
-  readonly code: MediaFetchErrorCode;
-
-  constructor(code: MediaFetchErrorCode, message: string) {
-    super(message);
-    this.code = code;
-    this.name = "MediaFetchError";
-  }
-}
+export { MediaFetchError } from "./fetch-error.js";
+export type { MediaFetchErrorCode } from "./fetch-error.js";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 

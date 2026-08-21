@@ -309,6 +309,11 @@ function isManagedRuntimeImplementationPath(
       /^dist\/agents\/tools\/browser-tool(?:\.schema)?\.js$/u.test(applicationPath)
     );
   }
+  if (extensionDirectory === "runtime-media") {
+    // The bundle externalizes every approved core facade. Every remaining src
+    // module in this graph is therefore implementation owned by runtime-media.
+    return true;
+  }
   if (extensionDirectory === "acpx") {
     return applicationPath === "dist/cli/acp-cli.js" || applicationPath.startsWith("dist/acp/");
   }
@@ -346,7 +351,12 @@ function isManagedRuntimeImplementationPath(
 
 /** Exact core dist modules whose implementation bytes are owned by managed packs. */
 export async function resolveManagedRuntimeImplementationPaths(
-  extensionDirectories: readonly string[] = ["line", "runtime-browser", "runtime-speech"],
+  extensionDirectories: readonly string[] = [
+    "line",
+    "runtime-browser",
+    "runtime-media",
+    "runtime-speech",
+  ],
 ): Promise<string[]> {
   const paths = new Set<string>();
   for (const extensionDirectory of extensionDirectories) {

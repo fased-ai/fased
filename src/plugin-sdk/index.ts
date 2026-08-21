@@ -458,7 +458,7 @@ export type {
   DiagnosticWebhookReceivedEvent,
 } from "../infra/diagnostic-events.js";
 export { detectMime, extensionForMime, getFileExtension } from "../media/mime.js";
-export { extractOriginalFilename } from "../media/store.js";
+export { extractOriginalFilename } from "../media/filename.js";
 export { issuePairingChallenge } from "../pairing/pairing-challenge.js";
 export { rawDataToString } from "../infra/ws.js";
 export { isDangerousNameMatchingEnabled } from "../config/dangerous-name-matching.js";
@@ -514,4 +514,4 @@ export type {
 export { stripMarkdown } from "../text/strip-markdown.js";
 
 // Media utilities
-export { loadWebMedia, type WebMediaResult } from "../web/media.js";
+export { loadWebMedia, type WebMediaResult } from "../media/runtime-service.js";

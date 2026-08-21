@@ -32,7 +32,7 @@ import {
   resolveTtsAutoMode,
   resolveTtsConfig,
   resolveTtsPrefsPath,
-} from "../tts/tts.js";
+} from "../tts/runtime-service.js";
 import {
   estimateUsageCost,
   formatTokenCount as formatTokenCountShared,

@@ -2,7 +2,6 @@ import type { sendMessageWhatsApp } from "../channels/web/index.js";
 import type { sendMessageDiscord } from "../discord/send.js";
 import type { sendMessageIMessage } from "../imessage/send.js";
 import type { OutboundSendDeps } from "../infra/outbound/deliver.js";
-import type { sendMessageSignal } from "../signal/send.js";
 import type { sendMessageSlack } from "../slack/send.js";
 import type { sendMessageTelegram } from "../telegram/send.js";
 import { createOutboundSendDepsFromCliSource } from "./outbound-send-mapping.js";
@@ -12,7 +11,6 @@ export type CliDeps = {
   sendMessageTelegram: typeof sendMessageTelegram;
   sendMessageDiscord: typeof sendMessageDiscord;
   sendMessageSlack: typeof sendMessageSlack;
-  sendMessageSignal: typeof sendMessageSignal;
   sendMessageIMessage: typeof sendMessageIMessage;
 };
 
@@ -33,10 +31,6 @@ export function createDefaultDeps(): CliDeps {
     sendMessageSlack: async (...args) => {
       const { sendMessageSlack } = await import("../slack/send.js");
       return await sendMessageSlack(...args);
-    },
-    sendMessageSignal: async (...args) => {
-      const { sendMessageSignal } = await import("../signal/send.js");
-      return await sendMessageSignal(...args);
     },
     sendMessageIMessage: async (...args) => {
       const { sendMessageIMessage } = await import("../imessage/send.js");

@@ -11,7 +11,7 @@ import {
   isInboundPathAllowed,
   resolveIMessageRemoteAttachmentRoots,
 } from "../../media/inbound-path-policy.js";
-import { getMediaDir } from "../../media/store.js";
+import { getMediaDir } from "../../media/runtime-service.js";
 import { CONFIG_DIR } from "../../utils.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { signalOutbound } from "../../../../extensions/signal/src/outbound.js";
 import type { FasedAgentConfig } from "../../../config/config.js";
-import { signalOutbound } from "./signal.js";
 
 describe("signalOutbound", () => {
   const cfg: FasedAgentConfig = {

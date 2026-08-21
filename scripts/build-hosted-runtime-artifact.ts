@@ -393,6 +393,7 @@ async function main(): Promise<void> {
       await resolveManagedRuntimeImplementationPaths([
         "line",
         "runtime-browser",
+        "runtime-media",
         "runtime-speech",
         "acpx",
         "discord",

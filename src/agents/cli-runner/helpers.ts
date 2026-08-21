@@ -8,7 +8,7 @@ import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import type { CliBackendConfig } from "../../config/types.js";
 import { runExec } from "../../process/exec.js";
-import { buildTtsSystemPromptHint } from "../../tts/tts.js";
+import { buildTtsSystemPromptHint } from "../../tts/runtime-service.js";
 import { isRecord } from "../../utils.js";
 import { buildModelAliasLines } from "../model-alias-lines.js";
 import { resolveDefaultModelForAgent } from "../model-selection.js";

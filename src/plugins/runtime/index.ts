@@ -58,12 +58,16 @@ import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { getChildLogger } from "../../logging.js";
 import { normalizeLogLevel } from "../../logging/levels.js";
 import { convertMarkdownTables } from "../../markdown/tables.js";
-import { isVoiceCompatibleAudio } from "../../media/audio.js";
-import { mediaKindFromMime } from "../../media/constants.js";
-import { fetchRemoteMedia } from "../../media/fetch.js";
-import { getImageMetadata, resizeToJpeg } from "../../media/image-ops.js";
-import { detectMime } from "../../media/mime.js";
-import { saveMediaBuffer } from "../../media/store.js";
+import {
+  detectMime,
+  fetchRemoteMedia,
+  getImageMetadata,
+  isVoiceCompatibleAudio,
+  loadWebMedia,
+  mediaKindFromMime,
+  resizeToJpeg,
+  saveMediaBuffer,
+} from "../../media/runtime-service.js";
 import { buildPairingReply } from "../../pairing/pairing-messages.js";
 import {
   readChannelAllowFromStore,
@@ -71,8 +75,7 @@ import {
 } from "../../pairing/pairing-store.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
-import { textToSpeechTelephony } from "../../tts/tts.js";
-import { loadWebMedia } from "../../web/media.js";
+import { textToSpeechTelephony } from "../../tts/runtime-service.js";
 import { formatNativeDependencyHint } from "./native-deps.js";
 import { createRuntimeHelpers, type PluginRuntimeOptions } from "./scoped.js";
 import type { PluginRuntime } from "./types.js";

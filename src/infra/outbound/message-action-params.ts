@@ -10,9 +10,9 @@ import type {
 } from "../../channels/plugins/types.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { extensionForMime } from "../../media/mime.js";
+import { loadWebMedia } from "../../media/runtime-service.js";
 import { parseSlackTarget } from "../../slack/targets.js";
 import { parseTelegramTarget } from "../../telegram/targets.js";
-import { loadWebMedia } from "../../web/media.js";
 
 export function readBooleanParam(
   params: Record<string, unknown>,

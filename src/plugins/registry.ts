@@ -14,6 +14,10 @@ import { resolveUserPath } from "../utils.js";
 import { registerPluginCommand } from "./commands.js";
 import { normalizePluginHttpPath } from "./http-path.js";
 import type {
+  PluginRuntimeProviderRegistration,
+  PluginRuntimeProviderRegistry,
+} from "./runtime-provider-types.js";
+import type {
   PluginRuntimeAdminRpcAuditEvent,
   PluginRuntimeAdminRpcInvocation,
 } from "./runtime/admin-rpc-helper.js";
@@ -179,6 +183,7 @@ export type PluginRegistry = {
   realtimeVoiceProviders: PluginRealtimeVoiceProviderRegistration[];
   gatewayHandlers: GatewayRequestHandlers;
   capabilityProviders: Record<string, GatewayRequestHandlers>;
+  runtimeProviders: PluginRuntimeProviderRegistry;
   gatewayMethodScopes: Partial<Record<string, OperatorScope>>;
   httpHandlers: PluginHttpRegistration[];
   httpRoutes: PluginHttpRouteRegistration[];
@@ -209,6 +214,7 @@ export function createEmptyPluginRegistry(): PluginRegistry {
     realtimeVoiceProviders: [],
     gatewayHandlers: {},
     capabilityProviders: {},
+    runtimeProviders: {},
     gatewayMethodScopes: {},
     httpHandlers: [],
     httpRoutes: [],
@@ -370,6 +376,38 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       return;
     }
     registry.capabilityProviders[record.id] = Object.freeze({ ...handlers });
+  };
+
+  const registerRuntimeProvider = (
+    record: PluginRecord,
+    registration: PluginRuntimeProviderRegistration,
+  ) => {
+    if (
+      (registration.kind === "media" && record.id !== "media-runtime") ||
+      (registration.kind === "speech" && record.id !== "speech-runtime")
+    ) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `runtime provider ${registration.kind} is not owned by plugin ${record.id}`,
+      });
+      return;
+    }
+    if (registry.runtimeProviders[registration.kind]) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `runtime provider already registered: ${registration.kind}`,
+      });
+      return;
+    }
+    if (registration.kind === "media") {
+      registry.runtimeProviders.media = Object.freeze({ ...registration.provider });
+    } else {
+      registry.runtimeProviders.speech = Object.freeze({ ...registration.provider });
+    }
   };
 
   const registerHttpHandler = (record: PluginRecord, handler: FasedAgentPluginHttpHandler) => {
@@ -840,6 +878,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       registerGatewayMethod: (method, handler, opts) =>
         registerGatewayMethod(record, method, handler, opts),
       registerCapabilityProvider: (handlers) => registerCapabilityProvider(record, handlers),
+      registerRuntimeProvider: (registration) => registerRuntimeProvider(record, registration),
       registerCli: (registrar, opts) => registerCli(record, registrar, opts),
       registerService: (service) => registerService(record, service),
       registerCommand: (command) => registerCommand(record, command),

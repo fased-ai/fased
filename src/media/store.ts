@@ -9,6 +9,7 @@ import { SafeOpenError, readLocalFileSafely } from "../infra/fs-safe.js";
 import { resolvePinnedHostname } from "../infra/net/ssrf.js";
 import { resolveConfigDir } from "../utils.js";
 import { detectMime, extensionForMime } from "./mime.js";
+export { extractOriginalFilename } from "./filename.js";
 
 const resolveMediaDir = () => path.join(resolveConfigDir(), "media");
 export const MEDIA_MAX_BYTES = 5 * 1024 * 1024; // 5MB default
@@ -48,31 +49,6 @@ function sanitizeFilename(name: string): string {
   const sanitized = trimmed.replace(/[^\p{L}\p{N}._-]+/gu, "_");
   // Collapse multiple underscores, trim leading/trailing, limit length
   return sanitized.replace(/_+/g, "_").replace(/^_|_$/g, "").slice(0, 60);
-}
-
-/**
- * Extract original filename from path if it matches the embedded format.
- * Pattern: {original}---{uuid}.{ext} → returns "{original}.{ext}"
- * Falls back to basename if no pattern match, or "file.bin" if empty.
- */
-export function extractOriginalFilename(filePath: string): string {
-  const basename = path.basename(filePath);
-  if (!basename) {
-    return "file.bin";
-  } // Fallback for empty input
-
-  const ext = path.extname(basename);
-  const nameWithoutExt = path.basename(basename, ext);
-
-  // Check for ---{uuid} pattern (36 chars: 8-4-4-4-12 with hyphens)
-  const match = nameWithoutExt.match(
-    /^(.+)---[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i,
-  );
-  if (match?.[1]) {
-    return `${match[1]}${ext}`;
-  }
-
-  return basename; // Fallback: use as-is
 }
 
 export function getMediaDir() {

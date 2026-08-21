@@ -15,7 +15,7 @@ import {
   setTtsMaxLength,
   setTtsProvider,
   textToSpeech,
-} from "../../tts/tts.js";
+} from "../../tts/runtime-service.js";
 import type { ReplyPayload } from "../types.js";
 import type { CommandHandler } from "./commands-types.js";
 

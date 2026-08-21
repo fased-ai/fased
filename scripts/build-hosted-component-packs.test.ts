@@ -41,6 +41,14 @@ describe("managed component pack identity", () => {
       path.join(import.meta.dirname, "..", "extensions", "runtime-speech", "index.ts"),
       "utf8",
     );
+    const runtimeMedia = await fs.readFile(
+      path.join(import.meta.dirname, "..", "extensions", "runtime-media", "index.ts"),
+      "utf8",
+    );
+    expect(runtimeMedia).toContain('kind: "media"');
+    expect(runtimeMedia).toContain("api.registerRuntimeProvider");
+    expect(runtimeSpeech).toContain('kind: "speech"');
+    expect(runtimeSpeech).toContain("api.registerRuntimeProvider");
     expect(runtimeSpeech).toContain("api.registerTool");
     const coreTools = await fs.readFile(
       path.join(import.meta.dirname, "..", "src", "agents", "fased-tools.ts"),
@@ -83,7 +91,7 @@ describe("managed component pack identity", () => {
     expect(paths).not.toContain("dist/browser/profiles.js");
     expect(paths).not.toContain("dist/browser/control-auth.js");
     expect(paths).not.toContain("dist/browser/paths.js");
-    expect(paths).not.toContain("dist/browser/proxy-files.js");
+    expect(paths).toContain("dist/browser/proxy-files.js");
     expect(paths).not.toContain("dist/tts/tts.js");
     expect(paths).not.toContain("dist/infra/home-dir.js");
     expect(paths).not.toContain("dist/plugins/discovery.js");
@@ -275,6 +283,17 @@ describe("managed component pack identity", () => {
     expect(paths).toContain("dist/tts/tts.js");
     expect(paths).toContain("dist/tts/tts-core.js");
     expect(paths).not.toContain("dist/plugin-sdk/speech-runtime.js");
+  });
+
+  it("derives media implementation paths for exclusion from the base artifact", async () => {
+    const paths = await resolveManagedRuntimeImplementationPaths(["runtime-media"]);
+    expect(paths).toContain("dist/web/media.js");
+    expect(paths).toContain("dist/media/fetch.js");
+    expect(paths).toContain("dist/media/store.js");
+    expect(paths).toContain("dist/media/audio.js");
+    expect(paths).toContain("dist/media/image-ops.js");
+    expect(paths).not.toContain("dist/media/runtime-service.js");
+    expect(paths).not.toContain("dist/plugins/runtime-provider-runtime.js");
   });
 
   it("moves the ACP protocol bridge and SDK ownership into the acpx component", async () => {

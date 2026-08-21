@@ -5,7 +5,7 @@ import { resolveApiKeyForProvider } from "../agents/model-auth.js";
 import type { MsgContext } from "../auto-reply/templating.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import { resolvePreferredFasedAgentTmpDir } from "../infra/tmp-fased-dir.js";
-import { fetchRemoteMedia } from "../media/fetch.js";
+import { fetchRemoteMedia } from "../media/runtime-service.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { clearMediaUnderstandingBinaryCacheForTests } from "./runner.js";
 
@@ -23,7 +23,7 @@ vi.mock("../agents/model-auth.js", () => ({
   },
 }));
 
-vi.mock("../media/fetch.js", () => ({
+vi.mock("../media/runtime-service.js", () => ({
   fetchRemoteMedia: vi.fn(),
 }));
 

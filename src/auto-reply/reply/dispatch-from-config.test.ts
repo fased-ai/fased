@@ -147,7 +147,7 @@ vi.mock("../../infra/outbound/session-binding-service.js", async (importOriginal
     }),
   };
 });
-vi.mock("../../tts/tts.js", () => ({
+vi.mock("../../tts/runtime-service.js", () => ({
   maybeApplyTtsToPayload: (params: unknown) => ttsMocks.maybeApplyTtsToPayload(params),
   normalizeTtsAutoMode: (value: unknown) => ttsMocks.normalizeTtsAutoMode(value),
   resolveTtsConfig: (cfg: FasedAgentConfig) => ttsMocks.resolveTtsConfig(cfg),

@@ -12,7 +12,7 @@ import { buildAgentSystemPrompt } from "../../agents/system-prompt.js";
 import { buildToolSummaryMap } from "../../agents/tool-summaries.js";
 import type { WorkspaceBootstrapFile } from "../../agents/workspace.js";
 import { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
-import { buildTtsSystemPromptHint } from "../../tts/tts.js";
+import { buildTtsSystemPromptHint } from "../../tts/runtime-service.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 
 export type CommandsSystemPromptBundle = {

@@ -38,6 +38,7 @@ import type { RuntimeEnv } from "../runtime.js";
 import type { RuntimeWebSearchMetadata } from "../secrets/runtime-web-tools.types.js";
 import type { VideoGenerationProvider } from "../video-generation/types.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
+import type { PluginRuntimeProviderRegistration } from "./runtime-provider-types.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
 export type { PluginRuntime } from "./runtime/types.js";
@@ -470,6 +471,8 @@ export type FasedAgentPluginApi = {
   ) => void;
   /** Register handlers consumed only by a core optional-capability facade. */
   registerCapabilityProvider: (handlers: GatewayRequestHandlers) => void;
+  /** Register a typed application runtime owned by an installed managed component. */
+  registerRuntimeProvider: (registration: PluginRuntimeProviderRegistration) => void;
   registerCli: (registrar: FasedAgentPluginCliRegistrar, opts?: { commands?: string[] }) => void;
   registerService: (service: FasedAgentPluginService) => void;
   registerProvider: (provider: ProviderPlugin) => void;
