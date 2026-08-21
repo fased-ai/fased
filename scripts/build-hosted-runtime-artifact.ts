@@ -481,7 +481,7 @@ async function main(): Promise<void> {
           "  try { await import(id); throw new Error(`excluded dependency resolved: ${id}`); }",
           '  catch (error) { if (String(error).includes("excluded dependency resolved")) throw error; }',
           "}",
-        ].join(";"),
+        ].join("\n"),
       ],
       packageRoot,
     );

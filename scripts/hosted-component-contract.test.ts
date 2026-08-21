@@ -203,6 +203,8 @@ describe("hosted component contract", () => {
     expect(artifactSource).toContain("managedRuntimeImplementationPaths.push(relative)");
     expect(artifactSource).toContain("componentContract.core.excludedDependencyPackages");
     expect(artifactSource).toContain('for (const id of ["typescript", "@fedify/vocab-tools"])');
+    expect(artifactSource).toContain('].join("\\n")');
+    expect(artifactSource).not.toContain('].join(";")');
     expect(artifactSource).toContain("extensions/sat-mining/implementation.js");
     expect(artifactSource).toContain("Dormant SAT Mining loaded its operational implementation");
     for (const packageName of [
