@@ -574,19 +574,29 @@ export async function buildHostedComponentPacks(
   }
 }
 
+export function selectedComponentDirectoriesFromArgv(
+  argv: readonly string[],
+): ReadonlySet<string> | undefined {
+  const componentIndex = argv.indexOf("--components");
+  if (componentIndex < 0) {
+    return undefined;
+  }
+  const selected = argv[componentIndex + 1]
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return selected?.length ? new Set(selected) : undefined;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
   const outputIndex = process.argv.indexOf("--output");
   const output = process.argv[outputIndex + 1];
   if (outputIndex < 0 || !output) {
     throw new Error("usage: build-hosted-component-packs.ts --output <directory>");
   }
-  const componentIndex = process.argv.indexOf("--components");
-  const selected = process.argv[componentIndex + 1]
-    ?.split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const selected = selectedComponentDirectoriesFromArgv(process.argv);
   await buildHostedComponentPacks(
     path.resolve(rootDir, output),
-    selected?.length ? { selectedExtensionDirectories: new Set(selected) } : {},
+    selected ? { selectedExtensionDirectories: selected } : {},
   );
 }
