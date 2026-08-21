@@ -4,7 +4,8 @@ import type { SkillCommandSpec } from "../agents/skills.js";
 import { isCommandFlagEnabled } from "../config/commands.js";
 import type { FasedAgentConfig } from "../config/types.js";
 import { escapeRegExp } from "../utils.js";
-import { getChatCommands, getNativeCommandSurfaces } from "./commands-registry.data.js";
+import { getChatCommands } from "./commands-registry.data.js";
+export { isNativeCommandSurface, shouldHandleTextCommands } from "./commands-policy.js";
 import type {
   ChatCommandDefinition,
   CommandArgChoiceContext,
@@ -513,21 +514,4 @@ export function resolveTextCommand(
   }
   const args = trimmed.slice(alias.length).trim();
   return { command, args: args || undefined };
-}
-
-export function isNativeCommandSurface(surface?: string): boolean {
-  if (!surface) {
-    return false;
-  }
-  return getNativeCommandSurfaces().has(surface.toLowerCase());
-}
-
-export function shouldHandleTextCommands(params: ShouldHandleTextCommandsParams): boolean {
-  if (params.commandSource === "native") {
-    return true;
-  }
-  if (params.cfg.commands?.text !== false) {
-    return true;
-  }
-  return !isNativeCommandSurface(params.surface);
 }

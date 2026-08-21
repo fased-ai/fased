@@ -15,7 +15,7 @@ import {
   isControlCommandMessage,
   shouldComputeCommandAuthorized,
 } from "../../auto-reply/command-detection.js";
-import { shouldHandleTextCommands } from "../../auto-reply/commands-registry.js";
+import { shouldHandleTextCommands } from "../../auto-reply/commands-policy.js";
 import { withReplyDispatcher } from "../../auto-reply/dispatch.js";
 import {
   formatAgentEnvelope,

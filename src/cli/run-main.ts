@@ -8,6 +8,7 @@ import { ensureFasedAgentCliOnPath } from "../infra/path-env.js";
 import { assertSupportedRuntime } from "../infra/runtime-guard.js";
 import { installUnhandledRejectionHandler } from "../infra/unhandled-rejections.js";
 import { enableConsoleCapture } from "../logging.js";
+import { initializePluginRuntimeFactory } from "../plugins/runtime/factory.js";
 import { getCommandPath, getPrimaryCommand, hasHelpOrVersion } from "./argv.js";
 import { tryRouteCli } from "./route.js";
 import { normalizeWindowsArgv } from "./windows-argv.js";
@@ -79,6 +80,11 @@ export async function runCli(argv: string[] = process.argv) {
 
     // Enforce the minimum supported runtime before doing any work.
     assertSupportedRuntime();
+
+    // Resolve the plugin runtime only after the CLI module graph has finished
+    // evaluating. The full runtime reaches back into plugin discovery, so
+    // selecting it with top-level await would deadlock the ESM import cycle.
+    await initializePluginRuntimeFactory();
 
     if (await tryRouteCli(normalizedArgv)) {
       return;

@@ -82,4 +82,14 @@ describe("managed plugin runtime selection", () => {
       }),
     ).toBe(false);
   });
+
+  it("uses the minimal runtime for exact committed installer onboarding", () => {
+    expect(
+      useManagedFreshCoreRuntime({
+        FASED_INSTALLER_ONBOARD: "1",
+        FASED_INSTALL_LIFECYCLE_COMMITTED: "1",
+      }),
+    ).toBe(true);
+    expect(useManagedFreshCoreRuntime({ FASED_INSTALLER_ONBOARD: "1" })).toBe(false);
+  });
 });

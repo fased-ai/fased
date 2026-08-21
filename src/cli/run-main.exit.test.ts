@@ -6,6 +6,7 @@ const loadDotEnvMock = vi.hoisted(() => vi.fn());
 const normalizeEnvMock = vi.hoisted(() => vi.fn());
 const ensurePathMock = vi.hoisted(() => vi.fn());
 const assertRuntimeMock = vi.hoisted(() => vi.fn());
+const initializePluginRuntimeFactoryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./route.js", () => ({
   tryRouteCli: tryRouteCliMock,
@@ -25,6 +26,10 @@ vi.mock("../infra/path-env.js", () => ({
 
 vi.mock("../infra/runtime-guard.js", () => ({
   assertSupportedRuntime: assertRuntimeMock,
+}));
+
+vi.mock("../plugins/runtime/factory.js", () => ({
+  initializePluginRuntimeFactory: initializePluginRuntimeFactoryMock,
 }));
 
 const { runCli } = await import("./run-main.js");

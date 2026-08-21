@@ -259,12 +259,24 @@ describe("managed component pack identity", () => {
 
   it("keeps the CLI process alive until the selected command completes", async () => {
     const entry = await fs.readFile(path.join(process.cwd(), "src", "entry.ts"), "utf8");
+    const runMain = await fs.readFile(
+      path.join(process.cwd(), "src", "cli", "run-main.ts"),
+      "utf8",
+    );
+    const runtimeFactory = await fs.readFile(
+      path.join(process.cwd(), "src", "plugins", "runtime", "factory.ts"),
+      "utf8",
+    );
 
     expect(entry).toContain('void import("./cli/run-main.js")');
     expect(entry).toContain(".then(({ runCli }) => runCli(process.argv))");
     expect(entry).toContain("const cliCompletionKeepAlive = setInterval");
     expect(entry).toContain(".finally(() => clearInterval(cliCompletionKeepAlive));");
     expect(entry).not.toContain('await import("./cli/run-main.js")');
+    expect(runMain).toContain("await initializePluginRuntimeFactory();");
+    expect(runtimeFactory).toContain('await import("./index.js")');
+    expect(runtimeFactory).not.toContain("const runtimeFactory = useManagedFreshCoreRuntime()");
+    expect(runtimeFactory).not.toContain('? (await import("./core.js"))');
   });
 
   it("rejects symbolic-link aliases before producing a managed identity", async () => {
