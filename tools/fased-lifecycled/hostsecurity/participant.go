@@ -48,16 +48,38 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 				return State{}, fmt.Errorf("recover previous Hosting security transaction: %w", err)
 			}
 		case PhasePrepared, PhaseRuntimeReady, PhaseHardening:
-			if !previous.matches(request) {
-				return State{}, errors.New("an incomplete Hosting security transaction has different release or platform identity")
+			if !previous.matchesIncompleteBoundary(request) {
+				return State{}, errors.New("an incomplete Hosting security transaction has a different update channel or platform identity")
 			}
 			inspection, inspectErr := participant.Host.Inspect(ctx, previous.GatewayPort, previous.OperatorUser)
-			if inspectErr != nil || !inspection.TailscaleRunning || !inspection.Authenticated || !inspection.PrivateServeReady {
+			if inspectErr != nil || !previous.matchesPreparedHost(inspection) {
 				return State{}, errors.Join(inspectErr, errors.New("incomplete Hosting security transaction no longer matches the prepared host"))
 			}
 			if !inspection.SignerWebAuthnReady {
 				if err := participant.Host.ConfigureSignerWebAuthn(ctx, previous.TailscaleDNS, previous.Phase != PhasePrepared); err != nil {
 					return State{}, fmt.Errorf("recover signer WebAuthn identity: %w", err)
+				}
+				inspection, inspectErr = participant.Host.Inspect(ctx, previous.GatewayPort, previous.OperatorUser)
+				if inspectErr != nil || !previous.matchesPreparedHost(inspection) || !inspection.SignerWebAuthnReady {
+					return State{}, errors.Join(inspectErr, errors.New("recovered signer WebAuthn identity did not converge"))
+				}
+			}
+			if previous.RuntimeReady && (!inspection.SignerReady || inspection.AppCanElevate) {
+				return State{}, errors.New("incomplete Hosting runtime boundary is not intact")
+			}
+			if previous.Release != request.Release {
+				previous.TransactionID = request.TransactionID
+				previous.Release = request.Release
+				if err := participant.Store.WriteState(previous); err != nil {
+					return State{}, fmt.Errorf("rebind incomplete Hosting security transaction: %w", err)
+				}
+			}
+			// Runtime-ready recovery must repair or replace the pending receipt
+			// after the durable state write. This closes the crash window between
+			// state rebinding and receipt publication without trusting stale bytes.
+			if previous.RuntimeReady {
+				if err := participant.Store.WriteReceipt(previous, false); err != nil {
+					return State{}, fmt.Errorf("publish rebound Hosting security receipt: %w", err)
 				}
 			}
 			return previous, nil
@@ -393,6 +415,17 @@ func (participant Participant) user() io.Writer {
 
 func (state State) matches(request Request) bool {
 	return state.Release == request.Release && state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser
+}
+
+func (state State) matchesIncompleteBoundary(request Request) bool {
+	return state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser
+}
+
+func (state State) matchesPreparedHost(inspection Inspection) bool {
+	return inspection.LifecyclePrerequisitesReady && inspection.TailscaleInstalled && inspection.TailscaleRunning && inspection.Authenticated &&
+		validDNS(inspection.TailscaleDNS) && ipv4Pattern.MatchString(inspection.TailscaleIPv4) && versionPattern.MatchString(inspection.TailscaleVersion) &&
+		inspection.TailscaleDNS == state.TailscaleDNS && inspection.TailscaleIPv4 == state.TailscaleIPv4 && inspection.TailscaleVersion == state.TailscaleVersion &&
+		inspection.PrivateServeReady
 }
 
 func (participant Participant) validateCommittedBoundary(ctx context.Context, state State) error {
