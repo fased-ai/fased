@@ -23,6 +23,13 @@ const (
 	managedSwapDiskMargin = int64(256 << 20)
 )
 
+// Linux reserves one base page at the start of a swap file for its header.
+// Allocate that page in addition to the promised usable capacity so
+// /proc/swaps exposes the complete two-GiB floor.
+func managedSwapFileBytes() int64 {
+	return managedSwapBytes + int64(os.Getpagesize())
+}
+
 type hardeningSwapSnapshot struct {
 	SchemaVersion uint32 `json:"schemaVersion"`
 	Required      bool   `json:"required"`
@@ -118,7 +125,7 @@ func (host LinuxHost) stageManagedSwap(ctx context.Context, snapshot hardeningSw
 				return err
 			}
 			available := int64(stat.Bavail) * int64(stat.Bsize)
-			if available < managedSwapBytes+managedSwapDiskMargin {
+			if available < managedSwapFileBytes()+managedSwapDiskMargin {
 				return errors.New("Hosting requires at least 2.25 GiB free disk to create managed swap")
 			}
 		}
@@ -130,13 +137,13 @@ func (host LinuxHost) stageManagedSwap(ctx context.Context, snapshot hardeningSw
 			return closeErr
 		}
 		if host.RootPrefix != "" {
-			err = os.Truncate(managedPath, managedSwapBytes)
+			err = os.Truncate(managedPath, managedSwapFileBytes())
 		} else {
 			fallocate, findErr := fixedExecutable("/usr/bin/fallocate", "/bin/fallocate")
 			if findErr != nil {
 				return findErr
 			}
-			err = host.run(ctx, fallocate, []string{"-l", strconv.FormatInt(managedSwapBytes, 10), managedPath}, nil, io.Discard, log, nil)
+			err = host.run(ctx, fallocate, []string{"-l", strconv.FormatInt(managedSwapFileBytes(), 10), managedPath}, nil, io.Discard, log, nil)
 		}
 		if err != nil {
 			return err
@@ -287,7 +294,7 @@ func validateManagedSwapParent(path string) error {
 
 func validateManagedSwapFile(info os.FileInfo) error {
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || stat.Uid != uint32(os.Getuid()) || stat.Nlink != 1 || info.Size() != managedSwapBytes {
+	if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || stat.Uid != uint32(os.Getuid()) || stat.Nlink != 1 || info.Size() != managedSwapFileBytes() {
 		return errors.New("Hosting managed swap file is unsafe")
 	}
 	return nil
@@ -369,7 +376,15 @@ func (host LinuxHost) removeManagedSwapFstab() error {
 }
 
 func (host LinuxHost) writeFixtureSwapActive() error {
-	return os.WriteFile(host.path("/proc/swaps"), []byte(fmt.Sprintf("Filename\tType\tSize\tUsed\tPriority\n%s file %d 0 -2\n", host.path(managedSwapPath), managedSwapBytes/1024)), 0o444)
+	info, err := os.Lstat(host.path(managedSwapPath))
+	if err != nil {
+		return err
+	}
+	usableBytes := info.Size() - int64(os.Getpagesize())
+	if usableBytes <= 0 || usableBytes%1024 != 0 {
+		return errors.New("Hosting managed swap fixture size is invalid")
+	}
+	return os.WriteFile(host.path("/proc/swaps"), []byte(fmt.Sprintf("Filename\tType\tSize\tUsed\tPriority\n%s file %d 0 -2\n", host.path(managedSwapPath), usableBytes/1024)), 0o444)
 }
 
 func (host LinuxHost) writeFixtureSwapInactive() error {
