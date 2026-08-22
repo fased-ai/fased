@@ -281,17 +281,26 @@ if [[ "$#" -eq 3 && "$1" == "remove" && "$2" == "-y" && "$3" == "tailscale" ]]; 
   systemctl daemon-reload
   exit 0
 fi
+if [[ "$#" -eq 3 && "$1" == "remove" && "$2" == "-y" && "$3" == "acl" ]]; then
+  DEBIAN_FRONTEND=noninteractive \
+    /usr/local/libexec/fased-fixture-apt-get-real remove -y acl >/dev/null
+  exit 0
+fi
 if [[ "$#" -eq 6 && "$1" == "-o" && "$2" == "APT::Get::AllowUnauthenticated=false" &&
   "$3" == "install" && "$4" == "-y" && "$5" == "--no-install-recommends" &&
   "$6" == "tailscale" ]]; then
   /usr/local/libexec/fased-install-tailscale-fixture
   exit 0
 fi
-if [[ "$#" -eq 6 && "$1" == "install" && "$2" == "-y" &&
+if [[ "$#" -eq 7 && "$1" == "install" && "$2" == "-y" &&
   "$3" == "--no-install-recommends" && "$4" == "nftables" &&
-  "$5" == "fail2ban" && "$6" == "unattended-upgrades" ]]; then
+  "$5" == "fail2ban" && "$6" == "unattended-upgrades" && "$7" == "acl" ]]; then
+  DEBIAN_FRONTEND=noninteractive \
+    /usr/local/libexec/fased-fixture-apt-get-real install -y --no-install-recommends acl >/dev/null
   command -v nft >/dev/null
   command -v fail2ban-client >/dev/null
+  command -v getfacl >/dev/null
+  command -v setfacl >/dev/null
   systemctl cat apt-daily-upgrade.timer >/dev/null
   exit 0
 fi

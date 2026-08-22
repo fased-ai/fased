@@ -477,6 +477,23 @@ describe("lifecycle acceptance contract", () => {
     expect(providerAccess).toContain("verify_sshd_runtime_prerequisites");
   });
 
+  it("starts without ACL tools and models their transactional installation", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const adapterStart = hosting.indexOf("cat >/usr/bin/apt-get <<'EOF_APT_FIXTURE'");
+    const adapter = hosting.slice(adapterStart, hosting.indexOf("\nEOF_APT_FIXTURE", adapterStart));
+
+    expect(hosting).toContain("remove_acl_fixture_prerequisite() {");
+    expect(adapter).toContain('"$3" == "acl"');
+    expect(adapter).toContain("fased-fixture-apt-get-real remove -y acl");
+    expect(adapter).toContain('"$7" == "acl"');
+    expect(adapter).toContain("fased-fixture-apt-get-real install -y --no-install-recommends acl");
+    expect(adapter).toContain("command -v getfacl >/dev/null");
+    expect(adapter).toContain("command -v setfacl >/dev/null");
+  });
+
   it("clears fixture-induced systemd rate limits before explicit restart proof", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
