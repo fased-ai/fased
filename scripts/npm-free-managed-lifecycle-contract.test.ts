@@ -230,8 +230,8 @@ describe("npm-free managed lifecycle", () => {
     expect(workspace).toContain("injectWorkspacePackages: true");
     expect(workspace).not.toContain("forceLegacyDeploy: true");
     expect(artifactBuilder).toContain('npm_config_force_legacy_deploy: "true"');
-    expect(artifactBuilder).toContain(
-      'fs.copyFile(path.join(rootDir, "pnpm-lock.yaml"), path.join(packageRoot, "pnpm-lock.yaml"))',
+    expect(artifactBuilder).toMatch(
+      /fs\.copyFile\(\s*path\.join\(rootDir, "pnpm-lock\.yaml"\),\s*path\.join\(packageRoot, "pnpm-lock\.yaml"\),?\s*\)/u,
     );
     expect(packedSmoke).toContain('npm_config_force_legacy_deploy: "true"');
     expect(artifactBuilder).toContain('["store", "path"]');
