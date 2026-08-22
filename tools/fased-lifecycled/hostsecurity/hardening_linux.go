@@ -357,8 +357,15 @@ func (host LinuxHost) hardeningPackageInstalled(ctx context.Context, family, nam
 		}
 		return false, nil
 	}
-	if family == "apt" && strings.TrimSpace(string(output)) != "ii" {
-		return false, errors.New("dpkg returned an ambiguous installed-package status")
+	if family == "apt" {
+		switch strings.TrimSpace(string(output)) {
+		case "ii":
+			return true, nil
+		case "rc":
+			return false, nil
+		default:
+			return false, errors.New("dpkg returned an ambiguous installed-package status")
+		}
 	}
 	return true, nil
 }

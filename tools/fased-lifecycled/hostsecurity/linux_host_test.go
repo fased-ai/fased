@@ -249,6 +249,41 @@ func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing
 	}
 }
 
+func TestHardeningSnapshotTreatsRemovedConfigResidueAsAbsent(t *testing.T) {
+	host, runner, _ := linuxHostFixture(t)
+	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades"} {
+		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} "+name] = []byte("ii ")
+	}
+	runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} acl"] = []byte("rc ")
+
+	encoded, err := host.SnapshotHardening(context.Background(), "app", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := decodeHardeningSnapshot(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range snapshot.Packages {
+		if item.Name == "acl" {
+			if item.Installed {
+				t.Fatal("removed ACL package configuration residue was treated as installed")
+			}
+			return
+		}
+	}
+	t.Fatal("ACL package missing from hardening snapshot")
+}
+
+func TestHardeningSnapshotRejectsPartialDpkgState(t *testing.T) {
+	host, runner, _ := linuxHostFixture(t)
+	runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} nftables"] = []byte("iU ")
+	if _, err := host.SnapshotHardening(context.Background(), "app", io.Discard); err == nil ||
+		!strings.Contains(err.Error(), "ambiguous installed-package status") {
+		t.Fatalf("partial dpkg state was not rejected: %v", err)
+	}
+}
+
 func TestLinuxHostConfiguresAndRestoresServeWithoutCallerDNS(t *testing.T) {
 	host, runner, _ := linuxHostFixture(t)
 	runner.errors["/usr/bin/tailscale serve get-config --all"] = errors.New("not configured")
