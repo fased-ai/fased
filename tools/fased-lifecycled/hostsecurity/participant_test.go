@@ -660,3 +660,117 @@ func TestHostingSecurityResumesDurableHardeningSnapshot(t *testing.T) {
 		t.Fatalf("durable hardening snapshot was not resumed exactly: %s", joined)
 	}
 }
+
+func TestHostingSecurityRebindsRuntimeReadyPredecessorToNewRelease(t *testing.T) {
+	participant, host, request := fixture(t)
+	request.Release = "0.1.76-rc.114"
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.inspection.SignerReady = true
+	state, err = participant.MarkRuntimeReady(context.Background(), state.TransactionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousTransactionID := state.TransactionID
+
+	host.calls = nil
+	request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	request.Release = "0.1.76-rc.115"
+	rebound, err := participant.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebound.Phase != PhaseRuntimeReady || rebound.TransactionID != request.TransactionID || rebound.Release != request.Release {
+		t.Fatalf("runtime-ready predecessor was not rebound: %+v", rebound)
+	}
+	if rebound.TransactionID == previousTransactionID {
+		t.Fatal("runtime-ready predecessor retained its previous transaction identity")
+	}
+	if got := strings.Join(host.calls, ","); got != "inspect" {
+		t.Fatalf("cross-release recovery mutated the prepared host: %s", got)
+	}
+	pending, err := os.ReadFile(participant.Store.ReceiptPath)
+	if err != nil || !strings.Contains(string(pending), "release="+request.Release+"\n") ||
+		!strings.Contains(string(pending), "transactionId="+request.TransactionID+"\n") ||
+		!strings.Contains(string(pending), "firewallReady=pending\n") {
+		t.Fatalf("rebound pending receipt is not exact: %q err=%v", pending, err)
+	}
+
+	committed, err := participant.Commit(context.Background(), rebound.TransactionID, true)
+	if err != nil || committed.Phase != PhaseCommitted {
+		t.Fatalf("commit rebound transaction: state=%+v err=%v", committed, err)
+	}
+	receipt, err := os.ReadFile(participant.Store.ReceiptPath)
+	if err != nil || !strings.Contains(string(receipt), "release="+request.Release+"\n") ||
+		!strings.Contains(string(receipt), "transactionId="+request.TransactionID+"\n") ||
+		!strings.Contains(string(receipt), "firewallReady=true\n") {
+		t.Fatalf("rebound committed receipt is not exact: %q err=%v", receipt, err)
+	}
+}
+
+func TestHostingSecurityCrossReleaseRecoveryRejectsBoundaryMismatchWithoutMutation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*Request, *fakeHost)
+	}{
+		{name: "channel", mutate: func(request *Request, _ *fakeHost) {
+			request.Channel = "stable"
+			request.Release = "1.2.4"
+		}},
+		{name: "gateway port", mutate: func(request *Request, _ *fakeHost) { request.GatewayPort++ }},
+		{name: "operator", mutate: func(request *Request, _ *fakeHost) { request.OperatorUser = "other" }},
+		{name: "Tailscale identity", mutate: func(_ *Request, host *fakeHost) { host.inspection.TailscaleDNS = "other.tailnet.ts.net" }},
+		{name: "signer readiness", mutate: func(_ *Request, host *fakeHost) { host.inspection.SignerReady = false }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			participant, host, request := fixture(t)
+			state, err := participant.Prepare(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			host.inspection.SignerReady = true
+			if _, err := participant.MarkRuntimeReady(context.Background(), state.TransactionID); err != nil {
+				t.Fatal(err)
+			}
+			stateBefore := snapshotDurableFile(t, participant.Store.StatePath)
+			receiptBefore := snapshotDurableFile(t, participant.Store.ReceiptPath)
+
+			request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+			request.Release = "1.2.3-rc.5"
+			test.mutate(&request, host)
+			if _, err := participant.Prepare(context.Background(), request); err == nil {
+				t.Fatal("cross-release boundary mismatch was accepted")
+			}
+			requireDurableFileUnchanged(t, participant.Store.StatePath, stateBefore)
+			requireDurableFileUnchanged(t, participant.Store.ReceiptPath, receiptBefore)
+		})
+	}
+}
+
+func TestHostingSecurityRuntimeReadyRecoveryRepairsMissingReceipt(t *testing.T) {
+	participant, host, request := fixture(t)
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.inspection.SignerReady = true
+	state, err = participant.MarkRuntimeReady(context.Background(), state.TransactionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(participant.Store.ReceiptPath); err != nil {
+		t.Fatal(err)
+	}
+
+	request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	recovered, err := participant.Prepare(context.Background(), request)
+	if err != nil || recovered.TransactionID != state.TransactionID {
+		t.Fatalf("repair runtime-ready receipt: state=%+v err=%v", recovered, err)
+	}
+	receipt, err := os.ReadFile(participant.Store.ReceiptPath)
+	if err != nil || !strings.Contains(string(receipt), "transactionId="+state.TransactionID+"\n") {
+		t.Fatalf("runtime-ready receipt was not repaired: %q err=%v", receipt, err)
+	}
+}

@@ -731,6 +731,51 @@ run_public_installer() {
       --skip-health
 }
 
+seed_runtime_ready_predecessor_host_security() {
+  local state=/var/lib/fased-host-security/active.json
+  local receipt=/etc/fased/hosting-prerequisites
+  local predecessor_release=0.1.76-rc.114
+  local predecessor_transaction=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+  local gateway_port_state tailscale_dns tailscale_version
+
+  gateway_port_state="$(jq -er .gatewayPort "$state")"
+  tailscale_dns="$(jq -er .tailscaleDns "$state")"
+  tailscale_version="$(jq -er .tailscaleVersion "$state")"
+  jq \
+    --arg release "$predecessor_release" \
+    --arg transaction "$predecessor_transaction" \
+    '.release = $release |
+     .transactionId = $transaction |
+     .phase = "RUNTIME_READY" |
+     .hardeningCommitted = false' \
+    "$state" >/tmp/fased-hosting-runtime-ready-predecessor.json
+  install -m 0600 -o root -g root \
+    /tmp/fased-hosting-runtime-ready-predecessor.json "$state"
+  rm -f /tmp/fased-hosting-runtime-ready-predecessor.json
+
+  cat >/tmp/fased-hosting-runtime-ready-predecessor.receipt <<EOF_RUNTIME_READY_RECEIPT
+schemaVersion=3
+release=$predecessor_release
+updateChannel=beta
+transactionId=$predecessor_transaction
+gatewayPort=$gateway_port_state
+tailscaleDns=$tailscale_dns
+tailscaleVersion=$tailscale_version
+tailscaleServeReady=true
+signerWebAuthnReady=true
+firewallReady=pending
+sshHardened=pending
+fail2banReady=pending
+automaticUpdatesReady=pending
+signerReady=true
+appSudoDisabled=true
+preparedBy=root
+EOF_RUNTIME_READY_RECEIPT
+  install -m 0644 -o root -g root \
+    /tmp/fased-hosting-runtime-ready-predecessor.receipt "$receipt"
+  rm -f /tmp/fased-hosting-runtime-ready-predecessor.receipt
+}
+
 assert_healthy() {
   test "$(jq -er .profile /var/lib/fased-lifecycled/installation-manifest.json)" = hosting
   test "$(jq -er .activeGeneration.version /var/lib/fased-lifecycled/installation-manifest.json)" = "$version"
@@ -1000,8 +1045,20 @@ case "$phase" in
       >/tmp/fased-hosting-state-preservation.out
     acceptance_mark state-preservation /tmp/fased-hosting-state-preservation.out \
       "state preserved"
+    seed_runtime_ready_predecessor_host_security
     run_public_installer >/tmp/fased-hosting-noop.out 2>/tmp/fased-hosting-noop.err
     grep -F "Already current: $version" /tmp/fased-hosting-noop.out >/dev/null
+    jq -e --arg version "$version" \
+      '.phase == "COMMITTED" and .release == $version and
+       .transactionId != "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" and
+       .runtimeReady == true and .hardeningCommitted == true' \
+      /var/lib/fased-host-security/active.json \
+      >/tmp/fased-hosting-cross-release-security-recovery.out
+    grep -Fqx "release=$version" /etc/fased/hosting-prerequisites
+    grep -Fqx 'firewallReady=true' /etc/fased/hosting-prerequisites
+    acceptance_mark cross-release-host-security-recovery \
+      /tmp/fased-hosting-cross-release-security-recovery.out \
+      "runtime-ready predecessor rebound and committed"
     run_public_updater >/tmp/fased-hosting-update-noop.out 2>/tmp/fased-hosting-update-noop.err
     grep -F "Already current: $version" /tmp/fased-hosting-update-noop.out >/dev/null
     record_noop_performance installer-noop-performance /tmp/fased-hosting-noop.out
