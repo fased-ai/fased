@@ -1,6 +1,6 @@
 {
   "name": "@fased/open-prose",
-  "version": "0.1.76-rc.112",
+  "version": "0.1.76-rc.113",
   "private": true,
   "description": "OpenProse VM skill pack plugin (slash command + telemetry).",
   "type": "module",
