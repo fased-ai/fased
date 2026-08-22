@@ -305,10 +305,8 @@ if [[ "$#" -eq 3 && "$1" == "remove" && "$2" == "-y" && "$3" == "tailscale" ]]; 
   exit 0
 fi
 if [[ "$#" -eq 3 && "$1" == "remove" && "$2" == "-y" && "$3" == "acl" ]]; then
-  rm -f -- /usr/bin/getfacl /usr/bin/setfacl \
-    /var/lib/fased-hosting-fixture/acl-package/installed
-  printf 'acl-state absent\n' >>/tmp/fased-fixture-acl-package.log
-  exit 0
+  exec env DEBIAN_FRONTEND=noninteractive \
+    /usr/local/libexec/fased-fixture-apt-get-real "$@"
 fi
 if [[ "$#" -eq 6 && "$1" == "-o" && "$2" == "APT::Get::AllowUnauthenticated=false" &&
   "$3" == "install" && "$4" == "-y" && "$5" == "--no-install-recommends" &&
@@ -368,6 +366,20 @@ prepare_provider_access_fixture() {
   verify_sshd_runtime_prerequisites
 }
 
+wait_for_fail2ban_fixture() {
+  local deadline=$((SECONDS + 30))
+  while ((SECONDS < deadline)); do
+    if fail2ban-client status sshd 2>/dev/null | grep -Fqi 'status for the jail: sshd'; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  systemctl status fail2ban.service --no-pager -l >&2 || true
+  fail2ban-client status sshd >&2 || true
+  echo "Hosting fixture fail2ban sshd jail did not become ready within 30 seconds" >&2
+  return 1
+}
+
 prepare_legacy_host_security_fixture() {
   systemctl enable --now fail2ban.service apt-daily-upgrade.timer >/dev/null
   ufw --force reset >/dev/null
@@ -379,7 +391,7 @@ prepare_legacy_host_security_fixture() {
   ufw --force enable >/dev/null
   systemctl restart ssh.service fail2ban.service
   ufw status verbose | grep -Fq 'Status: active'
-  fail2ban-client status sshd | grep -Fqi 'status for the jail: sshd'
+  wait_for_fail2ban_fixture
 }
 
 install_release_transport_fixture() {
