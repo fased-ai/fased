@@ -110,7 +110,11 @@ func (host LinuxHost) Inspect(ctx context.Context, port uint16, operator string)
 	}
 	inspection.SignerReady = host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "fased-signerd.service")
 	inspection.AppCanElevate = host.commandSucceeds(ctx, "/usr/sbin/runuser", "-u", operator, "--", "/usr/bin/sudo", "-n", "true")
-	inspection.LifecyclePrerequisitesReady = host.aclToolsReady()
+	prerequisitesReady, prerequisitesErr := host.lifecyclePrerequisitesReady()
+	if prerequisitesErr != nil {
+		return Inspection{}, prerequisitesErr
+	}
+	inspection.LifecyclePrerequisitesReady = prerequisitesReady
 	inspection.HardeningReady = host.hardeningReady(ctx)
 	inspection.SignerWebAuthnReady = host.signerWebAuthnReady(inspection.TailscaleDNS)
 	if !inspection.HardeningReady {

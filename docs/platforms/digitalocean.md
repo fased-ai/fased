@@ -156,17 +156,18 @@ Agent’s account routes in the Control UI.
 
 ## Optimizations for small droplets
 
-If the droplet has 1GB RAM, add swap and use API-based models instead of local
-models.
+For a managed Hosting install with 2GB RAM or less, Fased automatically creates
+a root-owned 2GB swapfile when the host does not already have at least 2GB of
+active swap. The swapfile and its `/etc/fstab` entry are part of the durable
+Hosting transaction, so interrupted installation, retry, rollback, and
+uninstall remain convergent. Hosts with more memory or sufficient existing swap
+are left unchanged.
 
-### Add swap (recommended)
+Verify the managed swap after installation:
 
 ```bash
-fallocate -l 2G /swapfile
-chmod 600 /swapfile
-mkswap /swapfile
-swapon /swapfile
-echo '/swapfile none swap sw 0 0' >> /etc/fstab
+swapon --show
+grep -F '/var/lib/fased-host-security/fased.swap none swap sw 0 0' /etc/fstab
 ```
 
 ### Use a lighter model

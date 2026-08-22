@@ -24,6 +24,10 @@ const expected = {
     resources: {
       memoryLimitBytes: 2147483648,
       swapLimitBytes: 2147483648,
+      initialSystemSwapBytes: 0,
+      finalSystemSwapBytes: 2147483648,
+      managedSwapActive: true,
+      managedSwapPersistent: true,
       memoryPeakBytes: 536870912,
       oomKill: 0,
     },
@@ -159,6 +163,21 @@ describe("pre-candidate local readiness", () => {
         hostingStagingReceipt: {
           ...expected.hostingStagingReceipt,
           evidenceClass: "SUPPORTING",
+        },
+      }),
+    ).toThrow("staging-VPS acceptance");
+  });
+
+  it("rejects staging evidence without the automatic low-memory swap boundary", () => {
+    expect(() =>
+      validateLocal0Readiness(receipt(), {
+        ...expected,
+        hostingStagingReceipt: {
+          ...expected.hostingStagingReceipt,
+          resources: {
+            ...expected.hostingStagingReceipt.resources,
+            managedSwapActive: false,
+          },
         },
       }),
     ).toThrow("staging-VPS acceptance");

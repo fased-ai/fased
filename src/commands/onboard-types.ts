@@ -104,7 +104,6 @@ export type OnboardOptions = {
   /** Internal flag for root-only host security preflight/prep flows. */
   hostSecurityOnly?: boolean;
   allowInsecure?: boolean;
-  swapGb?: number;
   mode?: OnboardMode;
   /** "manual" is an alias for "advanced". */
   flow?: "quickstart" | "advanced" | "manual";
