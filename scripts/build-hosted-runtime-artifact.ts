@@ -18,6 +18,7 @@ import {
   readHostedComponentContract,
   retainHostedCoreExtensions,
 } from "./hosted-component-contract.js";
+import { createWritablePnpmDeployStoreView } from "./pnpm-deploy-store-view.js";
 import { selectPnpmStorePath } from "./pnpm-store-path.js";
 import { writeReleaseArchive } from "./release-archive.js";
 
@@ -391,11 +392,12 @@ async function main(): Promise<void> {
 
     console.log(`hosted-artifact: deploying @fased/fased@${version} with pnpm`);
     const pnpmStore = await activePnpmStore();
+    const pnpmDeployStore = createWritablePnpmDeployStoreView(pnpmStore, tempRoot);
     const deployment = await run(
       "pnpm",
       [
         "--store-dir",
-        pnpmStore,
+        pnpmDeployStore,
         "--offline",
         "--filter",
         "@fased/fased",
@@ -405,10 +407,7 @@ async function main(): Promise<void> {
         packageRoot,
       ],
       rootDir,
-      {
-        npm_config_force_legacy_deploy: "true",
-        npm_config_ignore_scripts: "true",
-      },
+      { npm_config_ignore_scripts: "true" },
     );
     await fs.copyFile(
       path.join(rootDir, "pnpm-lock.yaml"),

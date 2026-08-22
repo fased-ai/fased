@@ -225,15 +225,17 @@ describe("npm-free managed lifecycle", () => {
     const packedSmoke = await source("scripts/smoke-packed-core.ts");
     const workspace = await source("pnpm-workspace.yaml");
     const offlineProductionDeploy =
-      /"--store-dir",\s*pnpmStore,\s*"--offline",\s*"--filter",\s*"@fased\/fased",\s*"deploy",\s*"--prod",\s*"--no-optional"/u;
+      /"--store-dir",\s*pnpmDeployStore,\s*"--offline",\s*"--filter",\s*"@fased\/fased",\s*"deploy",\s*"--prod",\s*"--no-optional"/u;
 
     expect(workspace).toContain("injectWorkspacePackages: true");
     expect(workspace).not.toContain("forceLegacyDeploy: true");
-    expect(artifactBuilder).toContain('npm_config_force_legacy_deploy: "true"');
+    expect(artifactBuilder).not.toContain("npm_config_force_legacy_deploy");
     expect(artifactBuilder).toMatch(
       /fs\.copyFile\(\s*path\.join\(rootDir, "pnpm-lock\.yaml"\),\s*path\.join\(packageRoot, "pnpm-lock\.yaml"\),?\s*\)/u,
     );
-    expect(packedSmoke).toContain('npm_config_force_legacy_deploy: "true"');
+    expect(packedSmoke).not.toContain("npm_config_force_legacy_deploy");
+    expect(artifactBuilder).toContain("createWritablePnpmDeployStoreView(pnpmStore, tempRoot)");
+    expect(packedSmoke).toContain("createWritablePnpmDeployStoreView(pnpmStore, tempRoot)");
     expect(artifactBuilder).toContain('["store", "path"]');
     expect(packedSmoke).toContain('["store", "path"]');
     expect(artifactBuilder).not.toContain('["store", "path", "--silent"]');

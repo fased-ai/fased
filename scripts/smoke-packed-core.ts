@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as tar from "tar";
+import { createWritablePnpmDeployStoreView } from "./pnpm-deploy-store-view.js";
 import { selectPnpmStorePath } from "./pnpm-store-path.js";
 
 type PackageJson = {
@@ -500,11 +501,12 @@ async function main() {
 
     const installRoot = path.join(tempRoot, "clean-install");
     const pnpmStore = activePnpmStore();
+    const pnpmDeployStore = createWritablePnpmDeployStoreView(pnpmStore, tempRoot);
     execFileSync(
       "pnpm",
       [
         "--store-dir",
-        pnpmStore,
+        pnpmDeployStore,
         "--offline",
         "--filter",
         "@fased/fased",
@@ -517,7 +519,6 @@ async function main() {
         cwd: repoRoot,
         env: {
           ...process.env,
-          npm_config_force_legacy_deploy: "true",
           npm_config_ignore_scripts: "true",
         },
         stdio: ["ignore", "inherit", "inherit"],
