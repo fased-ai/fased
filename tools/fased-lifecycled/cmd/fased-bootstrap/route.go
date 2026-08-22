@@ -860,10 +860,16 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	outcome := convergence.Outcome
 	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
 		onboardingStarted := time.Now()
-		convergence, err = runOnboarding(ctx, request, operator, result, lock, output, os.Stderr)
+		onboardingCtx, detached := onboardingPhaseContext(ctx, request)
+		convergence, err = runOnboarding(onboardingCtx, request, operator, result, lock, output, os.Stderr)
 		performance.OnboardingMillis = durationMillis(onboardingStarted)
 		if err != nil {
 			return err
+		}
+		if detached {
+			var finalizeCancel context.CancelFunc
+			ctx, finalizeCancel = context.WithTimeout(context.Background(), request.Timeout)
+			defer finalizeCancel()
 		}
 		outcome = convergence.Outcome
 	}
@@ -1331,6 +1337,9 @@ func parsePublicLifecycleRequest(operation string, args []string) (publicLifecyc
 		return publicLifecycleRequest{}, errors.New("managed operation does not accept onboarding arguments")
 	}
 	request.OnboardArgs = append([]string(nil), remaining...)
+	if namedFlagCount(request.OnboardArgs, "host-profile") != 0 {
+		return publicLifecycleRequest{}, errors.New("onboarding host profile is selected by the lifecycle profile")
+	}
 	request.Onboard = request.Onboard && !*noOnboard
 	request.Version = strings.TrimPrefix(request.Version, "v")
 	if request.Version == "stable" || request.Version == "latest" {
@@ -1560,7 +1569,6 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 	}
 	launcher := filepath.Join(operator.Home, ".fased", "bin", "fased")
 	args := onboardingCommandArgs(request, operator, config, launcher)
-	args = append(args, request.OnboardArgs...)
 	command := exec.CommandContext(ctx, "/usr/sbin/runuser", args...)
 	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
 	command.Stdout, command.Stderr = onboardingProcessOutputWriters(request, output, diagnostics)
@@ -1579,6 +1587,9 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 		command.Stdin = tty
 	}
 	if err := command.Run(); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return protocol.Response{}, fmt.Errorf("onboarding deadline ended before completion: %w", contextErr)
+		}
 		return protocol.Response{}, fmt.Errorf("onboarding failed: %w", err)
 	}
 	requestID, err := publicRequestID()
@@ -1674,7 +1685,33 @@ func onboardingCommandArgs(request publicLifecycleRequest, operator publicOperat
 	}
 	args := []string{"-u", operator.Name, "--", "/usr/bin/env"}
 	args = append(args, values...)
-	return append(args, launcher, "onboard", "--install-daemon")
+	hostProfile := "local"
+	if request.Profile == model.ProfileHosting {
+		hostProfile = "hosting"
+	}
+	args = append(args, launcher, "onboard", "--install-daemon")
+	args = append(args, request.OnboardArgs...)
+	if request.Profile == model.ProfileHosting {
+		// The root bootstrap has already created and verified the durable Hosting
+		// prerequisites marker. The app-owned onboarding process must receive the
+		// explicit half of that two-factor capability after the intentional
+		// privilege drop; environment or CLI input alone is insufficient.
+		args = append(args, "--host-security-capable")
+	}
+	return append(args, "--host-profile", hostProfile)
+}
+
+func onboardingPhaseContext(ctx context.Context, request publicLifecycleRequest) (context.Context, bool) {
+	for _, argument := range request.OnboardArgs {
+		if argument == "--non-interactive" || argument == "--non-interactive=true" {
+			return ctx, false
+		}
+	}
+	// The lifecycle acquisition/apply deadline is a machine-phase bound. A human
+	// may take longer while choosing Wallet and provider settings, so interactive
+	// onboarding must not inherit that deadline. The bootstrap process and its
+	// controlling terminal still own cancellation of the foreground child.
+	return context.WithoutCancel(ctx), true
 }
 
 func installedConfigPath(profile model.Profile, operator publicOperator) (string, error) {
