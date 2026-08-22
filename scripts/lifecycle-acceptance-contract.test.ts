@@ -488,6 +488,8 @@ describe("lifecycle acceptance contract", () => {
     expect(hosting).toContain("remove_acl_fixture_prerequisite() {");
     expect(adapter).toContain('"$3" == "acl"');
     expect(adapter).toContain("fased-fixture-apt-get-real remove -y acl");
+    expect(adapter).toContain('"$#" -eq 4');
+    expect(adapter).toContain('"$4" == "acl"');
     expect(adapter).toContain('"$7" == "acl"');
     expect(adapter).toContain("fased-fixture-apt-get-real install -y --no-install-recommends acl");
     expect(adapter).toContain("command -v getfacl >/dev/null");

@@ -38,6 +38,10 @@ func (host LinuxHost) StageHardening(context.Context, string, io.Writer) error {
 	return errLinuxHostingOnly
 }
 
+func (host LinuxHost) StageLifecyclePrerequisites(context.Context, string, io.Writer) error {
+	return errLinuxHostingOnly
+}
+
 func (host LinuxHost) CommitHardening(context.Context, string) error {
 	return errLinuxHostingOnly
 }

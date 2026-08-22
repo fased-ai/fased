@@ -38,18 +38,19 @@ type Request struct {
 }
 
 type Inspection struct {
-	TailscaleInstalled   bool
-	TailscaleRunning     bool
-	Authenticated        bool
-	TailscaleDNS         string
-	TailscaleIPv4        string
-	TailscaleVersion     string
-	PrivateServeReady    bool
-	SignerWebAuthnReady  bool
-	HardeningReady       bool
-	LegacyHardeningReady bool
-	SignerReady          bool
-	AppCanElevate        bool
+	TailscaleInstalled          bool
+	TailscaleRunning            bool
+	Authenticated               bool
+	TailscaleDNS                string
+	TailscaleIPv4               string
+	TailscaleVersion            string
+	PrivateServeReady           bool
+	SignerWebAuthnReady         bool
+	LifecyclePrerequisitesReady bool
+	HardeningReady              bool
+	LegacyHardeningReady        bool
+	SignerReady                 bool
+	AppCanElevate               bool
 }
 
 type State struct {
@@ -78,6 +79,8 @@ type State struct {
 	RuntimeReady                    bool   `json:"runtimeReady,omitempty"`
 	AccessConfirmed                 bool   `json:"accessConfirmed,omitempty"`
 	HardeningStarted                bool   `json:"hardeningStarted,omitempty"`
+	LifecyclePrerequisitesStaged    bool   `json:"lifecyclePrerequisitesStaged,omitempty"`
+	HardeningStaged                 bool   `json:"hardeningStaged,omitempty"`
 	HardeningAdopted                bool   `json:"hardeningAdopted,omitempty"`
 	HardeningSnapshot               string `json:"hardeningSnapshot,omitempty"`
 	HardeningCommitted              bool   `json:"hardeningCommitted,omitempty"`
@@ -121,6 +124,9 @@ func (state State) Validate() error {
 	if state.ServeChanged && !state.ServeMutationStarted || state.AuthenticatedByTransaction && !state.AuthenticationStarted ||
 		state.SignerWebAuthnChanged && !state.SignerWebAuthnMutationStarted || state.SignerWebAuthnPreviouslyExisted && state.PreviousSignerWebAuthn == "" ||
 		state.TailscaleInstalledByTransaction && !state.TailscaleInstallStarted || state.TailscaleInstallStarted && state.TailscaleInstallSnapshot == "" || state.RuntimeReady && state.Phase == PhasePreparing ||
+		state.LifecyclePrerequisitesStaged && (!state.HardeningStarted || state.HardeningSnapshot == "") ||
+		state.HardeningStaged && (!state.HardeningStarted || state.HardeningSnapshot == "") ||
+		state.HardeningStarted != (state.HardeningSnapshot != "") ||
 		state.HardeningCommitted && ((!state.HardeningStarted && !state.HardeningAdopted) || !state.RuntimeReady || !state.AccessConfirmed) ||
 		state.Phase == PhaseCommitted && !state.HardeningCommitted || state.LegacyHardeningAdopted && !state.AccessConfirmed ||
 		state.Phase != PhasePreparing && state.Phase != PhaseAborting && state.Phase != PhaseAborted && !state.SignerWebAuthnChanged {

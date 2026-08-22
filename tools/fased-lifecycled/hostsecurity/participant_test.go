@@ -13,11 +13,12 @@ import (
 )
 
 type fakeHost struct {
-	inspection     Inspection
-	calls          []string
-	serve          string
-	signerWebAuthn string
-	fail           string
+	inspection           Inspection
+	calls                []string
+	serve                string
+	signerWebAuthn       string
+	fail                 string
+	prerequisitesMissing bool
 }
 
 func (host *fakeHost) call(name string) error {
@@ -29,6 +30,9 @@ func (host *fakeHost) call(name string) error {
 }
 func (host *fakeHost) Inspect(context.Context, uint16, string) (Inspection, error) {
 	host.calls = append(host.calls, "inspect")
+	if !host.prerequisitesMissing {
+		host.inspection.LifecyclePrerequisitesReady = true
+	}
 	return host.inspection, nil
 }
 func (host *fakeHost) SnapshotTailscaleInstall(context.Context) (string, error) {
@@ -124,6 +128,14 @@ func (host *fakeHost) SnapshotHardening(context.Context, string, io.Writer) (str
 func (host *fakeHost) StageHardening(context.Context, string, io.Writer) error {
 	return host.call("stage-hardening")
 }
+func (host *fakeHost) StageLifecyclePrerequisites(context.Context, string, io.Writer) error {
+	if err := host.call("stage-lifecycle-prerequisites"); err != nil {
+		return err
+	}
+	host.inspection.LifecyclePrerequisitesReady = true
+	host.prerequisitesMissing = false
+	return nil
+}
 func (host *fakeHost) CommitHardening(context.Context, string) error {
 	if err := host.call("commit-hardening"); err != nil {
 		return err
@@ -142,7 +154,7 @@ func (host *fakeHost) RestoreHardening(context.Context, string) error {
 func fixture(t *testing.T) (Participant, *fakeHost, Request) {
 	t.Helper()
 	root := t.TempDir()
-	host := &fakeHost{}
+	host := &fakeHost{inspection: Inspection{LifecyclePrerequisitesReady: true}}
 	participant := Participant{Store: Store{StatePath: filepath.Join(root, "state.json"), ReceiptPath: filepath.Join(root, "hosting-prerequisites"), ExpectedUID: uint32(os.Getuid())}, Host: host}
 	request := Request{TransactionID: "01234567-89ab-4cde-8fab-0123456789ab", Release: "1.2.3-rc.4", Channel: "beta", GatewayPort: 18789, OperatorUser: "app", Interactive: true}
 	return participant, host, request
@@ -173,6 +185,23 @@ func TestHostingSecurityTwoPhaseCommit(t *testing.T) {
 	receipt, err = os.ReadFile(participant.Store.ReceiptPath)
 	if err != nil || !strings.Contains(string(receipt), "firewallReady=true") || !strings.Contains(string(receipt), "tailscaleDns=fased.tailnet.ts.net") {
 		t.Fatalf("committed receipt: %q err=%v", receipt, err)
+	}
+}
+
+func TestHostingSecurityStagesACLPrerequisiteBeforeRuntimeBootstrap(t *testing.T) {
+	participant, host, request := fixture(t)
+	host.inspection.LifecyclePrerequisitesReady = false
+	host.prerequisitesMissing = true
+
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil || state.Phase != PhasePrepared || !state.HardeningStarted ||
+		!state.LifecyclePrerequisitesStaged || state.HardeningSnapshot != "snapshot-v1" {
+		t.Fatalf("prepare lifecycle prerequisites: state=%+v err=%v", state, err)
+	}
+	joined := strings.Join(host.calls, ",")
+	if !strings.Contains(joined, "snapshot-hardening,stage-lifecycle-prerequisites,inspect") ||
+		strings.Contains(joined, "stage-hardening") {
+		t.Fatalf("ACL prerequisite was not isolated before runtime bootstrap: %s", joined)
 	}
 }
 
@@ -627,7 +656,7 @@ func TestHostingSecurityResumesDurableHardeningSnapshot(t *testing.T) {
 		t.Fatalf("resume commit: state=%+v err=%v", committed, err)
 	}
 	joined := strings.Join(host.calls, ",")
-	if strings.Contains(joined, "snapshot-hardening") || strings.Contains(joined, "stage-hardening") || !strings.Contains(joined, "commit-hardening") {
+	if strings.Contains(joined, "snapshot-hardening") || !strings.Contains(joined, "stage-hardening") || !strings.Contains(joined, "commit-hardening") {
 		t.Fatalf("durable hardening snapshot was not resumed exactly: %s", joined)
 	}
 }

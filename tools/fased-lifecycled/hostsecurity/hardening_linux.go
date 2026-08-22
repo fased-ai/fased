@@ -144,6 +144,20 @@ func (host LinuxHost) StageHardening(ctx context.Context, encoded string, log io
 	return nil
 }
 
+func (host LinuxHost) StageLifecyclePrerequisites(ctx context.Context, encoded string, log io.Writer) error {
+	snapshot, err := decodeHardeningSnapshot(encoded)
+	if err != nil {
+		return err
+	}
+	for _, item := range snapshot.Packages {
+		if item.Name == "acl" {
+			snapshot.Packages = []hardeningPackageSnapshot{item}
+			return host.installHardeningPackages(ctx, snapshot, log)
+		}
+	}
+	return errors.New("Hosting hardening snapshot does not bind the ACL prerequisite")
+}
+
 func (host LinuxHost) CommitHardening(ctx context.Context, encoded string) error {
 	snapshot, err := decodeHardeningSnapshot(encoded)
 	if err != nil {
