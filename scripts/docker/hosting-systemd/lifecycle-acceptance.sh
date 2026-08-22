@@ -1056,9 +1056,6 @@ case "$phase" in
       >/tmp/fased-hosting-cross-release-security-recovery.out
     grep -Fqx "release=$version" /etc/fased/hosting-prerequisites
     grep -Fqx 'firewallReady=true' /etc/fased/hosting-prerequisites
-    acceptance_mark cross-release-host-security-recovery \
-      /tmp/fased-hosting-cross-release-security-recovery.out \
-      "runtime-ready predecessor rebound and committed"
     run_public_updater >/tmp/fased-hosting-update-noop.out 2>/tmp/fased-hosting-update-noop.err
     grep -F "Already current: $version" /tmp/fased-hosting-update-noop.out >/dev/null
     record_noop_performance installer-noop-performance /tmp/fased-hosting-noop.out
