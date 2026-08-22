@@ -44,7 +44,12 @@ function child(profile: string, scenario: string) {
       status: "PASS",
       evidenceClass: profile === "hosting" ? "SUPPORTING" : "PASS",
       evidence: [
-        { id: "updater-already-current", status: "PASS", evidenceDigest: digest, summary: "ok" },
+        {
+          id: "updater-already-current",
+          status: profile === "hosting" ? "SUPPORTING" : "PASS",
+          evidenceDigest: digest,
+          summary: "ok",
+        },
       ],
     },
   };
@@ -106,6 +111,44 @@ describe("pre-candidate local readiness", () => {
     });
   });
 
+  it("binds real Hosting staging to the immutable product behind a fixture-only descendant", () => {
+    const fixtureReceipt = receipt();
+    const productCommit = "e".repeat(40);
+    const productTree = "f".repeat(40);
+    fixtureReceipt.artifact = {
+      ...fixtureReceipt.artifact,
+      fixtureOnlyDescendant: true,
+      productSource: {
+        commit: productCommit,
+        tree: productTree,
+        lockfileDigest: expected.lockfileDigest,
+      },
+    };
+
+    expect(
+      validateLocal0Readiness(fixtureReceipt, {
+        ...expected,
+        hostingStagingReceipt: {
+          ...expected.hostingStagingReceipt,
+          source: { commit: productCommit, tree: productTree },
+        },
+      }),
+    ).toMatchObject({
+      commit: expected.commit,
+      tree: expected.tree,
+      descriptorDigest: digest,
+    });
+
+    expect(() => validateLocal0Readiness(fixtureReceipt, expected)).toThrow(
+      "staging-VPS acceptance",
+    );
+
+    fixtureReceipt.artifact.productSource.lockfileDigest = `sha256:${"0".repeat(64)}`;
+    expect(() => validateLocal0Readiness(fixtureReceipt, expected)).toThrow(
+      "does not bind an exact product source",
+    );
+  });
+
   it("fails closed on incomplete identity or missing literal command evidence", () => {
     const incomplete = receipt();
     incomplete.completeLocal0 = false;
@@ -143,6 +186,12 @@ describe("pre-candidate local readiness", () => {
     missingCommand.receipts[0].receipt.evidence = [];
     expect(() => validateLocal0Readiness(missingCommand, expected)).toThrow(
       "does not prove updater-already-current",
+    );
+
+    const promotedContainerEvidence = receipt();
+    promotedContainerEvidence.receipts[3].receipt.evidence[0].status = "PASS";
+    expect(() => validateLocal0Readiness(promotedContainerEvidence, expected)).toThrow(
+      "hosting fresh-install does not prove updater-already-current",
     );
   });
 
