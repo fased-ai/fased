@@ -1077,6 +1077,40 @@ func TestHostingCoordinatorCommittedBoundaryRejectsEnvironmentMismatch(t *testin
 	}
 }
 
+func TestHostingCoordinatorPersistentCrossBuildUpdateAcceptsStableRoot(t *testing.T) {
+	participant, host, first := fixture(t)
+	first.Release = "0.1.76-rc.116"
+	state, err := participant.Prepare(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.inspection.SignerReady = true
+	state, err = markRuntimeReady(t, participant, state.TransactionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = participant.Commit(context.Background(), state.TransactionID, true)
+	if err != nil || state.Phase != PhaseCommitted {
+		t.Fatalf("commit first build: state=%+v err=%v", state, err)
+	}
+
+	second := first
+	second.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	second.Release = "0.1.76-rc.117"
+	second.RequireExistingHardening = true
+	prepared, err := participant.Prepare(context.Background(), second)
+	if err != nil {
+		t.Fatalf("persistent cross-build update rejected the stable root: %v", err)
+	}
+	if prepared.Release != second.Release || prepared.TransactionID != second.TransactionID || prepared.TrustRootSHA256 != first.TrustRootSHA256 || prepared.Phase != PhasePrivateNetworkReady {
+		t.Fatalf("cross-build Hosting state did not advance exactly: %+v", prepared)
+	}
+	persisted, err := participant.Store.ReadState()
+	if err != nil || persisted != prepared {
+		t.Fatalf("cross-build Hosting state was not durable: state=%+v err=%v", persisted, err)
+	}
+}
+
 func TestHostingCoordinatorMigratesSchemaOneRuntimeBeforeNewRelease(t *testing.T) {
 	participant, host, request := fixture(t)
 	state, err := participant.Prepare(context.Background(), request)
