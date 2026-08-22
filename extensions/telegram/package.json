@@ -1,6 +1,6 @@
 {
   "name": "@fased/telegram",
-  "version": "0.1.76-rc.115",
+  "version": "0.1.76-rc.116",
   "private": true,
   "description": "FasedAgent Telegram channel plugin",
   "files": [
@@ -17,7 +17,7 @@
     "grammy": "^1.40.1"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.115"
+    "@fased/fased": "^0.1.76-rc.116"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
