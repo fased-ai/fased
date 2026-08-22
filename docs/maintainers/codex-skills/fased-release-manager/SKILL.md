@@ -67,10 +67,10 @@ whether a correction works, and never present release progress as completion
 of later architecture phases.
 
 Continue until owner stop, identity/plan change, unavailable authority, or an
-unnamed boundary. Bare `fix` means focused proof. Treat same predicate failing
-twice in one lifecycle boundary as one correction across discovery/residue,
-ownership, service, security/network handoff, and rollback/retry predicates;
-block another candidate until the affected topology passes.
+unnamed boundary. Bare `fix` uses the narrow flow below; never inventory a whole
+subsystem without evidence. If same predicate failing twice or evidence couples
+adjacent owners, name only those predicates; block another candidate until they
+pass.
 
 If the owner defines `fix`, `continue`, or `finish` as a named chain, record it
 once and run its push, PR, CI, merge, P1, tag, and publication as `PASS` gates
@@ -79,7 +79,7 @@ owner/Hosting mutation, promotion, npm, cleanup, and deployment stay out.
 
 ## Fix the literal predicate first
 
-For install, update, repair, uninstall, onboarding, command, or runtime failures:
+For every Fased issue, default to:
 
 1. Preserve and inspect that exact environment and command.
 2. Identify the first divergent predicate.
