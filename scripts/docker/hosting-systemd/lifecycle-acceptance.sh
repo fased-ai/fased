@@ -44,6 +44,71 @@ restart_managed_services_after_fixture_churn() {
     fased-host-updater.service fased-signerd.service fased-gateway.service
 }
 
+prepare_interrupted_legacy_updater_fixture() {
+  local unit=/etc/systemd/system/fased-host-updater.service
+
+  # Start an inert process under the legacy unit name, then publish the exact
+  # historical on-disk projection without reloading systemd. This reproduces
+  # an interrupted pre-lifecycle Hosting install while preserving the core
+  # fixture's no-Node invariant.
+  cat >"$unit" <<'EOF_LOADED_UPDATER_UNIT'
+[Unit]
+Description=Fased interrupted legacy updater fixture
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sleep infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF_LOADED_UPDATER_UNIT
+  chown root:root "$unit"
+  chmod 0644 "$unit"
+  systemctl daemon-reload
+  systemctl enable --now fased-host-updater.service
+
+  cat >"$unit" <<'EOF_LEGACY_UPDATER_UNIT'
+[Unit]
+Description=Fased verified native signer updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=fased-host-updater
+RuntimeDirectoryMode=0755
+StateDirectory=fased-host-updater
+StateDirectoryMode=0700
+UMask=0117
+Environment=HOME=/var/lib/fased-host-updater
+ExecStart=/usr/bin/node /opt/fased/host-controller/current/fased-host-updater.mjs --socket-gid 995
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/fased/host-controller /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+EOF_LEGACY_UPDATER_UNIT
+  chown root:root "$unit"
+  chmod 0644 "$unit"
+  test "$(stat -c '%U:%G:%a:%s' "$unit")" = "root:root:644:958"
+  systemctl is-active --quiet fased-host-updater.service
+  ! command -v node >/dev/null 2>&1
+}
+
 diagnostics() {
   local status=$?
   if [[ "$status" -ne 0 ]]; then
@@ -850,6 +915,7 @@ case "$phase" in
     install_hosting_package_fixtures
     prepare_provider_access_fixture
     install_fixture_sat_runtime_environment
+    prepare_interrupted_legacy_updater_fixture
     run_public_installer >/tmp/fased-hosting-install.out 2>/tmp/fased-hosting-install.err
     jq -e '.phase == "COMMITTED" and .tailscaleInstalledByTransaction == true and
       .authenticatedByTransaction == true and .tailscaleDns == "fased-fixture.tailnet.ts.net"' \
@@ -857,6 +923,8 @@ case "$phase" in
     grep -Fq 'https://login.tailscale.com/a/fased-fixture' /tmp/fased-hosting-install.out
     ! grep -Fq 'Type the Tailscale DNS name' /tmp/fased-hosting-install.out
     ! command -v node >/dev/null 2>&1
+    ! grep -Fq '/opt/fased/host-controller/current/fased-host-updater.mjs' \
+      /etc/systemd/system/fased-host-updater.service
     acceptance_start
 	performance_summary="$(compact_performance_summary /tmp/fased-hosting-install.out)"
 	test "${#performance_summary}" -le 240

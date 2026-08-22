@@ -294,6 +294,29 @@ describe("attested Go lifecycle artifact layout", () => {
     expect(installCase).not.toContain("initialize");
   });
 
+  it("reproduces the exact interrupted legacy updater before Hosting convergence", () => {
+    const legacyFixture = hostingRunner.slice(
+      hostingRunner.indexOf("prepare_interrupted_legacy_updater_fixture()"),
+      hostingRunner.indexOf("verify_sshd_runtime_prerequisites()"),
+    );
+    const installCase = hostingRunner.slice(
+      hostingRunner.indexOf("  install)"),
+      hostingRunner.indexOf("  managed-update)"),
+    );
+    expect(legacyFixture).toContain("Fased verified native signer updater");
+    expect(legacyFixture).toContain(
+      "ExecStart=/usr/bin/node /opt/fased/host-controller/current/fased-host-updater.mjs --socket-gid 995",
+    );
+    expect(legacyFixture).toContain("root:root:644:958");
+    expect(legacyFixture).toContain("systemctl is-active --quiet fased-host-updater.service");
+    expect(installCase.indexOf("prepare_interrupted_legacy_updater_fixture")).toBeLessThan(
+      installCase.indexOf("run_public_installer"),
+    );
+    expect(installCase).toContain(
+      "! grep -Fq '/opt/fased/host-controller/current/fased-host-updater.mjs'",
+    );
+  });
+
   it("runs Local and Hosting lifecycle fixtures with a non-executable runtime mount", () => {
     expect(localFixture).toContain("--tmpfs /run:rw,noexec");
     expect(localFixture).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR");

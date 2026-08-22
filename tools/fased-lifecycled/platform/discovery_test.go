@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"fased-lifecycled/model"
@@ -233,7 +234,7 @@ func TestDiscoveryClassifiesMixedOrPrivateControlAsRepairRequiredInput(t *testin
 	}
 }
 
-func TestDiscoveryRetriesOnlyExactFreshHostingSupervisorProjection(t *testing.T) {
+func TestDiscoveryRetriesOnlyExactFreshOrLegacyHostingSupervisorProjection(t *testing.T) {
 	request := discoveryRequest(t, model.ProfileHosting)
 	ownerStateRoot, ok := unrootDiscoveryPath(request.SystemRootPrefix, request.OwnerStateRoot)
 	if !ok {
@@ -259,6 +260,46 @@ func TestDiscoveryRetriesOnlyExactFreshHostingSupervisorProjection(t *testing.T)
 	result, err := DiscoverInstallation(request)
 	if err != nil || result.Installation.Kind != planner.InstallationEmpty {
 		t.Fatalf("exact fresh Hosting supervisor projection was not retryable: %+v err=%v", result, err)
+	}
+
+	legacyUnit := strings.ReplaceAll(legacyHostingUpdaterProjection, "{{NODE}}", "/usr/bin/node")
+	legacyUnit = strings.ReplaceAll(legacyUnit, "{{GID}}", "995")
+	if len(legacyUnit) != 958 {
+		t.Fatalf("legacy Hosting updater fixture drifted: size=%d", len(legacyUnit))
+	}
+	if err := os.WriteFile(unitPath, []byte(legacyUnit), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err = DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationEmpty {
+		t.Fatalf("exact partial legacy Hosting updater was not retryable: %+v err=%v", result, err)
+	}
+
+	unsafeLegacy := strings.Replace(legacyUnit, "/usr/bin/node", "/tmp/node", 1)
+	if err := os.WriteFile(unitPath, []byte(unsafeLegacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err = DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationAmbiguous {
+		t.Fatalf("unsafe legacy Hosting updater was accepted: %+v err=%v", result, err)
+	}
+
+	noncanonicalLegacy := strings.Replace(legacyUnit, "--socket-gid 995", "--socket-gid 0995", 1)
+	if err := os.WriteFile(unitPath, []byte(noncanonicalLegacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err = DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationAmbiguous {
+		t.Fatalf("noncanonical legacy Hosting updater was accepted: %+v err=%v", result, err)
+	}
+
+	extendedLegacy := strings.Replace(legacyUnit, "Restart=on-failure\n", "Restart=on-failure\nExecStartPost=/bin/true\n", 1)
+	if err := os.WriteFile(unitPath, []byte(extendedLegacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err = DiscoverInstallation(request)
+	if err != nil || result.Installation.Kind != planner.InstallationAmbiguous {
+		t.Fatalf("extended legacy Hosting updater was accepted: %+v err=%v", result, err)
 	}
 
 	altered := append([]byte(nil), unit...)
