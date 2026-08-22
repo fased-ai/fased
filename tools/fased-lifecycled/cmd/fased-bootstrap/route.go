@@ -848,15 +848,22 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		hostingState = prepared
 		hostingSecurityReused = !hostingSecurityTransactionNeedsFinalization(prepared)
 	}
+	resumePendingOnboarding := hostingState.Phase == hostsecurity.PhaseOnboardingPending
 	applyStarted := time.Now()
 	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
-	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result, lock)
+	var convergence protocol.Response
+	var verboseOutput []byte
+	if resumePendingOnboarding {
+		convergence, err = recoverPendingHostingOnboarding(operator, hostingState, result)
+	} else {
+		convergence, verboseOutput, err = invokeLifecycleHost(ctx, request, operator, result, lock)
+	}
 	applyProgress.Stop()
 	performance.ApplyMillis = durationMillis(applyStarted)
 	performance.Transaction = convergence.Performance
 	emitLifecycleHostVerbose(lifecycleHostVerboseOutputWriter(request, output, os.Stderr), verboseOutput)
 	if err != nil {
-		if hostingParticipant != nil && !hostingSecurityReused {
+		if hostingParticipant != nil && !hostingSecurityReused && !resumePendingOnboarding {
 			err = errors.Join(err, hostingParticipant.Abort(ctx, hostingTransactionID))
 		}
 		return err
@@ -1010,6 +1017,55 @@ func transactionMillis(evidence *protocol.PerformanceEvidence, selectValue func(
 
 func hostingSecurityTransactionNeedsFinalization(state hostsecurity.State) bool {
 	return state.Phase != hostsecurity.PhaseCommitted
+}
+
+// recoverPendingHostingOnboarding resumes the only deliberate state in which
+// the generation is durably committed but live application convergence is not
+// yet expected. The actual onboarding child may have been terminated before it
+// created the owner configuration. Re-entering the ordinary lifecycle
+// AlreadyCurrent path in that state incorrectly tries to repair services from
+// that not-yet-created configuration. Bind the resume only to the exact
+// installed manifest and coordinator receipt; onboarding completion performs
+// the live convergence proof before the Hosting transaction can commit.
+func recoverPendingHostingOnboarding(operator publicOperator, state hostsecurity.State, result bootstrapResult) (protocol.Response, error) {
+	configPath, err := installedConfigPath(model.ProfileHosting, operator)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return protocol.Response{}, errors.New("pending Hosting onboarding platform configuration is unavailable")
+	}
+	config, err := platform.DecodeConfig(configData)
+	if err != nil {
+		return protocol.Response{}, fmt.Errorf("pending Hosting onboarding platform configuration is invalid: %w", err)
+	}
+	manifestData, err := os.ReadFile(filepath.Join(config.LifecycleRoot, "installation-manifest.json"))
+	if err != nil {
+		return protocol.Response{}, errors.New("pending Hosting onboarding lifecycle manifest is unavailable")
+	}
+	status, err := decodeInstalledLifecycleStatus(config, model.ProfileHosting, manifestData)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	return validatePendingHostingOnboardingBinding(state, status, result)
+}
+
+func validatePendingHostingOnboardingBinding(state hostsecurity.State, status installedLifecycleStatus, result bootstrapResult) (protocol.Response, error) {
+	if state.Phase != hostsecurity.PhaseOnboardingPending || !state.RuntimeReady ||
+		!state.OnboardingRequired || state.OnboardingComplete || state.Release != result.Version ||
+		status.Profile != model.ProfileHosting || status.Version != result.Version ||
+		status.ReleaseSequence != result.ReleaseSequence || status.SecurityEpoch != result.SecurityEpoch ||
+		status.ActiveGenerationID != state.LifecycleGenerationID ||
+		!digestID(state.LifecycleGenerationID) || !digestID(state.ConvergenceReceiptDigest) {
+		return protocol.Response{}, errors.New("pending Hosting onboarding differs from the exact acquired generation")
+	}
+	return protocol.Response{
+		SchemaVersion:            protocol.CurrentSchemaVersion,
+		Outcome:                  "ALREADY_CURRENT",
+		ActiveGenerationID:       state.LifecycleGenerationID,
+		ConvergenceReceiptDigest: state.ConvergenceReceiptDigest,
+	}, nil
 }
 
 func pruneAcquisitionInbox(stateRoot string) error {

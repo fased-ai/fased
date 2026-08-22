@@ -887,6 +887,49 @@ func TestCommittedHostingSecurityTransactionSkipsFinalization(t *testing.T) {
 	}
 }
 
+func TestPendingHostingOnboardingResumesOnlyExactCommittedGeneration(t *testing.T) {
+	generationID := "sha256:" + strings.Repeat("a", 64)
+	receiptDigest := "sha256:" + strings.Repeat("b", 64)
+	state := hostsecurity.State{
+		SchemaVersion: hostsecurity.CurrentSchemaVersion, Phase: hostsecurity.PhaseOnboardingPending,
+		Release: "0.1.76-rc.116", RuntimeReady: true, OnboardingRequired: true,
+		LifecycleGenerationID: generationID, ConvergenceReceiptDigest: receiptDigest,
+	}
+	status := installedLifecycleStatus{
+		Profile: model.ProfileHosting, Version: state.Release, ReleaseSequence: 16,
+		SecurityEpoch: 1, ActiveGenerationID: generationID,
+	}
+	result := bootstrapResult{Version: state.Release, ReleaseSequence: 16, SecurityEpoch: 1}
+	response, err := validatePendingHostingOnboardingBinding(state, status, result)
+	if err != nil || response.Outcome != "ALREADY_CURRENT" ||
+		response.ActiveGenerationID != generationID || response.ConvergenceReceiptDigest != receiptDigest {
+		t.Fatalf("exact pending Hosting onboarding did not resume: response=%+v err=%v", response, err)
+	}
+
+	for name, mutate := range map[string]func(*hostsecurity.State, *installedLifecycleStatus, *bootstrapResult){
+		"newer release": func(_ *hostsecurity.State, _ *installedLifecycleStatus, candidate *bootstrapResult) {
+			candidate.Version = "0.1.76-rc.117"
+		},
+		"different generation": func(_ *hostsecurity.State, installed *installedLifecycleStatus, _ *bootstrapResult) {
+			installed.ActiveGenerationID = "sha256:" + strings.Repeat("c", 64)
+		},
+		"different release sequence": func(_ *hostsecurity.State, installed *installedLifecycleStatus, _ *bootstrapResult) {
+			installed.ReleaseSequence++
+		},
+		"completed onboarding": func(coordinator *hostsecurity.State, _ *installedLifecycleStatus, _ *bootstrapResult) {
+			coordinator.OnboardingComplete = true
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changedState, changedStatus, changedResult := state, status, result
+			mutate(&changedState, &changedStatus, &changedResult)
+			if _, err := validatePendingHostingOnboardingBinding(changedState, changedStatus, changedResult); err == nil {
+				t.Fatal("mismatched pending Hosting onboarding was accepted")
+			}
+		})
+	}
+}
+
 func TestHostingSecurityLogIsBoundedAndSecure(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "log")
