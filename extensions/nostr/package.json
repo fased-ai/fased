@@ -1,6 +1,6 @@
 {
   "name": "@fased/nostr",
-  "version": "0.1.76-rc.112",
+  "version": "0.1.76-rc.113",
   "description": "FasedAgent Nostr channel plugin for NIP-04 encrypted DMs",
   "type": "module",
   "dependencies": {
