@@ -177,6 +177,18 @@ verify_sshd_runtime_prerequisites() {
 install_hosting_package_fixtures() {
   install -d -m 0755 -o root -g root /usr/local/libexec
   install -d -m 0700 -o root -g root /var/lib/fased-hosting-fixture/acl-package
+  install -d -m 0700 -o root -g root /var/lib/fased-hosting-fixture/apt-sourceparts
+  install -m 0644 -o root -g root /dev/null \
+    /var/lib/fased-hosting-fixture/apt-sources.list
+  while IFS= read -r source_file; do
+    install -m 0644 -o root -g root "$source_file" \
+      "/var/lib/fased-hosting-fixture/apt-sourceparts/$(basename "$source_file")"
+  done < <(find /etc/apt/sources.list.d -maxdepth 1 -type f \
+    \( -name '*.list' -o -name '*.sources' \) -print | sort)
+  if [[ -f /etc/apt/sources.list ]]; then
+    install -m 0644 -o root -g root /etc/apt/sources.list \
+      /var/lib/fased-hosting-fixture/apt-sources.list
+  fi
   install -m 0755 -o root -g root /usr/bin/getfacl \
     /var/lib/fased-hosting-fixture/acl-package/getfacl
   install -m 0755 -o root -g root /usr/bin/setfacl \
@@ -316,7 +328,10 @@ if [[ "$#" -eq 7 && "$1" == "install" && "$2" == "-y" &&
     /usr/local/libexec/fased-fixture-apt-get-real "$@"
 fi
 if [[ "$#" -eq 1 && "$1" == "update" ]]; then
-  exec /usr/local/libexec/fased-fixture-apt-get-real "$@"
+  exec /usr/local/libexec/fased-fixture-apt-get-real \
+    -o Dir::Etc::sourcelist=/var/lib/fased-hosting-fixture/apt-sources.list \
+    -o Dir::Etc::sourceparts=/var/lib/fased-hosting-fixture/apt-sourceparts \
+    "$@"
 fi
 if [[ "$#" -eq 11 && "$1" == "-o" &&
   "$2" == "Dir::Etc::sourcelist=/etc/apt/sources.list.d/tailscale.list" &&

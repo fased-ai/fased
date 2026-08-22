@@ -499,6 +499,11 @@ describe("lifecycle acceptance contract", () => {
     expect(adapter).toContain('"$7" == "acl"');
     expect(adapter).toContain("/usr/local/libexec/fased-fixture-apt-get-real");
     expect(adapter).toContain("DEBIAN_FRONTEND=noninteractive");
+    expect(hosting).toContain("/var/lib/fased-hosting-fixture/apt-sourceparts");
+    expect(hosting).toContain("/var/lib/fased-hosting-fixture/apt-sources.list");
+    expect(adapter).toContain(
+      "Dir::Etc::sourceparts=/var/lib/fased-hosting-fixture/apt-sourceparts",
+    );
   });
 
   it("kills the actual onboarding child and retains container evidence as supporting", () => {
