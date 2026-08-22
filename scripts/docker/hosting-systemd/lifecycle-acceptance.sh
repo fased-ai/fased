@@ -784,6 +784,41 @@ EOF_INTERACTIVE_INSTALLER
   rm -f /tmp/fased-hosting-interactive-installer
 }
 
+record_canonical_lifecycle_evidence() {
+  local manifest=/var/lib/fased-lifecycled/installation-manifest.json
+  local termination=/var/lib/fased-lifecycled/onboarding-termination.json
+  local evidence=/tmp/fased-hosting-canonical-lifecycle.evidence.json
+
+  jq -e '
+    .schemaVersion == 1 and
+    .role == "fased-hosting-onboarding-termination" and
+    .actualChild == true and
+    .signal == 9 and
+    (.onboardingPid | type == "number" and . > 1) and
+    (.installerExitStatus | type == "number" and . > 0) and
+    .durablePhase == "ONBOARDING_PENDING" and
+    (keys | sort) == [
+      "actualChild",
+      "durablePhase",
+      "installerExitStatus",
+      "onboardingPid",
+      "role",
+      "schemaVersion",
+      "signal"
+    ]' "$termination" >/dev/null
+  jq -n \
+    --arg manifestDigest "sha256:$(sha256sum "$manifest" | awk '{print $1}')" \
+    --arg terminationDigest "sha256:$(sha256sum "$termination" | awk '{print $1}')" \
+    '{schemaVersion:1,role:"fased-hosting-canonical-lifecycle-evidence",
+      manifestDigest:$manifestDigest,
+      actualOnboardingChildTermination:{
+        evidenceDigest:$terminationDigest,
+        signal:9,
+        durablePhase:"ONBOARDING_PENDING"
+      }}' >"$evidence"
+  printf '%s\n' "$evidence"
+}
+
 assert_healthy() {
   test "$(jq -er .profile /var/lib/fased-lifecycled/installation-manifest.json)" = hosting
   test "$(jq -er .activeGeneration.version /var/lib/fased-lifecycled/installation-manifest.json)" = "$version"
@@ -1038,8 +1073,9 @@ case "$phase" in
 	test "${#performance_summary}" -le 240
 	acceptance_mark lifecycle-performance /tmp/fased-hosting-install.out "$performance_summary"
     assert_healthy
-    acceptance_mark canonical-lifecycle /var/lib/fased-lifecycled/installation-manifest.json \
-      "canonical Hosting lifecycle verified"
+    canonical_lifecycle_evidence="$(record_canonical_lifecycle_evidence)"
+    acceptance_mark canonical-lifecycle "$canonical_lifecycle_evidence" \
+      "canonical Hosting lifecycle and actual onboarding child termination verified"
     systemctl status fased-host-updater.service fased-signerd.service \
       fased-gateway.service --no-pager >/tmp/fased-hosting-three-services.out
     acceptance_mark three-services-active /tmp/fased-hosting-three-services.out \

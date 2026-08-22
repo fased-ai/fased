@@ -477,6 +477,39 @@ describe("lifecycle acceptance contract", () => {
     expect(providerAccess).toContain("verify_sshd_runtime_prerequisites");
   });
 
+  it("binds actual onboarding child termination into fresh Hosting acceptance", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const evidence = hosting.slice(
+      hosting.indexOf("record_canonical_lifecycle_evidence() {"),
+      hosting.indexOf("assert_healthy() {"),
+    );
+    const freshInstall = hosting.slice(
+      hosting.indexOf("  install)"),
+      hosting.indexOf("  managed-update)"),
+    );
+
+    expect(evidence).toContain('.role == "fased-hosting-onboarding-termination"');
+    expect(evidence).toContain(".actualChild == true");
+    expect(evidence).toContain(".signal == 9");
+    expect(evidence).toContain('.durablePhase == "ONBOARDING_PENDING"');
+    expect(evidence).toContain('--arg manifestDigest "sha256:$(sha256sum "$manifest"');
+    expect(evidence).toContain('--arg terminationDigest "sha256:$(sha256sum "$termination"');
+    expect(evidence).toContain("manifestDigest:$manifestDigest");
+    expect(evidence).toContain("evidenceDigest:$terminationDigest");
+    expect(freshInstall).toContain(
+      'canonical_lifecycle_evidence="$(record_canonical_lifecycle_evidence)"',
+    );
+    expect(freshInstall).toContain(
+      'acceptance_mark canonical-lifecycle "$canonical_lifecycle_evidence"',
+    );
+    expect(freshInstall).toContain(
+      "canonical Hosting lifecycle and actual onboarding child termination verified",
+    );
+  });
+
   it("starts from a real absent Ubuntu ACL package state and installs it transactionally", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
