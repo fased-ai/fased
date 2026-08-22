@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	hardeningSnapshotSchema     uint32 = 3
+	hardeningSnapshotSchema     uint32 = 4
 	firewallUnitName                   = "fased-hosting-firewall.service"
 	hardeningConvergenceTimeout        = 15 * time.Second
 	hardeningConvergencePoll           = 100 * time.Millisecond
@@ -49,6 +49,7 @@ type hardeningSnapshot struct {
 	Packages      []hardeningPackageSnapshot `json:"packages"`
 	Files         []hardeningFileSnapshot    `json:"files"`
 	Services      []hardeningServiceSnapshot `json:"services"`
+	Swap          hardeningSwapSnapshot      `json:"swap,omitempty"`
 }
 
 func (host LinuxHost) SnapshotHardening(ctx context.Context, operator string, _ io.Writer) (string, error) {
@@ -69,6 +70,7 @@ func (host LinuxHost) SnapshotHardening(ctx context.Context, operator string, _ 
 		sshService = "ssh.service"
 	}
 	paths := []string{
+		"/etc/fstab",
 		"/etc/ssh/sshd_config.d/01-fased-hardening.conf",
 		"/etc/fased/hosting-firewall.nft",
 		"/etc/systemd/system/" + firewallUnitName,
@@ -79,7 +81,11 @@ func (host LinuxHost) SnapshotHardening(ctx context.Context, operator string, _ 
 	} else {
 		paths = append(paths, "/etc/dnf/automatic.conf")
 	}
-	snapshot := hardeningSnapshot{SchemaVersion: hardeningSnapshotSchema, Family: family, SSHService: sshService, UpdateTimer: timer, NftBinary: nftBinary}
+	swap, err := host.snapshotManagedSwap()
+	if err != nil {
+		return "", err
+	}
+	snapshot := hardeningSnapshot{SchemaVersion: hardeningSnapshotSchema, Family: family, SSHService: sshService, UpdateTimer: timer, NftBinary: nftBinary, Swap: swap}
 	for _, name := range packageNames {
 		installed, err := host.hardeningPackageInstalled(ctx, family, name)
 		if err != nil {
@@ -152,7 +158,10 @@ func (host LinuxHost) StageLifecyclePrerequisites(ctx context.Context, encoded s
 	for _, item := range snapshot.Packages {
 		if item.Name == "acl" {
 			snapshot.Packages = []hardeningPackageSnapshot{item}
-			return host.installHardeningPackages(ctx, snapshot, log)
+			if err := host.installHardeningPackages(ctx, snapshot, log); err != nil {
+				return err
+			}
+			return host.stageManagedSwap(ctx, snapshot.Swap, log)
 		}
 	}
 	return errors.New("Hosting hardening snapshot does not bind the ACL prerequisite")
@@ -210,6 +219,7 @@ func (host LinuxHost) RestoreHardening(ctx context.Context, encoded string) erro
 		return err
 	}
 	var failures []error
+	failures = append(failures, host.restoreManagedSwap(ctx, snapshot.Swap))
 	_, _ = host.Runner.Output(ctx, snapshot.NftBinary, "delete", "table", "inet", "fased_hosting")
 	failures = append(failures, host.restoreHardeningFiles(snapshot))
 	failures = append(failures, host.run(ctx, "/usr/bin/systemctl", []string{"daemon-reload"}, nil, io.Discard, io.Discard, nil))
@@ -238,7 +248,8 @@ func (host LinuxHost) RestoreHardening(ctx context.Context, encoded string) erro
 }
 
 func (host LinuxHost) hardeningReady(ctx context.Context) bool {
-	if !host.aclToolsReady() {
+	prerequisitesReady, err := host.lifecyclePrerequisitesReady()
+	if err != nil || !prerequisitesReady {
 		return false
 	}
 	nftBinary, err := fixedExecutable("/usr/sbin/nft", "/usr/bin/nft", "/sbin/nft")
@@ -622,9 +633,38 @@ func decodeHardeningSnapshot(encoded string) (hardeningSnapshot, error) {
 	decoder := json.NewDecoder(strings.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	var snapshot hardeningSnapshot
-	if err := decoder.Decode(&snapshot); err != nil || (snapshot.SchemaVersion != 2 && snapshot.SchemaVersion != hardeningSnapshotSchema) ||
+	if err := decoder.Decode(&snapshot); err != nil || (snapshot.SchemaVersion != 2 && snapshot.SchemaVersion != 3 && snapshot.SchemaVersion != hardeningSnapshotSchema) ||
 		(snapshot.Family != "apt" && snapshot.Family != "rpm") || snapshot.SSHService == "" || snapshot.UpdateTimer == "" || snapshot.NftBinary != "/usr/sbin/nft" || len(snapshot.Files) < 5 || len(snapshot.Services) != 4 {
 		return hardeningSnapshot{}, errors.Join(err, errors.New("Hosting hardening snapshot is invalid"))
+	}
+	if snapshot.SchemaVersion >= 4 {
+		if err := snapshot.Swap.validate(); err != nil {
+			return hardeningSnapshot{}, err
+		}
+		wantFiles := map[string]bool{
+			"/etc/fstab": true,
+			"/etc/ssh/sshd_config.d/01-fased-hardening.conf": true,
+			"/etc/fased/hosting-firewall.nft":                true,
+			"/etc/systemd/system/" + firewallUnitName:        true,
+			"/etc/fail2ban/jail.d/fased-sshd.local":          true,
+		}
+		if snapshot.Family == "apt" {
+			wantFiles["/etc/apt/apt.conf.d/52fased-security-updates"] = true
+		} else {
+			wantFiles["/etc/dnf/automatic.conf"] = true
+		}
+		if len(snapshot.Files) != len(wantFiles) {
+			return hardeningSnapshot{}, errors.New("Hosting hardening snapshot file set is invalid")
+		}
+		for _, file := range snapshot.Files {
+			if !wantFiles[file.Path] {
+				return hardeningSnapshot{}, errors.New("Hosting hardening snapshot file set is invalid")
+			}
+			delete(wantFiles, file.Path)
+		}
+		if len(wantFiles) != 0 {
+			return hardeningSnapshot{}, errors.New("Hosting hardening snapshot file set is invalid")
+		}
 	}
 	wantPackages := map[string]bool{"nftables": true, "fail2ban": true}
 	if snapshot.SchemaVersion >= 3 {

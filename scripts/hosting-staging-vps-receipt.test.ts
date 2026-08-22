@@ -16,6 +16,10 @@ function evidence(overrides = {}) {
     memoryPeakBytes: 512 * 1024 * 1024,
     memoryLimitBytes: 2 * 1024 * 1024 * 1024,
     swapLimitBytes: 2 * 1024 * 1024 * 1024,
+    initialSystemSwapBytes: 0,
+    finalSystemSwapBytes: 2 * 1024 * 1024 * 1024,
+    managedSwapActive: true,
+    managedSwapPersistent: true,
     ...overrides,
   };
 }
@@ -28,7 +32,15 @@ describe("Hosting staging VPS receipt", () => {
       environmentClass: "hosting-staging-vps",
       source: { commit: "a".repeat(40), tree: "b".repeat(40) },
       identicalRetry: { status: "PASS", outcome: "ALREADY_CURRENT" },
-      resources: { memoryLimitBytes: 2147483648, swapLimitBytes: 2147483648, oomKill: 0 },
+      resources: {
+        memoryLimitBytes: 2147483648,
+        swapLimitBytes: 2147483648,
+        initialSystemSwapBytes: 0,
+        finalSystemSwapBytes: 2147483648,
+        managedSwapActive: true,
+        managedSwapPersistent: true,
+        oomKill: 0,
+      },
     });
   });
 
@@ -37,6 +49,12 @@ describe("Hosting staging VPS receipt", () => {
       issueHostingStagingReceipt(evidence({ memoryEvents: Buffer.from("oom 1\noom_kill 1\n") })),
     ).toThrow("resource evidence");
     expect(() => issueHostingStagingReceipt(evidence({ swapLimitBytes: 4294967296 }))).toThrow(
+      "resource evidence",
+    );
+    expect(() => issueHostingStagingReceipt(evidence({ finalSystemSwapBytes: 0 }))).toThrow(
+      "resource evidence",
+    );
+    expect(() => issueHostingStagingReceipt(evidence({ managedSwapPersistent: false }))).toThrow(
       "resource evidence",
     );
     expect(() =>

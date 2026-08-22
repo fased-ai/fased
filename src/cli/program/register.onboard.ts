@@ -121,7 +121,6 @@ export function registerOnboardCommand(program: Command) {
       "Internal: post-bootstrap hosted rerun from the app user over Tailscale",
     )
     .option("--allow-insecure", "Allow continuing when hosting security setup fails")
-    .option("--swap-gb <n>", "Override automatic swap size in GB for hosting setup")
     .option("--auth-choice <choice>", `Auth: ${AUTH_CHOICE_HELP}`)
     .option(
       "--token-provider <id>",
@@ -243,16 +242,12 @@ export function registerOnboardCommand(program: Command) {
         typeof opts.gatewayPort === "string" ? Number.parseInt(opts.gatewayPort, 10) : undefined;
       const walletPort =
         typeof opts.walletPort === "string" ? Number.parseInt(opts.walletPort, 10) : undefined;
-      const swapGbRaw =
-        typeof opts.swapGb === "string" ? Number.parseInt(opts.swapGb, 10) : undefined;
       await onboardCommand(
         {
           hostProfile: opts.hostProfile as "local" | "hosting" | undefined,
           hostSecurityCapable: Boolean(opts.hostSecurityCapable),
           hostMaintenanceSession: Boolean(opts.hostMaintenanceSession),
           allowInsecure: Boolean(opts.allowInsecure),
-          swapGb:
-            typeof swapGbRaw === "number" && Number.isFinite(swapGbRaw) ? swapGbRaw : undefined,
           workspace: opts.workspace as string | undefined,
           nonInteractive: Boolean(opts.nonInteractive),
           acceptRisk: Boolean(opts.acceptRisk),

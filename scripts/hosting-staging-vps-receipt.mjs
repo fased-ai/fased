@@ -50,6 +50,10 @@ export function issueHostingStagingReceipt({
   memoryPeakBytes,
   memoryLimitBytes,
   swapLimitBytes,
+  initialSystemSwapBytes,
+  finalSystemSwapBytes,
+  managedSwapActive,
+  managedSwapPersistent,
 }) {
   const identity = JSON.parse(descriptor.toString("utf8"));
   const commit = identity.commit;
@@ -64,6 +68,11 @@ export function issueHostingStagingReceipt({
     memoryPeakBytes <= 0 ||
     memoryLimitBytes !== 2147483648 ||
     swapLimitBytes !== 2147483648 ||
+    initialSystemSwapBytes !== 0 ||
+    !Number.isSafeInteger(finalSystemSwapBytes) ||
+    finalSystemSwapBytes < 2147483648 ||
+    managedSwapActive !== true ||
+    managedSwapPersistent !== true ||
     (events.get("oom_kill") || 0) !== 0 ||
     (events.get("oom") || 0) !== 0
   ) {
@@ -98,6 +107,10 @@ export function issueHostingStagingReceipt({
       memoryPeakBytes,
       oomKill: events.get("oom_kill") || 0,
       memoryEventsDigest: sha256(memoryEvents),
+      initialSystemSwapBytes,
+      finalSystemSwapBytes,
+      managedSwapActive,
+      managedSwapPersistent,
     },
   });
 }
@@ -113,6 +126,10 @@ function main() {
     "--memory-peak-bytes",
     "--memory-limit-bytes",
     "--swap-limit-bytes",
+    "--initial-system-swap-bytes",
+    "--final-system-swap-bytes",
+    "--managed-swap-active",
+    "--managed-swap-persistent",
     "--output",
   ]) {
     if (!args.has(key)) {
@@ -128,6 +145,10 @@ function main() {
     memoryPeakBytes: Number(args.get("--memory-peak-bytes")),
     memoryLimitBytes: Number(args.get("--memory-limit-bytes")),
     swapLimitBytes: Number(args.get("--swap-limit-bytes")),
+    initialSystemSwapBytes: Number(args.get("--initial-system-swap-bytes")),
+    finalSystemSwapBytes: Number(args.get("--final-system-swap-bytes")),
+    managedSwapActive: args.get("--managed-swap-active") === "true",
+    managedSwapPersistent: args.get("--managed-swap-persistent") === "true",
   });
   if (!digestPattern.test(receipt.artifact.descriptorDigest)) {
     fail("descriptor digest is invalid");

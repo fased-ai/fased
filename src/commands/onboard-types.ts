@@ -8,7 +8,7 @@ import type {
 import type { GatewayDaemonRuntime } from "./daemon-runtime.js";
 
 export type OnboardMode = "local" | "remote";
-export type SecretInputMode = "plaintext" | "ref";
+export type SecretInputMode = "plaintext" | "ref"; // pragma: allowlist secret
 export type KnownAuthChoice =
   // Legacy short alias for Anthropic OAuth (kept for backwards CLI compatibility).
   | "oauth"
@@ -104,7 +104,6 @@ export type OnboardOptions = {
   /** Internal flag for root-only host security preflight/prep flows. */
   hostSecurityOnly?: boolean;
   allowInsecure?: boolean;
-  swapGb?: number;
   mode?: OnboardMode;
   /** "manual" is an alias for "advanced". */
   flow?: "quickstart" | "advanced" | "manual";

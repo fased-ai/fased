@@ -50,10 +50,13 @@ func (runner *fixtureRunner) Output(ctx context.Context, command string, args ..
 func linuxHostFixture(t *testing.T) (LinuxHost, *fixtureRunner, string) {
 	t.Helper()
 	root := t.TempDir()
-	for _, directory := range []string{"usr/bin", "etc", "etc/ssh/sshd_config.d"} {
+	for _, directory := range []string{"usr/bin", "etc", "etc/ssh/sshd_config.d", "proc", "var/lib/fased-host-security"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.Chmod(filepath.Join(root, "var/lib/fased-host-security"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "usr/bin/tailscale"), []byte("fixture"), 0o755); err != nil {
 		t.Fatal(err)
@@ -66,12 +69,121 @@ func linuxHostFixture(t *testing.T) (LinuxHost, *fixtureRunner, string) {
 	if err := os.WriteFile(filepath.Join(root, "etc/os-release"), []byte("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "etc/fstab"), []byte("# fixture fstab\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc/meminfo"), []byte("MemTotal:       8388608 kB\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc/swaps"), []byte("Filename\tType\tSize\tUsed\tPriority\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "etc/ssh/sshd_config.d/01-fased-hardening.conf"), []byte(sshHardeningConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runner := &fixtureRunner{outputs: map[string][]byte{}, errors: map[string]error{}, sequences: map[string][]fixtureOutput{}}
 	host := LinuxHost{Runner: runner, HTTPClient: NewLinuxHost().HTTPClient, RootPrefix: root}
 	return host, runner, root
+}
+
+func TestLowMemoryHostingStagesManagedSwapAndRollsBackExactly(t *testing.T) {
+	host, runner, root := linuxHostFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "proc/meminfo"), []byte("MemTotal:       1572864 kB\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades", "acl"} {
+		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Status}\t${db:Status-Eflag} "+name] = []byte("installed\tok")
+	}
+	encoded, err := host.SnapshotHardening(context.Background(), "app", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := decodeHardeningSnapshot(encoded)
+	if err != nil || !snapshot.Swap.Required {
+		t.Fatalf("low-memory snapshot did not require managed swap: snapshot=%+v err=%v", snapshot.Swap, err)
+	}
+	if err := host.StageLifecyclePrerequisites(context.Background(), encoded, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.StageLifecyclePrerequisites(context.Background(), encoded, io.Discard); err != nil {
+		t.Fatalf("same-transaction swap retry did not converge: %v", err)
+	}
+	swapPath := filepath.Join(root, strings.TrimPrefix(managedSwapPath, "/"))
+	info, err := os.Lstat(swapPath)
+	if err != nil || info.Size() != managedSwapBytes || info.Mode().Perm() != 0o600 {
+		t.Fatalf("managed swap file is invalid: info=%v err=%v", info, err)
+	}
+	fstab, err := os.ReadFile(filepath.Join(root, "etc/fstab"))
+	if err != nil || strings.Count(string(fstab), managedSwapFstabEntry) != 1 {
+		t.Fatalf("managed swap fstab entry is not exact: %q err=%v", fstab, err)
+	}
+	inspection, err := host.Inspect(context.Background(), 18789, "app")
+	if err != nil || !inspection.LifecyclePrerequisitesReady {
+		t.Fatalf("managed swap did not satisfy Hosting prerequisites: inspection=%+v err=%v", inspection, err)
+	}
+	if err := host.RestoreHardening(context.Background(), encoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(swapPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rollback retained managed swap: %v", err)
+	}
+	fstab, err = os.ReadFile(filepath.Join(root, "etc/fstab"))
+	if err != nil || string(fstab) != "# fixture fstab\n" {
+		t.Fatalf("rollback did not restore exact fstab: %q err=%v", fstab, err)
+	}
+}
+
+func TestLowMemoryHostingRejectsUnjournaledManagedSwapResidue(t *testing.T) {
+	host, _, root := linuxHostFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "proc/meminfo"), []byte("MemTotal:       1048576 kB\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, strings.TrimPrefix(managedSwapPath, "/"))
+	if err := os.Symlink("/tmp/foreign-swap", target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.SnapshotHardening(context.Background(), "app", io.Discard); err == nil || !strings.Contains(err.Error(), "managed swap file is unsafe") {
+		t.Fatalf("unsafe managed swap residue was accepted: %v", err)
+	}
+}
+
+func TestLowMemoryHostingResumesJournalBoundSwapResidue(t *testing.T) {
+	host, runner, root := linuxHostFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "proc/meminfo"), []byte("MemTotal:       1048576 kB\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades", "acl"} {
+		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Status}\t${db:Status-Eflag} "+name] = []byte("installed\tok")
+	}
+	encoded, err := host.SnapshotHardening(context.Background(), "app", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	swapPath := filepath.Join(root, strings.TrimPrefix(managedSwapPath, "/"))
+	file, err := os.OpenFile(swapPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(managedSwapBytes); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/fstab"), []byte("# fixture fstab\n"+managedSwapFstabEntry+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.StageLifecyclePrerequisites(context.Background(), encoded, io.Discard); err != nil {
+		t.Fatalf("journal-bound pre-swapon residue did not resume: %v", err)
+	}
+	inspection, err := host.Inspect(context.Background(), 18789, "app")
+	if err != nil || !inspection.LifecyclePrerequisitesReady {
+		t.Fatalf("resumed swap did not converge: inspection=%+v err=%v", inspection, err)
+	}
+	if err := host.RestoreHardening(context.Background(), encoded); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHardeningConvergenceWaitsForFail2banControlReadiness(t *testing.T) {
@@ -229,6 +341,15 @@ func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing
 	snapshot, err := decodeHardeningSnapshot(encoded)
 	if err != nil {
 		t.Fatal(err)
+	}
+	missingSwap := snapshot
+	missingSwap.Swap = hardeningSwapSnapshot{}
+	missingSwapBytes, err := json.Marshal(missingSwap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeHardeningSnapshot(string(missingSwapBytes)); err == nil {
+		t.Fatal("schema-4 hardening snapshot accepted a missing swap decision")
 	}
 	legacy := snapshot
 	legacy.SchemaVersion = 2

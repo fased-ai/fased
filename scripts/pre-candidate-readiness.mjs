@@ -55,6 +55,11 @@ function requireHostingStagingEvidence(staging, expected) {
     !digestPattern.test(staging?.identicalRetry?.evidenceDigest || "") ||
     staging?.resources?.memoryLimitBytes !== 2147483648 ||
     staging?.resources?.swapLimitBytes !== 2147483648 ||
+    staging?.resources?.initialSystemSwapBytes !== 0 ||
+    !Number.isSafeInteger(staging?.resources?.finalSystemSwapBytes) ||
+    staging.resources.finalSystemSwapBytes < 2147483648 ||
+    staging?.resources?.managedSwapActive !== true ||
+    staging?.resources?.managedSwapPersistent !== true ||
     staging?.resources?.oomKill !== 0 ||
     !Number.isSafeInteger(staging?.resources?.memoryPeakBytes) ||
     staging.resources.memoryPeakBytes <= 0

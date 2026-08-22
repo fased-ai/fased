@@ -28,6 +28,12 @@ signer/Gateway setup, and unprivileged onboarding. The installed stable
 launcher owns future update entry. Users never manage Node, npm, pnpm, Git, Go,
 GitHub CLI, internal paths, units, or recovery journals.
 
+On Hosting machines with 2 GiB RAM or less, the privileged lifecycle
+transaction owns an automatic 2 GiB swapfile only when active swap is below
+that floor. Its secure file, persistent fstab entry, retry, rollback and
+uninstall behavior are journaled with the prerequisite phase. An unprivileged
+onboarding flag must never mutate swap.
+
 An explicit `--release <tag>` must resolve completely from that immutable
 GitHub Release. A channel selector must resolve through the signed monotonic
 release record inside the Go trust boundary. GitHub release listings and npm
