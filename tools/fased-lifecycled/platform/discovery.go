@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -310,14 +311,14 @@ func hasKnownControlResidue(request DiscoveryRequest) bool {
 	if _, err := os.Lstat(supervisorPath); errors.Is(err, os.ErrNotExist) {
 		return false
 	}
-	return !hasExactHostingBootstrapSupervisor(request, supervisorPath)
+	return !hasRetryableHostingSupervisorProjection(request, supervisorPath)
 }
 
-// hasExactHostingBootstrapSupervisor recognizes the sole idempotent projection
-// that a failed fresh Hosting bootstrap may leave before the installation
-// manifest exists. It deliberately does not forgive any owner runtime, updater,
-// target-service residue, or a supervisor unit that differs by even one byte.
-func hasExactHostingBootstrapSupervisor(request DiscoveryRequest, path string) bool {
+// hasRetryableHostingSupervisorProjection recognizes the bounded projections
+// that a failed fresh Hosting bootstrap or an interrupted public-stable takeover
+// may leave before the installation manifest exists. It deliberately does not
+// forgive owner runtime, updater, target-service residue, or arbitrary units.
+func hasRetryableHostingSupervisorProjection(request DiscoveryRequest, path string) bool {
 	if request.Profile != model.ProfileHosting {
 		return false
 	}
@@ -335,8 +336,77 @@ func hasExactHostingBootstrapSupervisor(request DiscoveryRequest, path string) b
 		return false
 	}
 	expectedUID, expectedGID := expectedDiscoverySystemOwner(request)
-	actual, err := readExactBootstrapProjection(path, 0o644, expectedUID, expectedGID, int64(len(expected)))
-	return err == nil && bytes.Equal(actual, expected)
+	actual, err := readBoundedBootstrapProjection(path, 0o644, expectedUID, expectedGID, 4096)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(actual, expected) || isExactLegacyHostingUpdaterProjection(actual)
+}
+
+const legacyHostingUpdaterProjection = `[Unit]
+Description=Fased verified native signer updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=fased-host-updater
+RuntimeDirectoryMode=0755
+StateDirectory=fased-host-updater
+StateDirectoryMode=0700
+UMask=0117
+Environment=HOME=/var/lib/fased-host-updater
+ExecStart={{NODE}} /opt/fased/host-controller/current/fased-host-updater.mjs --socket-gid {{GID}}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/fased/host-controller /opt/fased/signer /var/lib/fased-host-updater /var/lib/fased-signer-update-gate /var/lib/fased-signerd /run/fased-host-updater /etc/systemd/system
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+`
+
+func isExactLegacyHostingUpdaterProjection(data []byte) bool {
+	lines := strings.Split(string(data), "\n")
+	const execPrefix = "ExecStart="
+	execIndex := -1
+	for index, line := range lines {
+		if strings.HasPrefix(line, execPrefix) {
+			if execIndex != -1 {
+				return false
+			}
+			execIndex = index
+		}
+	}
+	if execIndex == -1 {
+		return false
+	}
+	fields := strings.Fields(lines[execIndex])
+	if len(fields) != 4 || fields[1] != "/opt/fased/host-controller/current/fased-host-updater.mjs" || fields[2] != "--socket-gid" {
+		return false
+	}
+	node := strings.TrimPrefix(fields[0], execPrefix)
+	if (node != "/usr/bin/node" && node != "/usr/local/bin/node") || filepath.Clean(node) != node {
+		return false
+	}
+	gid, err := strconv.ParseUint(fields[3], 10, 32)
+	if err != nil || gid == 0 || strconv.FormatUint(gid, 10) != fields[3] {
+		return false
+	}
+	lines[execIndex] = "ExecStart={{NODE}} /opt/fased/host-controller/current/fased-host-updater.mjs --socket-gid {{GID}}"
+	return strings.Join(lines, "\n") == legacyHostingUpdaterProjection
 }
 
 func unrootDiscoveryPath(prefix, path string) (string, bool) {
@@ -365,10 +435,10 @@ func expectedDiscoverySystemOwner(request DiscoveryRequest) (uint32, uint32) {
 	return stat.Uid, stat.Gid
 }
 
-func readExactBootstrapProjection(path string, mode os.FileMode, uid, gid uint32, size int64) ([]byte, error) {
+func readBoundedBootstrapProjection(path string, mode os.FileMode, uid, gid uint32, maxSize int64) ([]byte, error) {
 	before, err := os.Lstat(path)
 	stat, ok := beforeSyscallStat(before)
-	if err != nil || !ok || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Mode().Perm() != mode || stat.Nlink != 1 || stat.Uid != uid || stat.Gid != gid || before.Size() != size {
+	if err != nil || !ok || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Mode().Perm() != mode || stat.Nlink != 1 || stat.Uid != uid || stat.Gid != gid || before.Size() <= 0 || before.Size() > maxSize {
 		return nil, errors.New("bootstrap supervisor projection is unsafe")
 	}
 	file, err := os.Open(path)
@@ -380,8 +450,8 @@ func readExactBootstrapProjection(path string, mode os.FileMode, uid, gid uint32
 	if err != nil || !os.SameFile(before, after) {
 		return nil, errors.New("bootstrap supervisor projection changed while reading")
 	}
-	data, err := io.ReadAll(io.LimitReader(file, size+1))
-	if err != nil || int64(len(data)) != size {
+	data, err := io.ReadAll(io.LimitReader(file, maxSize+1))
+	if err != nil || int64(len(data)) != before.Size() {
 		return nil, errors.New("bootstrap supervisor projection is unsafe")
 	}
 	finalDescriptor, descriptorErr := file.Stat()
