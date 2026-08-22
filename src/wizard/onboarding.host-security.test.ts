@@ -138,8 +138,6 @@ describe("onboarding Hosting security verification", () => {
 
     expect(checks.every((check) => check.ok)).toBe(true);
     expect(commands).toEqual([
-      "tailscale ip -4",
-      "tailscale serve status",
       "systemctl is-active --quiet fased-signerd.service",
       "systemctl is-active --quiet fail2ban.service",
       "id -nG",
@@ -148,6 +146,25 @@ describe("onboarding Hosting security verification", () => {
     expect(commands.join("\n")).not.toMatch(
       /\b(?:up|set|install|enable|restart|reload|serve reset)\b/,
     );
+  });
+
+  it("does not require the app user to access the root-only Tailscale control state", () => {
+    const commands: string[] = [];
+    const checks = __testing.verifyRootPreparedHostingPrerequisites({
+      markerPath: markerPath(currentMarker("pending")),
+      requiredMarkerUid: process.getuid?.() ?? 0,
+      probe: (command, args) => {
+        const invocation = [command, ...args].join(" ");
+        commands.push(invocation);
+        if (command === "tailscale") {
+          return { ok: false, detail: "permission denied" };
+        }
+        return healthyProbe(command, args);
+      },
+    });
+
+    expect(checks.every((check) => check.ok)).toBe(true);
+    expect(commands.some((command) => command.startsWith("tailscale "))).toBe(false);
   });
 
   it("fails closed if the app account regains passwordless sudo", () => {

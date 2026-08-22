@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -703,13 +704,61 @@ func TestOnboardingCommandBindsCanonicalProfileEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	hostArgs := strings.Join(onboardingCommandArgs(publicLifecycleRequest{Profile: model.ProfileHosting, Channel: "beta", Version: "0.1.76-rc.97"}, publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}, hosting, "/home/app/.fased/bin/fased"), "\n")
-	for _, required := range []string{"FASED_HOST_PROFILE=hosting", "FASED_HOST_ROOT_PREPARED=1", "FASED_UPDATE_CHANNEL=beta", "FASED_HOSTING_RELEASE=0.1.76-rc.97", "FASED_WALLET_LOCAL_SIGNER_SOCKET=" + hosting.ApplicationSocket()} {
+	for _, required := range []string{"FASED_HOST_PROFILE=hosting", "FASED_HOST_ROOT_PREPARED=1", "FASED_UPDATE_CHANNEL=beta", "FASED_HOSTING_RELEASE=0.1.76-rc.97", "FASED_WALLET_LOCAL_SIGNER_SOCKET=" + hosting.ApplicationSocket(), "--host-security-capable"} {
 		if !strings.Contains(hostArgs, required) {
 			t.Fatalf("Hosting onboarding omitted %q from %s", required, hostArgs)
 		}
 	}
 	if strings.Contains(hostArgs, "FASED_PROTECTED_LOCAL=") {
 		t.Fatalf("Hosting onboarding inherited Local authority: %s", hostArgs)
+	}
+	for _, fixture := range []struct {
+		name    string
+		request publicLifecycleRequest
+		config  platform.Config
+		profile string
+	}{
+		{name: "Local", request: publicLifecycleRequest{Profile: model.ProfileProtectedLocal, OnboardArgs: []string{"--flow", "manual"}}, config: local, profile: "local"},
+		{name: "Hosting", request: publicLifecycleRequest{Profile: model.ProfileHosting, Channel: "beta", Version: "0.1.76-rc.97", OnboardArgs: []string{"--flow", "manual"}}, config: hosting, profile: "hosting"},
+	} {
+		args := onboardingCommandArgs(fixture.request, operator, fixture.config, "/home/owner/.fased/bin/fased")
+		want := []string{"--host-profile", fixture.profile}
+		if got := args[len(args)-len(want):]; !slices.Equal(got, want) {
+			t.Fatalf("%s onboarding command tail = %v, want %v", fixture.name, got, want)
+		}
+		joined := strings.Join(args, "\n")
+		if !strings.Contains(joined, "onboard\n--install-daemon\n--flow\nmanual") || strings.Index(joined, "--flow\nmanual") > strings.Index(joined, "--host-profile\n"+fixture.profile) {
+			t.Fatalf("%s user onboarding arguments could override the lifecycle profile: %v", fixture.name, args)
+		}
+	}
+}
+
+func TestInteractiveOnboardingDoesNotInheritMachineDeadline(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	interactive, detached := onboardingPhaseContext(parent, publicLifecycleRequest{})
+	if !detached {
+		t.Fatal("interactive onboarding was not detached from the machine deadline")
+	}
+	if err := interactive.Err(); err != nil {
+		t.Fatalf("interactive onboarding inherited the machine deadline: %v", err)
+	}
+	scripted, detached := onboardingPhaseContext(parent, publicLifecycleRequest{OnboardArgs: []string{"--non-interactive"}})
+	if detached {
+		t.Fatal("scripted onboarding escaped the machine deadline")
+	}
+	if !errors.Is(scripted.Err(), context.Canceled) {
+		t.Fatalf("scripted onboarding lost the machine deadline: %v", scripted.Err())
+	}
+}
+
+func TestPublicInstallRejectsOnboardingProfileOverride(t *testing.T) {
+	_, err := parsePublicLifecycleRequest("install", []string{
+		"--profile", "hosting", "--channel", "beta", "--version", "0.1.76-rc.114", "--operator-user", "app",
+		"--", "--host-profile", "local",
+	})
+	if err == nil || !strings.Contains(err.Error(), "selected by the lifecycle profile") {
+		t.Fatalf("Hosting install accepted an onboarding profile override: %v", err)
 	}
 }
 

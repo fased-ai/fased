@@ -185,11 +185,6 @@ function verifyRootPreparedHostingPrerequisites(params?: {
     markerReady = false;
   }
 
-  const tailscaleIp = probe("tailscale", ["ip", "-4"]);
-  const tailnetReady =
-    tailscaleIp.ok && /^100\.(?:6[4-9]|[789]\d|1[01]\d|12[0-7])\./m.test(tailscaleIp.stdout || "");
-  const serve = probe("tailscale", ["serve", "status"]);
-  const serveReady = serve.ok && (serve.stdout || "").includes("127.0.0.1:18789");
   const signerReady = probe("systemctl", ["is-active", "--quiet", "fased-signerd.service"]).ok;
   const fail2banReady = probe("systemctl", ["is-active", "--quiet", "fail2ban.service"]).ok;
   const groups = probe("id", ["-nG"]);
@@ -200,11 +195,10 @@ function verifyRootPreparedHostingPrerequisites(params?: {
   return [
     {
       name: "tailscale",
-      ok: markerReady && tailnetReady && serveReady,
-      detail:
-        markerReady && tailnetReady && serveReady
-          ? "root-prepared tailnet identity and private Serve route verified"
-          : "root-prepared Tailscale identity or private Serve route is unavailable",
+      ok: markerReady,
+      detail: markerReady
+        ? "root-prepared tailnet identity and private Serve route verified by the bound marker"
+        : "root-prepared Tailscale identity or private Serve route marker is unavailable",
     },
     {
       name: "firewall",
