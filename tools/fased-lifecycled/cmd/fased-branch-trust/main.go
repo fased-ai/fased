@@ -32,6 +32,12 @@ type fixtureKey struct {
 	private ed25519.PrivateKey
 }
 
+const (
+	fixtureRootEpoch     = "6cff1ef78f4da8289e68e140eb3a416e39737bc1" // pragma: allowlist secret
+	fixtureRootIssuedAt  = "2026-08-22T21:31:57Z"
+	fixtureRootExpiresAt = "2026-09-21T21:31:57Z"
+)
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "fased-branch-trust:", err)
@@ -72,10 +78,10 @@ func run(args []string) error {
 	if err := json.Unmarshal(data, &inv); err != nil {
 		return err
 	}
-	rootKeys := []fixtureKey{fixtureKeyFor(commit, "root-1"), fixtureKeyFor(commit, "root-2"), fixtureKeyFor(commit, "root-3")}
+	rootKeys := []fixtureKey{fixtureRootKeyFor("root-1"), fixtureRootKeyFor("root-2"), fixtureRootKeyFor("root-3")}
 	releaseKey := fixtureKeyFor(commit, "release")
 	root := trust.RootMetadata{SchemaVersion: 1, Type: "fased-lifecycle-root", Version: 1,
-		IssuedAt: issued.Format(time.RFC3339), ExpiresAt: issued.Add(30 * 24 * time.Hour).Format(time.RFC3339),
+		IssuedAt: fixtureRootIssuedAt, ExpiresAt: fixtureRootExpiresAt,
 		Keys: map[string]trust.Key{}, Root: trust.RootRole{Threshold: 2},
 		ReleaseAuthority: &trust.ReleaseAuthority{Type: "github-artifact-attestation-v1", Repository: "fased-ai/fased", Workflow: "fased-ai/fased/.github/workflows/hosted-runtime-release.yml", SourceRefPrefix: "refs/tags/v", DenySelfHostedRunners: true},
 		Revocations:      trust.Revocations{ReleaseVersions: []string{}, TargetDigests: []string{}, DelegatedKeyIDs: []string{}}}
@@ -132,6 +138,10 @@ func run(args []string) error {
 	}
 	pin := sha256.Sum256(rootJSON)
 	return os.WriteFile(filepath.Join(artifactDir, "fased-branch-root.sha256"), []byte(hex.EncodeToString(pin[:])+"\n"), 0644)
+}
+
+func fixtureRootKeyFor(role string) fixtureKey {
+	return fixtureKeyFor(fixtureRootEpoch, role)
 }
 
 func fixtureKeyFor(commit, role string) fixtureKey {
