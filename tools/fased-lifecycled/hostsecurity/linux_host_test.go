@@ -58,6 +58,11 @@ func linuxHostFixture(t *testing.T) (LinuxHost, *fixtureRunner, string) {
 	if err := os.WriteFile(filepath.Join(root, "usr/bin/tailscale"), []byte("fixture"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range []string{"getfacl", "setfacl"} {
+		if err := os.WriteFile(filepath.Join(root, "usr/bin", name), []byte("fixture"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(root, "etc/os-release"), []byte("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +157,13 @@ func TestLinuxHostInspectionBindsPrivateTailscaleAndHardening(t *testing.T) {
 	if !inspection.Authenticated || !inspection.PrivateServeReady || !inspection.HardeningReady || !inspection.SignerReady || inspection.AppCanElevate || inspection.TailscaleDNS != "fased.tailnet.ts.net" {
 		t.Fatalf("Hosting inspection lost a required boundary: %+v", inspection)
 	}
+	if err := os.Remove(filepath.Join(root, "usr/bin/getfacl")); err != nil {
+		t.Fatal(err)
+	}
+	withoutACL, err := host.Inspect(context.Background(), 18789, "app")
+	if err != nil || withoutACL.HardeningReady {
+		t.Fatalf("Hosting hardening accepted missing getfacl: inspection=%+v err=%v", withoutACL, err)
+	}
 }
 
 func TestLinuxHostRejectsFunnelAndNonLoopbackServe(t *testing.T) {
@@ -185,7 +197,7 @@ func TestHostingFirewallDefaultsClosedAndAllowsOnlyPrivateAdministration(t *test
 
 func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing.T) {
 	host, runner, _ := linuxHostFixture(t)
-	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades"} {
+	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades", "acl"} {
 		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} "+name] = []byte("ii ")
 	}
 	encoded, err := host.SnapshotHardening(context.Background(), "app", io.Discard)
@@ -201,6 +213,25 @@ func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacy := snapshot
+	legacy.SchemaVersion = 2
+	legacy.Packages = legacy.Packages[:len(legacy.Packages)-1]
+	legacyBytes, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeHardeningSnapshot(string(legacyBytes)); err != nil {
+		t.Fatalf("schema-2 hardening rollback snapshot was rejected: %v", err)
+	}
+	missingACL := snapshot
+	missingACL.Packages = missingACL.Packages[:len(missingACL.Packages)-1]
+	missingACLBytes, err := json.Marshal(missingACL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeHardeningSnapshot(string(missingACLBytes)); err == nil {
+		t.Fatal("schema-3 hardening snapshot accepted a missing ACL package")
+	}
 	for index := range snapshot.Packages {
 		snapshot.Packages[index].Installed = false
 	}
@@ -213,7 +244,7 @@ func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing
 		t.Fatal(err)
 	}
 	joined := strings.Join(runner.calls, "\n")
-	if !strings.Contains(joined, "/usr/bin/apt-get remove -y nftables fail2ban unattended-upgrades") {
+	if !strings.Contains(joined, "/usr/bin/apt-get remove -y nftables fail2ban unattended-upgrades acl") {
 		t.Fatalf("rollback did not remove exactly the transaction-added packages:\n%s", joined)
 	}
 }

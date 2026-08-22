@@ -109,6 +109,18 @@ EOF_LEGACY_UPDATER_UNIT
   ! command -v node >/dev/null 2>&1
 }
 
+remove_acl_fixture_prerequisite() {
+  if command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get remove -y acl >/dev/null
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf remove -y acl >/dev/null
+  else
+    return 1
+  fi
+  ! command -v getfacl >/dev/null 2>&1
+  ! command -v setfacl >/dev/null 2>&1
+}
+
 diagnostics() {
   local status=$?
   if [[ "$status" -ne 0 ]]; then
@@ -916,6 +928,7 @@ case "$phase" in
     prepare_provider_access_fixture
     install_fixture_sat_runtime_environment
     prepare_interrupted_legacy_updater_fixture
+    remove_acl_fixture_prerequisite
     run_public_installer >/tmp/fased-hosting-install.out 2>/tmp/fased-hosting-install.err
     jq -e '.phase == "COMMITTED" and .tailscaleInstalledByTransaction == true and
       .authenticatedByTransaction == true and .tailscaleDns == "fased-fixture.tailnet.ts.net"' \
@@ -923,6 +936,8 @@ case "$phase" in
     grep -Fq 'https://login.tailscale.com/a/fased-fixture' /tmp/fased-hosting-install.out
     ! grep -Fq 'Type the Tailscale DNS name' /tmp/fased-hosting-install.out
     ! command -v node >/dev/null 2>&1
+    command -v getfacl >/dev/null 2>&1
+    command -v setfacl >/dev/null 2>&1
     ! grep -Fq '/opt/fased/host-controller/current/fased-host-updater.mjs' \
       /etc/systemd/system/fased-host-updater.service
     acceptance_start
