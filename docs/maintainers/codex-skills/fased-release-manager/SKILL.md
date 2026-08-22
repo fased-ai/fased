@@ -18,10 +18,9 @@ owner requests that inventory.
 3. Preserve unrelated dirty work. Resume the plan's first incomplete checkpoint;
    superseded plans are evidence only.
 
-The newest owner-selected plan is the sole controlling plan until the owner
-replaces or completes it. Superseded incident plans and reports are evidence
-only; never resume work from them. At every handoff, name the first incomplete
-checkpoint and continue from it.
+The newest owner-selected plan controls until replaced or completed;
+superseded plans are evidence only. At handoff, name and continue its first
+incomplete checkpoint.
 
 - `REPORT`: inspect and answer without mutation.
 - `FIX`: one failure, one correction, focused proof. Default mode.
@@ -67,14 +66,16 @@ implementation keeps the task in `FIX` or `LIFECYCLE`. Only an explicit named
 whether a correction works, and never present release progress as completion
 of later architecture phases.
 
-Continue reversible authorized checkpoints until completion, owner stop or plan
-replacement, one failure requiring a plan change, the same predicate failing
-twice, unavailable external authority, or an uncovered irreversible boundary.
-Merge, tag, GitHub publication, owner installation, real Hosting mutation, and
-stable promotion are irreversible boundaries.
+Continue until owner stop, identity/plan change, unavailable authority, or an
+unnamed boundary. Bare `fix` means focused proof. Treat same predicate failing
+twice in one lifecycle boundary as one correction across discovery/residue,
+ownership, service, security/network handoff, and rollback/retry predicates;
+block another candidate until the affected topology passes.
 
-Never duplicate a running command, rerun an unchanged failure, restart quiet
-CI, or rebuild unchanged bytes.
+If the owner defines `fix`, `continue`, or `finish` as a named chain, record it
+once and run its push, PR, CI, merge, P1, tag, and publication as `PASS` gates
+without asking again; this survives compaction until done or revoked. Unlisted
+owner/Hosting mutation, promotion, npm, cleanup, and deployment stay out.
 
 ## Fix the literal predicate first
 
@@ -113,9 +114,9 @@ surface requires them.
 
 ## Runtime and artifact discipline
 
-Lead lifecycle reports with literal end-user commands and distinguish
-`documented`, `implemented`, and `proven`. Managed users never maintain Node,
-npm, pnpm, Git, Go, GitHub CLI, internal paths, services, or journals.
+Lead lifecycle reports with literal user commands and distinguish `documented`,
+`implemented`, and `proven`. Managed users never maintain build tools, internal
+paths, services, or journals.
 
 Never rebuild Linux images for ordinary fixes. Reuse pinned fixture images and
 cached artifacts. When distributable bytes change, build one cached unpublished
@@ -134,9 +135,8 @@ mock, fixture, container, or substituted transport evidence never becomes
 owner-Local, real-Hosting, or public `PASS`. Bind completion claims to the exact
 identity required by the selected reference.
 
-Managed publication is GitHub-only. Never use npm packages or tags as managed
-install/update authority. Never bypass protected checks or inspect GitHub before
-reviewing or shipping. Whole-repository or full security scans require explicit
+Managed publication is GitHub-only; npm is never managed install/update
+authority. Never bypass protected checks. Repository/full security scans require
 owner authorization.
 
 ## Branch and workspace discipline
