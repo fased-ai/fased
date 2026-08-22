@@ -1,6 +1,6 @@
 {
   "name": "@fased/discord",
-  "version": "0.1.76-rc.111",
+  "version": "0.1.76-rc.112",
   "private": true,
   "description": "FasedAgent Discord channel plugin",
   "files": [
@@ -20,7 +20,7 @@
     "qrcode-terminal": "^0.12.0"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.111"
+    "@fased/fased": "^0.1.76-rc.112"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
