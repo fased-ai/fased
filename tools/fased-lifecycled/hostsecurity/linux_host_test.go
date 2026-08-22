@@ -215,7 +215,7 @@ func TestInspectChecksLifecyclePrerequisitesBeforeTailscaleExists(t *testing.T) 
 func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing.T) {
 	host, runner, _ := linuxHostFixture(t)
 	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades", "acl"} {
-		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} "+name] = []byte("ii ")
+		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Status}\t${db:Status-Eflag} "+name] = []byte("installed\tok")
 	}
 	encoded, err := host.SnapshotHardening(context.Background(), "app", io.Discard)
 	if err != nil {
@@ -269,9 +269,9 @@ func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing
 func TestHardeningSnapshotTreatsRemovedConfigResidueAsAbsent(t *testing.T) {
 	host, runner, _ := linuxHostFixture(t)
 	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades"} {
-		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} "+name] = []byte("ii ")
+		runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Status}\t${db:Status-Eflag} "+name] = []byte("installed\tok")
 	}
-	runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} acl"] = []byte("rc ")
+	runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Status}\t${db:Status-Eflag} acl"] = []byte("config-files\tok")
 
 	encoded, err := host.SnapshotHardening(context.Background(), "app", io.Discard)
 	if err != nil {
@@ -294,10 +294,46 @@ func TestHardeningSnapshotTreatsRemovedConfigResidueAsAbsent(t *testing.T) {
 
 func TestHardeningSnapshotRejectsPartialDpkgState(t *testing.T) {
 	host, runner, _ := linuxHostFixture(t)
-	runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Abbrev} nftables"] = []byte("iU ")
+	runner.outputs["/usr/bin/dpkg-query --show --showformat=${db:Status-Status}\t${db:Status-Eflag} nftables"] = []byte("unpacked\tok")
 	if _, err := host.SnapshotHardening(context.Background(), "app", io.Discard); err == nil ||
-		!strings.Contains(err.Error(), "ambiguous installed-package status") {
+		!strings.Contains(err.Error(), `dpkg package "nftables" is incomplete: status="unpacked" error="ok"`) {
 		t.Fatalf("partial dpkg state was not rejected: %v", err)
+	}
+}
+
+func TestClassifyDpkgPackageStatus(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		output    string
+		installed bool
+		wantError string
+	}{
+		{name: "installed", output: "installed\tok", installed: true},
+		{name: "not installed", output: "not-installed\tok"},
+		{name: "config residue", output: "config-files\tok"},
+		{name: "half installed", output: "half-installed\tok", wantError: "is incomplete"},
+		{name: "unpacked", output: "unpacked\tok", wantError: "is incomplete"},
+		{name: "half configured", output: "half-configured\tok", wantError: "is incomplete"},
+		{name: "triggers awaiting", output: "triggers-awaiting\tok", wantError: "is incomplete"},
+		{name: "triggers pending", output: "triggers-pending\tok", wantError: "is incomplete"},
+		{name: "reinstall required", output: "installed\treinstreq", wantError: "is unsafe"},
+		{name: "unknown", output: "future-state\tok", wantError: "has an unknown status"},
+		{name: "malformed", output: "installed", wantError: "returned an invalid status"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			installed, err := classifyDpkgPackageStatus("acl", []byte(test.output))
+			if installed != test.installed {
+				t.Fatalf("installed=%v, want %v", installed, test.installed)
+			}
+			if test.wantError == "" && err != nil {
+				t.Fatal(err)
+			}
+			if test.wantError != "" && (err == nil || !strings.Contains(err.Error(), test.wantError)) {
+				t.Fatalf("error=%v, want substring %q", err, test.wantError)
+			}
+		})
 	}
 }
 

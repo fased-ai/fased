@@ -329,7 +329,7 @@ func (host LinuxHost) hardeningPackageInstalled(ctx context.Context, family, nam
 	switch family {
 	case "apt":
 		command, err = fixedExecutable("/usr/bin/dpkg-query", "/bin/dpkg-query")
-		args = []string{"--show", "--showformat=${db:Status-Abbrev}", name}
+		args = []string{"--show", "--showformat=${db:Status-Status}\t${db:Status-Eflag}", name}
 	case "rpm":
 		command, err = fixedExecutable("/usr/bin/rpm", "/bin/rpm")
 		args = []string{"-q", "--quiet", name}
@@ -351,23 +351,39 @@ func (host LinuxHost) hardeningPackageInstalled(ctx context.Context, family, nam
 	if outputErr != nil {
 		if host.RootPrefix == "" {
 			var exitError *exec.ExitError
-			if !errors.As(outputErr, &exitError) {
+			if !errors.As(outputErr, &exitError) || exitError.ExitCode() != 1 {
 				return false, outputErr
 			}
+		} else {
+			return false, outputErr
 		}
 		return false, nil
 	}
 	if family == "apt" {
-		switch strings.TrimSpace(string(output)) {
-		case "ii":
-			return true, nil
-		case "rc":
-			return false, nil
-		default:
-			return false, errors.New("dpkg returned an ambiguous installed-package status")
-		}
+		return classifyDpkgPackageStatus(name, output)
 	}
 	return true, nil
+}
+
+func classifyDpkgPackageStatus(name string, output []byte) (bool, error) {
+	fields := strings.Split(strings.TrimSpace(string(output)), "\t")
+	if len(fields) != 2 || fields[0] == "" || fields[1] == "" {
+		return false, fmt.Errorf("dpkg returned an invalid status for Hosting package %q", name)
+	}
+	status, errorFlag := fields[0], fields[1]
+	if errorFlag != "ok" {
+		return false, fmt.Errorf("dpkg package %q is unsafe: status=%q error=%q", name, status, errorFlag)
+	}
+	switch status {
+	case "installed":
+		return true, nil
+	case "not-installed", "config-files":
+		return false, nil
+	case "half-installed", "unpacked", "half-configured", "triggers-awaiting", "triggers-pending":
+		return false, fmt.Errorf("dpkg package %q is incomplete: status=%q error=%q", name, status, errorFlag)
+	default:
+		return false, fmt.Errorf("dpkg package %q has an unknown status: status=%q error=%q", name, status, errorFlag)
+	}
 }
 
 func (host LinuxHost) installHardeningPackages(ctx context.Context, snapshot hardeningSnapshot, log io.Writer) error {

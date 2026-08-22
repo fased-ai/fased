@@ -109,18 +109,6 @@ EOF_LEGACY_UPDATER_UNIT
   ! command -v node >/dev/null 2>&1
 }
 
-remove_acl_fixture_prerequisite() {
-  if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get remove -y acl >/dev/null
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf remove -y acl >/dev/null
-  else
-    return 1
-  fi
-  ! command -v getfacl >/dev/null 2>&1
-  ! command -v setfacl >/dev/null 2>&1
-}
-
 diagnostics() {
   local status=$?
   if [[ "$status" -ne 0 ]]; then
@@ -193,29 +181,21 @@ install_hosting_package_fixtures() {
     /var/lib/fased-hosting-fixture/acl-package/getfacl
   install -m 0755 -o root -g root /usr/bin/setfacl \
     /var/lib/fased-hosting-fixture/acl-package/setfacl
-  install -m 0600 -o root -g root /dev/null \
-    /var/lib/fased-hosting-fixture/acl-package/installed
+  if command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get remove -y acl >/dev/null
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf remove -y acl >/dev/null
+  else
+    return 1
+  fi
+  ! command -v getfacl >/dev/null 2>&1
+  ! command -v setfacl >/dev/null 2>&1
   install -m 0755 -o root -g root /usr/bin/apt-get \
     /usr/local/libexec/fased-fixture-apt-get-real
-  install -m 0755 -o root -g root /usr/bin/dpkg-query \
-    /usr/local/libexec/fased-fixture-dpkg-query-real
-  cat >/usr/bin/dpkg-query <<'EOF_DPKG_QUERY_FIXTURE'
-#!/usr/bin/env bash
-set -euo pipefail
-state=/var/lib/fased-hosting-fixture/acl-package
-if [[ "$#" -eq 3 && "$1" == "--show" &&
-  "$2" == '--showformat=${db:Status-Abbrev}' && "$3" == "acl" ]]; then
-  if [[ -f "$state/installed" ]]; then
-    printf 'ii '
-  else
-    printf 'rc '
-  fi
-  exit 0
-fi
-exec /usr/local/libexec/fased-fixture-dpkg-query-real "$@"
-EOF_DPKG_QUERY_FIXTURE
-  chown root:root /usr/bin/dpkg-query
-  chmod 0755 /usr/bin/dpkg-query
+  test -x /usr/bin/dpkg-query
+  acl_status="$(/usr/bin/dpkg-query --show \
+    '--showformat=${db:Status-Status}\t${db:Status-Eflag}' acl 2>/dev/null || true)"
+  [[ "$acl_status" == $'not-installed\tok' || "$acl_status" == $'config-files\tok' || -z "$acl_status" ]]
   cat >/usr/local/libexec/fased-install-tailscale-fixture <<'EOF_INSTALL_TAILSCALE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -987,7 +967,6 @@ case "$phase" in
     prepare_provider_access_fixture
     install_fixture_sat_runtime_environment
     prepare_interrupted_legacy_updater_fixture
-    remove_acl_fixture_prerequisite
     run_public_installer >/tmp/fased-hosting-install.out 2>/tmp/fased-hosting-install.err
     jq -e '.phase == "COMMITTED" and .tailscaleInstalledByTransaction == true and
       .authenticatedByTransaction == true and .tailscaleDns == "fased-fixture.tailnet.ts.net"' \
