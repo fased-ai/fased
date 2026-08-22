@@ -318,7 +318,15 @@ func (service *Service) converge(ctx context.Context, request protocol.Request) 
 		}
 		digest, verifyErr := service.CurrentConvergence.VerifyCurrent(ctx, installed, manifestDigest)
 		if verifyErr != nil || !validConvergenceDigest(digest) {
-			return protocol.Response{}, errors.Join(errors.New("already-current live convergence proof failed"), verifyErr)
+			if service.CurrentRepair == nil {
+				return protocol.Response{}, errors.Join(errors.New("already-current live convergence proof failed"), verifyErr)
+			}
+			repaired, repairErr := service.repairCurrent(ctx, request)
+			if repairErr != nil {
+				return protocol.Response{}, errors.Join(errors.New("already-current live convergence proof failed"), verifyErr, repairErr)
+			}
+			repaired.Outcome = string(plan.Action)
+			return repaired, nil
 		}
 		result := response(request, string(plan.Action), "", generation.ID)
 		result.ConvergenceReceiptDigest = digest
