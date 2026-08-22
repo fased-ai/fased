@@ -110,7 +110,7 @@ func TestLowMemoryHostingStagesManagedSwapAndRollsBackExactly(t *testing.T) {
 	}
 	swapPath := filepath.Join(root, strings.TrimPrefix(managedSwapPath, "/"))
 	info, err := os.Lstat(swapPath)
-	if err != nil || info.Size() != managedSwapBytes || info.Mode().Perm() != 0o600 {
+	if err != nil || info.Size() != managedSwapFileBytes() || info.Mode().Perm() != 0o600 {
 		t.Fatalf("managed swap file is invalid: info=%v err=%v", info, err)
 	}
 	fstab, err := os.ReadFile(filepath.Join(root, "etc/fstab"))
@@ -164,7 +164,7 @@ func TestLowMemoryHostingResumesJournalBoundSwapResidue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Truncate(managedSwapBytes); err != nil {
+	if err := file.Truncate(managedSwapFileBytes()); err != nil {
 		_ = file.Close()
 		t.Fatal(err)
 	}
