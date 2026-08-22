@@ -23,6 +23,7 @@ type Host interface {
 	RestoreSignerWebAuthn(context.Context, string, bool) error
 	LogoutTailscale(context.Context) error
 	SnapshotHardening(context.Context, string, io.Writer) (string, error)
+	StageLifecyclePrerequisites(context.Context, string, io.Writer) error
 	StageHardening(context.Context, string, io.Writer) error
 	CommitHardening(context.Context, string) error
 	RestoreHardening(context.Context, string) error
@@ -86,6 +87,29 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 	inspection, err := participant.Host.Inspect(ctx, request.GatewayPort, request.OperatorUser)
 	if err != nil {
 		return State{}, participant.abort(ctx, state, err)
+	}
+	if !inspection.LifecyclePrerequisitesReady {
+		participant.progress("Fased: installing lifecycle ACL prerequisites...")
+		snapshot, snapshotErr := participant.Host.SnapshotHardening(ctx, request.OperatorUser, participant.log())
+		if snapshotErr != nil {
+			return State{}, participant.abort(ctx, state, snapshotErr)
+		}
+		state.HardeningStarted = true
+		state.HardeningSnapshot = snapshot
+		if err := participant.Store.WriteState(state); err != nil {
+			return State{}, err
+		}
+		if err := participant.Host.StageLifecyclePrerequisites(ctx, snapshot, participant.log()); err != nil {
+			return State{}, participant.abort(ctx, state, err)
+		}
+		state.LifecyclePrerequisitesStaged = true
+		if err := participant.Store.WriteState(state); err != nil {
+			return State{}, participant.abort(ctx, state, err)
+		}
+		inspection, err = participant.Host.Inspect(ctx, request.GatewayPort, request.OperatorUser)
+		if err != nil || !inspection.LifecyclePrerequisitesReady {
+			return State{}, participant.abort(ctx, state, errors.Join(err, errors.New("Hosting lifecycle prerequisites did not converge")))
+		}
 	}
 	if request.RequireExistingHardening && (!inspection.HardeningReady && !inspection.LegacyHardeningReady || inspection.AppCanElevate) {
 		return State{}, participant.abort(ctx, state, errors.New("Hosting update refused because the installed host-security boundary is not intact"))
@@ -232,20 +256,28 @@ func (participant Participant) Commit(ctx context.Context, transactionID string,
 	if !state.AccessConfirmed {
 		return State{}, errors.New("provider access remains open until independent tailnet access is confirmed")
 	}
-	if !inspection.HardeningReady && !state.HardeningStarted {
+	if !inspection.HardeningReady {
 		participant.progress("Fased: staging firewall, SSH, fail2ban, and security updates...")
-		snapshot, err := participant.Host.SnapshotHardening(ctx, state.OperatorUser, participant.log())
-		if err != nil {
-			return State{}, participant.abort(ctx, state, err)
+		if !state.HardeningStarted {
+			snapshot, err := participant.Host.SnapshotHardening(ctx, state.OperatorUser, participant.log())
+			if err != nil {
+				return State{}, participant.abort(ctx, state, err)
+			}
+			state.HardeningStarted = true
+			state.HardeningSnapshot = snapshot
 		}
-		state.HardeningStarted = true
 		state.Phase = PhaseHardening
-		state.HardeningSnapshot = snapshot
 		if err := participant.Store.WriteState(state); err != nil {
 			return State{}, err
 		}
-		if err := participant.Host.StageHardening(ctx, state.HardeningSnapshot, participant.log()); err != nil {
-			return State{}, participant.abort(ctx, state, err)
+		if !state.HardeningStaged {
+			if err := participant.Host.StageHardening(ctx, state.HardeningSnapshot, participant.log()); err != nil {
+				return State{}, participant.abort(ctx, state, err)
+			}
+			state.HardeningStaged = true
+			if err := participant.Store.WriteState(state); err != nil {
+				return State{}, participant.abort(ctx, state, err)
+			}
 		}
 	}
 	if !inspection.HardeningReady {
@@ -322,6 +354,7 @@ func (participant Participant) abort(ctx context.Context, state State, cause err
 	}
 	state.Phase = PhaseAborted
 	state.RuntimeReady, state.AccessConfirmed, state.HardeningCommitted = false, false, false
+	state.LifecyclePrerequisitesStaged, state.HardeningStaged = false, false
 	state.HardeningAdopted, state.LegacyHardeningAdopted = false, false
 	if err := participant.Store.WriteState(state); err != nil {
 		failures = append(failures, err)

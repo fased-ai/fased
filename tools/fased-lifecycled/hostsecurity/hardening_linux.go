@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	hardeningSnapshotSchema     uint32 = 2
+	hardeningSnapshotSchema     uint32 = 3
 	firewallUnitName                   = "fased-hosting-firewall.service"
 	hardeningConvergenceTimeout        = 15 * time.Second
 	hardeningConvergencePoll           = 100 * time.Millisecond
@@ -144,6 +144,20 @@ func (host LinuxHost) StageHardening(ctx context.Context, encoded string, log io
 	return nil
 }
 
+func (host LinuxHost) StageLifecyclePrerequisites(ctx context.Context, encoded string, log io.Writer) error {
+	snapshot, err := decodeHardeningSnapshot(encoded)
+	if err != nil {
+		return err
+	}
+	for _, item := range snapshot.Packages {
+		if item.Name == "acl" {
+			snapshot.Packages = []hardeningPackageSnapshot{item}
+			return host.installHardeningPackages(ctx, snapshot, log)
+		}
+	}
+	return errors.New("Hosting hardening snapshot does not bind the ACL prerequisite")
+}
+
 func (host LinuxHost) CommitHardening(ctx context.Context, encoded string) error {
 	snapshot, err := decodeHardeningSnapshot(encoded)
 	if err != nil {
@@ -224,6 +238,9 @@ func (host LinuxHost) RestoreHardening(ctx context.Context, encoded string) erro
 }
 
 func (host LinuxHost) hardeningReady(ctx context.Context) bool {
+	if !host.aclToolsReady() {
+		return false
+	}
 	nftBinary, err := fixedExecutable("/usr/sbin/nft", "/usr/bin/nft", "/sbin/nft")
 	if host.RootPrefix != "" {
 		nftBinary, err = "/usr/sbin/nft", nil
@@ -269,14 +286,37 @@ func (host LinuxHost) hardeningReady(ctx context.Context) bool {
 	return err == nil && dnfAutomaticEnabled(data)
 }
 
+func (host LinuxHost) aclToolsReady() bool {
+	for _, candidates := range [][]string{{"/usr/bin/getfacl", "/bin/getfacl"}, {"/usr/bin/setfacl", "/bin/setfacl"}} {
+		if host.RootPrefix == "" {
+			if _, err := fixedExecutable(candidates...); err != nil {
+				return false
+			}
+			continue
+		}
+		found := false
+		for _, candidate := range candidates {
+			info, err := os.Lstat(host.path(candidate))
+			if err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o111 != 0 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 func hardeningPackagePlan(release map[string]string) (family, timer string, packages []string, err error) {
 	switch release["ID"] {
 	case "ubuntu", "debian":
-		return "apt", "apt-daily-upgrade.timer", []string{"nftables", "fail2ban", "unattended-upgrades"}, nil
+		return "apt", "apt-daily-upgrade.timer", []string{"nftables", "fail2ban", "unattended-upgrades", "acl"}, nil
 	case "fedora":
-		return "rpm", "dnf-automatic-install.timer", []string{"nftables", "fail2ban", "dnf-automatic"}, nil
+		return "rpm", "dnf-automatic-install.timer", []string{"nftables", "fail2ban", "dnf-automatic", "acl"}, nil
 	case "centos", "rhel", "rocky", "almalinux", "ol", "cloudlinux":
-		return "rpm", "dnf-automatic-install.timer", []string{"epel-release", "nftables", "fail2ban", "dnf-automatic"}, nil
+		return "rpm", "dnf-automatic-install.timer", []string{"epel-release", "nftables", "fail2ban", "dnf-automatic", "acl"}, nil
 	default:
 		return "", "", nil, errors.New("unsupported Hosting distribution for hardening")
 	}
@@ -317,8 +357,15 @@ func (host LinuxHost) hardeningPackageInstalled(ctx context.Context, family, nam
 		}
 		return false, nil
 	}
-	if family == "apt" && strings.TrimSpace(string(output)) != "ii" {
-		return false, errors.New("dpkg returned an ambiguous installed-package status")
+	if family == "apt" {
+		switch strings.TrimSpace(string(output)) {
+		case "ii":
+			return true, nil
+		case "rc":
+			return false, nil
+		default:
+			return false, errors.New("dpkg returned an ambiguous installed-package status")
+		}
 	}
 	return true, nil
 }
@@ -559,20 +606,31 @@ func decodeHardeningSnapshot(encoded string) (hardeningSnapshot, error) {
 	decoder := json.NewDecoder(strings.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	var snapshot hardeningSnapshot
-	if err := decoder.Decode(&snapshot); err != nil || snapshot.SchemaVersion != hardeningSnapshotSchema ||
+	if err := decoder.Decode(&snapshot); err != nil || (snapshot.SchemaVersion != 2 && snapshot.SchemaVersion != hardeningSnapshotSchema) ||
 		(snapshot.Family != "apt" && snapshot.Family != "rpm") || snapshot.SSHService == "" || snapshot.UpdateTimer == "" || snapshot.NftBinary != "/usr/sbin/nft" || len(snapshot.Files) < 5 || len(snapshot.Services) != 4 {
 		return hardeningSnapshot{}, errors.Join(err, errors.New("Hosting hardening snapshot is invalid"))
 	}
 	wantPackages := map[string]bool{"nftables": true, "fail2ban": true}
+	if snapshot.SchemaVersion >= 3 {
+		wantPackages["acl"] = true
+	}
 	if snapshot.Family == "apt" {
 		wantPackages["unattended-upgrades"] = true
-		if snapshot.UpdateTimer != "apt-daily-upgrade.timer" || len(snapshot.Packages) != 3 {
+		wantCount := 3
+		if snapshot.SchemaVersion >= 3 {
+			wantCount++
+		}
+		if snapshot.UpdateTimer != "apt-daily-upgrade.timer" || len(snapshot.Packages) != wantCount {
 			return hardeningSnapshot{}, errors.New("Hosting apt hardening snapshot is invalid")
 		}
 	} else {
 		wantPackages["dnf-automatic"] = true
 		wantPackages["epel-release"] = true
-		if snapshot.UpdateTimer != "dnf-automatic-install.timer" || (len(snapshot.Packages) != 3 && len(snapshot.Packages) != 4) {
+		minimum, maximum := 3, 4
+		if snapshot.SchemaVersion >= 3 {
+			minimum, maximum = 4, 5
+		}
+		if snapshot.UpdateTimer != "dnf-automatic-install.timer" || (len(snapshot.Packages) != minimum && len(snapshot.Packages) != maximum) {
 			return hardeningSnapshot{}, errors.New("Hosting rpm hardening snapshot is invalid")
 		}
 	}
@@ -584,8 +642,9 @@ func decodeHardeningSnapshot(encoded string) (hardeningSnapshot, error) {
 		seenPackages[item.Name] = true
 	}
 	if !seenPackages["nftables"] || !seenPackages["fail2ban"] ||
-		(snapshot.Family == "apt" && (!seenPackages["unattended-upgrades"] || len(seenPackages) != 3)) ||
-		(snapshot.Family == "rpm" && (!seenPackages["dnf-automatic"] || len(seenPackages) < 3)) {
+		(snapshot.SchemaVersion >= 3 && !seenPackages["acl"]) ||
+		(snapshot.Family == "apt" && (!seenPackages["unattended-upgrades"] || len(seenPackages) != len(wantPackages))) ||
+		(snapshot.Family == "rpm" && (!seenPackages["dnf-automatic"] || len(seenPackages) < len(wantPackages)-1)) {
 		return hardeningSnapshot{}, errors.New("Hosting hardening snapshot lacks required packages")
 	}
 	return snapshot, nil
