@@ -17,6 +17,7 @@ const lockfileDigest = `sha256:${"1".repeat(64)}`;
 const descriptorDigest = `sha256:${"2".repeat(64)}`;
 const artifactSetDigest = `sha256:${"3".repeat(64)}`;
 const local0ReceiptDigest = `sha256:${"4".repeat(64)}`;
+const hostingStagingReceiptDigest = `sha256:${"5".repeat(64)}`;
 
 function source(commit = commitA, tree = treeA) {
   return { commit, tree, lockfileDigest };
@@ -29,6 +30,7 @@ function release() {
 function claims(phase: string) {
   if (phase === "pre-candidate") {
     return {
+      hostingStagingReceiptDigest,
       local0ReceiptDigest,
       mainChecksJobId: "1002",
       mainRunId: "1001",
@@ -41,6 +43,7 @@ function claims(phase: string) {
   }
   if (phase === "pre-tag-p1") {
     return {
+      hostingStagingReceiptDigest,
       local0ReceiptDigest,
       managedPredecessorVersion: "0.1.60",
       preCandidateRunId: "1003",

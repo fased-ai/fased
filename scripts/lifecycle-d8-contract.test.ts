@@ -204,9 +204,8 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(hosting).not.toContain("/repo/");
     expect(hosting).toContain("lifecycle-receipt-verifier.mjs");
     expect(hosting).toContain('grep -F "Already current: $version"');
-    expect(hosting).toContain(
-      "runuser -u app -- env HOME=/home/app /home/app/.fased/bin/fased update",
-    );
+    expect(hosting).toContain("run_public_updater()");
+    expect(hosting).toContain('exec fased update "$@"');
     expect(hosting).toContain(
       `test "$(stat -Lc '%U:%G:%a' /etc/sudoers.d/fased-hosting-update)" = "root:root:440"`,
     );
@@ -218,11 +217,11 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(hosting).not.toContain("fased-hosting-target-config-without-mode.json");
     expect(runner).toContain("acceptance_evidence_class=PASS");
     expect(runner).toContain("acceptance_acquisition_evidence_class=SUPPORTING");
-    expect(hosting).toContain("acceptance_evidence_class=PASS");
+    expect(hosting).toContain("acceptance_evidence_class=SUPPORTING");
     expect(hosting).toContain("acceptance_acquisition_evidence_class=SUPPORTING");
     expect(wrapper).toContain("--evidence-class PASS");
     expect(wrapper).toContain("--acquisition-evidence-class SUPPORTING");
-    expect(hostingWrapper).toContain("--evidence-class PASS");
+    expect(hostingWrapper).toContain("--evidence-class SUPPORTING");
     expect(hostingWrapper).toContain("--acquisition-evidence-class SUPPORTING");
     expect(wrapper).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
     expect(fixtureOnlyPaths).toContain("lifecycle-d8-contract");

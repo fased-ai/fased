@@ -61,6 +61,11 @@ function currentMarker(state: "pending" | "true" = "pending"): string {
     .join("\n");
 }
 
+function coordinatorMarker(state: "pending" | "true" = "pending"): string {
+  const current = currentMarker(state).trimEnd();
+  return `${current.replace("schemaVersion=3", "schemaVersion=4")}\nplatformIdentity=linux/x64\ntrustRootSha256=${"a".repeat(64)}\nlifecycleGenerationId=sha256:${"b".repeat(64)}\nconvergenceReceiptDigest=sha256:${"c".repeat(64)}\nonboardingComplete=false\n`;
+}
+
 function healthyProbe(command: string, args: string[]) {
   const invocation = [command, ...args].join(" ");
   if (invocation === "tailscale ip -4") {
@@ -108,6 +113,24 @@ describe("onboarding Hosting security verification", () => {
     });
     expect(checks.every((check) => check.ok)).toBe(true);
     expect(checks.find((check) => check.name === "ssh")?.detail).toContain("no DNS-name");
+  });
+
+  it("accepts only an exactly generation-bound composite coordinator marker", () => {
+    const values = __testing.readRootPreparedMarker(
+      markerPath(coordinatorMarker("pending")),
+      process.getuid?.() ?? 0,
+    );
+    expect(__testing.markerHasExpectedRootState(values)).toBe(true);
+
+    const wrongGeneration = coordinatorMarker("pending").replace(
+      `sha256:${"b".repeat(64)}`,
+      "sha256:not-a-generation",
+    );
+    expect(
+      __testing.markerHasExpectedRootState(
+        __testing.readRootPreparedMarker(markerPath(wrongGeneration), process.getuid?.() ?? 0),
+      ),
+    ).toBe(false);
   });
 
   it("rejects unknown and duplicate marker fields", () => {

@@ -181,8 +181,10 @@ func (store Store) WriteReceipt(state State, complete bool) error {
 		}
 		ready = "true"
 	}
-	data := fmt.Sprintf("schemaVersion=3\nrelease=%s\nupdateChannel=%s\ntransactionId=%s\ngatewayPort=%d\ntailscaleDns=%s\ntailscaleVersion=%s\ntailscaleServeReady=true\nsignerWebAuthnReady=true\nfirewallReady=%s\nsshHardened=%s\nfail2banReady=%s\nautomaticUpdatesReady=%s\nsignerReady=true\nappSudoDisabled=true\npreparedBy=root\n",
-		state.Release, state.Channel, state.TransactionID, state.GatewayPort, state.TailscaleDNS, state.TailscaleVersion, ready, ready, ready, ready)
+	data := fmt.Sprintf("schemaVersion=4\nrelease=%s\nupdateChannel=%s\ntransactionId=%s\nplatformIdentity=%s\ntrustRootSha256=%s\nlifecycleGenerationId=%s\nconvergenceReceiptDigest=%s\nonboardingComplete=%t\ngatewayPort=%d\ntailscaleDns=%s\ntailscaleVersion=%s\ntailscaleServeReady=true\nsignerWebAuthnReady=true\nfirewallReady=%s\nsshHardened=%s\nfail2banReady=%s\nautomaticUpdatesReady=%s\nsignerReady=true\nappSudoDisabled=true\npreparedBy=root\n",
+		state.Release, state.Channel, state.TransactionID, state.PlatformIdentity, state.TrustRootSHA256,
+		state.LifecycleGenerationID, state.ConvergenceReceiptDigest, state.OnboardingComplete,
+		state.GatewayPort, state.TailscaleDNS, state.TailscaleVersion, ready, ready, ready, ready)
 	return writeAtomicRootFile(store.ReceiptPath, []byte(data), 0o644, store.ExpectedUID)
 }
 

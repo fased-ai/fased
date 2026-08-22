@@ -46,6 +46,7 @@ jobs:
       release_sequence: ${{ steps.identity.outputs.release_sequence }}
       security_epoch: ${{ steps.identity.outputs.security_epoch }}
       local0_receipt_sha256: ${{ steps.identity.outputs.local0_receipt_sha256 }}
+      hosting_staging_receipt_sha256: ${{ steps.identity.outputs.hosting_staging_receipt_sha256 }}
     steps:
       - name: Checkout exact version-only source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -129,6 +130,8 @@ jobs:
           printf 'security_epoch=%s\n' "$(jq -er .claims.securityEpoch "$evidence")" >>"$GITHUB_OUTPUT"
           printf 'local0_receipt_sha256=%s\n' \
             "$(jq -er .claims.local0ReceiptDigest "$evidence")" >>"$GITHUB_OUTPUT"
+          printf 'hosting_staging_receipt_sha256=%s\n' \
+            "$(jq -er .claims.hostingStagingReceiptDigest "$evidence")" >>"$GITHUB_OUTPUT"
 
   candidate:
     name: Build one unpublished Linux-x64 candidate-shaped artifact
@@ -415,6 +418,7 @@ jobs:
           RELEASE_SEQUENCE: ${{ needs.preflight.outputs.release_sequence }}
           SECURITY_EPOCH: ${{ needs.preflight.outputs.security_epoch }}
           LOCAL0_RECEIPT_SHA256: ${{ needs.preflight.outputs.local0_receipt_sha256 }}
+          HOSTING_STAGING_RECEIPT_SHA256: ${{ needs.preflight.outputs.hosting_staging_receipt_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -435,6 +439,7 @@ jobs:
             --claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID" \
             --claim "workflowRunId=$GITHUB_RUN_ID" \
             --claim "local0ReceiptDigest=$LOCAL0_RECEIPT_SHA256" \
+            --claim "hostingStagingReceiptDigest=$HOSTING_STAGING_RECEIPT_SHA256" \
             --output "$RUNNER_TEMP/pre-tag-evidence/evidence.json"
       - name: Upload protected pre-tag evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

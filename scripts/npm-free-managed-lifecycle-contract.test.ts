@@ -268,12 +268,27 @@ describe("npm-free managed lifecycle", () => {
     const release = await source(
       "docs/maintainers/codex-skills/fased-release-manager/references/release.md",
     );
+    const lifecycle = await source(
+      "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle.md",
+    );
     const redesign = await source(
       "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle-redesign.md",
     );
 
     expect(skill).toMatch(
       /Candidate and release work begins only after the literal end-user command\s+passes\./u,
+    );
+    expect(skill).toMatch(
+      /never publish a sequence of first-error patches to discover\s+the next\s+phase on the owner's VPS/u,
+    );
+    expect(skill).toMatch(/a root container is H0 `SUPPORTING` evidence\s+only/u);
+    expect(skill).toMatch(/real-init\s+staging VM\/VPS run using the exact unpublished artifact/u);
+    expect(skill).toMatch(/identical-command\s+`Already current`/u);
+    expect(lifecycle).toContain("`hosting-container`");
+    expect(lifecycle).toContain("`hosting-staging-vps`");
+    expect(lifecycle).toContain("`hosting-public-vps`");
+    expect(lifecycle).toMatch(
+      /Do not synthesize an interrupted phase by editing\s+a successfully\s+committed receipt/u,
     );
     expect(skill).toContain("publication must not rebuild");
     expect(release).toContain("one unpublished, tag-free candidate-shaped Linux-x64 build");

@@ -58,7 +58,19 @@ const CURRENT_MARKER_KEYS = new Set([
   "appSudoDisabled",
   "preparedBy",
 ]);
-const KNOWN_MARKER_KEYS = new Set([...LEGACY_MARKER_KEYS, ...CURRENT_MARKER_KEYS]);
+const COORDINATOR_MARKER_KEYS = new Set([
+  ...CURRENT_MARKER_KEYS,
+  "platformIdentity",
+  "trustRootSha256",
+  "lifecycleGenerationId",
+  "convergenceReceiptDigest",
+  "onboardingComplete",
+]);
+const KNOWN_MARKER_KEYS = new Set([
+  ...LEGACY_MARKER_KEYS,
+  ...CURRENT_MARKER_KEYS,
+  ...COORDINATOR_MARKER_KEYS,
+]);
 
 function runReadOnlyProbe(command: string, args: string[]) {
   const result = spawnSync(command, args, {
@@ -134,9 +146,7 @@ function markerHasExpectedRootState(values: Map<string, string>): boolean {
     values.get("fail2banReady"),
     values.get("automaticUpdatesReady"),
   ];
-  return (
-    values.size === CURRENT_MARKER_KEYS.size &&
-    values.get("schemaVersion") === "3" &&
+  const commonCurrentReady =
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(release) &&
     /^(stable|beta)$/.test(channel) &&
     (!release.includes("-") || channel === "beta") &&
@@ -154,7 +164,19 @@ function markerHasExpectedRootState(values: Map<string, string>): boolean {
     new Set(lifecycleStates).size === 1 &&
     values.get("signerReady") === "true" &&
     values.get("appSudoDisabled") === "true" &&
-    values.get("preparedBy") === "root"
+    values.get("preparedBy") === "root";
+  return (
+    (values.size === CURRENT_MARKER_KEYS.size &&
+      values.get("schemaVersion") === "3" &&
+      commonCurrentReady) ||
+    (values.size === COORDINATOR_MARKER_KEYS.size &&
+      values.get("schemaVersion") === "4" &&
+      values.get("platformIdentity") === "linux/x64" &&
+      /^[0-9a-f]{64}$/.test(values.get("trustRootSha256") || "") &&
+      /^sha256:[0-9a-f]{64}$/.test(values.get("lifecycleGenerationId") || "") &&
+      /^sha256:[0-9a-f]{64}$/.test(values.get("convergenceReceiptDigest") || "") &&
+      /^(?:true|false)$/.test(values.get("onboardingComplete") || "") &&
+      commonCurrentReady)
   );
 }
 

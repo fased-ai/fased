@@ -160,8 +160,9 @@ validate_receipt_set() {
   receipt_commit="$(jq -er .commit "$artifact_dir/fased-lifecycled-release.json")"
   for receipt in "${acceptance_receipts[@]}"; do
     jq -e --arg commit "$receipt_commit" \
-      '.evidenceClass == "PASS" and .commit == $commit and
-       (.profile == "protected-local" or .profile == "hosting") and
+      '.commit == $commit and
+       ((.profile == "protected-local" and .evidenceClass == "PASS") or
+        (.profile == "hosting" and .evidenceClass == "SUPPORTING")) and
        (.scenario == "fresh-install" or .scenario == "managed-update")' \
       "$receipt" >/dev/null || return 1
   done

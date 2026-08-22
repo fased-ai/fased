@@ -10,6 +10,24 @@ const expected = {
   lockfileDigest: `sha256:${"d".repeat(64)}`,
   localEntrypointDigest: digest,
   hostingEntrypointDigest: digest,
+  hostingStagingReceiptDigest: digest,
+  hostingStagingReceipt: {
+    schemaVersion: 1,
+    role: "fased-hosting-staging-vps-acceptance",
+    status: "PASS",
+    evidenceClass: "PASS",
+    environmentClass: "hosting-staging-vps",
+    source: { commit: "b".repeat(40), tree: "c".repeat(40) },
+    artifact: { descriptorDigest: digest, acceptanceContractDigest: digest },
+    literalPublicInstall: { status: "PASS", evidenceDigest: digest },
+    identicalRetry: { status: "PASS", outcome: "ALREADY_CURRENT", evidenceDigest: digest },
+    resources: {
+      memoryLimitBytes: 2147483648,
+      swapLimitBytes: 2147483648,
+      memoryPeakBytes: 536870912,
+      oomKill: 0,
+    },
+  },
 };
 
 function child(profile: string, scenario: string) {
@@ -20,7 +38,7 @@ function child(profile: string, scenario: string) {
       profile,
       scenario,
       status: "PASS",
-      evidenceClass: "PASS",
+      evidenceClass: profile === "hosting" ? "SUPPORTING" : "PASS",
       evidence: [
         { id: "updater-already-current", status: "PASS", evidenceDigest: digest, summary: "ok" },
       ],
@@ -122,5 +140,27 @@ describe("pre-candidate local readiness", () => {
     expect(() => validateLocal0Readiness(missingCommand, expected)).toThrow(
       "does not prove updater-already-current",
     );
+  });
+
+  it("rejects container/H0 evidence as real Hosting acceptance", () => {
+    expect(() =>
+      validateLocal0Readiness(receipt(), {
+        ...expected,
+        hostingStagingReceipt: {
+          ...expected.hostingStagingReceipt,
+          environmentClass: "hosting-container",
+        },
+      }),
+    ).toThrow("staging-VPS acceptance");
+
+    expect(() =>
+      validateLocal0Readiness(receipt(), {
+        ...expected,
+        hostingStagingReceipt: {
+          ...expected.hostingStagingReceipt,
+          evidenceClass: "SUPPORTING",
+        },
+      }),
+    ).toThrow("staging-VPS acceptance");
   });
 });

@@ -31,6 +31,10 @@ on:
         description: Digest emitted by the exact local pre-candidate readiness check
         required: true
         type: string
+      hosting_staging_receipt_sha256:
+        description: Digest of the exact unpublished Hosting staging-VPS PASS receipt
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -77,6 +81,7 @@ jobs:
           RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
           SECURITY_EPOCH: ${{ inputs.security_epoch }}
           LOCAL0_RECEIPT_SHA256: ${{ inputs.local0_receipt_sha256 }}
+          HOSTING_STAGING_RECEIPT_SHA256: ${{ inputs.hosting_staging_receipt_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -88,6 +93,7 @@ jobs:
           [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]]
           [[ "$SECURITY_EPOCH" =~ ^[1-9][0-9]*$ ]]
           [[ "$LOCAL0_RECEIPT_SHA256" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$HOSTING_STAGING_RECEIPT_SHA256" =~ ^sha256:[a-f0-9]{64}$ ]]
           test "$NEXT_RELEASE_VERSION" != "$PREDECESSOR_VERSION"
           test "$NEXT_RELEASE_VERSION" != "$MANAGED_PREDECESSOR_VERSION"
           test "$(node -p "require('./package.json').version")" != "$NEXT_RELEASE_VERSION"
@@ -156,6 +162,7 @@ jobs:
           RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
           SECURITY_EPOCH: ${{ inputs.security_epoch }}
           LOCAL0_RECEIPT_SHA256: ${{ inputs.local0_receipt_sha256 }}
+          HOSTING_STAGING_RECEIPT_SHA256: ${{ inputs.hosting_staging_receipt_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -174,6 +181,7 @@ jobs:
             --claim "mainChecksJobId=$MAIN_CHECKS_JOB_ID" \
             --claim "workflowRunId=$GITHUB_RUN_ID" \
             --claim "local0ReceiptDigest=$LOCAL0_RECEIPT_SHA256" \
+            --claim "hostingStagingReceiptDigest=$HOSTING_STAGING_RECEIPT_SHA256" \
             --output .artifacts/pre-candidate/evidence.json
 
       - name: Upload pre-candidate evidence

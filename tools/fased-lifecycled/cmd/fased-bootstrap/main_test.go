@@ -875,8 +875,15 @@ func TestCommittedHostingSecurityTransactionSkipsFinalization(t *testing.T) {
 	if hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: hostsecurity.PhaseCommitted}) {
 		t.Fatal("reused committed Hosting security transaction selected completion mutations")
 	}
-	if !hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: hostsecurity.PhaseRuntimeReady}) {
-		t.Fatal("pending Hosting security transaction skipped required completion")
+	for _, phase := range []hostsecurity.Phase{
+		hostsecurity.PhaseRuntimeReady,
+		hostsecurity.PhaseOnboardingPending,
+		hostsecurity.PhaseOnboardingComplete,
+		hostsecurity.PhaseHardening,
+	} {
+		if !hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: phase}) {
+			t.Fatalf("pending Hosting security phase %s skipped required completion", phase)
+		}
 	}
 }
 

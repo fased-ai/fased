@@ -802,6 +802,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	}
 	performance.Acquisition = result.Performance
 	var hostingParticipant *hostsecurity.Participant
+	var hostingState hostsecurity.State
 	hostingTransactionID := ""
 	hostingSecurityReused := false
 	if request.Profile == model.ProfileHosting {
@@ -828,15 +829,23 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			Host:  hostsecurity.NewLinuxHost(), Log: log, User: userOutput,
 		}
 		hostingParticipant = &participant
+		onboardingRequired := request.Operation == "install" && request.Onboard && !ownerConfigExisted
+		if prior, priorErr := participant.Store.ReadState(); priorErr == nil && prior.Phase != hostsecurity.PhaseCommitted && prior.Phase != hostsecurity.PhaseAborted {
+			onboardingRequired = onboardingRequired || prior.OnboardingRequired ||
+				(prior.SchemaVersion == 1 && prior.RuntimeReady && request.Operation == "install" && request.Onboard)
+		}
 		prepared, prepareErr := participant.Prepare(ctx, hostsecurity.Request{
 			TransactionID: hostingTransactionID, Release: result.Version, Channel: request.Channel,
 			GatewayPort: request.GatewayPort, OperatorUser: operator.Name,
+			PlatformIdentity: runtime.GOOS + "/" + architecture(), TrustRootSHA256: releaseRoute.PinnedRootSHA256,
 			AuthKeyFile: request.TailscaleAuthKeyFile, Interactive: publicRequestAllowsBrowserAuthentication(request), RequireExistingHardening: request.Operation != "install",
+			OnboardingRequired: onboardingRequired,
 		})
 		if prepareErr != nil {
 			return prepareErr
 		}
 		hostingTransactionID = prepared.TransactionID
+		hostingState = prepared
 		hostingSecurityReused = !hostingSecurityTransactionNeedsFinalization(prepared)
 	}
 	applyStarted := time.Now()
@@ -853,18 +862,28 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		return err
 	}
 	if hostingParticipant != nil && !hostingSecurityReused {
-		if _, err := hostingParticipant.MarkRuntimeReady(ctx, hostingTransactionID); err != nil {
-			return fmt.Errorf("Hosting runtime installed but host-security handoff remains pending: %w", err)
+		bound, bindErr := hostingParticipant.BindRuntimeReady(ctx, hostingTransactionID,
+			convergence.ActiveGenerationID, convergence.ConvergenceReceiptDigest, hostingState.OnboardingRequired)
+		if bindErr != nil {
+			return fmt.Errorf("Hosting runtime installed but host-security handoff remains pending: %w", bindErr)
 		}
+		hostingState = bound
 	}
 	outcome := convergence.Outcome
-	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
+	if shouldRunOnboarding(request, outcome, ownerConfigExisted) || hostingState.Phase == hostsecurity.PhaseOnboardingPending {
 		onboardingStarted := time.Now()
 		onboardingCtx, detached := onboardingPhaseContext(ctx, request)
 		convergence, err = runOnboarding(onboardingCtx, request, operator, result, lock, output, os.Stderr)
 		performance.OnboardingMillis = durationMillis(onboardingStarted)
 		if err != nil {
 			return err
+		}
+		if hostingParticipant != nil && !hostingSecurityReused {
+			completed, completeErr := hostingParticipant.MarkOnboardingComplete(hostingTransactionID)
+			if completeErr != nil {
+				return fmt.Errorf("onboarding completed but Hosting coordinator remains pending: %w", completeErr)
+			}
+			hostingState = completed
 		}
 		if detached {
 			var finalizeCancel context.CancelFunc

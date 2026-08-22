@@ -311,6 +311,9 @@ run_scenario_body() {
     --name "$name" \
     --privileged \
     --systemd=always \
+    --memory 2g \
+    --memory-swap 2g \
+    --pids-limit 1024 \
     --tmpfs /run:rw,noexec \
     --tmpfs /tmp \
     -e "FASED_FIXTURE_VERSION=$version" \
@@ -375,8 +378,29 @@ run_scenario_body() {
       --predecessor-capsule-digest "$capsule_digest" \
       --predecessor-installation-class "$([[ "$scenario" == "managed-update" ]] && printf '%s' "$PREDECESSOR_CLASS" || true)" \
       --predecessor-installation-class-digest "$installation_class_digest" \
-      --evidence-class PASS \
+      --evidence-class SUPPORTING \
       --acquisition-evidence-class SUPPORTING >/dev/null || return 1
+
+    memory_peak="$("$RUNTIME" exec "$name" cat /sys/fs/cgroup/memory.peak 2>/dev/null || true)"
+    memory_events="$("$RUNTIME" exec "$name" cat /sys/fs/cgroup/memory.events 2>/dev/null || true)"
+    oom_killed="$("$RUNTIME" inspect "$name" --format '{{.State.OOMKilled}}')"
+    gateway_peak="$("$RUNTIME" exec "$name" systemctl show --value -p MemoryPeak fased-gateway.service 2>/dev/null || true)"
+    signer_peak="$("$RUNTIME" exec "$name" systemctl show --value -p MemoryPeak fased-signerd.service 2>/dev/null || true)"
+    lifecycle_peak="$("$RUNTIME" exec "$name" systemctl show --value -p MemoryPeak fased-host-updater.service 2>/dev/null || true)"
+    jq -n --arg distro "$distro" --arg scenario "$scenario" \
+      --argjson memoryLimitBytes 2147483648 \
+      --arg memoryPeakBytes "$memory_peak" --arg memoryEvents "$memory_events" \
+      --arg gatewayPeakBytes "$gateway_peak" --arg signerPeakBytes "$signer_peak" \
+      --arg lifecyclePeakBytes "$lifecycle_peak" \
+      --arg oomKilled "$oom_killed" \
+      '{schemaVersion:1,role:"fased-hosting-container-resource-receipt",
+        evidenceClass:"SUPPORTING",environmentClass:"hosting-container",
+        distro:$distro,scenario:$scenario,memoryLimitBytes:$memoryLimitBytes,
+        swapLimitBytes:$memoryLimitBytes,
+        memoryPeakBytes:(if ($memoryPeakBytes|test("^[0-9]+$")) then ($memoryPeakBytes|tonumber) else null end),
+        pidLimit:1024,memoryEvents:$memoryEvents,oomKilled:($oomKilled == "true"),
+        serviceMemoryPeakBytes:{gateway:$gatewayPeakBytes,signer:$signerPeakBytes,lifecycle:$lifecyclePeakBytes}}' \
+      >"$RECEIPT_DIR/${distro}-${scenario}-resources.json" || return 1
   fi
   "$RUNTIME" stop "$name" >/dev/null || return 1
   "$RUNTIME" start "$name" >/dev/null || return 1
