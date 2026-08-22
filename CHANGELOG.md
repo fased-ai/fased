@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.116
+
+- Preserve the complete optimized Go-managed core, modular Wallet, signer,
+  Mining, task-ledger and digest-bound optional component architecture.
+- Recover an exact incomplete Hosting security transaction across immutable
+  release identities while retaining strict channel, platform, operator,
+  Tailscale, signer, privilege and host-state boundaries.
+- Keep Protected Local behavior unchanged while advancing the signed lifecycle
+  authority to release sequence 24 and security epoch 1.
+
 ## 0.1.76-rc.115
 
 - Preserve the complete optimized Go-managed core, modular Wallet, signer,
