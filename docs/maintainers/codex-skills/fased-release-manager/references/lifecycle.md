@@ -158,6 +158,23 @@ binding; and rollback preserving signer database and master-key identity.
 Containers support Hosting adapter evidence; only an authorized real VPS proves
 Hosting acceptance.
 
+For Hosting changes, keep three environment classes distinct in every receipt:
+
+- `hosting-container`: root/systemd adapter proof with any substituted package,
+  network or release transport; always `SUPPORTING`;
+- `hosting-staging-vps`: exact unpublished artifact on a real-init authorized
+  VM/VPS with real package manager, systemd and the declared resource floor;
+  required topology proof before candidate allocation when Hosting bytes change;
+- `hosting-public-vps`: literal immutable public installer plus identical retry;
+  the only environment that may close real Hosting acceptance.
+
+The Hosting transaction inventory is one coupled recovery surface:
+prerequisites, private network, generation, signer/Gateway, onboarding,
+hardening and commit. A failure in one phase requires adjacent termination and
+retry cases before delivery. Do not synthesize an interrupted phase by editing
+a successfully committed receipt when the real owner process can be killed at
+that boundary.
+
 Use the stable acceptance IDs in the canonical lifecycle architecture.
 Fixtures with substituted transport never prove public acquisition. A D10
 branch receipt may mark its independently exercised product predicates `PASS`

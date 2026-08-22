@@ -35,7 +35,8 @@ describe("version-neutral lifecycle acceptance", () => {
     expect(local0).not.toContain("merge-base --is-ancestor");
     expect(local0).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
     expect(local0).toContain('source "$ROOT_DIR/scripts/local0-receipt-inventory.sh"');
-    expect(local0).toContain('.evidenceClass == "PASS" and .commit == $commit');
+    expect(local0).toContain('.profile == "protected-local" and .evidenceClass == "PASS"');
+    expect(local0).toContain('.profile == "hosting" and .evidenceClass == "SUPPORTING"');
     expect(local0).toContain(
       "LOCAL0 refused a false PASS without every exact verified child receipt.",
     );

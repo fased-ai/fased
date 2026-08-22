@@ -19,7 +19,7 @@ acceptance_contract=/artifacts/fased-lifecycle-acceptance-v2.json
 acceptance_descriptor=/artifacts/fased-hosting-candidate.json
 acceptance_evidence=/tmp/fased-hosting-acceptance.evidence.jsonl
 acceptance_receipt="/var/lib/fased-lifecycled/lifecycle-acceptance-${scenario}.json"
-acceptance_evidence_class=PASS
+acceptance_evidence_class=SUPPORTING
 acceptance_acquisition_evidence_class=SUPPORTING
 acceptance_release_base_url="https://github.com/fased-ai/fased/releases/download/v${version}"
 predecessor_capsule_descriptor=/predecessor-capsule/fased-predecessor-capsule.json
@@ -177,6 +177,18 @@ verify_sshd_runtime_prerequisites() {
 install_hosting_package_fixtures() {
   install -d -m 0755 -o root -g root /usr/local/libexec
   install -d -m 0700 -o root -g root /var/lib/fased-hosting-fixture/acl-package
+  install -d -m 0700 -o root -g root /var/lib/fased-hosting-fixture/apt-sourceparts
+  install -m 0644 -o root -g root /dev/null \
+    /var/lib/fased-hosting-fixture/apt-sources.list
+  while IFS= read -r source_file; do
+    install -m 0644 -o root -g root "$source_file" \
+      "/var/lib/fased-hosting-fixture/apt-sourceparts/$(basename "$source_file")"
+  done < <(find /etc/apt/sources.list.d -maxdepth 1 -type f \
+    \( -name '*.list' -o -name '*.sources' \) -print | sort)
+  if [[ -f /etc/apt/sources.list ]]; then
+    install -m 0644 -o root -g root /etc/apt/sources.list \
+      /var/lib/fased-hosting-fixture/apt-sources.list
+  fi
   install -m 0755 -o root -g root /usr/bin/getfacl \
     /var/lib/fased-hosting-fixture/acl-package/getfacl
   install -m 0755 -o root -g root /usr/bin/setfacl \
@@ -306,36 +318,20 @@ if [[ "$#" -eq 6 && "$1" == "-o" && "$2" == "APT::Get::AllowUnauthenticated=fals
 fi
 if [[ "$#" -eq 4 && "$1" == "install" && "$2" == "-y" &&
   "$3" == "--no-install-recommends" && "$4" == "acl" ]]; then
-  install -m 0755 -o root -g root /var/lib/fased-hosting-fixture/acl-package/getfacl \
-    /usr/bin/getfacl
-  install -m 0755 -o root -g root /var/lib/fased-hosting-fixture/acl-package/setfacl \
-    /usr/bin/setfacl
-  install -m 0600 -o root -g root /dev/null \
-    /var/lib/fased-hosting-fixture/acl-package/installed
-  stat -c 'acl-state installed %U:%G %a %n' /usr/bin/getfacl /usr/bin/setfacl \
-    >>/tmp/fased-fixture-acl-package.log
-  command -v getfacl >/dev/null
-  command -v setfacl >/dev/null
-  exit 0
+  exec env DEBIAN_FRONTEND=noninteractive \
+    /usr/local/libexec/fased-fixture-apt-get-real "$@"
 fi
 if [[ "$#" -eq 7 && "$1" == "install" && "$2" == "-y" &&
   "$3" == "--no-install-recommends" && "$4" == "nftables" &&
   "$5" == "fail2ban" && "$6" == "unattended-upgrades" && "$7" == "acl" ]]; then
-  install -m 0755 -o root -g root /var/lib/fased-hosting-fixture/acl-package/getfacl \
-    /usr/bin/getfacl
-  install -m 0755 -o root -g root /var/lib/fased-hosting-fixture/acl-package/setfacl \
-    /usr/bin/setfacl
-  install -m 0600 -o root -g root /dev/null \
-    /var/lib/fased-hosting-fixture/acl-package/installed
-  command -v nft >/dev/null
-  command -v fail2ban-client >/dev/null
-  command -v getfacl >/dev/null
-  command -v setfacl >/dev/null
-  systemctl cat apt-daily-upgrade.timer >/dev/null
-  exit 0
+  exec env DEBIAN_FRONTEND=noninteractive \
+    /usr/local/libexec/fased-fixture-apt-get-real "$@"
 fi
 if [[ "$#" -eq 1 && "$1" == "update" ]]; then
-  exit 0
+  exec /usr/local/libexec/fased-fixture-apt-get-real \
+    -o Dir::Etc::sourcelist=/var/lib/fased-hosting-fixture/apt-sources.list \
+    -o Dir::Etc::sourceparts=/var/lib/fased-hosting-fixture/apt-sourceparts \
+    "$@"
 fi
 if [[ "$#" -eq 11 && "$1" == "-o" &&
   "$2" == "Dir::Etc::sourcelist=/etc/apt/sources.list.d/tailscale.list" &&
@@ -731,49 +727,96 @@ run_public_installer() {
       --skip-health
 }
 
-seed_runtime_ready_predecessor_host_security() {
+interrupt_actual_onboarding_child() {
+  local installer_pid="" onboarding_pid="" installer_status=0
   local state=/var/lib/fased-host-security/active.json
-  local receipt=/etc/fased/hosting-prerequisites
-  local predecessor_release=0.1.76-rc.114
-  local predecessor_transaction=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
-  local gateway_port_state tailscale_dns tailscale_version
+  cat >/tmp/fased-hosting-interactive-installer <<EOF_INTERACTIVE_INSTALLER
+#!/usr/bin/env bash
+set -euo pipefail
+FASED_INSTALL_USER=app bash "$candidate_installer" \\
+  --hosting --release "v$version" --update-channel beta --verbose \\
+  --tailnet-access-confirmed -- --accept-risk --auth-choice skip \\
+  --workspace /home/app/.fased/workspace --gateway-auth token \\
+  --gateway-token fased-hosting-fixture-token --gateway-port "$gateway_port" \\
+  --gateway-bind loopback --skip-skills --skip-health
+EOF_INTERACTIVE_INSTALLER
+  chmod 0700 /tmp/fased-hosting-interactive-installer
+  script -qefc /tmp/fased-hosting-interactive-installer \
+    /tmp/fased-hosting-interrupted-onboarding.pty \
+    >/tmp/fased-hosting-interrupted-onboarding.out \
+    2>/tmp/fased-hosting-interrupted-onboarding.err &
+  installer_pid=$!
+  for _ in {1..3000}; do
+    if [[ -f "$state" ]] &&
+      [[ "$(jq -r '.phase // empty' "$state" 2>/dev/null || true)" == "ONBOARDING_PENDING" ]]; then
+      onboarding_pid="$(pgrep -o -f '/home/app/\.fased/bin/fased onboard --install-daemon' || true)"
+      if [[ -n "$onboarding_pid" ]]; then
+        kill -KILL "$onboarding_pid"
+        break
+      fi
+    fi
+    kill -0 "$installer_pid" 2>/dev/null || break
+    sleep 0.01
+  done
+  [[ -n "$onboarding_pid" ]] || {
+    wait "$installer_pid" || true
+    echo "The fixture did not observe the actual onboarding child." >&2
+    return 1
+  }
+  set +e
+  wait "$installer_pid"
+  installer_status=$?
+  set -e
+  if [[ "$installer_status" -eq 0 ]]; then
+    echo "The installer ignored termination of its actual onboarding child." >&2
+    return 1
+  fi
+  jq -e '.phase == "ONBOARDING_PENDING" and .runtimeReady == true and
+    .onboardingRequired == true and (.onboardingComplete // false) == false and
+    (.lifecycleGenerationId | startswith("sha256:")) and
+    (.convergenceReceiptDigest | startswith("sha256:"))' "$state" >/dev/null
+  jq -n --argjson onboardingPid "$onboarding_pid" --argjson signal 9 \
+    --argjson installerExitStatus "$installer_status" \
+    '{schemaVersion:1,role:"fased-hosting-onboarding-termination",
+      actualChild:true,onboardingPid:$onboardingPid,signal:$signal,
+      installerExitStatus:$installerExitStatus,durablePhase:"ONBOARDING_PENDING"}' \
+    >/var/lib/fased-lifecycled/onboarding-termination.json
+  rm -f /tmp/fased-hosting-interactive-installer
+}
 
-  gateway_port_state="$(jq -er .gatewayPort "$state")"
-  tailscale_dns="$(jq -er .tailscaleDns "$state")"
-  tailscale_version="$(jq -er .tailscaleVersion "$state")"
-  jq \
-    --arg release "$predecessor_release" \
-    --arg transaction "$predecessor_transaction" \
-    '.release = $release |
-     .transactionId = $transaction |
-     .phase = "RUNTIME_READY" |
-     .hardeningCommitted = false' \
-    "$state" >/tmp/fased-hosting-runtime-ready-predecessor.json
-  install -m 0600 -o root -g root \
-    /tmp/fased-hosting-runtime-ready-predecessor.json "$state"
-  rm -f /tmp/fased-hosting-runtime-ready-predecessor.json
+record_canonical_lifecycle_evidence() {
+  local manifest=/var/lib/fased-lifecycled/installation-manifest.json
+  local termination=/var/lib/fased-lifecycled/onboarding-termination.json
+  local evidence=/tmp/fased-hosting-canonical-lifecycle.evidence.json
 
-  cat >/tmp/fased-hosting-runtime-ready-predecessor.receipt <<EOF_RUNTIME_READY_RECEIPT
-schemaVersion=3
-release=$predecessor_release
-updateChannel=beta
-transactionId=$predecessor_transaction
-gatewayPort=$gateway_port_state
-tailscaleDns=$tailscale_dns
-tailscaleVersion=$tailscale_version
-tailscaleServeReady=true
-signerWebAuthnReady=true
-firewallReady=pending
-sshHardened=pending
-fail2banReady=pending
-automaticUpdatesReady=pending
-signerReady=true
-appSudoDisabled=true
-preparedBy=root
-EOF_RUNTIME_READY_RECEIPT
-  install -m 0644 -o root -g root \
-    /tmp/fased-hosting-runtime-ready-predecessor.receipt "$receipt"
-  rm -f /tmp/fased-hosting-runtime-ready-predecessor.receipt
+  jq -e '
+    .schemaVersion == 1 and
+    .role == "fased-hosting-onboarding-termination" and
+    .actualChild == true and
+    .signal == 9 and
+    (.onboardingPid | type == "number" and . > 1) and
+    (.installerExitStatus | type == "number" and . > 0) and
+    .durablePhase == "ONBOARDING_PENDING" and
+    (keys | sort) == [
+      "actualChild",
+      "durablePhase",
+      "installerExitStatus",
+      "onboardingPid",
+      "role",
+      "schemaVersion",
+      "signal"
+    ]' "$termination" >/dev/null
+  jq -n \
+    --arg manifestDigest "sha256:$(sha256sum "$manifest" | awk '{print $1}')" \
+    --arg terminationDigest "sha256:$(sha256sum "$termination" | awk '{print $1}')" \
+    '{schemaVersion:1,role:"fased-hosting-canonical-lifecycle-evidence",
+      manifestDigest:$manifestDigest,
+      actualOnboardingChildTermination:{
+        evidenceDigest:$terminationDigest,
+        signal:9,
+        durablePhase:"ONBOARDING_PENDING"
+      }}' >"$evidence"
+  printf '%s\n' "$evidence"
 }
 
 assert_healthy() {
@@ -1012,11 +1055,13 @@ case "$phase" in
     prepare_provider_access_fixture
     install_fixture_sat_runtime_environment
     prepare_interrupted_legacy_updater_fixture
+    interrupt_actual_onboarding_child
     run_public_installer >/tmp/fased-hosting-install.out 2>/tmp/fased-hosting-install.err
     jq -e '.phase == "COMMITTED" and .tailscaleInstalledByTransaction == true and
       .authenticatedByTransaction == true and .tailscaleDns == "fased-fixture.tailnet.ts.net"' \
       /var/lib/fased-host-security/active.json >/dev/null
-    grep -Fq 'https://login.tailscale.com/a/fased-fixture' /tmp/fased-hosting-install.out
+    grep -Fq 'https://login.tailscale.com/a/fased-fixture' \
+      /tmp/fased-hosting-interrupted-onboarding.out
     ! grep -Fq 'Type the Tailscale DNS name' /tmp/fased-hosting-install.out
     ! command -v node >/dev/null 2>&1
     command -v getfacl >/dev/null 2>&1
@@ -1028,8 +1073,9 @@ case "$phase" in
 	test "${#performance_summary}" -le 240
 	acceptance_mark lifecycle-performance /tmp/fased-hosting-install.out "$performance_summary"
     assert_healthy
-    acceptance_mark canonical-lifecycle /var/lib/fased-lifecycled/installation-manifest.json \
-      "canonical Hosting lifecycle verified"
+    canonical_lifecycle_evidence="$(record_canonical_lifecycle_evidence)"
+    acceptance_mark canonical-lifecycle "$canonical_lifecycle_evidence" \
+      "canonical Hosting lifecycle and actual onboarding child termination verified"
     systemctl status fased-host-updater.service fased-signerd.service \
       fased-gateway.service --no-pager >/tmp/fased-hosting-three-services.out
     acceptance_mark three-services-active /tmp/fased-hosting-three-services.out \
@@ -1045,13 +1091,14 @@ case "$phase" in
       >/tmp/fased-hosting-state-preservation.out
     acceptance_mark state-preservation /tmp/fased-hosting-state-preservation.out \
       "state preserved"
-    seed_runtime_ready_predecessor_host_security
     run_public_installer >/tmp/fased-hosting-noop.out 2>/tmp/fased-hosting-noop.err
     grep -F "Already current: $version" /tmp/fased-hosting-noop.out >/dev/null
     jq -e --arg version "$version" \
       '.phase == "COMMITTED" and .release == $version and
-       .transactionId != "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" and
-       .runtimeReady == true and .hardeningCommitted == true' \
+       .runtimeReady == true and .onboardingComplete == true and
+       .hardeningCommitted == true and
+       (.lifecycleGenerationId | startswith("sha256:")) and
+       (.convergenceReceiptDigest | startswith("sha256:"))' \
       /var/lib/fased-host-security/active.json \
       >/tmp/fased-hosting-cross-release-security-recovery.out
     grep -Fqx "release=$version" /etc/fased/hosting-prerequisites

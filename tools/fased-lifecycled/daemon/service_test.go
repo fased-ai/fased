@@ -561,6 +561,29 @@ func TestAlreadyCurrentReturnsGenerationBoundLiveConvergenceReceipt(t *testing.T
 	}
 }
 
+func TestAlreadyCurrentRepairsInterruptedLiveServicesBeforeReturning(t *testing.T) {
+	inventory, target := targetContract()
+	manifest := model.Manifest{
+		SchemaVersion: model.CurrentManifestSchemaVersion, Profile: model.ProfileProtectedLocal,
+		Platform: platform(), ActiveGeneration: &target, StateSchemas: inventory.StateSchemas, Capabilities: inventory.Capabilities,
+		ReleaseSequence: 12, SecurityEpoch: 3,
+	}
+	locks, releases := 0, 0
+	verifier := &fakeCurrentConvergence{err: errors.New("Gateway process does not execute the current generation")}
+	repair := &fakeCurrentRepair{}
+	service := Service{
+		Profile: model.ProfileProtectedLocal, Platform: platform(),
+		Store:     fakeStore{manifest: &manifest, manifestDigest: digestA, inventory: inventory, generation: target, locks: &locks, releases: &releases},
+		Inventory: &fakeInventory{}, Supervisor: &fakeSupervisor{}, CurrentConvergence: verifier, CurrentRepair: repair,
+	}
+	request := protocol.Request{SchemaVersion: protocol.CurrentSchemaVersion, RequestID: requestID, Operation: protocol.OperationConverge, TargetGenerationID: target.ID, ExpectedManifestDigest: digestA}
+	response, err := service.Handle(context.Background(), request)
+	if err != nil || response.Outcome != string(engine.OutcomeAlreadyCurrent) || response.ConvergenceReceiptDigest != digestB ||
+		verifier.calls != 1 || repair.calls != 1 || repair.transactionID != requestID || repair.manifestDigest != digestA || locks != 1 || releases != 1 {
+		t.Fatalf("interrupted already-current services were not repaired under the lifecycle lock: response=%+v verifier=%d repair=%+v locks=%d releases=%d err=%v", response, verifier.calls, repair, locks, releases, err)
+	}
+}
+
 func TestConvergeBindsSchemaOnePredecessorAndSignedMigrationAuthority(t *testing.T) {
 	inventory, target := targetContract()
 	active := generation(digestA, "0.1.76-rc.72", commitA)

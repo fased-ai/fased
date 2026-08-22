@@ -48,6 +48,28 @@ type RunResult = {
 
 const HOSTED_DEPENDENCY_LAYER_SCHEMA = 2;
 
+async function resolveHostedRuntimeTempParent(): Promise<string> {
+  const configured = process.env.FASED_HOSTED_RUNTIME_TEMP_ROOT?.trim();
+  if (!configured) {
+    return os.tmpdir();
+  }
+  if (!path.isAbsolute(configured)) {
+    throw new Error("FASED_HOSTED_RUNTIME_TEMP_ROOT must be absolute.");
+  }
+  await fs.mkdir(configured, { recursive: true, mode: 0o700 });
+  const metadata = await fs.lstat(configured);
+  const expectedUid = process.getuid?.();
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    (metadata.mode & 0o777) !== 0o700 ||
+    (expectedUid !== undefined && metadata.uid !== expectedUid)
+  ) {
+    throw new Error("FASED_HOSTED_RUNTIME_TEMP_ROOT must be an owner-controlled 0700 directory.");
+  }
+  return configured;
+}
+
 function parseOutputDir(): string {
   const outputFlag = process.argv.indexOf("--output");
   const value = outputFlag >= 0 ? process.argv[outputFlag + 1] : undefined;
@@ -357,7 +379,9 @@ async function main(): Promise<void> {
   }
   const createdAt = await releaseCreatedAt(commit);
 
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fased-hosted-runtime-"));
+  const tempRoot = await fs.mkdtemp(
+    path.join(await resolveHostedRuntimeTempParent(), "fased-hosted-runtime-"),
+  );
   const extractDir = path.join(tempRoot, "extract");
   const packageRoot = path.join(extractDir, "package");
 
@@ -381,7 +405,14 @@ async function main(): Promise<void> {
         packageRoot,
       ],
       rootDir,
-      { npm_config_ignore_scripts: "true" },
+      {
+        npm_config_force_legacy_deploy: "true",
+        npm_config_ignore_scripts: "true",
+      },
+    );
+    await fs.copyFile(
+      path.join(rootDir, "pnpm-lock.yaml"),
+      path.join(packageRoot, "pnpm-lock.yaml"),
     );
     const componentContract = await readHostedComponentContract(
       path.join(rootDir, "config", "hosted-component-packs.json"),

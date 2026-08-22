@@ -700,6 +700,7 @@ describe("CI workflow routing", () => {
     expect(workflow.on.workflow_dispatch.inputs.release_sequence.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.security_epoch.required).toBe(true);
     expect(workflow.on.workflow_dispatch.inputs.local0_receipt_sha256.required).toBe(true);
+    expect(workflow.on.workflow_dispatch.inputs.hosting_staging_receipt_sha256.required).toBe(true);
     expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(5);
     expect(commands).toContain("pnpm install --frozen-lockfile");
     expect(commands).toContain("actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT");
@@ -725,6 +726,7 @@ describe("CI workflow routing", () => {
     expect(commands).toContain("--lockfile-digest");
     expect(commands).toContain("managedPredecessorVersion=");
     expect(commands).toContain("local0ReceiptDigest=");
+    expect(commands).toContain("hostingStagingReceiptDigest=");
     expect(commands).toContain("releaseSequence=");
     expect(commands).toContain("securityEpoch=");
     expect(commands).toContain("node scripts/verify-lifecycle-root-pin.mjs");

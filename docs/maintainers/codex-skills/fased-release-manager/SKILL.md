@@ -18,9 +18,7 @@ owner requests that inventory.
 3. Preserve unrelated dirty work. Resume the plan's first incomplete checkpoint;
    superseded plans are evidence only.
 
-The newest owner-selected plan controls until replaced or completed;
-superseded plans are evidence only. At handoff, name and continue its first
-incomplete checkpoint.
+The newest owner-selected plan controls until replaced or completed; superseded plans are evidence only.
 
 - `REPORT`: inspect and answer without mutation.
 - `FIX`: one failure, one correction, focused proof. Default mode.
@@ -32,21 +30,9 @@ a source, fixture, or user-visible failure.
 
 ## Soft budgets
 
-- Before the first edit, normally use at most six targeted discovery calls.
-  Batch independent reads and name the first failing predicate.
-- Keep task-specific instructions and references near a 6,000-token soft
-  context budget.
-- Load this file plus at most one reference for ordinary work. Load a second
-  only after reporting the unresolved predicate requiring it.
-- Every tool call must discover, edit, or verify the selected predicate. Never
-  poll unchanged state or repeat an unchanged command.
-- After discovery, target at most twelve additional tool calls for one bounded
-  correction.
-- These are soft limits. Exceed one only with a one-line reason; never omit
-  safety or correctness evidence to meet a budget. Do not set a hard token
-  budget unless the owner explicitly requests one.
-- Explain commands expected to exceed one minute. A diagnostic cycle should
-  normally finish within 15 minutes; report progress at least every 60 seconds.
+- Load this file plus at most one reference; use at most six targeted discovery calls and a 6,000-token soft context budget.
+- Every tool call must discover, edit, or verify; after discovery use at most twelve additional tool calls.
+- Never repeat unchanged state. Explain commands over one minute and report every 60 seconds.
 
 ## Follow the plan before release
 
@@ -96,6 +82,14 @@ diagnosing. `fix and ship` means one locally proven final diff, one push, one
 protected PR, one changed-surface CI result, and an authorized exact-head squash
 merge.
 
+For a Hosting install, update, recovery, or uninstall failure, the literal
+predicate includes the complete coupled transaction even when the first error is
+narrow. Inventory prerequisites, private network, lifecycle generation,
+signer/Gateway readiness, onboarding, hardening, durable recovery and identical
+retry before choosing the correction. Exercise adjacent durable transitions in
+one pass; never publish a sequence of first-error patches to discover the next
+phase on the owner's VPS.
+
 ## Load details only when selected
 
 - Tests, fixtures, protected delivery, workspace/cache hygiene:
@@ -128,6 +122,14 @@ passes. Reuse identical bytes across acceptance, P1, tag, and publication;
 publication must not rebuild. Full `LOCAL0`, PRE-CANDIDATE, P1, tag, and
 publication belong only to an explicit release plan.
 
+When Hosting product bytes change, a root container is H0 `SUPPORTING` evidence
+only. Before candidate allocation, require one owner-authorized real-init
+staging VM/VPS run using the exact unpublished artifact, real package manager,
+systemd and the intended resource floor. After publication, only the literal
+immutable public installer on an authorized VPS plus an identical-command
+`Already current` result can mark real Hosting `PASS`. A waiver never changes
+either rule.
+
 ## Evidence and authority
 
 Use only `PASS`, `FAIL`, `BLOCKED`, `SUPPORTING`, `WAIVED`, and `N/A`. Source,
@@ -141,16 +143,12 @@ owner authorization.
 
 ## Branch and workspace discipline
 
-- Prefer one owner workspace and one current-main task worktree. Use another
-  only for a real conflict or intentionally preserved evidence.
-- Budget local branches to `main` plus one active task branch. Preserve unique
-  inactive work in one verified bundle with an exact restore command.
-- Record task-branch deletion as `remove after exact merged-tree validation` and
-  remove its worktree, local branch, and tracking ref when proven.
-- Cache immutable artifacts, dependencies, toolchains, fixture images, and one
-  predecessor set; never cache installations, journals, Wallets, or signer state.
-- Use `${XDG_CACHE_HOME:-$HOME/.cache}/fased-dev` and `mktemp -d
-/tmp/fased-<task>.XXXXXX`; remove only task-created residues.
+- Prefer one owner workspace, `main`, and one task branch/worktree. Preserve any
+  unique inactive work in a verified bundle; remove the task worktree, branch
+  and tracking ref only after exact merged-tree validation.
+- Cache immutable artifacts/tools/one predecessor, never installations,
+  journals, Wallets or signer state. Use `$XDG_CACHE_HOME/fased-dev` and exact
+  task-created `/tmp/fased-*` directories; remove only classified residues.
 - Check `sudo -n true` once when privilege is selected. If unavailable, report
   `NOT RUN: sudo credential expired`; never poll.
 

@@ -41,13 +41,48 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 		return State{}, errors.Join(err, errors.New("Hosting security participant is incomplete"))
 	}
 	participant.progress("Fased: checking private Hosting access...")
+	var resumed *State
 	if previous, err := participant.Store.ReadState(); err == nil {
 		switch previous.Phase {
-		case PhasePreparing, PhaseAborting:
+		case PhasePreflight, PhasePreparing, PhaseAborting:
+			if !previous.matchesIncompleteBoundary(request) {
+				return State{}, errors.New("an incomplete Hosting security transaction has a different update channel or platform identity")
+			}
 			if err := participant.abort(ctx, previous, nil); err != nil {
 				return State{}, fmt.Errorf("recover previous Hosting security transaction: %w", err)
 			}
-		case PhasePrepared, PhaseRuntimeReady, PhaseHardening:
+		case PhasePrerequisitesReady:
+			if !previous.matchesIncompleteBoundary(request) {
+				return State{}, errors.New("an incomplete Hosting security transaction has a different update channel or platform identity")
+			}
+			inspection, inspectErr := participant.Host.Inspect(ctx, previous.GatewayPort, previous.OperatorUser)
+			if inspectErr != nil || !inspection.LifecyclePrerequisitesReady {
+				return State{}, errors.Join(inspectErr, errors.New("incomplete Hosting prerequisites no longer match the prepared host"))
+			}
+			if previous.Release != request.Release {
+				previous.TransactionID = request.TransactionID
+				previous.Release = request.Release
+				if err := participant.Store.WriteState(previous); err != nil {
+					return State{}, fmt.Errorf("rebind incomplete Hosting prerequisites: %w", err)
+				}
+			}
+			resumed = &previous
+		case PhaseHardening, PhaseHardeningReady:
+			if !previous.matchesIncompleteBoundary(request) {
+				return State{}, errors.New("an incomplete Hosting security transaction has a different update channel or platform identity")
+			}
+			inspection, inspectErr := participant.Host.Inspect(ctx, previous.GatewayPort, previous.OperatorUser)
+			if inspectErr != nil || !previous.matchesPreparedHost(inspection) || !inspection.SignerReady || inspection.AppCanElevate {
+				return State{}, errors.Join(inspectErr, errors.New("incomplete Hosting hardening boundary is not intact"))
+			}
+			finalized, finalizeErr := participant.Commit(ctx, previous.TransactionID, previous.AccessConfirmed)
+			if finalizeErr != nil {
+				return State{}, fmt.Errorf("finish previous Hosting hardening: %w", finalizeErr)
+			}
+			if finalized.matches(request) {
+				return finalized, nil
+			}
+		case PhasePrepared, PhasePrivateNetworkReady, PhaseGenerationReady, PhaseRuntimeReady, PhaseOnboardingPending, PhaseOnboardingComplete:
 			if !previous.matchesIncompleteBoundary(request) {
 				return State{}, errors.New("an incomplete Hosting security transaction has a different update channel or platform identity")
 			}
@@ -66,6 +101,16 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 			}
 			if previous.RuntimeReady && (!inspection.SignerReady || inspection.AppCanElevate) {
 				return State{}, errors.New("incomplete Hosting runtime boundary is not intact")
+			}
+			if previous.Phase == PhaseGenerationReady && (!inspection.SignerReady || inspection.AppCanElevate) {
+				return State{}, errors.New("incomplete Hosting generation boundary is not intact")
+			}
+			if previous.SchemaVersion == 1 {
+				previous.SchemaVersion = CurrentSchemaVersion
+				previous.PlatformIdentity = request.PlatformIdentity
+				previous.TrustRootSHA256 = request.TrustRootSHA256
+				previous.OnboardingRequired = request.OnboardingRequired
+				previous.LegacyRuntimeBindingPending = previous.RuntimeReady
 			}
 			if previous.Release != request.Release {
 				previous.TransactionID = request.TransactionID
@@ -90,6 +135,9 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 				}
 				return previous, nil
 			}
+			if !previous.matchesIncompleteBoundary(request) {
+				return State{}, errors.New("committed Hosting security transaction has a different update channel or platform identity")
+			}
 			if _, err := participant.Store.EnsureOwnership(previous); err != nil {
 				return State{}, fmt.Errorf("preserve Hosting uninstall baseline: %w", err)
 			}
@@ -101,10 +149,17 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return State{}, fmt.Errorf("read previous Hosting security transaction: %w", err)
 	}
-	state := State{SchemaVersion: CurrentSchemaVersion, TransactionID: request.TransactionID, Release: request.Release,
-		Channel: request.Channel, GatewayPort: request.GatewayPort, OperatorUser: request.OperatorUser, Phase: PhasePreparing}
-	if err := participant.Store.WriteState(state); err != nil {
-		return State{}, err
+	state := State{}
+	if resumed != nil {
+		state = *resumed
+	} else {
+		state = State{SchemaVersion: CurrentSchemaVersion, TransactionID: request.TransactionID, Release: request.Release,
+			Channel: request.Channel, GatewayPort: request.GatewayPort, OperatorUser: request.OperatorUser,
+			PlatformIdentity: request.PlatformIdentity, TrustRootSHA256: request.TrustRootSHA256,
+			OnboardingRequired: request.OnboardingRequired, Phase: PhasePreflight}
+		if err := participant.Store.WriteState(state); err != nil {
+			return State{}, err
+		}
 	}
 	inspection, err := participant.Host.Inspect(ctx, request.GatewayPort, request.OperatorUser)
 	if err != nil {
@@ -131,6 +186,12 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 		inspection, err = participant.Host.Inspect(ctx, request.GatewayPort, request.OperatorUser)
 		if err != nil || !inspection.LifecyclePrerequisitesReady {
 			return State{}, participant.abort(ctx, state, errors.Join(err, errors.New("Hosting lifecycle prerequisites did not converge")))
+		}
+	}
+	if state.Phase == PhasePreflight || state.Phase == PhasePreparing {
+		state.Phase = PhasePrerequisitesReady
+		if err := participant.Store.WriteState(state); err != nil {
+			return State{}, participant.abort(ctx, state, err)
 		}
 	}
 	if request.RequireExistingHardening && (!inspection.HardeningReady && !inspection.LegacyHardeningReady || inspection.AppCanElevate) {
@@ -225,35 +286,79 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 	if err != nil || !inspection.PrivateServeReady || !inspection.SignerWebAuthnReady {
 		return State{}, participant.abort(ctx, state, errors.Join(err, errors.New("private Tailscale Serve route is not ready")))
 	}
-	state.Phase = PhasePrepared
+	state.Phase = PhasePrivateNetworkReady
 	if err := participant.Store.WriteState(state); err != nil {
 		return State{}, participant.abort(ctx, state, err)
 	}
 	return state, nil
 }
 
-func (participant Participant) MarkRuntimeReady(ctx context.Context, transactionID string) (State, error) {
+func (participant Participant) BindRuntimeReady(ctx context.Context, transactionID, generationID, convergenceReceiptDigest string, onboardingRequired bool) (State, error) {
 	participant.progress("Fased: verifying isolated Gateway and signer...")
+	if !sha256IDPattern.MatchString(generationID) || !sha256IDPattern.MatchString(convergenceReceiptDigest) {
+		return State{}, errors.New("Hosting runtime binding is invalid")
+	}
 	state, err := participant.boundState(transactionID)
 	if err != nil {
 		return State{}, err
 	}
-	if state.Phase == PhaseCommitted || state.RuntimeReady {
+	if state.Phase == PhaseCommitted {
+		if state.LifecycleGenerationID != generationID || state.ConvergenceReceiptDigest != convergenceReceiptDigest {
+			return State{}, errors.New("committed Hosting runtime binding differs from the active generation")
+		}
 		return state, nil
 	}
-	if state.Phase != PhasePrepared {
+	if state.Phase != PhasePrepared && state.Phase != PhasePrivateNetworkReady && state.Phase != PhaseGenerationReady &&
+		state.Phase != PhaseRuntimeReady && state.Phase != PhaseOnboardingPending && state.Phase != PhaseOnboardingComplete {
 		return State{}, errors.New("Hosting security transaction is not prepared")
 	}
 	inspection, err := participant.Host.Inspect(ctx, state.GatewayPort, state.OperatorUser)
 	if err != nil || !inspection.TailscaleRunning || !inspection.Authenticated || !inspection.PrivateServeReady || !inspection.SignerWebAuthnReady || !inspection.SignerReady || inspection.AppCanElevate {
 		return State{}, errors.Join(err, errors.New("Hosting runtime is not safe before host-security handoff"))
 	}
+	if state.Phase == PhasePrepared || state.Phase == PhasePrivateNetworkReady || state.Phase == PhaseGenerationReady {
+		state.LifecycleGenerationID = generationID
+		state.ConvergenceReceiptDigest = ""
+		state.RuntimeReady = false
+		state.Phase = PhaseGenerationReady
+		if err := participant.Store.WriteState(state); err != nil {
+			return State{}, err
+		}
+	}
 	state.RuntimeReady = true
-	state.Phase = PhaseRuntimeReady
+	state.LifecycleGenerationID = generationID
+	state.ConvergenceReceiptDigest = convergenceReceiptDigest
+	state.LegacyRuntimeBindingPending = false
+	state.OnboardingRequired = state.OnboardingRequired || onboardingRequired
+	if state.OnboardingRequired && !state.OnboardingComplete {
+		state.Phase = PhaseOnboardingPending
+	} else {
+		state.OnboardingComplete = true
+		state.Phase = PhaseRuntimeReady
+	}
 	if err := participant.Store.WriteState(state); err != nil {
 		return State{}, err
 	}
 	if err := participant.Store.WriteReceipt(state, false); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
+func (participant Participant) MarkOnboardingComplete(transactionID string) (State, error) {
+	state, err := participant.boundState(transactionID)
+	if err != nil {
+		return State{}, err
+	}
+	if state.Phase == PhaseCommitted || state.Phase == PhaseHardening || state.Phase == PhaseOnboardingComplete {
+		return state, nil
+	}
+	if !state.RuntimeReady || state.Phase != PhaseOnboardingPending {
+		return State{}, errors.New("Hosting coordinator is not awaiting onboarding")
+	}
+	state.OnboardingComplete = true
+	state.Phase = PhaseOnboardingComplete
+	if err := participant.Store.WriteState(state); err != nil {
 		return State{}, err
 	}
 	return state, nil
@@ -267,7 +372,10 @@ func (participant Participant) Commit(ctx context.Context, transactionID string,
 	if state.Phase == PhaseCommitted {
 		return state, participant.Store.WriteReceipt(state, true)
 	}
-	if state.Phase != PhaseRuntimeReady && state.Phase != PhaseHardening {
+	if state.Phase == PhaseRuntimeReady && !state.OnboardingComplete {
+		return State{}, errors.New("Hosting coordinator onboarding is incomplete")
+	}
+	if state.Phase != PhaseRuntimeReady && state.Phase != PhaseOnboardingComplete && state.Phase != PhaseHardening && state.Phase != PhaseHardeningReady {
 		return State{}, errors.New("Hosting security transaction is not runtime-ready")
 	}
 	inspection, err := participant.Host.Inspect(ctx, state.GatewayPort, state.OperatorUser)
@@ -314,10 +422,16 @@ func (participant Participant) Commit(ctx context.Context, transactionID string,
 		return State{}, participant.abort(ctx, state, errors.Join(err, errors.New("Hosting hardening did not converge")))
 	}
 	state.HardeningCommitted = true
-	state.Phase = PhaseCommitted
-	if _, err := participant.Store.EnsureOwnership(state); err != nil {
+	state.Phase = PhaseHardeningReady
+	if err := participant.Store.WriteState(state); err != nil {
 		return State{}, err
 	}
+	ownershipState := state
+	ownershipState.Phase = PhaseCommitted
+	if _, err := participant.Store.EnsureOwnership(ownershipState); err != nil {
+		return State{}, err
+	}
+	state.Phase = PhaseCommitted
 	if err := participant.Store.WriteState(state); err != nil {
 		return State{}, err
 	}
@@ -368,14 +482,16 @@ func (participant Participant) abort(ctx context.Context, state State, cause err
 	if state.TailscaleInstallStarted {
 		failures = append(failures, participant.Host.RestoreTailscaleInstall(ctx, state.TailscaleInstallSnapshot))
 	}
-	// The public receipt is first published by MarkRuntimeReady. Earlier phases
+	// The public receipt is first published by BindRuntimeReady. Earlier phases
 	// cannot own it, so recovery must preserve any predecessor receipt instead
 	// of trying to parse or remove it.
 	if state.RuntimeReady {
 		failures = append(failures, participant.Store.RemoveReceiptOwned(state.TransactionID))
 	}
 	state.Phase = PhaseAborted
-	state.RuntimeReady, state.AccessConfirmed, state.HardeningCommitted = false, false, false
+	state.RuntimeReady, state.OnboardingComplete, state.AccessConfirmed, state.HardeningCommitted = false, false, false, false
+	state.LifecycleGenerationID, state.ConvergenceReceiptDigest = "", ""
+	state.LegacyRuntimeBindingPending = false
 	state.LifecyclePrerequisitesStaged, state.HardeningStaged = false, false
 	state.HardeningAdopted, state.LegacyHardeningAdopted = false, false
 	if err := participant.Store.WriteState(state); err != nil {
@@ -414,11 +530,15 @@ func (participant Participant) user() io.Writer {
 }
 
 func (state State) matches(request Request) bool {
-	return state.Release == request.Release && state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser
+	return state.Release == request.Release && state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser &&
+		(state.PlatformIdentity == "" || state.PlatformIdentity == request.PlatformIdentity) &&
+		(state.TrustRootSHA256 == "" || state.TrustRootSHA256 == request.TrustRootSHA256)
 }
 
 func (state State) matchesIncompleteBoundary(request Request) bool {
-	return state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser
+	return state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser &&
+		(state.PlatformIdentity == "" || state.PlatformIdentity == request.PlatformIdentity) &&
+		(state.TrustRootSHA256 == "" || state.TrustRootSHA256 == request.TrustRootSHA256)
 }
 
 func (state State) matchesPreparedHost(inspection Inspection) bool {

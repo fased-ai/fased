@@ -62,7 +62,10 @@ fixture and bounded diagnostics, correct locally, and rerun there; never
 allocate another RC to discover whether the correction works.
 
 Before PRE-CANDIDATE, run `scripts/pre-candidate-readiness.mjs` locally against
-the exact complete LOCAL0 receipt. It rejects a dirty or mismatched source,
+the exact complete LOCAL0 receipt and pass `--hosting-staging-receipt` for the
+exact unpublished artifact. Produce that receipt only with
+`scripts/hosting-staging-vps-receipt.mjs` after the literal 2 GB/no-swap staging
+VPS install and identical-command `Already current` proof. It rejects a dirty or mismatched source,
 missing fresh-login `fased` command evidence, missing `Already current`, an
 unresolved exact-source failure marker, or an unavailable exact predecessor
 release. Its receipt digest is a required PRE-CANDIDATE input and evidence

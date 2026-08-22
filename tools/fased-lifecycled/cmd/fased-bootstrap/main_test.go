@@ -875,8 +875,72 @@ func TestCommittedHostingSecurityTransactionSkipsFinalization(t *testing.T) {
 	if hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: hostsecurity.PhaseCommitted}) {
 		t.Fatal("reused committed Hosting security transaction selected completion mutations")
 	}
-	if !hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: hostsecurity.PhaseRuntimeReady}) {
-		t.Fatal("pending Hosting security transaction skipped required completion")
+	for _, phase := range []hostsecurity.Phase{
+		hostsecurity.PhasePrerequisitesReady,
+		hostsecurity.PhasePrivateNetworkReady,
+		hostsecurity.PhaseGenerationReady,
+		hostsecurity.PhaseRuntimeReady,
+		hostsecurity.PhaseOnboardingPending,
+		hostsecurity.PhaseOnboardingComplete,
+		hostsecurity.PhaseHardening,
+		hostsecurity.PhaseHardeningReady,
+	} {
+		if !hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: phase}) {
+			t.Fatalf("pending Hosting security phase %s skipped required completion", phase)
+		}
+	}
+}
+
+func TestPendingHostingOnboardingResumesOnlyExactCommittedGeneration(t *testing.T) {
+	generationID := "sha256:" + strings.Repeat("a", 64)
+	receiptDigest := "sha256:" + strings.Repeat("b", 64)
+	state := hostsecurity.State{
+		SchemaVersion: hostsecurity.CurrentSchemaVersion, Phase: hostsecurity.PhaseOnboardingPending,
+		Release: "0.1.76-rc.116", RuntimeReady: true, OnboardingRequired: true,
+		LifecycleGenerationID: generationID, ConvergenceReceiptDigest: receiptDigest,
+	}
+	status := installedLifecycleStatus{
+		Profile: model.ProfileHosting, Version: state.Release, ReleaseSequence: 16,
+		SecurityEpoch: 1, ActiveGenerationID: generationID,
+	}
+	result := bootstrapResult{Version: state.Release, ReleaseSequence: 16, SecurityEpoch: 1}
+	response, alreadyCurrent, err := validatePendingHostingOnboardingBinding(state, status, result)
+	if err != nil || !alreadyCurrent || response.Outcome != "ALREADY_CURRENT" ||
+		response.ActiveGenerationID != generationID || response.ConvergenceReceiptDigest != receiptDigest {
+		t.Fatalf("exact pending Hosting onboarding did not resume: response=%+v err=%v", response, err)
+	}
+
+	for name, mutate := range map[string]func(*hostsecurity.State, *installedLifecycleStatus, *bootstrapResult){
+		"newer release": func(_ *hostsecurity.State, _ *installedLifecycleStatus, candidate *bootstrapResult) {
+			candidate.Version = "0.1.76-rc.117"
+		},
+		"different generation": func(_ *hostsecurity.State, installed *installedLifecycleStatus, _ *bootstrapResult) {
+			installed.ActiveGenerationID = "sha256:" + strings.Repeat("c", 64)
+		},
+		"different release sequence": func(_ *hostsecurity.State, installed *installedLifecycleStatus, _ *bootstrapResult) {
+			installed.ReleaseSequence++
+		},
+		"completed onboarding": func(coordinator *hostsecurity.State, _ *installedLifecycleStatus, _ *bootstrapResult) {
+			coordinator.OnboardingComplete = true
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changedState, changedStatus, changedResult := state, status, result
+			mutate(&changedState, &changedStatus, &changedResult)
+			if _, _, err := validatePendingHostingOnboardingBinding(changedState, changedStatus, changedResult); err == nil {
+				t.Fatal("mismatched pending Hosting onboarding was accepted")
+			}
+		})
+	}
+
+	newer := result
+	newer.Version = "0.1.76-rc.117"
+	newer.ReleaseSequence++
+	newerState := state
+	newerState.Release = newer.Version
+	response, alreadyCurrent, err = validatePendingHostingOnboardingBinding(newerState, status, newer)
+	if err != nil || alreadyCurrent || response.ActiveGenerationID != "" {
+		t.Fatalf("newer exact Hosting release did not select lifecycle convergence: response=%+v current=%v err=%v", response, alreadyCurrent, err)
 	}
 }
 

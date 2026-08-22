@@ -802,6 +802,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	}
 	performance.Acquisition = result.Performance
 	var hostingParticipant *hostsecurity.Participant
+	var hostingState hostsecurity.State
 	hostingTransactionID := ""
 	hostingSecurityReused := false
 	if request.Profile == model.ProfileHosting {
@@ -828,43 +829,72 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			Host:  hostsecurity.NewLinuxHost(), Log: log, User: userOutput,
 		}
 		hostingParticipant = &participant
+		onboardingRequired := request.Operation == "install" && request.Onboard && !ownerConfigExisted
+		if prior, priorErr := participant.Store.ReadState(); priorErr == nil && prior.Phase != hostsecurity.PhaseCommitted && prior.Phase != hostsecurity.PhaseAborted {
+			onboardingRequired = onboardingRequired || prior.OnboardingRequired ||
+				(prior.SchemaVersion == 1 && prior.RuntimeReady && request.Operation == "install" && request.Onboard)
+		}
 		prepared, prepareErr := participant.Prepare(ctx, hostsecurity.Request{
 			TransactionID: hostingTransactionID, Release: result.Version, Channel: request.Channel,
 			GatewayPort: request.GatewayPort, OperatorUser: operator.Name,
+			PlatformIdentity: runtime.GOOS + "/" + architecture(), TrustRootSHA256: releaseRoute.PinnedRootSHA256,
 			AuthKeyFile: request.TailscaleAuthKeyFile, Interactive: publicRequestAllowsBrowserAuthentication(request), RequireExistingHardening: request.Operation != "install",
+			OnboardingRequired: onboardingRequired,
 		})
 		if prepareErr != nil {
 			return prepareErr
 		}
 		hostingTransactionID = prepared.TransactionID
+		hostingState = prepared
 		hostingSecurityReused = !hostingSecurityTransactionNeedsFinalization(prepared)
 	}
+	resumePendingOnboarding := hostingState.Phase == hostsecurity.PhaseOnboardingPending
 	applyStarted := time.Now()
 	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
-	convergence, verboseOutput, err := invokeLifecycleHost(ctx, request, operator, result, lock)
+	var convergence protocol.Response
+	var verboseOutput []byte
+	if resumePendingOnboarding {
+		var alreadyCurrent bool
+		convergence, alreadyCurrent, err = recoverPendingHostingOnboarding(operator, hostingState, result)
+		if err == nil && !alreadyCurrent {
+			convergence, verboseOutput, err = invokeLifecycleHost(ctx, request, operator, result, lock)
+		}
+	} else {
+		convergence, verboseOutput, err = invokeLifecycleHost(ctx, request, operator, result, lock)
+	}
 	applyProgress.Stop()
 	performance.ApplyMillis = durationMillis(applyStarted)
 	performance.Transaction = convergence.Performance
 	emitLifecycleHostVerbose(lifecycleHostVerboseOutputWriter(request, output, os.Stderr), verboseOutput)
 	if err != nil {
-		if hostingParticipant != nil && !hostingSecurityReused {
+		if hostingParticipant != nil && !hostingSecurityReused && !resumePendingOnboarding {
 			err = errors.Join(err, hostingParticipant.Abort(ctx, hostingTransactionID))
 		}
 		return err
 	}
 	if hostingParticipant != nil && !hostingSecurityReused {
-		if _, err := hostingParticipant.MarkRuntimeReady(ctx, hostingTransactionID); err != nil {
-			return fmt.Errorf("Hosting runtime installed but host-security handoff remains pending: %w", err)
+		bound, bindErr := hostingParticipant.BindRuntimeReady(ctx, hostingTransactionID,
+			convergence.ActiveGenerationID, convergence.ConvergenceReceiptDigest, hostingState.OnboardingRequired)
+		if bindErr != nil {
+			return fmt.Errorf("Hosting runtime installed but host-security handoff remains pending: %w", bindErr)
 		}
+		hostingState = bound
 	}
 	outcome := convergence.Outcome
-	if shouldRunOnboarding(request, outcome, ownerConfigExisted) {
+	if shouldRunOnboarding(request, outcome, ownerConfigExisted) || hostingState.Phase == hostsecurity.PhaseOnboardingPending {
 		onboardingStarted := time.Now()
 		onboardingCtx, detached := onboardingPhaseContext(ctx, request)
 		convergence, err = runOnboarding(onboardingCtx, request, operator, result, lock, output, os.Stderr)
 		performance.OnboardingMillis = durationMillis(onboardingStarted)
 		if err != nil {
 			return err
+		}
+		if hostingParticipant != nil && !hostingSecurityReused {
+			completed, completeErr := hostingParticipant.MarkOnboardingComplete(hostingTransactionID)
+			if completeErr != nil {
+				return fmt.Errorf("onboarding completed but Hosting coordinator remains pending: %w", completeErr)
+			}
+			hostingState = completed
 		}
 		if detached {
 			var finalizeCancel context.CancelFunc
@@ -991,6 +1021,63 @@ func transactionMillis(evidence *protocol.PerformanceEvidence, selectValue func(
 
 func hostingSecurityTransactionNeedsFinalization(state hostsecurity.State) bool {
 	return state.Phase != hostsecurity.PhaseCommitted
+}
+
+// recoverPendingHostingOnboarding resumes the only deliberate state in which
+// the generation is durably committed but live application convergence is not
+// yet expected. The actual onboarding child may have been terminated before it
+// created the owner configuration. Re-entering the ordinary lifecycle
+// AlreadyCurrent path in that state incorrectly tries to repair services from
+// that not-yet-created configuration. Bind the resume only to the exact
+// installed manifest and coordinator receipt; onboarding completion performs
+// the live convergence proof before the Hosting transaction can commit.
+func recoverPendingHostingOnboarding(operator publicOperator, state hostsecurity.State, result bootstrapResult) (protocol.Response, bool, error) {
+	configPath, err := installedConfigPath(model.ProfileHosting, operator)
+	if err != nil {
+		return protocol.Response{}, false, err
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return protocol.Response{}, false, errors.New("pending Hosting onboarding platform configuration is unavailable")
+	}
+	config, err := platform.DecodeConfig(configData)
+	if err != nil {
+		return protocol.Response{}, false, fmt.Errorf("pending Hosting onboarding platform configuration is invalid: %w", err)
+	}
+	manifestData, err := os.ReadFile(filepath.Join(config.LifecycleRoot, "installation-manifest.json"))
+	if err != nil {
+		return protocol.Response{}, false, errors.New("pending Hosting onboarding lifecycle manifest is unavailable")
+	}
+	status, err := decodeInstalledLifecycleStatus(config, model.ProfileHosting, manifestData)
+	if err != nil {
+		return protocol.Response{}, false, err
+	}
+	return validatePendingHostingOnboardingBinding(state, status, result)
+}
+
+func validatePendingHostingOnboardingBinding(state hostsecurity.State, status installedLifecycleStatus, result bootstrapResult) (protocol.Response, bool, error) {
+	if state.Phase != hostsecurity.PhaseOnboardingPending || !state.RuntimeReady ||
+		!state.OnboardingRequired || state.OnboardingComplete || state.Release != result.Version ||
+		status.Profile != model.ProfileHosting ||
+		status.ActiveGenerationID != state.LifecycleGenerationID ||
+		!digestID(state.LifecycleGenerationID) || !digestID(state.ConvergenceReceiptDigest) {
+		return protocol.Response{}, false, errors.New("pending Hosting onboarding differs from the exact acquired generation")
+	}
+	if status.Version != result.Version {
+		if status.ReleaseSequence >= result.ReleaseSequence || status.SecurityEpoch > result.SecurityEpoch {
+			return protocol.Response{}, false, errors.New("pending Hosting onboarding cannot adopt the acquired release authority")
+		}
+		return protocol.Response{}, false, nil
+	}
+	if status.ReleaseSequence != result.ReleaseSequence || status.SecurityEpoch != result.SecurityEpoch {
+		return protocol.Response{}, false, errors.New("pending Hosting onboarding authority differs from the acquired release")
+	}
+	return protocol.Response{
+		SchemaVersion:            protocol.CurrentSchemaVersion,
+		Outcome:                  "ALREADY_CURRENT",
+		ActiveGenerationID:       state.LifecycleGenerationID,
+		ConvergenceReceiptDigest: state.ConvergenceReceiptDigest,
+	}, true, nil
 }
 
 func pruneAcquisitionInbox(stateRoot string) error {

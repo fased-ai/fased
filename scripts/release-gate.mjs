@@ -24,6 +24,7 @@ export const RELEASE_GATE_PHASES = Object.freeze([
 
 const REQUIRED_CLAIMS = Object.freeze({
   "pre-candidate": Object.freeze([
+    "hostingStagingReceiptDigest",
     "local0ReceiptDigest",
     "mainChecksJobId",
     "mainRunId",
@@ -34,6 +35,7 @@ const REQUIRED_CLAIMS = Object.freeze({
     "workflowRunId",
   ]),
   "pre-tag-p1": Object.freeze([
+    "hostingStagingReceiptDigest",
     "local0ReceiptDigest",
     "managedPredecessorVersion",
     "preCandidateRunId",

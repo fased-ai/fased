@@ -37,6 +37,32 @@ function requireLiteralUserEvidence(child, profile) {
   }
 }
 
+function requireHostingStagingEvidence(staging, expected) {
+  if (
+    staging?.schemaVersion !== 1 ||
+    staging?.role !== "fased-hosting-staging-vps-acceptance" ||
+    staging?.status !== "PASS" ||
+    staging?.evidenceClass !== "PASS" ||
+    staging?.environmentClass !== "hosting-staging-vps" ||
+    staging?.source?.commit !== expected.commit ||
+    staging?.source?.tree !== expected.tree ||
+    staging?.artifact?.descriptorDigest !== expected.descriptorDigest ||
+    staging?.artifact?.acceptanceContractDigest !== expected.acceptanceContractDigest ||
+    staging?.literalPublicInstall?.status !== "PASS" ||
+    !digestPattern.test(staging?.literalPublicInstall?.evidenceDigest || "") ||
+    staging?.identicalRetry?.status !== "PASS" ||
+    staging?.identicalRetry?.outcome !== "ALREADY_CURRENT" ||
+    !digestPattern.test(staging?.identicalRetry?.evidenceDigest || "") ||
+    staging?.resources?.memoryLimitBytes !== 2147483648 ||
+    staging?.resources?.swapLimitBytes !== 2147483648 ||
+    staging?.resources?.oomKill !== 0 ||
+    !Number.isSafeInteger(staging?.resources?.memoryPeakBytes) ||
+    staging.resources.memoryPeakBytes <= 0
+  ) {
+    fail("exact unpublished Hosting staging-VPS acceptance is missing or invalid");
+  }
+}
+
 export function validateLocal0Readiness(receipt, expected) {
   if (
     receipt?.schemaVersion !== 1 ||
@@ -75,7 +101,11 @@ export function validateLocal0Readiness(receipt, expected) {
   }
   const children = receipt.receipts.map((record) => record?.receipt).filter(Boolean);
   for (const child of children) {
-    if (child.evidenceClass !== "PASS") {
+    if (child.profile === "hosting") {
+      if (child.evidenceClass !== "SUPPORTING") {
+        fail("LOCAL0 Hosting container evidence must remain SUPPORTING");
+      }
+    } else if (child.evidenceClass !== "PASS") {
       fail("LOCAL0 contains a non-passing child receipt");
     }
   }
@@ -89,6 +119,12 @@ export function validateLocal0Readiness(receipt, expected) {
     children.find((child) => child.profile === "hosting" && child.scenario === "fresh-install"),
     "hosting",
   );
+  requireHostingStagingEvidence(expected.hostingStagingReceipt, {
+    commit: expected.commit,
+    tree: expected.tree,
+    descriptorDigest: receipt.artifact.descriptorDigest,
+    acceptanceContractDigest: receipt.artifact.acceptanceContractDigest,
+  });
   return Object.freeze({
     commit: expected.commit,
     tree: expected.tree,
@@ -99,6 +135,7 @@ export function validateLocal0Readiness(receipt, expected) {
     hostingEntrypointDigest: expected.hostingEntrypointDigest,
     descriptorDigest: receipt.artifact.descriptorDigest,
     acceptanceContractDigest: receipt.artifact.acceptanceContractDigest,
+    hostingStagingReceiptDigest: expected.hostingStagingReceiptDigest,
   });
 }
 
@@ -116,6 +153,7 @@ function parseArgs(args) {
     "--local0-receipt",
     "--predecessor-version",
     "--managed-predecessor-version",
+    "--hosting-staging-receipt",
   ]) {
     if (!values.has(key)) {
       fail(`${key} is required`);
@@ -161,6 +199,8 @@ function main() {
     fail(`unresolved exact-source LOCAL0 failure remains at ${failureMarker}`);
   }
   const receipt = JSON.parse(receiptBytes.toString("utf8"));
+  const hostingStagingReceiptBytes = readFileSync(args.get("--hosting-staging-receipt"));
+  const hostingStagingReceipt = JSON.parse(hostingStagingReceiptBytes.toString("utf8"));
   const receiptCommit = receipt.source?.commit;
   if (!commitPattern.test(receiptCommit || "")) {
     fail("LOCAL0 receipt source commit is invalid");
@@ -186,6 +226,8 @@ function main() {
     lockfileDigest,
     localEntrypointDigest,
     hostingEntrypointDigest,
+    hostingStagingReceipt,
+    hostingStagingReceiptDigest: sha256(hostingStagingReceiptBytes),
   });
   const predecessorVersion = args.get("--predecessor-version");
   const managedPredecessorVersion = args.get("--managed-predecessor-version");

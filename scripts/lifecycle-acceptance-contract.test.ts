@@ -477,6 +477,39 @@ describe("lifecycle acceptance contract", () => {
     expect(providerAccess).toContain("verify_sshd_runtime_prerequisites");
   });
 
+  it("binds actual onboarding child termination into fresh Hosting acceptance", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const evidence = hosting.slice(
+      hosting.indexOf("record_canonical_lifecycle_evidence() {"),
+      hosting.indexOf("assert_healthy() {"),
+    );
+    const freshInstall = hosting.slice(
+      hosting.indexOf("  install)"),
+      hosting.indexOf("  managed-update)"),
+    );
+
+    expect(evidence).toContain('.role == "fased-hosting-onboarding-termination"');
+    expect(evidence).toContain(".actualChild == true");
+    expect(evidence).toContain(".signal == 9");
+    expect(evidence).toContain('.durablePhase == "ONBOARDING_PENDING"');
+    expect(evidence).toContain('--arg manifestDigest "sha256:$(sha256sum "$manifest"');
+    expect(evidence).toContain('--arg terminationDigest "sha256:$(sha256sum "$termination"');
+    expect(evidence).toContain("manifestDigest:$manifestDigest");
+    expect(evidence).toContain("evidenceDigest:$terminationDigest");
+    expect(freshInstall).toContain(
+      'canonical_lifecycle_evidence="$(record_canonical_lifecycle_evidence)"',
+    );
+    expect(freshInstall).toContain(
+      'acceptance_mark canonical-lifecycle "$canonical_lifecycle_evidence"',
+    );
+    expect(freshInstall).toContain(
+      "canonical Hosting lifecycle and actual onboarding child termination verified",
+    );
+  });
+
   it("starts from a real absent Ubuntu ACL package state and installs it transactionally", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
@@ -497,11 +530,39 @@ describe("lifecycle acceptance contract", () => {
     expect(adapter).toContain('"$#" -eq 4');
     expect(adapter).toContain('"$4" == "acl"');
     expect(adapter).toContain('"$7" == "acl"');
-    expect(adapter).toContain("/var/lib/fased-hosting-fixture/acl-package/getfacl");
-    expect(adapter).toContain("/var/lib/fased-hosting-fixture/acl-package/setfacl");
-    expect(adapter).toContain("/var/lib/fased-hosting-fixture/acl-package/installed");
-    expect(adapter).toContain("command -v getfacl >/dev/null");
-    expect(adapter).toContain("command -v setfacl >/dev/null");
+    expect(adapter).toContain("/usr/local/libexec/fased-fixture-apt-get-real");
+    expect(adapter).toContain("DEBIAN_FRONTEND=noninteractive");
+    expect(hosting).toContain("/var/lib/fased-hosting-fixture/apt-sourceparts");
+    expect(hosting).toContain("/var/lib/fased-hosting-fixture/apt-sources.list");
+    expect(adapter).toContain(
+      "Dir::Etc::sourceparts=/var/lib/fased-hosting-fixture/apt-sourceparts",
+    );
+  });
+
+  it("kills the actual onboarding child and retains container evidence as supporting", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const driver = readFileSync(
+      new URL("./test-lifecycle-hosting-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    expect(hosting).toContain("interrupt_actual_onboarding_child");
+    expect(hosting).toContain("script -qefc /tmp/fased-hosting-interactive-installer");
+    expect(hosting).toContain("/tmp/fased-hosting-interrupted-onboarding.out");
+    expect(hosting).toContain("/home/app/\\.fased/bin/fased onboard --install-daemon");
+    expect(hosting).toContain('kill -KILL "$onboarding_pid"');
+    expect(hosting).toContain('.phase == "ONBOARDING_PENDING"');
+    expect(hosting).not.toContain("seed_runtime_ready_predecessor_host_security");
+    expect(hosting).toContain("acceptance_evidence_class=SUPPORTING");
+    expect(driver).toContain("--memory 2g");
+    expect(driver).toContain("--memory-swap 2g");
+    expect(driver).toContain("--pids-limit 1024");
+    expect(driver).toContain('environmentClass:"hosting-container"');
+    expect(driver).toContain("/sys/fs/cgroup/memory.events");
+    expect(driver).toContain("/sys/fs/cgroup/memory.peak");
+    expect(driver).toContain("systemctl show --value -p MemoryPeak");
   });
 
   it("clears fixture-induced systemd rate limits before explicit restart proof", () => {
