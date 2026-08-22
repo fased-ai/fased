@@ -477,6 +477,34 @@ describe("lifecycle acceptance contract", () => {
     expect(providerAccess).toContain("verify_sshd_runtime_prerequisites");
   });
 
+  it("waits for the real fail2ban control socket before seeding legacy Hosting state", () => {
+    const hosting = readFileSync(
+      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
+      "utf8",
+    );
+    const readiness = hosting.slice(
+      hosting.indexOf("wait_for_fail2ban_fixture() {"),
+      hosting.indexOf("prepare_legacy_host_security_fixture() {"),
+    );
+    const legacyPreparation = hosting.slice(
+      hosting.indexOf("prepare_legacy_host_security_fixture() {"),
+      hosting.indexOf("install_release_transport_fixture() {"),
+    );
+
+    expect(readiness).toContain("local deadline=$((SECONDS + 30))");
+    expect(readiness).toContain("while ((SECONDS < deadline)); do");
+    expect(readiness).toContain("fail2ban-client status sshd 2>/dev/null");
+    expect(readiness).toContain("sleep 0.1");
+    expect(readiness).toContain("return 0");
+    expect(readiness).toContain(
+      "Hosting fixture fail2ban sshd jail did not become ready within 30 seconds",
+    );
+    expect(legacyPreparation).toContain("wait_for_fail2ban_fixture");
+    expect(legacyPreparation).not.toContain(
+      "fail2ban-client status sshd | grep -Fqi 'status for the jail: sshd'",
+    );
+  });
+
   it("binds actual onboarding child termination into fresh Hosting acceptance", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
@@ -517,6 +545,10 @@ describe("lifecycle acceptance contract", () => {
     );
     const adapterStart = hosting.indexOf("cat >/usr/bin/apt-get <<'EOF_APT_FIXTURE'");
     const adapter = hosting.slice(adapterStart, hosting.indexOf("\nEOF_APT_FIXTURE", adapterStart));
+    const aclRemoval = adapter.slice(
+      adapter.indexOf('if [[ "$#" -eq 3 && "$1" == "remove"'),
+      adapter.indexOf('if [[ "$#" -eq 6 && "$1" == "-o"'),
+    );
 
     expect(adapter).toContain('"$3" == "acl"');
     expect(hosting).toContain("DEBIAN_FRONTEND=noninteractive apt-get remove -y acl");
@@ -526,7 +558,9 @@ describe("lifecycle acceptance contract", () => {
     expect(hosting).toContain("$'config-files\\tok'");
     expect(hosting).not.toContain("cat >/usr/bin/dpkg-query <<'EOF_DPKG_QUERY_FIXTURE'");
     expect(hosting).not.toContain("fased-fixture-dpkg-query-real");
-    expect(adapter).toContain("rm -f -- /usr/bin/getfacl /usr/bin/setfacl");
+    expect(aclRemoval).toContain("exec env DEBIAN_FRONTEND=noninteractive");
+    expect(aclRemoval).toContain('/usr/local/libexec/fased-fixture-apt-get-real "$@"');
+    expect(aclRemoval).not.toContain("rm -f -- /usr/bin/getfacl /usr/bin/setfacl");
     expect(adapter).toContain('"$#" -eq 4');
     expect(adapter).toContain('"$4" == "acl"');
     expect(adapter).toContain('"$7" == "acl"');
