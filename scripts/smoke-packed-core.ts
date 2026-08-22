@@ -515,7 +515,11 @@ async function main() {
       ],
       {
         cwd: repoRoot,
-        env: { ...process.env, npm_config_ignore_scripts: "true" },
+        env: {
+          ...process.env,
+          npm_config_force_legacy_deploy: "true",
+          npm_config_ignore_scripts: "true",
+        },
         stdio: ["ignore", "inherit", "inherit"],
       },
     );

@@ -405,7 +405,10 @@ async function main(): Promise<void> {
         packageRoot,
       ],
       rootDir,
-      { npm_config_ignore_scripts: "true" },
+      {
+        npm_config_force_legacy_deploy: "true",
+        npm_config_ignore_scripts: "true",
+      },
     );
     const componentContract = await readHostedComponentContract(
       path.join(rootDir, "config", "hosted-component-packs.json"),
