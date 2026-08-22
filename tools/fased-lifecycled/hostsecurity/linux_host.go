@@ -79,35 +79,34 @@ func (host LinuxHost) Inspect(ctx context.Context, port uint16, operator string)
 	}
 	inspection := Inspection{}
 	tailscale, err := host.tailscaleBinary()
-	if err != nil {
-		return inspection, nil
-	}
-	inspection.TailscaleInstalled = true
-	statusJSON, statusErr := host.Runner.Output(ctx, tailscale, "status", "--json")
-	if statusErr == nil {
-		var status tailscaleStatus
-		if json.Unmarshal(statusJSON, &status) == nil && status.BackendState == "Running" {
-			inspection.TailscaleRunning = true
-			inspection.TailscaleDNS = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(status.Self.DNSName)), ".")
-			for _, value := range status.Self.TailscaleIPs {
-				if ipv4Pattern.MatchString(value) {
-					inspection.TailscaleIPv4 = value
-					break
+	if err == nil {
+		inspection.TailscaleInstalled = true
+		statusJSON, statusErr := host.Runner.Output(ctx, tailscale, "status", "--json")
+		if statusErr == nil {
+			var status tailscaleStatus
+			if json.Unmarshal(statusJSON, &status) == nil && status.BackendState == "Running" {
+				inspection.TailscaleRunning = true
+				inspection.TailscaleDNS = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(status.Self.DNSName)), ".")
+				for _, value := range status.Self.TailscaleIPs {
+					if ipv4Pattern.MatchString(value) {
+						inspection.TailscaleIPv4 = value
+						break
+					}
 				}
+				inspection.Authenticated = validDNS(inspection.TailscaleDNS) && inspection.TailscaleIPv4 != ""
 			}
-			inspection.Authenticated = validDNS(inspection.TailscaleDNS) && inspection.TailscaleIPv4 != ""
 		}
-	}
-	if version, versionErr := host.Runner.Output(ctx, tailscale, "version"); versionErr == nil {
-		first, _, _ := strings.Cut(strings.TrimSpace(string(version)), "\n")
-		first = strings.TrimSpace(first)
-		if versionPattern.MatchString(first) {
-			inspection.TailscaleVersion = first
+		if version, versionErr := host.Runner.Output(ctx, tailscale, "version"); versionErr == nil {
+			first, _, _ := strings.Cut(strings.TrimSpace(string(version)), "\n")
+			first = strings.TrimSpace(first)
+			if versionPattern.MatchString(first) {
+				inspection.TailscaleVersion = first
+			}
 		}
-	}
-	serve, serveErr := host.Runner.Output(ctx, tailscale, "serve", "status", "--json")
-	if serveErr == nil && !containsPublicFunnel(serve) && serveTargetsLoopback(serve, port) {
-		inspection.PrivateServeReady = true
+		serve, serveErr := host.Runner.Output(ctx, tailscale, "serve", "status", "--json")
+		if serveErr == nil && !containsPublicFunnel(serve) && serveTargetsLoopback(serve, port) {
+			inspection.PrivateServeReady = true
+		}
 	}
 	inspection.SignerReady = host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "fased-signerd.service")
 	inspection.AppCanElevate = host.commandSucceeds(ctx, "/usr/sbin/runuser", "-u", operator, "--", "/usr/bin/sudo", "-n", "true")

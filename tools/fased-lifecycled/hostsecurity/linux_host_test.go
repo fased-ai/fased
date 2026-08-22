@@ -195,6 +195,23 @@ func TestHostingFirewallDefaultsClosedAndAllowsOnlyPrivateAdministration(t *test
 	}
 }
 
+func TestInspectChecksLifecyclePrerequisitesBeforeTailscaleExists(t *testing.T) {
+	host, _, root := linuxHostFixture(t)
+	if err := os.Remove(filepath.Join(root, "usr/bin/tailscale")); err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := host.Inspect(context.Background(), 18789, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.TailscaleInstalled {
+		t.Fatal("missing Tailscale was reported as installed")
+	}
+	if !inspection.LifecyclePrerequisitesReady {
+		t.Fatal("ACL lifecycle prerequisites were skipped when Tailscale was absent")
+	}
+}
+
 func TestHardeningSnapshotIsReadOnlyAndRollbackRemovesOnlyNewPackages(t *testing.T) {
 	host, runner, _ := linuxHostFixture(t)
 	for _, name := range []string{"nftables", "fail2ban", "unattended-upgrades", "acl"} {
