@@ -8,7 +8,7 @@ import type {
 import type { GatewayDaemonRuntime } from "./daemon-runtime.js";
 
 export type OnboardMode = "local" | "remote";
-export type SecretInputMode = "plaintext" | "ref";
+export type SecretInputMode = "plaintext" | "ref"; // pragma: allowlist secret
 export type KnownAuthChoice =
   // Legacy short alias for Anthropic OAuth (kept for backwards CLI compatibility).
   | "oauth"
