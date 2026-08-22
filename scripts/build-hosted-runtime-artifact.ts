@@ -410,6 +410,10 @@ async function main(): Promise<void> {
         npm_config_ignore_scripts: "true",
       },
     );
+    await fs.copyFile(
+      path.join(rootDir, "pnpm-lock.yaml"),
+      path.join(packageRoot, "pnpm-lock.yaml"),
+    );
     const componentContract = await readHostedComponentContract(
       path.join(rootDir, "config", "hosted-component-packs.json"),
     );
