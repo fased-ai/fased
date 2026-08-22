@@ -1025,7 +1025,8 @@ case "$phase" in
     jq -e '.phase == "COMMITTED" and .tailscaleInstalledByTransaction == true and
       .authenticatedByTransaction == true and .tailscaleDns == "fased-fixture.tailnet.ts.net"' \
       /var/lib/fased-host-security/active.json >/dev/null
-    grep -Fq 'https://login.tailscale.com/a/fased-fixture' /tmp/fased-hosting-install.out
+    grep -Fq 'https://login.tailscale.com/a/fased-fixture' \
+      /tmp/fased-hosting-interrupted-onboarding.out
     ! grep -Fq 'Type the Tailscale DNS name' /tmp/fased-hosting-install.out
     ! command -v node >/dev/null 2>&1
     command -v getfacl >/dev/null 2>&1

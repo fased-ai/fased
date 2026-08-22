@@ -517,6 +517,7 @@ describe("lifecycle acceptance contract", () => {
     );
     expect(hosting).toContain("interrupt_actual_onboarding_child");
     expect(hosting).toContain("script -qefc /tmp/fased-hosting-interactive-installer");
+    expect(hosting).toContain("/tmp/fased-hosting-interrupted-onboarding.out");
     expect(hosting).toContain("/home/app/\\.fased/bin/fased onboard --install-daemon");
     expect(hosting).toContain('kill -KILL "$onboarding_pid"');
     expect(hosting).toContain('.phase == "ONBOARDING_PENDING"');
