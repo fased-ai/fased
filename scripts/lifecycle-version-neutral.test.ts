@@ -19,7 +19,9 @@ describe("version-neutral lifecycle acceptance", () => {
     const local0 = await readFile(resolve(repoRoot, "scripts/run-lifecycle-local0.sh"), "utf8");
 
     expect(local0).toContain('MODE="all"');
-    expect(local0).toContain('identity_key="${commit}-${tree}-${lockfile_digest#sha256:}"');
+    expect(local0).toContain(
+      'identity_key="${commit}-${tree}-${lockfile_digest#sha256:}-sequence${FIXTURE_RELEASE_SEQUENCE}"',
+    );
     expect(local0).toContain('failure_marker="$CACHE_ROOT/failures/$identity_key.json"');
     expect(local0).toContain('install -m 0600 "$aggregate_receipt" "$failure_marker"');
     expect(local0).toContain('rm -f -- "$failure_marker"');

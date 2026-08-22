@@ -389,6 +389,17 @@ describe("lifecycle acceptance contract", () => {
     expect(driver).toContain('current_phase="pre-tag-predecessor-capsule-contract"');
   });
 
+  it("binds fixture release sequence into cache identity, verification, and trust overlay", () => {
+    const driver = readFileSync(new URL("./run-lifecycle-local0.sh", import.meta.url), "utf8");
+    expect(driver).toContain('FIXTURE_RELEASE_SEQUENCE="${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}"');
+    expect(driver).toContain(
+      'identity_key="${commit}-${tree}-${lockfile_digest#sha256:}-sequence${FIXTURE_RELEASE_SEQUENCE}"',
+    );
+    expect(driver).toContain('FASED_LIFECYCLE_RELEASE_SEQUENCE="$FIXTURE_RELEASE_SEQUENCE"');
+    expect(driver).toContain(".signed.releaseSequence == $fixtureReleaseSequence");
+    expect(driver).toContain("fixtureReleaseSequence:($fixtureReleaseSequence | tonumber)");
+  });
+
   it("keeps fixture-image preparation outside normal aggregate LOCAL0", () => {
     const localWrapper = readFileSync(
       new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
