@@ -28,10 +28,15 @@ function requireLiteralUserEvidence(child, profile) {
   if (!child || child.profile !== profile || child.scenario !== "fresh-install") {
     fail(`${profile} fresh-install receipt is missing`);
   }
+  const expectedStatus = profile === "hosting" ? "SUPPORTING" : "PASS";
   const evidence = new Map((child.evidence || []).map((record) => [record.id, record]));
   for (const id of ["updater-already-current"]) {
     const record = evidence.get(id);
-    if (!record || record.status !== "PASS" || !digestPattern.test(record.evidenceDigest || "")) {
+    if (
+      !record ||
+      record.status !== expectedStatus ||
+      !digestPattern.test(record.evidenceDigest || "")
+    ) {
       fail(`${profile} fresh-install does not prove ${id}`);
     }
   }
@@ -124,9 +129,20 @@ export function validateLocal0Readiness(receipt, expected) {
     children.find((child) => child.profile === "hosting" && child.scenario === "fresh-install"),
     "hosting",
   );
+  let hostingStagingSource = { commit: expected.commit, tree: expected.tree };
+  if (receipt.artifact?.fixtureOnlyDescendant === true) {
+    const productSource = receipt.artifact?.productSource;
+    if (
+      !commitPattern.test(productSource?.commit || "") ||
+      !commitPattern.test(productSource?.tree || "") ||
+      productSource?.lockfileDigest !== expected.lockfileDigest
+    ) {
+      fail("fixture-only LOCAL0 receipt does not bind an exact product source");
+    }
+    hostingStagingSource = { commit: productSource.commit, tree: productSource.tree };
+  }
   requireHostingStagingEvidence(expected.hostingStagingReceipt, {
-    commit: expected.commit,
-    tree: expected.tree,
+    ...hostingStagingSource,
     descriptorDigest: receipt.artifact.descriptorDigest,
     acceptanceContractDigest: receipt.artifact.acceptanceContractDigest,
   });
