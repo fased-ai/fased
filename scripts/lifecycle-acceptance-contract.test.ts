@@ -487,11 +487,16 @@ describe("lifecycle acceptance contract", () => {
 
     expect(hosting).toContain("remove_acl_fixture_prerequisite() {");
     expect(adapter).toContain('"$3" == "acl"');
-    expect(adapter).toContain("fased-fixture-apt-get-real remove -y acl");
+    expect(hosting).toContain("cat >/usr/bin/dpkg-query <<'EOF_DPKG_QUERY_FIXTURE'");
+    expect(hosting).toContain("fased-fixture-dpkg-query-real");
+    expect(hosting).toContain("printf 'rc '");
+    expect(adapter).toContain("rm -f -- /usr/bin/getfacl /usr/bin/setfacl");
     expect(adapter).toContain('"$#" -eq 4');
     expect(adapter).toContain('"$4" == "acl"');
     expect(adapter).toContain('"$7" == "acl"');
-    expect(adapter).toContain("fased-fixture-apt-get-real install -y --no-install-recommends acl");
+    expect(adapter).toContain("/var/lib/fased-hosting-fixture/acl-package/getfacl");
+    expect(adapter).toContain("/var/lib/fased-hosting-fixture/acl-package/setfacl");
+    expect(adapter).toContain("/var/lib/fased-hosting-fixture/acl-package/installed");
     expect(adapter).toContain("command -v getfacl >/dev/null");
     expect(adapter).toContain("command -v setfacl >/dev/null");
   });

@@ -134,6 +134,10 @@ diagnostics() {
       printf '\n--- /var/log/fased/hosting-security.log ---\n' >&2
       sed -n '1,200p' /var/log/fased/hosting-security.log >&2
     fi
+    if [[ -f /tmp/fased-fixture-acl-package.log ]]; then
+      printf '\n--- /tmp/fased-fixture-acl-package.log ---\n' >&2
+      sed -n '1,120p' /tmp/fased-fixture-acl-package.log >&2
+    fi
     if [[ -x /usr/sbin/sshd ]]; then
       local sshd_status=0
       /usr/sbin/sshd -t \
@@ -184,8 +188,34 @@ verify_sshd_runtime_prerequisites() {
 
 install_hosting_package_fixtures() {
   install -d -m 0755 -o root -g root /usr/local/libexec
+  install -d -m 0700 -o root -g root /var/lib/fased-hosting-fixture/acl-package
+  install -m 0755 -o root -g root /usr/bin/getfacl \
+    /var/lib/fased-hosting-fixture/acl-package/getfacl
+  install -m 0755 -o root -g root /usr/bin/setfacl \
+    /var/lib/fased-hosting-fixture/acl-package/setfacl
+  install -m 0600 -o root -g root /dev/null \
+    /var/lib/fased-hosting-fixture/acl-package/installed
   install -m 0755 -o root -g root /usr/bin/apt-get \
     /usr/local/libexec/fased-fixture-apt-get-real
+  install -m 0755 -o root -g root /usr/bin/dpkg-query \
+    /usr/local/libexec/fased-fixture-dpkg-query-real
+  cat >/usr/bin/dpkg-query <<'EOF_DPKG_QUERY_FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+state=/var/lib/fased-hosting-fixture/acl-package
+if [[ "$#" -eq 3 && "$1" == "--show" &&
+  "$2" == '--showformat=${db:Status-Abbrev}' && "$3" == "acl" ]]; then
+  if [[ -f "$state/installed" ]]; then
+    printf 'ii '
+  else
+    printf 'rc '
+  fi
+  exit 0
+fi
+exec /usr/local/libexec/fased-fixture-dpkg-query-real "$@"
+EOF_DPKG_QUERY_FIXTURE
+  chown root:root /usr/bin/dpkg-query
+  chmod 0755 /usr/bin/dpkg-query
   cat >/usr/local/libexec/fased-install-tailscale-fixture <<'EOF_INSTALL_TAILSCALE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -274,6 +304,7 @@ EOF_INSTALL_TAILSCALE
   cat >/usr/bin/apt-get <<'EOF_APT_FIXTURE'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'apt-get %q\n' "$*" >>/tmp/fased-fixture-acl-package.log
 if [[ "$#" -eq 3 && "$1" == "remove" && "$2" == "-y" && "$3" == "tailscale" ]]; then
   systemctl stop tailscaled.service >/dev/null 2>&1 || true
   systemctl disable tailscaled.service >/dev/null 2>&1 || true
@@ -282,8 +313,9 @@ if [[ "$#" -eq 3 && "$1" == "remove" && "$2" == "-y" && "$3" == "tailscale" ]]; 
   exit 0
 fi
 if [[ "$#" -eq 3 && "$1" == "remove" && "$2" == "-y" && "$3" == "acl" ]]; then
-  DEBIAN_FRONTEND=noninteractive \
-    /usr/local/libexec/fased-fixture-apt-get-real remove -y acl >/dev/null
+  rm -f -- /usr/bin/getfacl /usr/bin/setfacl \
+    /var/lib/fased-hosting-fixture/acl-package/installed
+  printf 'acl-state absent\n' >>/tmp/fased-fixture-acl-package.log
   exit 0
 fi
 if [[ "$#" -eq 6 && "$1" == "-o" && "$2" == "APT::Get::AllowUnauthenticated=false" &&
@@ -294,8 +326,14 @@ if [[ "$#" -eq 6 && "$1" == "-o" && "$2" == "APT::Get::AllowUnauthenticated=fals
 fi
 if [[ "$#" -eq 4 && "$1" == "install" && "$2" == "-y" &&
   "$3" == "--no-install-recommends" && "$4" == "acl" ]]; then
-  DEBIAN_FRONTEND=noninteractive \
-    /usr/local/libexec/fased-fixture-apt-get-real install -y --no-install-recommends acl >/dev/null
+  install -m 0755 -o root -g root /var/lib/fased-hosting-fixture/acl-package/getfacl \
+    /usr/bin/getfacl
+  install -m 0755 -o root -g root /var/lib/fased-hosting-fixture/acl-package/setfacl \
+    /usr/bin/setfacl
+  install -m 0600 -o root -g root /dev/null \
+    /var/lib/fased-hosting-fixture/acl-package/installed
+  stat -c 'acl-state installed %U:%G %a %n' /usr/bin/getfacl /usr/bin/setfacl \
+    >>/tmp/fased-fixture-acl-package.log
   command -v getfacl >/dev/null
   command -v setfacl >/dev/null
   exit 0
@@ -303,8 +341,12 @@ fi
 if [[ "$#" -eq 7 && "$1" == "install" && "$2" == "-y" &&
   "$3" == "--no-install-recommends" && "$4" == "nftables" &&
   "$5" == "fail2ban" && "$6" == "unattended-upgrades" && "$7" == "acl" ]]; then
-  DEBIAN_FRONTEND=noninteractive \
-    /usr/local/libexec/fased-fixture-apt-get-real install -y --no-install-recommends acl >/dev/null
+  install -m 0755 -o root -g root /var/lib/fased-hosting-fixture/acl-package/getfacl \
+    /usr/bin/getfacl
+  install -m 0755 -o root -g root /var/lib/fased-hosting-fixture/acl-package/setfacl \
+    /usr/bin/setfacl
+  install -m 0600 -o root -g root /dev/null \
+    /var/lib/fased-hosting-fixture/acl-package/installed
   command -v nft >/dev/null
   command -v fail2ban-client >/dev/null
   command -v getfacl >/dev/null
