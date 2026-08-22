@@ -854,7 +854,11 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	var convergence protocol.Response
 	var verboseOutput []byte
 	if resumePendingOnboarding {
-		convergence, err = recoverPendingHostingOnboarding(operator, hostingState, result)
+		var alreadyCurrent bool
+		convergence, alreadyCurrent, err = recoverPendingHostingOnboarding(operator, hostingState, result)
+		if err == nil && !alreadyCurrent {
+			convergence, verboseOutput, err = invokeLifecycleHost(ctx, request, operator, result, lock)
+		}
 	} else {
 		convergence, verboseOutput, err = invokeLifecycleHost(ctx, request, operator, result, lock)
 	}
@@ -1027,45 +1031,53 @@ func hostingSecurityTransactionNeedsFinalization(state hostsecurity.State) bool 
 // that not-yet-created configuration. Bind the resume only to the exact
 // installed manifest and coordinator receipt; onboarding completion performs
 // the live convergence proof before the Hosting transaction can commit.
-func recoverPendingHostingOnboarding(operator publicOperator, state hostsecurity.State, result bootstrapResult) (protocol.Response, error) {
+func recoverPendingHostingOnboarding(operator publicOperator, state hostsecurity.State, result bootstrapResult) (protocol.Response, bool, error) {
 	configPath, err := installedConfigPath(model.ProfileHosting, operator)
 	if err != nil {
-		return protocol.Response{}, err
+		return protocol.Response{}, false, err
 	}
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return protocol.Response{}, errors.New("pending Hosting onboarding platform configuration is unavailable")
+		return protocol.Response{}, false, errors.New("pending Hosting onboarding platform configuration is unavailable")
 	}
 	config, err := platform.DecodeConfig(configData)
 	if err != nil {
-		return protocol.Response{}, fmt.Errorf("pending Hosting onboarding platform configuration is invalid: %w", err)
+		return protocol.Response{}, false, fmt.Errorf("pending Hosting onboarding platform configuration is invalid: %w", err)
 	}
 	manifestData, err := os.ReadFile(filepath.Join(config.LifecycleRoot, "installation-manifest.json"))
 	if err != nil {
-		return protocol.Response{}, errors.New("pending Hosting onboarding lifecycle manifest is unavailable")
+		return protocol.Response{}, false, errors.New("pending Hosting onboarding lifecycle manifest is unavailable")
 	}
 	status, err := decodeInstalledLifecycleStatus(config, model.ProfileHosting, manifestData)
 	if err != nil {
-		return protocol.Response{}, err
+		return protocol.Response{}, false, err
 	}
 	return validatePendingHostingOnboardingBinding(state, status, result)
 }
 
-func validatePendingHostingOnboardingBinding(state hostsecurity.State, status installedLifecycleStatus, result bootstrapResult) (protocol.Response, error) {
+func validatePendingHostingOnboardingBinding(state hostsecurity.State, status installedLifecycleStatus, result bootstrapResult) (protocol.Response, bool, error) {
 	if state.Phase != hostsecurity.PhaseOnboardingPending || !state.RuntimeReady ||
 		!state.OnboardingRequired || state.OnboardingComplete || state.Release != result.Version ||
-		status.Profile != model.ProfileHosting || status.Version != result.Version ||
-		status.ReleaseSequence != result.ReleaseSequence || status.SecurityEpoch != result.SecurityEpoch ||
+		status.Profile != model.ProfileHosting ||
 		status.ActiveGenerationID != state.LifecycleGenerationID ||
 		!digestID(state.LifecycleGenerationID) || !digestID(state.ConvergenceReceiptDigest) {
-		return protocol.Response{}, errors.New("pending Hosting onboarding differs from the exact acquired generation")
+		return protocol.Response{}, false, errors.New("pending Hosting onboarding differs from the exact acquired generation")
+	}
+	if status.Version != result.Version {
+		if status.ReleaseSequence >= result.ReleaseSequence || status.SecurityEpoch > result.SecurityEpoch {
+			return protocol.Response{}, false, errors.New("pending Hosting onboarding cannot adopt the acquired release authority")
+		}
+		return protocol.Response{}, false, nil
+	}
+	if status.ReleaseSequence != result.ReleaseSequence || status.SecurityEpoch != result.SecurityEpoch {
+		return protocol.Response{}, false, errors.New("pending Hosting onboarding authority differs from the acquired release")
 	}
 	return protocol.Response{
 		SchemaVersion:            protocol.CurrentSchemaVersion,
 		Outcome:                  "ALREADY_CURRENT",
 		ActiveGenerationID:       state.LifecycleGenerationID,
 		ConvergenceReceiptDigest: state.ConvergenceReceiptDigest,
-	}, nil
+	}, true, nil
 }
 
 func pruneAcquisitionInbox(stateRoot string) error {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -181,10 +182,172 @@ func markRuntimeReady(t *testing.T, participant Participant, transactionID strin
 	)
 }
 
+func terminationFixture(root string, target Phase) (Participant, *fakeHost, Request) {
+	host := &fakeHost{inspection: Inspection{LifecyclePrerequisitesReady: true}}
+	store := Store{
+		StatePath: filepath.Join(root, "state.json"), ReceiptPath: filepath.Join(root, "hosting-prerequisites"),
+		ExpectedUID: uint32(os.Getuid()),
+	}
+	if target != "" {
+		store.afterWriteState = func(state State) {
+			if state.Phase == target {
+				os.Exit(73)
+			}
+		}
+	}
+	request := Request{
+		TransactionID: "01234567-89ab-4cde-8fab-0123456789ab", Release: "1.2.3-rc.4",
+		Channel: "beta", GatewayPort: 18789, OperatorUser: "app", Interactive: true,
+		PlatformIdentity: "linux/x64", TrustRootSHA256: strings.Repeat("a", 64),
+		OnboardingRequired: target != PhaseRuntimeReady,
+	}
+	return Participant{Store: store, Host: host}, host, request
+}
+
+func TestHostingCoordinatorTerminationProcess(t *testing.T) {
+	target := Phase(os.Getenv("FASED_HOSTING_TERMINATION_PHASE"))
+	root := os.Getenv("FASED_HOSTING_TERMINATION_ROOT")
+	if target == "" || root == "" {
+		return
+	}
+	participant, host, request := terminationFixture(root, target)
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.inspection.SignerReady = true
+	state, err = participant.BindRuntimeReady(context.Background(), state.TransactionID,
+		"sha256:"+strings.Repeat("b", 64), "sha256:"+strings.Repeat("c", 64), request.OnboardingRequired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase == PhaseOnboardingPending {
+		state, err = participant.MarkOnboardingComplete(state.TransactionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := participant.Commit(context.Background(), state.TransactionID, true); err != nil {
+		t.Fatal(err)
+	}
+	t.Fatalf("termination phase %s was not reached", target)
+}
+
+func recoveredTerminationHost(state State) *fakeHost {
+	dns := state.TailscaleDNS
+	if dns == "" {
+		dns = "fased.tailnet.ts.net"
+	}
+	ipv4 := state.TailscaleIPv4
+	if ipv4 == "" {
+		ipv4 = "100.64.1.9"
+	}
+	version := state.TailscaleVersion
+	if version == "" {
+		version = "1.88.1"
+	}
+	hardened := state.Phase == PhaseHardeningReady || state.Phase == PhaseCommitted
+	return &fakeHost{
+		serve: dns, signerWebAuthn: dns,
+		inspection: Inspection{
+			LifecyclePrerequisitesReady: true, TailscaleInstalled: true, TailscaleRunning: true,
+			Authenticated: true, TailscaleDNS: dns, TailscaleIPv4: ipv4, TailscaleVersion: version,
+			PrivateServeReady: true, SignerWebAuthnReady: true, SignerReady: true, HardeningReady: hardened,
+		},
+	}
+}
+
+func completeTerminatedCoordinator(t *testing.T, participant Participant, host *fakeHost, request Request) State {
+	t.Helper()
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase == PhaseCommitted {
+		return state
+	}
+	host.inspection.SignerReady = true
+	state, err = participant.BindRuntimeReady(context.Background(), state.TransactionID,
+		"sha256:"+strings.Repeat("d", 64), "sha256:"+strings.Repeat("e", 64), request.OnboardingRequired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase == PhaseOnboardingPending {
+		state, err = participant.MarkOnboardingComplete(state.TransactionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err = participant.Commit(context.Background(), state.TransactionID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func TestHostingCoordinatorTerminationRecoveryMatrix(t *testing.T) {
+	phases := []Phase{
+		PhasePreflight, PhasePrerequisitesReady, PhasePrivateNetworkReady, PhaseGenerationReady,
+		PhaseRuntimeReady, PhaseOnboardingPending, PhaseOnboardingComplete, PhaseHardening,
+		PhaseHardeningReady, PhaseCommitted,
+	}
+	for _, phase := range phases {
+		phase := phase
+		for _, mode := range []string{"same-release", "newer-release", "mismatched-environment"} {
+			mode := mode
+			t.Run(string(phase)+"/"+mode, func(t *testing.T) {
+				root := t.TempDir()
+				command := exec.Command(os.Args[0], "-test.run=^TestHostingCoordinatorTerminationProcess$")
+				command.Env = append(os.Environ(),
+					"FASED_HOSTING_TERMINATION_PHASE="+string(phase),
+					"FASED_HOSTING_TERMINATION_ROOT="+root)
+				err := command.Run()
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) || exitErr.ExitCode() != 73 {
+					t.Fatalf("phase owner was not terminated after durable %s: %v", phase, err)
+				}
+
+				store := Store{StatePath: filepath.Join(root, "state.json"), ReceiptPath: filepath.Join(root, "hosting-prerequisites"), ExpectedUID: uint32(os.Getuid())}
+				state, err := store.ReadState()
+				if err != nil || state.Phase != phase {
+					t.Fatalf("terminated phase was not durable: state=%+v err=%v", state, err)
+				}
+				before, err := os.ReadFile(store.StatePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				host := recoveredTerminationHost(state)
+				participant := Participant{Store: store, Host: host}
+				_, _, request := terminationFixture(root, phase)
+				switch mode {
+				case "newer-release":
+					request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+					request.Release = "1.2.3-rc.5"
+				case "mismatched-environment":
+					request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+					request.GatewayPort++
+					if _, err := participant.Prepare(context.Background(), request); err == nil {
+						t.Fatal("mismatched environment resumed a terminated Hosting coordinator")
+					}
+					after, err := os.ReadFile(store.StatePath)
+					if err != nil || !bytes.Equal(before, after) {
+						t.Fatalf("mismatch changed terminated state: err=%v", err)
+					}
+					return
+				}
+				completed := completeTerminatedCoordinator(t, participant, host, request)
+				if completed.Phase != PhaseCommitted || completed.Release != request.Release {
+					t.Fatalf("terminated coordinator did not converge: %+v", completed)
+				}
+			})
+		}
+	}
+}
+
 func TestHostingSecurityTwoPhaseCommit(t *testing.T) {
 	participant, host, request := fixture(t)
 	state, err := participant.Prepare(context.Background(), request)
-	if err != nil || state.Phase != PhasePrepared {
+	if err != nil || state.Phase != PhasePrivateNetworkReady {
 		t.Fatalf("prepare: state=%+v err=%v", state, err)
 	}
 	host.inspection.SignerReady = true
@@ -215,7 +378,7 @@ func TestHostingSecurityStagesACLPrerequisiteBeforeRuntimeBootstrap(t *testing.T
 	host.prerequisitesMissing = true
 
 	state, err := participant.Prepare(context.Background(), request)
-	if err != nil || state.Phase != PhasePrepared || !state.HardeningStarted ||
+	if err != nil || state.Phase != PhasePrivateNetworkReady || !state.HardeningStarted ||
 		!state.LifecyclePrerequisitesStaged || state.HardeningSnapshot != "snapshot-v1" {
 		t.Fatalf("prepare lifecycle prerequisites: state=%+v err=%v", state, err)
 	}
@@ -263,7 +426,7 @@ func TestHostingSecurityInterruptedPreRuntimeRecoveryDoesNotOwnLegacyReceipt(t *
 
 	request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	prepared, err := participant.Prepare(context.Background(), request)
-	if err != nil || prepared.Phase != PhasePrepared || prepared.TransactionID != request.TransactionID {
+	if err != nil || prepared.Phase != PhasePrivateNetworkReady || prepared.TransactionID != request.TransactionID {
 		t.Fatalf("recover pre-runtime transaction: state=%+v err=%v", prepared, err)
 	}
 	beforeReady, err := os.ReadFile(participant.Store.ReceiptPath)
@@ -334,7 +497,7 @@ func TestHostingSecurityLegacyUpdateAbortIsTerminalAndRetryable(t *testing.T) {
 	}
 	request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	request.Release = "1.2.3-rc.5"
-	if retried, err := participant.Prepare(context.Background(), request); err != nil || retried.Phase != PhasePrepared {
+	if retried, err := participant.Prepare(context.Background(), request); err != nil || retried.Phase != PhasePrivateNetworkReady {
 		t.Fatalf("identical legacy update retry did not prepare: state=%+v err=%v", retried, err)
 	}
 }
@@ -651,7 +814,7 @@ func TestHostingSecurityRecoversPreparingTransactionBeforeNewMutation(t *testing
 	host.inspection = Inspection{TailscaleInstalled: true, TailscaleRunning: true, Authenticated: true,
 		TailscaleDNS: "old.tailnet.ts.net", TailscaleIPv4: "100.64.1.2", TailscaleVersion: "1.88.1", PrivateServeReady: true}
 	state, err := participant.Prepare(context.Background(), request)
-	if err != nil || state.TransactionID != request.TransactionID || state.Phase != PhasePrepared {
+	if err != nil || state.TransactionID != request.TransactionID || state.Phase != PhasePrivateNetworkReady {
 		t.Fatalf("recovered prepare: state=%+v err=%v", state, err)
 	}
 	joined := strings.Join(host.calls, ",")
@@ -675,13 +838,9 @@ func TestHostingSecurityResumesDurableHardeningSnapshot(t *testing.T) {
 	}
 	host.inspection = Inspection{TailscaleInstalled: true, TailscaleRunning: true, Authenticated: true, TailscaleDNS: state.TailscaleDNS,
 		TailscaleIPv4: state.TailscaleIPv4, TailscaleVersion: state.TailscaleVersion, PrivateServeReady: true, SignerWebAuthnReady: true, SignerReady: true}
-	prepared, err := participant.Prepare(context.Background(), request)
-	if err != nil || prepared.Phase != PhaseHardening {
-		t.Fatalf("resume prepare: state=%+v err=%v", prepared, err)
-	}
-	committed, err := participant.Commit(context.Background(), prepared.TransactionID, false)
+	committed, err := participant.Prepare(context.Background(), request)
 	if err != nil || committed.Phase != PhaseCommitted {
-		t.Fatalf("resume commit: state=%+v err=%v", committed, err)
+		t.Fatalf("resume prepare did not finish prior hardening: state=%+v err=%v", committed, err)
 	}
 	joined := strings.Join(host.calls, ",")
 	if strings.Contains(joined, "snapshot-hardening") || !strings.Contains(joined, "stage-hardening") || !strings.Contains(joined, "commit-hardening") {

@@ -876,10 +876,14 @@ func TestCommittedHostingSecurityTransactionSkipsFinalization(t *testing.T) {
 		t.Fatal("reused committed Hosting security transaction selected completion mutations")
 	}
 	for _, phase := range []hostsecurity.Phase{
+		hostsecurity.PhasePrerequisitesReady,
+		hostsecurity.PhasePrivateNetworkReady,
+		hostsecurity.PhaseGenerationReady,
 		hostsecurity.PhaseRuntimeReady,
 		hostsecurity.PhaseOnboardingPending,
 		hostsecurity.PhaseOnboardingComplete,
 		hostsecurity.PhaseHardening,
+		hostsecurity.PhaseHardeningReady,
 	} {
 		if !hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: phase}) {
 			t.Fatalf("pending Hosting security phase %s skipped required completion", phase)
@@ -900,8 +904,8 @@ func TestPendingHostingOnboardingResumesOnlyExactCommittedGeneration(t *testing.
 		SecurityEpoch: 1, ActiveGenerationID: generationID,
 	}
 	result := bootstrapResult{Version: state.Release, ReleaseSequence: 16, SecurityEpoch: 1}
-	response, err := validatePendingHostingOnboardingBinding(state, status, result)
-	if err != nil || response.Outcome != "ALREADY_CURRENT" ||
+	response, alreadyCurrent, err := validatePendingHostingOnboardingBinding(state, status, result)
+	if err != nil || !alreadyCurrent || response.Outcome != "ALREADY_CURRENT" ||
 		response.ActiveGenerationID != generationID || response.ConvergenceReceiptDigest != receiptDigest {
 		t.Fatalf("exact pending Hosting onboarding did not resume: response=%+v err=%v", response, err)
 	}
@@ -923,10 +927,20 @@ func TestPendingHostingOnboardingResumesOnlyExactCommittedGeneration(t *testing.
 		t.Run(name, func(t *testing.T) {
 			changedState, changedStatus, changedResult := state, status, result
 			mutate(&changedState, &changedStatus, &changedResult)
-			if _, err := validatePendingHostingOnboardingBinding(changedState, changedStatus, changedResult); err == nil {
+			if _, _, err := validatePendingHostingOnboardingBinding(changedState, changedStatus, changedResult); err == nil {
 				t.Fatal("mismatched pending Hosting onboarding was accepted")
 			}
 		})
+	}
+
+	newer := result
+	newer.Version = "0.1.76-rc.117"
+	newer.ReleaseSequence++
+	newerState := state
+	newerState.Release = newer.Version
+	response, alreadyCurrent, err = validatePendingHostingOnboardingBinding(newerState, status, newer)
+	if err != nil || alreadyCurrent || response.ActiveGenerationID != "" {
+		t.Fatalf("newer exact Hosting release did not select lifecycle convergence: response=%+v current=%v err=%v", response, alreadyCurrent, err)
 	}
 }
 

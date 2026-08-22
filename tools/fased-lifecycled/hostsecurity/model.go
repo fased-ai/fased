@@ -16,16 +16,21 @@ const CurrentSchemaVersion uint32 = 2
 type Phase string
 
 const (
-	PhasePreparing          Phase = "PREPARING"
-	PhasePrepared           Phase = "PREPARED"
-	PhaseRuntimeReady       Phase = "RUNTIME_READY"
-	PhaseOnboardingPending  Phase = "ONBOARDING_PENDING"
-	PhaseOnboardingComplete Phase = "ONBOARDING_COMPLETE"
-	PhaseHardening          Phase = "HARDENING"
-	PhaseCommitted          Phase = "COMMITTED"
-	PhaseAborting           Phase = "ABORTING"
-	PhaseAborted            Phase = "ABORTED"
-	maxOpaqueSnapshot             = 128 << 10
+	PhasePreflight           Phase = "PREFLIGHT"
+	PhasePrerequisitesReady  Phase = "PREREQUISITES_READY"
+	PhasePrivateNetworkReady Phase = "PRIVATE_NETWORK_READY"
+	PhaseGenerationReady     Phase = "GENERATION_READY"
+	PhasePreparing           Phase = "PREPARING"
+	PhasePrepared            Phase = "PREPARED"
+	PhaseRuntimeReady        Phase = "RUNTIME_READY"
+	PhaseOnboardingPending   Phase = "ONBOARDING_PENDING"
+	PhaseOnboardingComplete  Phase = "ONBOARDING_COMPLETE"
+	PhaseHardening           Phase = "HARDENING"
+	PhaseHardeningReady      Phase = "HARDENING_READY"
+	PhaseCommitted           Phase = "COMMITTED"
+	PhaseAborting            Phase = "ABORTING"
+	PhaseAborted             Phase = "ABORTED"
+	maxOpaqueSnapshot              = 128 << 10
 )
 
 type Request struct {
@@ -129,12 +134,18 @@ func (state State) Validate() error {
 	if (state.SchemaVersion != CurrentSchemaVersion && !legacy) || (!legacy && request.Validate() != nil) || !validPhase(state.Phase) || len(state.PreviousServe) > maxOpaqueSnapshot || len(state.PreviousSignerWebAuthn) > 4096 || len(state.HardeningSnapshot) > maxOpaqueSnapshot || len(state.TailscaleInstallSnapshot) > maxOpaqueSnapshot {
 		return errors.New("Hosting security state is invalid")
 	}
-	if legacy && (state.PlatformIdentity != "" || state.TrustRootSHA256 != "" || state.LifecycleGenerationID != "" || state.ConvergenceReceiptDigest != "" || state.LegacyRuntimeBindingPending || state.OnboardingRequired || state.OnboardingComplete || state.Phase == PhaseOnboardingPending || state.Phase == PhaseOnboardingComplete) {
+	if legacy && (state.PlatformIdentity != "" || state.TrustRootSHA256 != "" || state.LifecycleGenerationID != "" || state.ConvergenceReceiptDigest != "" || state.LegacyRuntimeBindingPending || state.OnboardingRequired || state.OnboardingComplete || state.Phase == PhasePreflight || state.Phase == PhasePrerequisitesReady || state.Phase == PhasePrivateNetworkReady || state.Phase == PhaseGenerationReady || state.Phase == PhaseOnboardingPending || state.Phase == PhaseOnboardingComplete) {
 		return errors.New("legacy Hosting security state contains newer coordinator fields")
 	}
 	if !legacy {
+		if state.Phase == PhaseGenerationReady && (state.RuntimeReady || !sha256IDPattern.MatchString(state.LifecycleGenerationID) || state.ConvergenceReceiptDigest != "") {
+			return errors.New("Hosting coordinator generation binding is incomplete")
+		}
 		if state.RuntimeReady && !state.LegacyRuntimeBindingPending && (!sha256IDPattern.MatchString(state.LifecycleGenerationID) || !sha256IDPattern.MatchString(state.ConvergenceReceiptDigest)) {
 			return errors.New("Hosting coordinator runtime binding is incomplete")
+		}
+		if !state.RuntimeReady && state.Phase != PhaseGenerationReady && (state.LifecycleGenerationID != "" || state.ConvergenceReceiptDigest != "") {
+			return errors.New("Hosting coordinator has a premature runtime binding")
 		}
 		if state.LegacyRuntimeBindingPending && (!state.RuntimeReady || state.LifecycleGenerationID != "" || state.ConvergenceReceiptDigest != "") {
 			return errors.New("Hosting coordinator legacy runtime migration is inconsistent")
@@ -144,7 +155,7 @@ func (state State) Validate() error {
 		}
 		if state.Phase == PhaseOnboardingPending && (!state.RuntimeReady || !state.OnboardingRequired || state.OnboardingComplete) ||
 			state.Phase == PhaseOnboardingComplete && (!state.RuntimeReady || !state.OnboardingComplete) ||
-			(state.Phase == PhaseHardening || state.Phase == PhaseCommitted) && !state.OnboardingComplete {
+			(state.Phase == PhaseHardening || state.Phase == PhaseHardeningReady || state.Phase == PhaseCommitted) && !state.OnboardingComplete {
 			return errors.New("Hosting coordinator phase is not bound to onboarding")
 		}
 	}
@@ -159,13 +170,13 @@ func (state State) Validate() error {
 	}
 	if state.ServeChanged && !state.ServeMutationStarted || state.AuthenticatedByTransaction && !state.AuthenticationStarted ||
 		state.SignerWebAuthnChanged && !state.SignerWebAuthnMutationStarted || state.SignerWebAuthnPreviouslyExisted && state.PreviousSignerWebAuthn == "" ||
-		state.TailscaleInstalledByTransaction && !state.TailscaleInstallStarted || state.TailscaleInstallStarted && state.TailscaleInstallSnapshot == "" || state.RuntimeReady && state.Phase == PhasePreparing ||
+		state.TailscaleInstalledByTransaction && !state.TailscaleInstallStarted || state.TailscaleInstallStarted && state.TailscaleInstallSnapshot == "" || state.RuntimeReady && (state.Phase == PhasePreflight || state.Phase == PhasePreparing || state.Phase == PhasePrerequisitesReady || state.Phase == PhasePrivateNetworkReady || state.Phase == PhaseGenerationReady) ||
 		state.LifecyclePrerequisitesStaged && (!state.HardeningStarted || state.HardeningSnapshot == "") ||
 		state.HardeningStaged && (!state.HardeningStarted || state.HardeningSnapshot == "") ||
 		state.HardeningStarted != (state.HardeningSnapshot != "") ||
 		state.HardeningCommitted && ((!state.HardeningStarted && !state.HardeningAdopted) || !state.RuntimeReady || !state.AccessConfirmed) ||
-		state.Phase == PhaseCommitted && !state.HardeningCommitted || state.LegacyHardeningAdopted && !state.AccessConfirmed ||
-		state.Phase != PhasePreparing && state.Phase != PhaseAborting && state.Phase != PhaseAborted && !state.SignerWebAuthnChanged {
+		(state.Phase == PhaseHardeningReady || state.Phase == PhaseCommitted) && !state.HardeningCommitted || state.LegacyHardeningAdopted && !state.AccessConfirmed ||
+		state.Phase != PhasePreflight && state.Phase != PhasePreparing && state.Phase != PhasePrerequisitesReady && state.Phase != PhaseAborting && state.Phase != PhaseAborted && !state.SignerWebAuthnChanged {
 		return errors.New("Hosting security state transition flags are inconsistent")
 	}
 	return nil
@@ -173,7 +184,9 @@ func (state State) Validate() error {
 
 func validPhase(phase Phase) bool {
 	switch phase {
-	case PhasePreparing, PhasePrepared, PhaseRuntimeReady, PhaseOnboardingPending, PhaseOnboardingComplete, PhaseHardening, PhaseCommitted, PhaseAborting, PhaseAborted:
+	case PhasePreflight, PhasePrerequisitesReady, PhasePrivateNetworkReady, PhaseGenerationReady,
+		PhasePreparing, PhasePrepared, PhaseRuntimeReady, PhaseOnboardingPending, PhaseOnboardingComplete,
+		PhaseHardening, PhaseHardeningReady, PhaseCommitted, PhaseAborting, PhaseAborted:
 		return true
 	default:
 		return false

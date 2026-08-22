@@ -14,11 +14,12 @@ import (
 const maxStateBytes = 1 << 20
 
 type Store struct {
-	StatePath     string
-	ReceiptPath   string
-	OwnershipPath string
-	UninstallPath string
-	ExpectedUID   uint32
+	StatePath       string
+	ReceiptPath     string
+	OwnershipPath   string
+	UninstallPath   string
+	ExpectedUID     uint32
+	afterWriteState func(State)
 }
 
 func (store Store) Validate() error {
@@ -140,7 +141,13 @@ func (store Store) WriteState(state State) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomicRootFile(store.StatePath, append(data, '\n'), 0o600, store.ExpectedUID)
+	if err := writeAtomicRootFile(store.StatePath, append(data, '\n'), 0o600, store.ExpectedUID); err != nil {
+		return err
+	}
+	if store.afterWriteState != nil {
+		store.afterWriteState(state)
+	}
+	return nil
 }
 
 func (store Store) ReadState() (State, error) {
