@@ -477,7 +477,7 @@ describe("lifecycle acceptance contract", () => {
     expect(providerAccess).toContain("verify_sshd_runtime_prerequisites");
   });
 
-  it("starts without ACL tools and models their transactional installation", () => {
+  it("starts from a real absent Ubuntu ACL package state and installs it transactionally", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
       "utf8",
@@ -485,11 +485,14 @@ describe("lifecycle acceptance contract", () => {
     const adapterStart = hosting.indexOf("cat >/usr/bin/apt-get <<'EOF_APT_FIXTURE'");
     const adapter = hosting.slice(adapterStart, hosting.indexOf("\nEOF_APT_FIXTURE", adapterStart));
 
-    expect(hosting).toContain("remove_acl_fixture_prerequisite() {");
     expect(adapter).toContain('"$3" == "acl"');
-    expect(hosting).toContain("cat >/usr/bin/dpkg-query <<'EOF_DPKG_QUERY_FIXTURE'");
-    expect(hosting).toContain("fased-fixture-dpkg-query-real");
-    expect(hosting).toContain("printf 'rc '");
+    expect(hosting).toContain("DEBIAN_FRONTEND=noninteractive apt-get remove -y acl");
+    expect(hosting).toContain("test -x /usr/bin/dpkg-query");
+    expect(hosting).toContain("'--showformat=${db:Status-Status}\\t${db:Status-Eflag}' acl");
+    expect(hosting).toContain("$'not-installed\\tok'");
+    expect(hosting).toContain("$'config-files\\tok'");
+    expect(hosting).not.toContain("cat >/usr/bin/dpkg-query <<'EOF_DPKG_QUERY_FIXTURE'");
+    expect(hosting).not.toContain("fased-fixture-dpkg-query-real");
     expect(adapter).toContain("rm -f -- /usr/bin/getfacl /usr/bin/setfacl");
     expect(adapter).toContain('"$#" -eq 4');
     expect(adapter).toContain('"$4" == "acl"');
