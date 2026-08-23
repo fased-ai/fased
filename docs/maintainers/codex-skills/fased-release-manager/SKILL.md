@@ -5,9 +5,8 @@ description: Use for every task involving Fased, including status, diagnosis, fo
 
 # Fased Release Manager
 
-Work only in `/home/fc/fasedbot/fased` or one explicitly selected Fased
-worktree. Never scan the parent, all worktrees, or archived incidents unless the
-owner requests that inventory.
+Work only in `/home/fc/fasedbot/fased` or an explicitly selected worktree. Do not
+scan parent directories, other worktrees, or archives unless requested.
 
 ## Start once
 
@@ -18,7 +17,7 @@ owner requests that inventory.
 3. Preserve unrelated dirty work. Resume the plan's first incomplete checkpoint;
    superseded plans are evidence only.
 
-The newest owner-selected plan controls until replaced or completed; superseded plans are evidence only.
+The newest owner plan controls; superseded plans are evidence only.
 
 - `REPORT`: inspect and answer without mutation.
 - `FIX`: one failure, one correction, focused proof. Default mode.
@@ -37,8 +36,8 @@ a source, fixture, or user-visible failure.
 ## Follow the plan before release
 
 Release authority permits an irreversible action; it never proves readiness or
-overrides the controlling plan. Before PRE-CANDIDATE, RC allocation, P1, tag,
-publication, promotion, or version-only change:
+overrides the controlling plan. Before a release workflow, tag, publication,
+promotion, or version-only change:
 
 1. Read the controlling plan's ordered checkpoints.
 2. Reconcile them with failures and unfinished branches/worktrees.
@@ -54,7 +53,7 @@ Continue until owner stop, identity/plan change, unavailable authority, or an
 unnamed boundary. If same predicate failing twice, report it and block release.
 
 If the owner defines `fix`, `continue`, or `finish` as a named chain, record it
-once and run its push, PR, CI, merge, P1, tag, and publication as `PASS` gates
+once and run its push, PR, CI, merge, release, and publication as `PASS` gates
 without asking again; this survives compaction until done or revoked. Unlisted
 owner/Hosting mutation, promotion, npm, cleanup, and deployment stay out.
 
@@ -115,10 +114,11 @@ Linux-x64 artifact after focused tests, exercise only the affected topology, and
 reuse those exact bytes. Fixture-only changes reuse prior verified product bytes.
 
 Candidate and release work begins only after the literal affected-environment
-command passes. Build one Linux-x64 artifact after source is final and reuse its
-identical bytes through P1, tag, and publication; publication must verify
-receipts and must not rebuild or replay product execution. PRE-CANDIDATE, P1,
-tag, and publication belong only to an explicit release plan. Broad Node, Go,
+command passes. One protected release workflow derives the next signed channel
+sequence, builds one Linux-x64 artifact after source is final, attests it, creates
+the immutable tag, publishes those bytes, and advances the channel. The
+publication must verify receipts and must not rebuild or replay product
+execution. A partial public-release retry uses only metadata. Broad Node, Go,
 Docker, CodeQL, multi-platform, and dead-code matrices are weekly/manual
 diagnostics, not ordinary-PR or release acceptance gates.
 

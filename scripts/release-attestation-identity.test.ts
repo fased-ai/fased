@@ -38,6 +38,40 @@ function bundle(overrides: Record<string, unknown> = {}) {
   return { dsseEnvelope: { payload: Buffer.from(JSON.stringify(statement)).toString("base64") } };
 }
 
+function taggedBundle() {
+  const sourceRef = "refs/tags/v0.1.76-rc.119";
+  const statement = {
+    predicateType: "https://slsa.dev/provenance/v1",
+    predicate: {
+      buildDefinition: {
+        buildType: "https://actions.github.io/buildtypes/workflow/v1",
+        externalParameters: {
+          workflow: {
+            ref: sourceRef,
+            repository: "https://github.com/fased-ai/fased",
+            path: ".github/workflows/hosted-runtime-release.yml",
+          },
+        },
+        resolvedDependencies: [
+          {
+            uri: `git+https://github.com/fased-ai/fased@${sourceRef}`,
+            digest: { gitCommit: historicalDigest },
+          },
+        ],
+      },
+      runDetails: {
+        builder: {
+          id: `https://github.com/fased-ai/fased/.github/workflows/hosted-runtime-release.yml@${sourceRef}`,
+        },
+        metadata: {
+          invocationId: "https://github.com/fased-ai/fased/actions/runs/32610440454/attempts/1",
+        },
+      },
+    },
+  };
+  return { dsseEnvelope: { payload: Buffer.from(JSON.stringify(statement)).toString("base64") } };
+}
+
 describe("release attestation identity", () => {
   it("preserves the immutable protected-main identity when main has advanced", () => {
     expect(resolveReleaseAttestationIdentity(bundle(), repository)).toEqual({
@@ -70,5 +104,11 @@ describe("release attestation identity", () => {
         repository,
       ),
     ).toThrow("protected release workflow");
+  });
+
+  it("accepts immutable historical tag-origin channel evidence", () => {
+    expect(resolveReleaseAttestationIdentity(taggedBundle(), repository).sourceRef).toBe(
+      "refs/tags/v0.1.76-rc.119",
+    );
   });
 });

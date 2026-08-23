@@ -297,17 +297,21 @@ describe("npm-free managed lifecycle", () => {
     expect(lifecycle).toMatch(
       /Do not synthesize an interrupted phase by editing\s+a successfully\s+committed receipt/u,
     );
-    expect(skill).toMatch(/publication must verify\s+receipts and must not rebuild/u);
-    expect(release).toContain("build one production Linux-x64 artifact");
-    expect(release).toContain("PRE-CANDIDATE is metadata-only");
-    expect(release).toContain("Any change to a bound product input");
-    expect(redesign).toContain("Only after both pass may the next unused RC be allocated");
+    expect(skill).toMatch(/partial public-release retry uses only metadata/u);
+    expect(release).toMatch(/builds\s+one Linux-x64 core artifact/u);
+    expect(release).toContain(
+      "One protected workflow builds, attests, tags, publishes, and promotes",
+    );
+    expect(release).toMatch(
+      /Any product\s+change after that proof returns to the normal fix path/u,
+    );
+    expect(redesign).toContain("release workflow starts");
   });
 
   it("keeps release authority subordinate to the controlling plan", async () => {
     const skill = await source("docs/maintainers/codex-skills/fased-release-manager/SKILL.md");
 
-    expect(skill).toContain("The newest owner-selected plan controls until replaced or completed;");
+    expect(skill).toContain("The newest owner plan controls;");
     expect(skill).toContain("superseded plans are evidence only.");
     expect(skill).toContain(
       "Release authority permits an irreversible action; it never proves readiness or",

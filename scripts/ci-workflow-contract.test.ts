@@ -112,137 +112,63 @@ describe("lean CI and release workflow contracts", () => {
     expect(jobText(proof)).not.toContain("native_helper_changed");
   });
 
-  it("keeps pre-candidate metadata-only and binds real Hosting staging", async () => {
-    const value = await workflow(".github/workflows/pre-candidate.yml");
-    const source = await text(".github/workflows/pre-candidate.yml");
-    const dispatch = value.on?.workflow_dispatch as { inputs?: Record<string, unknown> };
-    expect(dispatch.inputs).toHaveProperty("hosting_staging_receipt_sha256");
-    expect(dispatch.inputs).toHaveProperty("hosting_staging_receipt_json");
-    expect(dispatch.inputs).not.toHaveProperty("local0_receipt_sha256");
-    expect(source).toContain("hostingStagingReceiptDigest=");
-    expect(source).toContain("validateHostingStagingReadiness");
-    expect(source).toContain('sha256sum "$staging_receipt"');
-    expect(source).toContain(".artifacts/pre-candidate/hosting-staging-receipt.json");
-    expect(source).not.toContain("local0ReceiptDigest=");
-    expect(source).not.toContain("pnpm install --frozen-lockfile");
-    expect(source).not.toContain("pnpm build");
+  it("removes the pre-candidate, P1, and reusable-gate workflow chain", async () => {
+    for (const removed of [
+      ".github/workflows/pre-candidate.yml",
+      ".github/workflows/pre-tag-p1.yml",
+      ".github/workflows/release-gate-verify.yml",
+    ]) {
+      expect(await exists(removed), removed).toBe(false);
+    }
   });
 
-  it("builds one Linux-x64 artifact in pre-tag without fixture execution", async () => {
-    const value = await workflow(".github/workflows/pre-tag-p1.yml");
-    const source = await text(".github/workflows/pre-tag-p1.yml");
-    expect(Object.keys(value.jobs ?? {}).toSorted()).toEqual([
-      "candidate",
-      "evidence",
-      "preflight",
-    ]);
-    expect(value.jobs?.candidate?.["timeout-minutes"]).toBe(20);
-    expect(source).toContain("scripts/build-linux-x64-release-artifact.sh");
-    expect(source).toContain('.profile == "linux-x64" and .publishable == false');
-    expect(source).toContain("scripts/finalize-pretag-candidate.sh");
-    expect(source).toContain("product.sha256");
-    expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
-    expect(source).not.toContain("test-lifecycle-local-acceptance.sh");
-    expect(source).not.toContain("test-lifecycle-hosting-acceptance.sh");
-    expect(source).not.toContain("prepare-candidate-fixture-trust.sh");
+  it("uses a metadata-only idempotent public promotion retry", async () => {
+    const value = await workflow(".github/workflows/hosted-runtime-promote.yml");
+    const source = await text(".github/workflows/hosted-runtime-promote.yml");
+    expect(Object.keys(value.jobs ?? {})).toEqual(["promote"]);
+    expect(value.jobs?.promote?.["timeout-minutes"]).toBe(5);
+    expect(source).toContain("Read and verify immutable public release metadata");
+    expect(source).toContain("release-attestation-identity.mjs resolve");
+    expect(source).toContain("Advance or confirm the signed channel");
+    expect(source).toContain("fased-public-channel-promotion");
+    expect(source).not.toContain("build-linux-x64-release-artifact.sh");
+    expect(source).not.toContain("finalize-pretag-candidate.sh");
+    expect(source).not.toContain("actions/attest");
+    expect(source).not.toContain("actions/download-artifact");
+    expect(source).not.toContain("setup-node-env");
+    expect(source).not.toContain("setup-go");
   });
 
-  it("attests and publishes pre-tag product bytes without rebuilding or reinstalling", async () => {
+  it("builds, attests, tags, publishes, and promotes once in one workflow", async () => {
     const value = await workflow(".github/workflows/hosted-runtime-release.yml");
     const source = await text(".github/workflows/hosted-runtime-release.yml");
     const channelScript = await text("scripts/publish-lifecycle-channel.sh");
-    const finalizeText = jobText(value.jobs?.["finalize-candidate"]);
+    expect(Object.keys(value.jobs ?? {})).toEqual(["prepare", "publish"]);
+    expect(value.jobs?.prepare?.["timeout-minutes"]).toBe(20);
+    expect(value.jobs?.publish?.["timeout-minutes"]).toBe(10);
+    const prepareText = jobText(value.jobs?.prepare);
     const publishText = jobText(value.jobs?.publish);
-    const stage = value.jobs?.["finalize-candidate"]?.steps?.find(
-      (step) => step.name === "Verify and stage only the pre-tag product bytes",
-    );
-    const identity = value.jobs?.preflight?.steps?.find(
-      (step) => step.name === "Verify exact immutable tagged candidate identity",
-    );
-    const bind = value.jobs?.["finalize-candidate"]?.steps?.find(
-      (step) => step.name === "Bind and verify the final candidate artifact set",
-    );
-    const descriptor = value.jobs?.["finalize-candidate"]?.steps?.find(
-      (step) => step.name === "Stage and verify the final candidate descriptor",
-    );
-    const publishIdentity = value.jobs?.publish?.steps?.find(
-      (step) => step.name === "Verify exact candidate identity",
-    );
-    const publishTag = value.jobs?.publish?.steps?.find(
-      (step) => step.name === "Reverify immutable candidate tag before publication",
-    );
-    const channelWitness = value.jobs?.["refresh-root-head"]?.steps?.find(
-      (step) => step.name === "Prepare current channel root-head statement",
-    );
-    const channelPublisher = value.jobs?.publish?.steps?.find(
-      (step) => step.name === "Advance signed managed channel to the exact public candidate",
-    );
-    const channelPublisherBridge = value.jobs?.publish?.steps?.find(
-      (step) => step.name === "Restore protected channel publisher bridge",
-    );
-    const channelAttestationIdentity = value.jobs?.publish?.steps?.find(
-      (step) => step.name === "Bind channel advancement to immutable public attestation identity",
-    );
-    const publicRelease = value.jobs?.publish?.steps?.find(
-      (step) => step.name === "Publish one draft and expose it only after every byte uploads",
-    );
-    expect(stage?.env?.PRE_TAG_P1_RUN_ID).toBe("${{ inputs.pre_tag_p1_run_id }}");
-    expect(stage?.run).toContain('--workflow-run-id "$PRE_TAG_P1_RUN_ID"');
-    expect(identity?.run).toContain('test "$GITHUB_REF" = "refs/heads/main"');
-    expect(identity?.run).toContain('git merge-base --is-ancestor "$SOURCE_COMMIT" "$remote_main"');
-    expect(identity?.run).toContain(".github/workflows/hosted-runtime-release.yml");
-    expect(identity?.run).toContain("scripts/ci-workflow-contract.test.ts");
-    expect(identity?.run).toContain("scripts/publish-lifecycle-channel.sh");
-    expect(identity?.run).not.toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
-    expect(identity?.run).not.toContain("Candidate release already exists");
-    expect(finalizeText).toContain("product.sha256");
-    expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
-    expect(finalizeText).toContain("release-artifact-set.mjs verify");
-    expect(bind?.run).toContain('product_source_ref="refs/tags/v$RELEASE_VERSION"');
-    expect(bind?.run).toContain('--source-ref "$product_source_ref"');
-    expect(bind?.run).toContain('--source-ref "$GITHUB_REF"');
-    expect(bind?.run).toContain('--source-digest "$GITHUB_SHA"');
-    expect(descriptor?.run).toContain('--source-ref "$GITHUB_REF"');
-    expect(descriptor?.run).toContain('--source-digest "$GITHUB_SHA"');
-    expect(descriptor?.run).toContain('--source-ref "refs/tags/v$RELEASE_VERSION"');
-    expect(finalizeText).toContain('--source-digest \\"$GITHUB_SHA\\"');
-    expect(finalizeText).not.toContain('--source-digest \\"$SOURCE_COMMIT\\"');
-    expect(publishIdentity?.run).toContain('--source-ref "refs/tags/v$RELEASE_VERSION"');
-    expect(publishIdentity?.run).toContain('--source-ref "$GITHUB_REF"');
-    expect(publishIdentity?.run).toContain('--source-digest "$GITHUB_SHA"');
-    expect(channelPublisher?.run).toContain('"${CHANNEL_ATTESTATION_SOURCE_REF}"');
-    expect(channelPublisher?.run).toContain('"${CHANNEL_ATTESTATION_SOURCE_DIGEST}"');
-    expect(channelPublisherBridge?.run).toContain('git show "$GITHUB_SHA:$bridge_path"');
-    expect(channelPublisherBridge?.run).toContain("scripts/release-attestation-identity.mjs");
-    expect(channelAttestationIdentity?.run).toContain("release-attestation-identity.mjs resolve");
-    expect(channelAttestationIdentity?.run).toContain(".head_sha == $digest");
-    expect(channelAttestationIdentity?.run).toContain('.head_branch == "main"');
-    expect(channelAttestationIdentity?.run).toContain('--source-digest "$source_digest"');
+    expect(source).toContain("Resolve exact next signed channel identity");
+    expect(source).toContain("verify-next-release-sequence.mjs");
+    expect(source).toContain("run Hosted Runtime Promote instead");
+    expect(source).toContain("scripts/build-linux-x64-release-artifact.sh");
+    expect(source).toContain("scripts/finalize-pretag-candidate.sh");
+    expect(source.match(/actions\/attest@/gu)?.length).toBe(9);
+    expect(source).toContain('git tag -a "$tag" "$SOURCE_COMMIT"');
+    expect(source).toContain("gh release create");
+    expect(source).toContain("publish-lifecycle-channel.sh");
+    expect(source).not.toContain("pre_candidate_run_id");
+    expect(source).not.toContain("pre_tag_p1_run_id");
+    expect(source).not.toContain("release-gate-verify.yml");
+    expect(source).not.toContain("test-lifecycle-local-acceptance.sh");
+    expect(source).not.toContain("test-lifecycle-hosting-acceptance.sh");
+    expect(prepareText.match(/build-linux-x64-release-artifact\.sh/gu)?.length).toBe(1);
+    expect(publishText).not.toContain("build-linux-x64-release-artifact.sh");
+    expect(publishText).not.toContain("actions/attest");
     expect(channelScript).toContain('--source-ref "$attestation_source_ref"');
     expect(channelScript).toContain('--source-digest "$attestation_source_digest"');
-    expect(channelScript).toContain("--source-ref refs/heads/main");
-    expect(channelScript).toContain('--source-ref "refs/tags/v$current_version"');
-    expect(publicRelease?.env?.SOURCE_COMMIT).toBe("${{ inputs.source_commit }}");
-    expect(publicRelease?.run).toContain("existing-public-candidate");
-    expect(publicRelease?.run).toContain("releases/assets/$asset_id");
-    expect(publicRelease?.run).toContain('--directory "$public_dir"');
-    expect(publicRelease?.run).toContain('--workflow-run-id "$public_run_id"');
-    expect(publicRelease?.run).toContain('--workflow-run-attempt "$public_run_attempt"');
-    expect(publicRelease?.run).toContain("--source-ref refs/heads/main");
-    expect(publicRelease?.run).toContain('cp -a "$public_dir/." .artifacts/hosted-runtime/');
-    expect(publishTag?.env?.SOURCE_COMMIT).toBe("${{ inputs.source_commit }}");
-    expect(publishTag?.run).toContain('test "$remote_tag_commit" = "$SOURCE_COMMIT"');
-    expect(publishTag?.run).not.toContain('test "$remote_tag_commit" = "$GITHUB_SHA"');
-    expect(channelWitness?.run).toContain('--source-ref "$GITHUB_REF"');
-    expect(channelWitness?.run).toContain('--source-digest "$GITHUB_SHA"');
-    expect(finalizeText).not.toContain("pnpm install");
-    expect(finalizeText).not.toContain("pnpm build");
-    expect(finalizeText).not.toContain("go build");
-    expect(finalizeText).not.toContain("finalize-pretag-candidate.sh");
-    expect(publishText).not.toContain("pnpm install");
-    expect(publishText).not.toContain("pnpm build");
-    expect(publishText).not.toContain("go build");
-    expect(publishText).toContain("gh release create");
+    expect(channelScript).toContain("verify_historical_index_attestation");
+    expect(channelScript).toContain('if cmp -s "$index" "$current_index"; then');
   });
 
   it("removes replay workflows and simulated Local acceptance", async () => {

@@ -1,491 +1,230 @@
 name: Hosted Runtime Release
 
 on:
-  schedule:
-    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       release_version:
-        description: Exact immutable tagged package version to attest and promote
+        description: Exact version already committed on protected main
         required: true
         type: string
       source_commit:
-        description: Exact protected-main commit whose pre-tag bytes are reused
-        required: true
-        type: string
-      predecessor_version:
-        description: Exact supported public stable compatibility predecessor
-        required: true
-        type: string
-      managed_predecessor_version:
-        description: Representative supported pre-bootstrap managed predecessor
-        required: true
-        type: string
-      pre_candidate_run_id:
-        description: Successful Pre-candidate workflow run bound to the unversioned parent source
-        required: true
-        type: string
-      pre_tag_p1_run_id:
-        description: Successful protected pre-tag P1 run bound to the exact versioned source
+        description: Exact protected-main commit to build and publish
         required: true
         type: string
 
 permissions:
-  actions: read
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'schedule' && format('fased-root-head-refresh-{0}', github.run_id) || format('fased-lifecycle-channel-{0}', contains(inputs.release_version, '-') && 'beta' || 'stable') }}
+  group: hosted-runtime-release-${{ inputs.release_version }}
   cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  preflight:
-    name: Validate release preflight
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    outputs:
-      release_sequence: ${{ steps.pre-candidate.outputs.release_sequence }}
-      security_epoch: ${{ steps.pre-candidate.outputs.security_epoch }}
-      pretag_descriptor_sha256: ${{ steps.pretag.outputs.descriptor_sha256 }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-          # Release validation exercises one frozen pre-generation updater
-          # fixture stored at an immutable historical tag.
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-
-      - name: Verify exact immutable tagged candidate identity
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
-          MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
-          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = "refs/heads/main"
-          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
-          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
-          [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$MANAGED_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
-          test "$PREDECESSOR_VERSION" != "$RELEASE_VERSION"
-          test "$MANAGED_PREDECESSOR_VERSION" != "$RELEASE_VERSION"
-          remote_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-          test "$remote_main" = "$GITHUB_SHA"
-          if test "$remote_main" != "$SOURCE_COMMIT"; then
-            git merge-base --is-ancestor "$SOURCE_COMMIT" "$remote_main"
-            test "$(git diff --name-only "$SOURCE_COMMIT" "$remote_main" | sort)" = \
-              $'.github/workflows/hosted-runtime-release.yml\nscripts/ci-workflow-contract.test.ts\nscripts/publish-lifecycle-channel.sh\nscripts/release-attestation-identity.mjs\nscripts/release-attestation-identity.test.ts'
-          fi
-          remote_tag_ref="refs/tags/v$RELEASE_VERSION"
-          remote_tag_lines="$(git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}")"
-          remote_tag_object="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '$2 == ref {print $1}')"
-          remote_tag_commit="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '
-            $2 == ref { direct = $1 }
-            $2 == ref "^{}" { peeled = $1 }
-            END { print peeled != "" ? peeled : direct }
-          ')"
-          test -n "$remote_tag_object"
-          test "$remote_tag_commit" = "$SOURCE_COMMIT"
-      - name: Verify immutable pre-candidate pass
-        id: pre-candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
-          PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
-          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$PRE_CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
-          base_commit="$(git rev-parse "$SOURCE_COMMIT^")"
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PRE_CANDIDATE_RUN_ID")"
-          jq -e \
-            --arg baseCommit "$base_commit" \
-            '.name == "Pre-candidate" and .path == ".github/workflows/pre-candidate.yml" and .event == "workflow_dispatch" and .conclusion == "success" and .head_sha == $baseCommit' \
-            <<<"$run_json" >/dev/null
-          GITHUB_EVENT_NAME=pull_request \
-            GITHUB_BASE_REF= \
-            GITHUB_BASE_SHA="$base_commit" \
-            node scripts/ci-version-identity.mjs --allow-exact-tag
-          evidence_dir="$RUNNER_TEMP/pre-candidate-evidence"
-          gh run download "$PRE_CANDIDATE_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name fased-pre-candidate-evidence \
-            --dir "$evidence_dir"
-          evidence="$evidence_dir/evidence.json"
-          test -f "$evidence"
-          node scripts/release-gate.mjs verify \
-            --receipt "$evidence" \
-            --phase pre-candidate \
-            --source-commit "$base_commit" \
-            --source-tree "$(git rev-parse "$base_commit^{tree}")" \
-            --lockfile-digest \
-              "sha256:$(git show "$base_commit:pnpm-lock.yaml" | sha256sum | awk '{print $1}')" \
-            --release-version "$RELEASE_VERSION" \
-            --claim "predecessorVersion=$PREDECESSOR_VERSION" \
-            --claim "managedPredecessorVersion=$MANAGED_PREDECESSOR_VERSION" \
-            --claim "workflowRunId=$PRE_CANDIDATE_RUN_ID" >/dev/null
-          staging_receipt="$evidence_dir/hosting-staging-receipt.json"
-          staging_digest="$(jq -er .claims.hostingStagingReceiptDigest "$evidence")"
-          test "sha256:$(sha256sum "$staging_receipt" | awk '{print $1}')" = "$staging_digest"
-          node --input-type=module - "$staging_receipt" "$base_commit" \
-            "$(git rev-parse "$base_commit^{tree}")" <<'NODE'
-          import { readFileSync } from "node:fs";
-          import { validateHostingStagingReadiness } from "./scripts/pre-candidate-readiness.mjs";
-          const [, , receiptPath, commit, tree] = process.argv;
-          validateHostingStagingReadiness(JSON.parse(readFileSync(receiptPath, "utf8")), {
-            commit,
-            tree,
-          });
-          NODE
-          printf 'release_sequence=%s\n' \
-            "$(jq -er .claims.releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
-          printf 'security_epoch=%s\n' \
-            "$(jq -er .claims.securityEpoch "$evidence")" >>"$GITHUB_OUTPUT"
-          main_run_id="$(jq -er '.claims.mainRunId | select(test("^[0-9]+$"))' "$evidence")"
-          main_checks_job_id="$(
-            jq -er '.claims.mainChecksJobId | select(test("^[0-9]+$"))' "$evidence"
-          )"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$main_run_id" \
-            | jq -e \
-              --arg sourceCommit "$base_commit" \
-              '.path == ".github/workflows/main.yml" and .head_sha == $sourceCommit and .head_branch == "main" and .event == "push" and .conclusion == "success"' \
-              >/dev/null
-          gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$main_checks_job_id" \
-            | jq -e \
-              --argjson runId "$main_run_id" \
-              '.run_id == $runId and .name == "checks" and .conclusion == "success"' \
-              >/dev/null
-
-      - name: Verify immutable protected pre-tag P1 pass
-        id: pretag
-        env:
-          MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
-          PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
-          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
-          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-          RELEASE_SEQUENCE: ${{ steps.pre-candidate.outputs.release_sequence }}
-          SECURITY_EPOCH: ${{ steps.pre-candidate.outputs.security_epoch }}
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$PRE_TAG_P1_RUN_ID" =~ ^[0-9]+$ ]]
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PRE_TAG_P1_RUN_ID")"
-          jq -e \
-            --arg sourceCommit "$SOURCE_COMMIT" \
-            '.name == "Pre-tag P1" and .path == ".github/workflows/pre-tag-p1.yml" and
-             .event == "workflow_dispatch" and .conclusion == "success" and
-             .head_sha == $sourceCommit' <<<"$run_json" >/dev/null
-          evidence_dir="$RUNNER_TEMP/pre-tag-p1-evidence"
-          gh run download "$PRE_TAG_P1_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name fased-pre-tag-p1-evidence \
-            --dir "$evidence_dir"
-          evidence="$evidence_dir/evidence.json"
-          node scripts/release-gate.mjs verify \
-            --receipt "$evidence" \
-            --phase pre-tag-p1 \
-            --source-commit "$SOURCE_COMMIT" \
-            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --release-version "$RELEASE_VERSION" \
-            --claim "predecessorVersion=$PREDECESSOR_VERSION" \
-            --claim "managedPredecessorVersion=$MANAGED_PREDECESSOR_VERSION" \
-            --claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID" \
-            --claim "workflowRunId=$PRE_TAG_P1_RUN_ID" \
-            --claim "releaseSequence=$RELEASE_SEQUENCE" \
-            --claim "securityEpoch=$SECURITY_EPOCH" >/dev/null
-          printf 'descriptor_sha256=%s\n' \
-            "$(jq -er .artifact.descriptorDigest "$evidence")" >>"$GITHUB_OUTPUT"
-
-      - name: Verify public compatibility coverage
-        env:
-          GH_TOKEN: ${{ github.token }}
-          MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
-          PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/lifecycle-compatibility-inventory.mjs --verify-release "$PREDECESSOR_VERSION"
-          node scripts/lifecycle-compatibility-inventory.mjs --verify-release "$MANAGED_PREDECESSOR_VERSION"
-          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
-          test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$MANAGED_PREDECESSOR_VERSION")"
-          gh release view "v$MANAGED_PREDECESSOR_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
-
-  finalize-candidate:
-    name: Attest the exact pre-tag P1 product bytes
-    needs: [preflight]
+  prepare:
+    name: Build and attest exact candidate once
     permissions:
       actions: read
-      artifact-metadata: write
-      attestations: write
       contents: read
       id-token: write
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      release_sequence: ${{ steps.channel.outputs.release_sequence }}
+      security_epoch: ${{ steps.channel.outputs.security_epoch }}
     steps:
-      - name: Checkout exact tagged source
+      - name: Checkout exact protected source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.source_commit }}
           fetch-depth: 0
+          submodules: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-
-      - name: Download the exact pre-tag P1 artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-pre-tag-candidate
-          path: ${{ runner.temp }}/fased-pre-tag-candidate
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.pre_tag_p1_run_id }}
-
-      - name: Download the exact pre-tag gate receipt
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-pre-tag-p1-evidence
-          path: ${{ runner.temp }}/fased-pre-tag-p1-evidence
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.pre_tag_p1_run_id }}
-
-      - name: Verify and stage only the pre-tag product bytes
+      - name: Verify exact source and version
         env:
-          EXPECTED_DESCRIPTOR_SHA256: ${{ needs.preflight.outputs.pretag_descriptor_sha256 }}
-          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
-          RELEASE_SEQUENCE: ${{ needs.preflight.outputs.release_sequence }}
-          SECURITY_EPOCH: ${{ needs.preflight.outputs.security_epoch }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
           set -euo pipefail
-          package_dir="$RUNNER_TEMP/fased-pre-tag-candidate"
-          raw_dir="$package_dir/raw"
-          product_dir="$package_dir/product"
-          test "sha256:$(sha256sum "$raw_dir/fased-hosting-candidate.json" | awk '{print $1}')" = \
-            "$EXPECTED_DESCRIPTOR_SHA256"
-          node scripts/release-artifact-set.mjs verify \
-            --directory "$raw_dir" \
-            --version "$RELEASE_VERSION" \
-            --commit "$SOURCE_COMMIT" \
-            --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "refs/tags/v$RELEASE_VERSION" \
-            --workflow-run-id "$PRE_TAG_P1_RUN_ID"
-          test -s "$package_dir/product.sha256"
-          test -z "$(find "$product_dir" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
-          (cd "$product_dir" && sha256sum -c "$package_dir/product.sha256")
-          mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts"
-          mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts/hosted-runtime"
-          cp -a "$product_dir/." "$GITHUB_WORKSPACE/.artifacts/hosted-runtime/"
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+          [[ "$RELEASE_VERSION" == *-* ]]
+          [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_COMMIT"
+          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
+          if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Immutable release already exists; run Hosted Runtime Promote instead." >&2
+            exit 1
+          fi
 
-      - name: Attest native signer product bytes
-        id: attest-native-signer
+      - name: Resolve exact next signed channel identity
+        id: channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/channel.json"
+          index="$RUNNER_TEMP/channel-index.json"
+          attestation="$RUNNER_TEMP/channel-index.attestation.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/fased-channel-beta-v1" > "$release_json"
+          download() {
+            local name="$1" output="$2" id
+            id="$(jq -er --arg name "$name" \
+              '[.assets[] | select(.name == $name)] |
+               if length == 1 then .[0].id else error("channel asset is not unique") end' \
+              "$release_json")"
+            gh api -H "Accept: application/octet-stream" \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "$output"
+          }
+          download fased-release-index-v1.json "$index"
+          download fased-release-index-v1.json.attestation.json "$attestation"
+          identity="$(node scripts/release-attestation-identity.mjs resolve \
+            --bundle "$attestation" --repository "$GITHUB_REPOSITORY")"
+          GH_PROMPT_DISABLED=1 gh attestation verify "$index" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$attestation" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "$(jq -er .sourceRef <<<"$identity")" \
+            --source-digest "$(jq -er .sourceDigest <<<"$identity")" \
+            --deny-self-hosted-runners >/dev/null
+          release_sequence="$(jq -er '.releaseSequence + 1' "$index")"
+          security_epoch="$(jq -er .securityEpoch "$index")"
+          node scripts/verify-next-release-sequence.mjs \
+            --current "$index" --release-sequence "$release_sequence" \
+            --security-epoch "$security_epoch" >/dev/null
+          printf 'release_sequence=%s\n' "$release_sequence" >> "$GITHUB_OUTPUT"
+          printf 'security_epoch=%s\n' "$security_epoch" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: tools/fased-lifecycled/go.mod
+          cache-dependency-path: |
+            tools/fased-lifecycled/go.sum
+            tools/fased-signerd/go.sum
+
+      - name: Build exact Linux-x64 artifact once
+        env:
+          FASED_LIFECYCLE_RELEASE_SEQUENCE: ${{ steps.channel.outputs.release_sequence }}
+          FASED_LIFECYCLE_SECURITY_EPOCH: ${{ steps.channel.outputs.security_epoch }}
+        run: bash scripts/build-linux-x64-release-artifact.sh "$RUNNER_TEMP/candidate/raw"
+
+      - name: Finalize exact product inventory once
+        env:
+          RELEASE_SEQUENCE: ${{ steps.channel.outputs.release_sequence }}
+          SECURITY_EPOCH: ${{ steps.channel.outputs.security_epoch }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/finalize-pretag-candidate.sh \
+            "$RUNNER_TEMP/candidate/raw" "$RUNNER_TEMP/candidate/product" \
+            "$RELEASE_VERSION" "$SOURCE_COMMIT" \
+            "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            "$RELEASE_SEQUENCE" "$SECURITY_EPOCH"
+          mkdir -p .artifacts/hosted-runtime
+          cp -a "$RUNNER_TEMP/candidate/product/." .artifacts/hosted-runtime/
+
+      - name: Attest signer
+        id: signer
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/fased-signerd-*
+      - name: Stage signer attestation
+        run: install -m 0644 "${{ steps.signer.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-signerd-release.attestation.json
 
-      - name: Stage native signer attestation
-        run: >-
-          install -m 0644 "${{ steps.attest-native-signer.outputs.bundle-path }}"
-          .artifacts/hosted-runtime/fased-signerd-release.attestation.json
-
-      - name: Attest native lifecycle product bytes
-        id: attest-native-lifecycle
+      - name: Attest lifecycle supervisor
+        id: lifecycle
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/fased-lifecycled-*
+      - name: Stage lifecycle attestation
+        run: install -m 0644 "${{ steps.lifecycle.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-lifecycled-release.attestation.json
 
-      - name: Stage native lifecycle attestation
-        run: >-
-          install -m 0644 "${{ steps.attest-native-lifecycle.outputs.bundle-path }}"
-          .artifacts/hosted-runtime/fased-lifecycled-release.attestation.json
-
-      - name: Attest root Hosting bootstrap
-        id: attest-hosting-bootstrap
+      - name: Attest installer
+        id: installer
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/install.sh
+      - name: Stage installer attestation
+        run: install -m 0644 "${{ steps.installer.outputs.bundle-path }}" .artifacts/hosted-runtime/install.sh.attestation.json
 
-      - name: Stage root Hosting bootstrap attestation
-        run: >-
-          install -m 0644 "${{ steps.attest-hosting-bootstrap.outputs.bundle-path }}"
-          .artifacts/hosted-runtime/install.sh.attestation.json
-
-      - name: Attest unified candidate manifest
-        id: attest-candidate-manifest
+      - name: Attest release manifest
+        id: manifest
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/fased-hosted-release-v2.json
+      - name: Stage release-manifest attestation
+        run: install -m 0644 "${{ steps.manifest.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-hosted-release-v2.json.attestation.json
 
-      - name: Stage candidate manifest attestation
-        run: >-
-          install -m 0644 "${{ steps.attest-candidate-manifest.outputs.bundle-path }}"
-          .artifacts/hosted-runtime/fased-hosted-release-v2.json.attestation.json
-
-      - name: Attest privileged release provenance
-        id: attest-candidate-provenance
+      - name: Attest privileged provenance
+        id: provenance
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json
+      - name: Stage provenance attestation
+        run: install -m 0644 "${{ steps.provenance.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json
 
-      - name: Stage privileged provenance attestation
-        run: >-
-          install -m 0644 "${{ steps.attest-candidate-provenance.outputs.bundle-path }}"
-          .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json
-
-      - name: Attest lifecycle trust metadata
-        id: attest-candidate-lifecycle-trust
+      - name: Attest lifecycle trust
+        id: trust
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json
+      - name: Stage lifecycle-trust attestation
+        run: install -m 0644 "${{ steps.trust.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json.attestation.json
 
-      - name: Stage lifecycle trust attestation
-        run: >-
-          install -m 0644 "${{ steps.attest-candidate-lifecycle-trust.outputs.bundle-path }}"
-          .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json.attestation.json
-
-      - name: Attest production lifecycle release index
-        id: attest-lifecycle-release-index
+      - name: Attest release index
+        id: index
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/fased-release-index-v1.json
+      - name: Stage release-index attestation
+        run: install -m 0644 "${{ steps.index.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
 
-      - name: Stage lifecycle release index attestation
-        run: >-
-          install -m 0644 "${{ steps.attest-lifecycle-release-index.outputs.bundle-path }}"
-          .artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
-
-      - name: Attest current lifecycle root head
-        id: attest-lifecycle-root-head
+      - name: Attest lifecycle root head
+        id: root-head
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json
+      - name: Stage root-head attestation
+        run: install -m 0644 "${{ steps.root-head.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json.attestation.json
 
-      - name: Stage lifecycle root-head attestation
-        run: >-
-          install -m 0644 "${{ steps.attest-lifecycle-root-head.outputs.bundle-path }}"
-          .artifacts/hosted-runtime/fased-lifecycle-root-head-v1.json.attestation.json
-
-      - name: Bind and verify the final candidate artifact set
+      - name: Bind final candidate descriptor
         env:
-          GH_PROMPT_DISABLED: "1"
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
           set -euo pipefail
-          directory=.artifacts/hosted-runtime
-          product_source_ref="refs/tags/v$RELEASE_VERSION"
-          verify() {
-            gh attestation verify "$directory/$1" \
-              --repo "$GITHUB_REPOSITORY" \
-            --bundle "$directory/$2" \
-            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$GITHUB_REF" \
-            --source-digest "$GITHUB_SHA" \
-            --deny-self-hosted-runners >/dev/null
-          }
-          verify fased-hosted-release-v2.json fased-hosted-release-v2.json.attestation.json
-          verify fased-lifecycle-trust-v1.json fased-lifecycle-trust-v1.json.attestation.json
-          verify fased-release-index-v1.json fased-release-index-v1.json.attestation.json
-          verify fased-lifecycle-root-head-v1.json fased-lifecycle-root-head-v1.json.attestation.json
-          verify fased-privileged-provenance-v1.intoto.json \
-            fased-privileged-provenance-v1.intoto.json.attestation.json
-          verify fased-signerd-linux-amd64 fased-signerd-release.attestation.json
-          verify fased-lifecycled-linux-amd64 fased-lifecycled-release.attestation.json
-          verify install.sh install.sh.attestation.json
           node scripts/release-artifact-set.mjs build \
-            --directory "$directory" \
-            --version "$RELEASE_VERSION" \
-            --commit "$SOURCE_COMMIT" \
-            --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "$product_source_ref" \
-            --workflow-run-id "$GITHUB_RUN_ID" \
-            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
-
-      - name: Attest the final candidate descriptor
-        id: attest-candidate-descriptor
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: .artifacts/hosted-runtime/fased-hosting-candidate.json
-
-      - name: Stage and verify the final candidate descriptor
-        env:
-          GH_PROMPT_DISABLED: "1"
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest-candidate-descriptor.outputs.bundle-path }}" \
-            .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json
-          gh attestation verify .artifacts/hosted-runtime/fased-hosting-candidate.json \
-            --repo "$GITHUB_REPOSITORY" \
-          --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
-          --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-          --source-ref "$GITHUB_REF" \
-          --source-digest "$GITHUB_SHA" \
-          --deny-self-hosted-runners >/dev/null
-          node scripts/release-artifact-set.mjs verify \
             --directory .artifacts/hosted-runtime \
-            --version "$RELEASE_VERSION" \
-            --commit "$SOURCE_COMMIT" \
+            --version "$RELEASE_VERSION" --commit "$SOURCE_COMMIT" \
             --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
             --source-ref "refs/tags/v$RELEASE_VERSION" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
-      - name: Record content-addressed candidate finalization gate
-        env:
-          PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
-          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          descriptor=.artifacts/hosted-runtime/fased-hosting-candidate.json
-          mkdir -p .artifacts/release-gate
-          node scripts/release-gate.mjs record \
-            --phase candidate-finalization \
-            --source-commit "$SOURCE_COMMIT" \
-            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --release-version "$RELEASE_VERSION" \
-            --candidate-descriptor-digest \
-              "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
-            --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" \
-            --upstream-receipt "$RUNNER_TEMP/fased-pre-tag-p1-evidence/evidence.json" \
-            --claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID" \
-            --claim "preTagP1RunId=$PRE_TAG_P1_RUN_ID" \
-            --claim "workflowRunId=$GITHUB_RUN_ID" \
-            --output .artifacts/release-gate/evidence.json
+      - name: Attest final candidate descriptor
+        id: descriptor
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: .artifacts/hosted-runtime/fased-hosting-candidate.json
+      - name: Stage descriptor attestation
+        run: install -m 0644 "${{ steps.descriptor.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json
 
-      - name: Upload the exact finalized candidate
+      - name: Upload exact candidate once
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fased-hosting-candidate
@@ -493,448 +232,114 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload candidate finalization gate receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-release-gate-candidate-finalization
-          path: .artifacts/release-gate/evidence.json
-          if-no-files-found: error
-          retention-days: 30
-
-  release-gate:
-    name: Verify reusable candidate finalization gate
-    needs: [finalize-candidate]
-    if: github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/release-gate-verify.yml
-    with:
-      run_id: ${{ github.run_id }}
-      artifact_name: fased-release-gate-candidate-finalization
-      receipt_phase: candidate-finalization
-      source_commit: ${{ inputs.source_commit }}
-      release_version: ${{ inputs.release_version }}
-
   publish:
-    name: Promote exact verified candidate bytes
-    needs: [finalize-candidate, release-gate]
+    name: Publish and promote exact candidate
+    needs: [prepare]
     environment: candidate-release
     permissions:
       actions: read
       contents: write
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - name: Checkout exact P1-tested source
+      - name: Checkout exact candidate source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.source_commit }}
           fetch-depth: 0
-
-      - name: Reverify immutable candidate tag before publication
-        env:
-          RELEASE_TAG: v${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          remote_tag_ref="refs/tags/$RELEASE_TAG"
-          remote_tag_lines="$(git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}")"
-          remote_tag_object="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '$2 == ref {print $1}')"
-          remote_tag_commit="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '
-            $2 == ref { direct = $1 }
-            $2 == ref "^{}" { peeled = $1 }
-            END { print peeled != "" ? peeled : direct }
-          ')"
-          test -n "$remote_tag_object"
-          test "$remote_tag_commit" = "$SOURCE_COMMIT"
-
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.x
-
-      - name: Download the complete P1-tested candidate
+      - name: Download exact candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: fased-hosting-candidate
           path: .artifacts/hosted-runtime
 
-      - name: Download candidate finalization gate receipt
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-release-gate-candidate-finalization
-          path: .artifacts/release-gate
-
-      - name: Verify exact candidate identity
+      - name: Verify candidate and create immutable tag if absent
         env:
           GH_TOKEN: ${{ github.token }}
-          PRE_CANDIDATE_RUN_ID: ${{ inputs.pre_candidate_run_id }}
-          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
           set -euo pipefail
-          package_version="$(node -p "require('./package.json').version")"
-          test "$RELEASE_VERSION" = "$package_version"
-          release_commit="$(git rev-parse HEAD)"
-          test "$release_commit" = "$SOURCE_COMMIT"
+          descriptor=.artifacts/hosted-runtime/fased-hosting-candidate.json
           node scripts/release-artifact-set.mjs verify \
-            --directory .artifacts/hosted-runtime \
-            --version "$package_version" \
-            --commit "$release_commit" \
-            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --directory .artifacts/hosted-runtime --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT" --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "refs/tags/v$RELEASE_VERSION" \
-            --workflow-run-id "$GITHUB_RUN_ID"
-          gh attestation verify \
-            .artifacts/hosted-runtime/fased-hosting-candidate.json \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
-            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$GITHUB_REF" \
-            --source-digest "$GITHUB_SHA" \
-            --deny-self-hosted-runners >/dev/null
-          gh attestation verify \
-            .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle \
-              .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json.attestation.json \
-            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$GITHUB_REF" \
-            --source-digest "$GITHUB_SHA" \
-            --deny-self-hosted-runners >/dev/null
-          node scripts/privileged-release-evidence.mjs verify \
-            --release-manifest .artifacts/hosted-runtime/fased-hosted-release-v2.json \
-            --lifecycle-metadata .artifacts/hosted-runtime/fased-lifecycle-trust-v1.json \
-            --provenance .artifacts/hosted-runtime/fased-privileged-provenance-v1.intoto.json \
-            --sbom .artifacts/hosted-runtime/fased-privileged-sbom-v1.spdx.json \
-            --vex .artifacts/hosted-runtime/fased-privileged-vex-v1.openvex.json \
-            --version "$package_version" \
-            --commit "$release_commit"
-          descriptor=.artifacts/hosted-runtime/fased-hosting-candidate.json
-          node scripts/release-gate.mjs verify \
-            --receipt .artifacts/release-gate/evidence.json \
-            --phase candidate-finalization \
-            --source-commit "$SOURCE_COMMIT" \
-            --source-tree "$(git rev-parse 'HEAD^{tree}')" \
-            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --release-version "$RELEASE_VERSION" \
-            --candidate-descriptor-digest \
-              "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
-            --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" \
-            --claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID" \
-            --claim "preTagP1RunId=$PRE_TAG_P1_RUN_ID" \
-            --claim "workflowRunId=$GITHUB_RUN_ID" >/dev/null
-
-      - name: Publish one draft and expose it only after every byte uploads
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: v${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_version="$(node -p "require('./package.json').version")"
-          release_id=""
-          find_draft_id() {
-            gh api --paginate \
-              "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              --slurp | jq -er --arg tag "$RELEASE_TAG" \
-                '[.[][] | select(.tag_name == $tag and .draft == true)] |
-                 if length == 1 then .[0].id else error("exact draft release not found") end'
-          }
-          cleanup_draft() {
-            if [[ -z "$release_id" ]]; then
-              release_id="$(find_draft_id 2>/dev/null || true)"
-            fi
-            if [[ -n "$release_id" ]]; then
-              gh api --method DELETE \
-                "repos/$GITHUB_REPOSITORY/releases/$release_id" >/dev/null 2>&1 || true
-            fi
-          }
-          trap cleanup_draft EXIT
-          is_prerelease=false
-          make_latest=true
-          if [[ "$package_version" == *-* ]]; then
-            is_prerelease=true
-            make_latest=false
-          fi
-          existing_release_id="$(gh api \
-            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id')"
-          if [[ -n "$existing_release_id" ]]; then
-            gh api "repos/$GITHUB_REPOSITORY/releases/$existing_release_id" \
-              > "$RUNNER_TEMP/existing-release.json"
-            jq -e \
-              --arg tag "$RELEASE_TAG" \
-              --argjson prerelease "$is_prerelease" \
-              '.tag_name == $tag and .draft == false and .prerelease == $prerelease' \
-              "$RUNNER_TEMP/existing-release.json" >/dev/null
-            jq '[.assets[] | {name,size,digest}]' \
-              "$RUNNER_TEMP/existing-release.json" > "$RUNNER_TEMP/release-assets.json"
-            public_dir="$RUNNER_TEMP/existing-public-candidate"
-            mkdir -m 0700 "$public_dir"
-            while IFS=$'\t' read -r asset_id asset_name; do
-              [[ "$asset_id" =~ ^[1-9][0-9]*$ && "$asset_name" =~ ^[A-Za-z0-9._-]+$ ]]
-              gh api -H "Accept: application/octet-stream" \
-                "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$public_dir/$asset_name"
-              test -s "$public_dir/$asset_name"
-            done < <(jq -r '.assets[] | [.id,.name] | @tsv' \
-              "$RUNNER_TEMP/existing-release.json")
-            node scripts/release-artifact-set.mjs verify-assets \
-              --directory "$public_dir" \
-              --assets-json "$RUNNER_TEMP/release-assets.json"
-            public_descriptor="$public_dir/fased-hosting-candidate.json"
-            public_run_id="$(jq -er .workflowRunId "$public_descriptor")"
-            public_run_attempt="$(jq -er .workflowRunAttempt "$public_descriptor")"
-            node scripts/release-artifact-set.mjs verify \
-              --directory "$public_dir" \
-              --version "$package_version" \
-              --commit "$SOURCE_COMMIT" \
-              --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-              --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-              --source-ref "refs/tags/v$package_version" \
-              --workflow-run-id "$public_run_id" \
-              --workflow-run-attempt "$public_run_attempt"
-            gh attestation verify "$public_descriptor" \
-              --repo "$GITHUB_REPOSITORY" \
-              --bundle "$public_dir/fased-hosting-candidate.json.attestation.json" \
-              --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-              --source-ref refs/heads/main \
-              --deny-self-hosted-runners >/dev/null
-            cp -a "$public_dir/." .artifacts/hosted-runtime/
-            release_id=""
-            trap - EXIT
-            exit 0
-          fi
-          release_args=(
-            --repo "$GITHUB_REPOSITORY"
-            --title "Fased Agent $RELEASE_TAG"
-            --generate-notes
-            --verify-tag
-            --draft
-          )
-          if [[ "$is_prerelease" == true ]]; then
-            release_args+=(--prerelease)
-          fi
-          # Keep the release explicitly private until GitHub's remote asset metadata
-          # matches the exact locally verified candidate set.
-          gh release create "$RELEASE_TAG" .artifacts/hosted-runtime/* "${release_args[@]}"
-          release_id="$(find_draft_id)"
-          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-            --jq '[.assets[] | {name,size,digest}]' > "$RUNNER_TEMP/release-assets.json"
-          node scripts/release-artifact-set.mjs verify-assets \
-            --directory .artifacts/hosted-runtime \
-            --assets-json "$RUNNER_TEMP/release-assets.json"
-          gh api --method PATCH \
-            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-            -F draft=false \
-            -F prerelease="$is_prerelease" \
-            -f make_latest="$make_latest" \
-            --jq '{tagName:.tag_name,draft,isPrerelease:.prerelease}' \
-            > "$RUNNER_TEMP/published-release.json"
-          test "$(jq -r .tagName "$RUNNER_TEMP/published-release.json")" = "$RELEASE_TAG"
-          test "$(jq -r .draft "$RUNNER_TEMP/published-release.json")" = "false"
-          test "$(jq -r .isPrerelease "$RUNNER_TEMP/published-release.json")" = "$is_prerelease"
-          release_id=""
-          trap - EXIT
-
-      - name: Restore protected channel publisher bridge
-        shell: bash
-        run: |
-          set -euo pipefail
-          git cat-file -e "$GITHUB_SHA^{commit}"
-          for bridge_path in \
-            scripts/publish-lifecycle-channel.sh \
-            scripts/release-attestation-identity.mjs
-          do
-            bridge="$RUNNER_TEMP/${bridge_path##*/}"
-            git show "$GITHUB_SHA:$bridge_path" > "$bridge"
-            test -s "$bridge"
-            install -m 0755 "$bridge" "$bridge_path"
-          done
-
-      - name: Bind channel advancement to immutable public attestation identity
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          bundle=.artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
-          index=.artifacts/hosted-runtime/fased-release-index-v1.json
+            --source-ref "refs/tags/v$RELEASE_VERSION" --workflow-run-id "$GITHUB_RUN_ID"
           identity="$(node scripts/release-attestation-identity.mjs resolve \
-            --bundle "$bundle" \
-            --repository "$GITHUB_REPOSITORY")"
-          source_ref="$(jq -er .sourceRef <<<"$identity")"
-          source_digest="$(jq -er .sourceDigest <<<"$identity")"
-          workflow_path="$(jq -er .workflowPath <<<"$identity")"
-          workflow_run_id="$(jq -er .workflowRunId <<<"$identity")"
-          workflow_run_attempt="$(jq -er .workflowRunAttempt <<<"$identity")"
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$workflow_run_id")"
-          jq -e \
-            --arg digest "$source_digest" \
-            --arg path "$workflow_path" \
-            --argjson attempt "$workflow_run_attempt" \
-            '.head_sha == $digest and .path == $path and .event == "workflow_dispatch" and
-             .run_attempt == $attempt and .head_branch == "main"' <<<"$run_json" >/dev/null
-          GH_PROMPT_DISABLED=1 gh attestation verify "$index" \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle "$bundle" \
+            --bundle "$descriptor.attestation.json" --repository "$GITHUB_REPOSITORY")"
+          GH_PROMPT_DISABLED=1 gh attestation verify "$descriptor" \
+            --repo "$GITHUB_REPOSITORY" --bundle "$descriptor.attestation.json" \
             --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$source_ref" \
-            --source-digest "$source_digest" \
+            --source-ref "$(jq -er .sourceRef <<<"$identity")" \
+            --source-digest "$(jq -er .sourceDigest <<<"$identity")" \
             --deny-self-hosted-runners >/dev/null
-          printf 'CHANNEL_ATTESTATION_SOURCE_REF=%s\n' "$source_ref" >> "$GITHUB_ENV"
-          printf 'CHANNEL_ATTESTATION_SOURCE_DIGEST=%s\n' "$source_digest" >> "$GITHUB_ENV"
+          tag="v$RELEASE_VERSION"
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            git config user.name github-actions
+            git config user.email github-actions@github.com
+            git tag -a "$tag" "$SOURCE_COMMIT" -m "Fased Agent $tag"
+            git push origin "refs/tags/$tag"
+          fi
+          lines="$(git ls-remote --exit-code --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")"
+          commit="$(awk -v ref="refs/tags/$tag" '$2 == ref {d=$1} $2 == ref "^{}" {p=$1} END {print p != "" ? p : d}' <<<"$lines")"
+          test "$commit" = "$SOURCE_COMMIT"
 
-      - name: Advance signed managed channel to the exact public candidate
+      - name: Publish exact release once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Fased Agent $tag" --generate-notes)
+            [[ "$RELEASE_VERSION" == *-* ]] && args+=(--prerelease)
+            gh release create "$tag" .artifacts/hosted-runtime/* "${args[@]}"
+          fi
+          release_json="$RUNNER_TEMP/release.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json"
+          jq -e --arg tag "$tag" '.tag_name == $tag and .draft == false' "$release_json" >/dev/null
+          jq '[.assets[] | {name,size,digest}]' "$release_json" > "$RUNNER_TEMP/assets.json"
+          node scripts/release-artifact-set.mjs verify-assets \
+            --directory .artifacts/hosted-runtime --assets-json "$RUNNER_TEMP/assets.json"
+
+      - name: Advance signed channel
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
-        run: >-
-          bash scripts/publish-lifecycle-channel.sh
-          .artifacts/hosted-runtime
-          "${SOURCE_COMMIT}"
-          "${CHANNEL_ATTESTATION_SOURCE_REF}"
-          "${CHANNEL_ATTESTATION_SOURCE_DIGEST}"
+        run: |
+          set -euo pipefail
+          attestation=.artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
+          identity="$(node scripts/release-attestation-identity.mjs resolve \
+            --bundle "$attestation" --repository "$GITHUB_REPOSITORY")"
+          bash scripts/publish-lifecycle-channel.sh .artifacts/hosted-runtime "$SOURCE_COMMIT" \
+            "$(jq -er .sourceRef <<<"$identity")" "$(jq -er .sourceDigest <<<"$identity")"
 
-      - name: Record successful candidate publication gate
+      - name: Record minimal release receipt
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
-          set -euo pipefail
-          descriptor=.artifacts/hosted-runtime/fased-hosting-candidate.json
-          node scripts/release-gate.mjs record \
-            --phase candidate-publication \
-            --source-commit "$SOURCE_COMMIT" \
-            --source-tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --release-version "$RELEASE_VERSION" \
-            --candidate-descriptor-digest \
-              "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
-            --artifact-set-digest "$(jq -er .artifactSetDigest "$descriptor")" \
-            --upstream-receipt .artifacts/release-gate/evidence.json \
-            --claim "publicationRunId=$GITHUB_RUN_ID" \
-            --claim "sourceRunId=$GITHUB_RUN_ID" \
-            --claim "workflowRunId=$GITHUB_RUN_ID" \
-            --output "$RUNNER_TEMP/candidate-publication-gate.json"
-
-      - name: Upload candidate publication gate receipt
+          mkdir -p .artifacts/release-receipt
+          jq -n --arg version "$RELEASE_VERSION" --arg commit "$SOURCE_COMMIT" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg artifactSetDigest "$(jq -er .artifactSetDigest .artifacts/hosted-runtime/fased-hosting-candidate.json)" \
+            '{schemaVersion:1,role:"fased-candidate-publication",version:$version,commit:$commit,
+              workflowRunId:$runId,artifactSetDigest:$artifactSetDigest}' \
+            > .artifacts/release-receipt/evidence.json
+      - name: Upload release receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fased-release-gate-candidate-publication
-          path: ${{ runner.temp }}/candidate-publication-gate.json
+          name: fased-candidate-publication
+          path: .artifacts/release-receipt/evidence.json
           if-no-files-found: error
           retention-days: 30
-
-  refresh-root-head:
-    name: Refresh ${{ matrix.channel }} lifecycle root witness
-    if: github.event_name == 'schedule'
-    concurrency:
-      group: fased-lifecycle-channel-${{ matrix.channel }}
-      cancel-in-progress: false
-    strategy:
-      fail-fast: false
-      matrix:
-        channel: [stable, beta]
-    permissions:
-      artifact-metadata: write
-      attestations: write
-      contents: write
-      id-token: write
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout protected main witness code
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-
-      - name: Prepare current channel root-head statement
-        id: prepare
-        env:
-          CHANNEL: ${{ matrix.channel }}
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          channel_tag="fased-channel-$CHANNEL-v1"
-          printf 'found=false\n' >>"$GITHUB_OUTPUT"
-          if ! gh release view "$channel_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            exit 0
-          fi
-          directory="$RUNNER_TEMP/root-head-$CHANNEL"
-          mkdir -p "$directory"
-          gh release download "$channel_tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern 'fased-lifecycle-root-v*.json' \
-            --pattern 'fased-release-index-v1.json' \
-            --pattern 'fased-release-index-v1.json.attestation.json' \
-            --dir "$directory"
-          source_roots="$RUNNER_TEMP/source-roots-$CHANNEL"
-          mkdir -p "$source_roots"
-          mapfile -t root_policies < <(find release/lifecycle-trust -mindepth 2 -maxdepth 2 \
-            -type f -name 'fased-lifecycle-root-v*.json' | sort -V)
-          test "${#root_policies[@]}" -gt 0
-          for source_root in "${root_policies[@]}"; do
-            root_name="$(basename "$source_root")"
-            install -m 0644 "$source_root" "$source_roots/$root_name"
-            cmp -s "$source_root" "$directory/$root_name"
-          done
-          test "$(find "$directory" -maxdepth 1 -type f -name 'fased-lifecycle-root-v*.json' | wc -l)" \
-            -eq "${#root_policies[@]}"
-          root_info="$(node scripts/verify-lifecycle-root-chain.mjs \
-            --directory "$source_roots" \
-            --pin release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256)"
-          version="$(jq -er .version "$directory/fased-release-index-v1.json")"
-          test "$(jq -er .channel "$directory/fased-release-index-v1.json")" = "$CHANNEL"
-          gh attestation verify "$directory/fased-release-index-v1.json" \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle "$directory/fased-release-index-v1.json.attestation.json" \
-            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$GITHUB_REF" \
-            --source-digest "$GITHUB_SHA" \
-            --deny-self-hosted-runners >/dev/null
-          root_version="$(jq -er .version <<<"$root_info")"
-          readarray -t root_head_times < <(node -e '
-            const issued = new Date();
-            const expires = new Date(issued.getTime() + 36 * 60 * 60 * 1000);
-            process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
-          ')
-          node scripts/build-lifecycle-root-head.mjs \
-            --root "$source_roots/fased-lifecycle-root-v${root_version}.json" \
-            --index "$directory/fased-release-index-v1.json" \
-            --witness-ref refs/heads/main \
-            --witness-commit "$GITHUB_SHA" \
-            --issued-at "${root_head_times[0]}" \
-            --expires-at "${root_head_times[1]}" \
-            --output "$directory/fased-lifecycle-root-head-v1.json"
-          printf 'directory=%s\n' "$directory" >>"$GITHUB_OUTPUT"
-          printf 'found=true\n' >>"$GITHUB_OUTPUT"
-
-      - name: Attest refreshed lifecycle root head
-        if: steps.prepare.outputs.found == 'true'
-        id: attest
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: ${{ steps.prepare.outputs.directory }}/fased-lifecycle-root-head-v1.json
-
-      - name: Publish refreshed lifecycle root witness
-        if: steps.prepare.outputs.found == 'true'
-        env:
-          CHANNEL: ${{ matrix.channel }}
-          GH_TOKEN: ${{ github.token }}
-          ROOT_HEAD_DIRECTORY: ${{ steps.prepare.outputs.directory }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -m 0644 \
-            "${{ steps.attest.outputs.bundle-path }}" \
-            "$ROOT_HEAD_DIRECTORY/fased-lifecycle-root-head-v1.json.attestation.json"
-          bash scripts/publish-lifecycle-root-head.sh \
-            "$ROOT_HEAD_DIRECTORY" \
-            "fased-channel-$CHANNEL-v1"

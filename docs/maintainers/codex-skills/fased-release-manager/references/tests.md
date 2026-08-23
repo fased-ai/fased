@@ -41,7 +41,7 @@ runtime bytes can change.
 When lifecycle product behavior changed, use one unpublished Linux-x64 artifact
 keyed by commit, tree, and lockfile digest. Exercise only the affected real
 Local or Hosting environment. Reuse the artifact for rollback/retry, restart,
-preservation, P1, tag and publication. A container may retain transaction-level
+preservation, release, tag and publication. A container may retain transaction-level
 diagnostic value, but it is optional `SUPPORTING` evidence and never acceptance.
 
 For an exact-runner packaging or archive proof, run one attempt per materially
@@ -68,7 +68,7 @@ For `fix and ship`:
 
 `focused local PASS -> classify final diff once -> push once -> one protected PR -> focused CI -> squash merge`
 
-PR CI must not build release artifacts, run P1, publish, or repeat packaged
+PR CI must not build release artifacts, publish, or repeat packaged
 lifecycle acceptance. Superseded runs cancel. Do not restart quiet CI; inspect
 one existing run. Target one to three minutes for ordinary PRs. A route that
 selects unrelated suites is a classifier defect, not permission to wait longer.

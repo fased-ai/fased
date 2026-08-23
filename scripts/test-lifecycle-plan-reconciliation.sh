@@ -45,19 +45,19 @@ require_text scripts/lifecycle-acceptance-contract.mjs \
   'acquisitionMode: "immutable-github-release"'
 require_text scripts/docker/hosting-systemd/lifecycle-acceptance.sh \
   'acceptance_acquisition_evidence_class=SUPPORTING'
-require_text .github/workflows/pre-tag-p1.yml 'build-linux-x64-release-artifact.sh'
-reject_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-hosting-acceptance.sh'
-reject_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-local-acceptance.sh'
+require_text .github/workflows/hosted-runtime-release.yml 'build-linux-x64-release-artifact.sh'
+reject_text .github/workflows/hosted-runtime-release.yml 'test-lifecycle-hosting-acceptance.sh'
+reject_text .github/workflows/hosted-runtime-release.yml 'test-lifecycle-local-acceptance.sh'
 require_text .github/workflows/hosted-runtime-release.yml \
-  'Verify immutable protected pre-tag P1 pass'
+  'Build exact Linux-x64 artifact once'
 require_text docs/maintainers/codex-skills/fased-release-manager/SKILL.md \
   'Before candidate allocation, require one owner-authorized real-init'
 require_text docs/maintainers/codex-skills/fased-release-manager/SKILL.md \
   'Never use a release to discover whether a correction works.'
 require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \
-  'build one production Linux-x64 artifact on exact versioned main'
+  'One protected workflow builds, attests, tags, publishes, and promotes.'
 require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \
-  'allocate an RC to discover whether a correction works.'
+  'Never allocate an RC to'
 
 # DEV-007: PUBLIC0 is a readback boundary and cannot be lifecycle acceptance.
 require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \

@@ -36,12 +36,15 @@ describe("version-neutral lifecycle release architecture", () => {
       "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh",
       ".github/workflows/candidate-p1-replay.yml",
       ".github/workflows/candidate-publication-replay.yml",
+      ".github/workflows/pre-candidate.yml",
+      ".github/workflows/pre-tag-p1.yml",
+      ".github/workflows/release-gate-verify.yml",
     ]) {
       expect(await exists(removed), removed).toBe(false);
     }
-    const preTag = await source(".github/workflows/pre-tag-p1.yml");
-    expect(preTag).not.toContain("test-lifecycle-hosting-acceptance.sh");
-    expect(preTag).not.toContain("test-lifecycle-local-acceptance.sh");
+    const release = await source(".github/workflows/hosted-runtime-release.yml");
+    expect(release).not.toContain("test-lifecycle-hosting-acceptance.sh");
+    expect(release).not.toContain("test-lifecycle-local-acceptance.sh");
   });
 
   it("marks every substituted fixture contract as SUPPORTING", async () => {
@@ -57,20 +60,13 @@ describe("version-neutral lifecycle release architecture", () => {
   });
 
   it("keeps candidate identity immutable without a historical-version branch", async () => {
-    const preCandidate = await source(".github/workflows/pre-candidate.yml");
-    const preTag = await source(".github/workflows/pre-tag-p1.yml");
     const release = await source(".github/workflows/hosted-runtime-release.yml");
-    expect(preCandidate).toContain("NEXT_RELEASE_VERSION");
-    expect(preCandidate).toContain(
-      '! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$NEXT_RELEASE_VERSION"',
-    );
-    expect(preTag).toContain(
+    expect(release).toContain(
       'test "$(node -p "require(\'./package.json\').version")" = "$RELEASE_VERSION"',
     );
-    expect(release).toContain('test "$remote_tag_commit" = "$SOURCE_COMMIT"');
-    for (const value of [preCandidate, preTag, release]) {
-      expect(value).not.toMatch(/case\s+[^\n]*RELEASE_VERSION/u);
-    }
+    expect(release).toContain('git tag -a "$tag" "$SOURCE_COMMIT"');
+    expect(release).toContain('test "$commit" = "$SOURCE_COMMIT"');
+    expect(release).not.toMatch(/case\s+[^\n]*RELEASE_VERSION/u);
   });
 
   it("builds optional component packs outside the core artifact", async () => {
