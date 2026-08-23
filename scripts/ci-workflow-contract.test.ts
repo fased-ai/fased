@@ -177,6 +177,9 @@ describe("lean CI and release workflow contracts", () => {
     const channelPublisher = value.jobs?.publish?.steps?.find(
       (step) => step.name === "Advance signed managed channel to the exact public candidate",
     );
+    const channelPublisherBridge = value.jobs?.publish?.steps?.find(
+      (step) => step.name === "Restore protected channel publisher bridge",
+    );
     const publicRelease = value.jobs?.publish?.steps?.find(
       (step) => step.name === "Publish one draft and expose it only after every byte uploads",
     );
@@ -206,6 +209,12 @@ describe("lean CI and release workflow contracts", () => {
     expect(publishIdentity?.run).toContain('--source-digest "$GITHUB_SHA"');
     expect(channelPublisher?.run).toContain('"${GITHUB_REF}"');
     expect(channelPublisher?.run).toContain('"${GITHUB_SHA}"');
+    expect(channelPublisherBridge?.run).toContain(
+      'git show "$GITHUB_SHA:scripts/publish-lifecycle-channel.sh"',
+    );
+    expect(channelPublisherBridge?.run).toContain(
+      'install -m 0755 "$bridge" scripts/publish-lifecycle-channel.sh',
+    );
     expect(channelScript).toContain('--source-ref "$attestation_source_ref"');
     expect(channelScript).toContain('--source-digest "$attestation_source_digest"');
     expect(channelScript).toContain("--source-ref refs/heads/main");
