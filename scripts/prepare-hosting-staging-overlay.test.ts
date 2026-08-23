@@ -18,7 +18,8 @@ describe("real Hosting staging overlay", () => {
     expect(source).toContain("fased-lifecycle-root-v1.json");
     expect(source).toContain("fased-release-index-v1.json.attestation.json");
     expect(source).toContain("main.branchFixturePinnedRootSHA256");
-    expect(source).not.toContain("github.com/fased-ai/fased/releases/download");
+    expect(source).toContain("staging installer release base is not unique");
+    expect(source).toContain('source.replace(expected, `release_base="${replacement}"`)');
     expect(source).not.toContain("gh release");
   });
 });
