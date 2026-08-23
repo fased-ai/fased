@@ -139,7 +139,7 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).not.toContain("setup-go");
   });
 
-  it("builds, attests, tags, publishes, and promotes once in one workflow", async () => {
+  it("builds and attests once, then verifies the owner tag before publication", async () => {
     const value = await workflow(".github/workflows/hosted-runtime-release.yml");
     const source = await text(".github/workflows/hosted-runtime-release.yml");
     const channelScript = await text("scripts/publish-lifecycle-channel.sh");
@@ -155,7 +155,13 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).toContain("scripts/build-linux-x64-release-artifact.sh");
     expect(source).toContain("scripts/finalize-pretag-candidate.sh");
     expect(source.match(/actions\/attest@/gu)?.length).toBe(9);
-    expect(source).toContain('git tag -a "$tag" "$SOURCE_COMMIT"');
+    expect(source).toContain("Verify candidate and owner-created immutable tag");
+    expect(source).toContain(
+      "Owner-created annotated tag $tag is required before candidate-release approval.",
+    );
+    expect(source).toContain('"refs/tags/$tag^{}"');
+    expect(source).not.toContain('git tag -a "$tag"');
+    expect(source).not.toContain('git push origin "refs/tags/$tag"');
     expect(source).toContain("gh release create");
     expect(source).toContain("publish-lifecycle-channel.sh");
     expect(source).not.toContain("pre_candidate_run_id");
