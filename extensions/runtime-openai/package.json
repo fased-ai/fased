@@ -1,6 +1,6 @@
 {
   "name": "@fased/openai-runtime",
-  "version": "0.1.76-rc.124",
+  "version": "0.1.76-rc.125",
   "private": true,
   "description": "Optional official OpenAI Codex runtime for Fased Agent ChatGPT sign-in",
   "files": [
@@ -12,7 +12,7 @@
     "@openai/codex": "0.144.1"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.124"
+    "@fased/fased": "^0.1.76-rc.125"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
