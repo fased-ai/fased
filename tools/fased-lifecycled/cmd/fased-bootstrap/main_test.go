@@ -1053,26 +1053,26 @@ func TestPublicTrustRouteUsesOnlyCompileTimeFixturePair(t *testing.T) {
 	if err != nil || route.ReleaseBaseURL != branchFixtureMetadataBase || route.PinnedRootSHA256 != branchFixturePinnedRootSHA256 || route.VerifyIndex == nil {
 		t.Fatalf("compiled fixture trust route was not selected: route=%+v err=%v", route, err)
 	}
-	branchFixtureMetadataBase = "http://127.0.0.1:18443/v0.1.76-rc.73"
+	branchFixtureMetadataBase = "https://127.0.0.1:18443/v0.1.76-rc.73"
 	route, err = publicTrustRoute("0.1.76-rc.73")
 	if err != nil || route.ReleaseBaseURL != branchFixtureMetadataBase || route.VerifyIndex == nil {
 		t.Fatalf("loopback staging route was not selected: route=%+v err=%v", route, err)
 	}
 	for _, invalid := range []string{
-		"http://127.0.0.1/v0.1.76-rc.73",
-		"http://0.0.0.0:18443/v0.1.76-rc.73",
-		"http://localhost:18443/v0.1.76-rc.73",
-		"https://127.0.0.1:18443/v0.1.76-rc.73",
-		"http://127.0.0.1:18443/v0.1.76-rc.72",
-		"http://127.0.0.1:18443/v0.1.76-rc.73/",
-		"http://127.0.0.1:18443/v0.1.76-rc.73?candidate=1",
+		"https://127.0.0.1/v0.1.76-rc.73",
+		"https://0.0.0.0:18443/v0.1.76-rc.73",
+		"https://localhost:18443/v0.1.76-rc.73",
+		"http://127.0.0.1:18443/v0.1.76-rc.73",
+		"https://127.0.0.1:18443/v0.1.76-rc.72",
+		"https://127.0.0.1:18443/v0.1.76-rc.73/",
+		"https://127.0.0.1:18443/v0.1.76-rc.73?candidate=1",
 	} {
 		branchFixtureMetadataBase = invalid
 		if _, err := publicTrustRoute("0.1.76-rc.73"); err == nil {
 			t.Fatalf("unsafe staging route was accepted: %s", invalid)
 		}
 	}
-	branchFixtureMetadataBase = "http://127.0.0.1:18443/v0.1.76-rc.73"
+	branchFixtureMetadataBase = "https://127.0.0.1:18443/v0.1.76-rc.73"
 	branchFixturePinnedRootSHA256 = strings.Repeat("z", 64)
 	if _, err := publicTrustRoute("0.1.76-rc.73"); err == nil {
 		t.Fatal("non-hex staging root pin was accepted")
