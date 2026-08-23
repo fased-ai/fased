@@ -69,6 +69,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
+          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
           MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
         shell: bash
@@ -289,7 +290,7 @@ jobs:
             --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
             --source-ref "refs/tags/v$RELEASE_VERSION" \
-            --workflow-run-id "${{ inputs.pre_tag_p1_run_id }}"
+            --workflow-run-id "$PRE_TAG_P1_RUN_ID"
           test -s "$package_dir/product.sha256"
           test -z "$(find "$product_dir" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
           (cd "$product_dir" && sha256sum -c "$package_dir/product.sha256")
