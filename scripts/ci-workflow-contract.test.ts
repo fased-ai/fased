@@ -7,6 +7,7 @@ import { parse } from "yaml";
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 type WorkflowStep = {
+  env?: Record<string, string>;
   name?: string;
   run?: string;
 };
@@ -151,6 +152,11 @@ describe("lean CI and release workflow contracts", () => {
     const source = await text(".github/workflows/hosted-runtime-release.yml");
     const finalizeText = jobText(value.jobs?.["finalize-candidate"]);
     const publishText = jobText(value.jobs?.publish);
+    const stage = value.jobs?.["finalize-candidate"]?.steps?.find(
+      (step) => step.name === "Verify and stage only the pre-tag product bytes",
+    );
+    expect(stage?.env?.PRE_TAG_P1_RUN_ID).toBe("${{ inputs.pre_tag_p1_run_id }}");
+    expect(stage?.run).toContain('--workflow-run-id "$PRE_TAG_P1_RUN_ID"');
     expect(finalizeText).toContain("product.sha256");
     expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
     expect(finalizeText).toContain("release-artifact-set.mjs verify");
