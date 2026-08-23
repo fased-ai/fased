@@ -6,14 +6,18 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$script_dir/lib/github-release-draft.sh"
 
 usage() {
-  echo "usage: publish-lifecycle-channel.sh <candidate-directory> <source-commit>" >&2
+  echo "usage: publish-lifecycle-channel.sh <candidate-directory> <source-commit> <attestation-source-ref> <attestation-source-digest>" >&2
   exit 2
 }
 
-[[ $# -eq 2 ]] || usage
+[[ $# -eq 4 ]] || usage
 candidate_dir="$(realpath -e "$1")"
 source_commit="$2"
-[[ -d "$candidate_dir" && "$source_commit" =~ ^[a-f0-9]{40}$ ]] || usage
+attestation_source_ref="$3"
+attestation_source_digest="$4"
+[[ -d "$candidate_dir" && "$source_commit" =~ ^[a-f0-9]{40}$ &&
+  "$attestation_source_ref" == refs/heads/main &&
+  "$attestation_source_digest" =~ ^[a-f0-9]{40}$ ]] || usage
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
@@ -69,7 +73,8 @@ GH_PROMPT_DISABLED=1 gh attestation verify "$index" \
   --repo "$GITHUB_REPOSITORY" \
   --bundle "$attestation" \
   --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-  --source-ref "refs/tags/v$version" \
+  --source-ref "$attestation_source_ref" \
+  --source-digest "$attestation_source_digest" \
   --deny-self-hosted-runners >/dev/null
 
 workspace="$(mktemp -d)"
@@ -255,12 +260,19 @@ else
       if ! cmp -s "$attestation" "$current_attestation" &&
         ! cmp -s "$index" "$current_index"; then
         current_version="$(jq -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"))' "$current_index")"
-        GH_PROMPT_DISABLED=1 gh attestation verify "$current_index" \
+        if ! GH_PROMPT_DISABLED=1 gh attestation verify "$current_index" \
           --repo "$GITHUB_REPOSITORY" \
           --bundle "$current_attestation" \
           --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-          --source-ref "refs/tags/v$current_version" \
-          --deny-self-hosted-runners >/dev/null
+          --source-ref refs/heads/main \
+          --deny-self-hosted-runners >/dev/null 2>&1; then
+          GH_PROMPT_DISABLED=1 gh attestation verify "$current_index" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$current_attestation" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "refs/tags/v$current_version" \
+            --deny-self-hosted-runners >/dev/null
+        fi
       fi
     fi
   else
