@@ -679,7 +679,18 @@ describe("CI workflow routing", () => {
     expect(refreshRootHeadText).toContain("publish-lifecycle-root-head.sh");
 
     expect(preflightText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
-    expect(preflightText).toContain('test "$remote_tag" = "$SOURCE_COMMIT"');
+    expect(preflightText).toContain(
+      'git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}"',
+    );
+    expect(preflightText).toContain('$2 == ref "^{}" { peeled = $1 }');
+    expect(preflightText).toContain('print peeled != "" ? peeled : direct');
+    expect(preflightText).toContain('test "$remote_tag_commit" = "$SOURCE_COMMIT"');
+    expect(publishText).toContain(
+      'git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}"',
+    );
+    expect(publishText).toContain('$2 == ref "^{}" { peeled = $1 }');
+    expect(publishText).toContain('print peeled != "" ? peeled : direct');
+    expect(publishText).toContain('test "$remote_tag_commit" = "$GITHUB_SHA"');
     expect(preflightText).toContain(".mainRunId");
     expect(preflightText).toContain(".mainChecksJobId");
     expect(preflightText).toContain('.path == ".github/workflows/pre-tag-p1.yml"');
