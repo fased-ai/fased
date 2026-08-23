@@ -111,6 +111,9 @@ func main() {
 }
 
 func run(args []string, output io.Writer) error {
+	if len(args) > 0 && args[0] == "verify-release-set" {
+		return runVerifyReleaseSet(args[1:], output)
+	}
 	if len(args) > 0 && (args[0] == "install" || args[0] == "update" || args[0] == "repair") {
 		return runPublicLifecycle(args[0], args[1:], output)
 	}

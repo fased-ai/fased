@@ -282,9 +282,7 @@ describe("npm-free managed lifecycle", () => {
       "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle-redesign.md",
     );
 
-    expect(skill).toMatch(
-      /Candidate and release work begins only after the literal affected-environment\s+command passes\./u,
-    );
+    expect(skill).toMatch(/Candidate work starts only after literal environment proof passes\./u);
     expect(skill).toContain(
       "Exercise adjacent durable transitions once; never publish first-error patches.",
     );
@@ -297,11 +295,10 @@ describe("npm-free managed lifecycle", () => {
     expect(lifecycle).toMatch(
       /Do not synthesize an interrupted phase by editing\s+a successfully\s+committed receipt/u,
     );
-    expect(skill).toMatch(/partial public-release retry uses only metadata/u);
+    expect(skill).toContain("Metadata-only retries never reattest; broad matrices remain manual.");
     expect(release).toMatch(/builds\s+one Linux-x64 core artifact/u);
-    expect(release).toContain(
-      "One protected workflow builds, attests, tags, publishes, and promotes",
-    );
+    expect(release).toContain("finalize from the actual immutable tag ref");
+    expect(release).toMatch(/actual `GITHUB_REF` equal to\s+`refs\/tags\/v<version>`/u);
     expect(release).toMatch(
       /Any product\s+change after that proof returns to the normal fix path/u,
     );
