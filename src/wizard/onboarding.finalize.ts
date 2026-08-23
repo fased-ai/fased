@@ -447,6 +447,22 @@ export function resolveHostedGatewayServiceUser(): string {
   return configured && /^[A-Za-z0-9_.@-]+$/.test(configured) ? configured : "fased-gateway";
 }
 
+export function matchesHostedGatewayServiceUser(params: {
+  configuredUser: string;
+  expectedName: string;
+  expectedUid: string;
+}): boolean {
+  const configuredUser = params.configuredUser.trim();
+  const expectedName = params.expectedName.trim();
+  const expectedUid = params.expectedUid.trim();
+  return (
+    configuredUser.length > 0 &&
+    expectedName.length > 0 &&
+    /^[0-9]+$/.test(expectedUid) &&
+    (configuredUser === expectedName || configuredUser === expectedUid)
+  );
+}
+
 export function resolveVerifiedRootServiceReady(params: {
   restartQueued: boolean;
   activeAfterRestart: boolean;
@@ -532,19 +548,42 @@ async function verifyStrictRootGatewayExecStart(
   runAsUser?: string,
 ): Promise<{ ok: boolean; detail?: string }> {
   const safeRunAsUser = runAsUser?.trim();
-  return await runShell(
+  const structure = await runShell(
     [
       startupMode === "go-lifecycle"
         ? `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=.*/payload/bin/fased-gateway-launch$' >/dev/null`
         : `systemctl cat ${serviceName}.service 2>/dev/null | grep -E '^ExecStart=' | grep -F ' gateway ' >/dev/null`,
       `systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'Environment=FASED_GATEWAY_PORT=' >/dev/null`,
-      ...(safeRunAsUser
-        ? [
-            `systemctl cat ${serviceName}.service 2>/dev/null | grep -F 'User=${safeRunAsUser}' >/dev/null`,
-          ]
-        : []),
     ].join(" && "),
   );
+  if (!structure.ok || !safeRunAsUser) {
+    return structure;
+  }
+  const [configuredUser, expectedUid] = await Promise.all([
+    runShell(
+      `systemctl show ${shellQuote(`${serviceName}.service`)} --property=User --value 2>/dev/null`,
+    ),
+    runShell(`id -u ${shellQuote(safeRunAsUser)} 2>/dev/null`),
+  ]);
+  if (!configuredUser.ok || !expectedUid.ok) {
+    return {
+      ok: false,
+      detail: configuredUser.detail || expectedUid.detail || "Gateway service user is unavailable",
+    };
+  }
+  if (
+    !matchesHostedGatewayServiceUser({
+      configuredUser: configuredUser.detail ?? "",
+      expectedName: safeRunAsUser,
+      expectedUid: expectedUid.detail ?? "",
+    })
+  ) {
+    return {
+      ok: false,
+      detail: `Gateway service User=${configuredUser.detail ?? ""} does not match ${safeRunAsUser}`,
+    };
+  }
+  return structure;
 }
 
 async function isSystemdServiceActive(params: {

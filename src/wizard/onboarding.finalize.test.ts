@@ -10,6 +10,7 @@ import {
   buildOnboardingDashboardUrl,
   ensureGatewaySecretMatchesToken,
   formatHostedRootServiceRequiredFailure,
+  matchesHostedGatewayServiceUser,
   formatLocalDashboardReady,
   formatStrictRemoteAccessDetails,
   gatewayServiceMatchesCurrentInstall,
@@ -363,6 +364,44 @@ describe("formatHostedRootServiceRequiredFailure", () => {
     expect(text).toContain("exact tagged, attested Hosting release");
     expect(text).toContain("never run the app checkout with sudo");
     expect(text).toContain("sudo systemctl status fased-gateway");
+  });
+});
+
+describe("matchesHostedGatewayServiceUser", () => {
+  it("accepts the canonical account name or its exact numeric uid", () => {
+    expect(
+      matchesHostedGatewayServiceUser({
+        configuredUser: "fased-gateway",
+        expectedName: "fased-gateway",
+        expectedUid: "999",
+      }),
+    ).toBe(true);
+    expect(
+      matchesHostedGatewayServiceUser({
+        configuredUser: "999",
+        expectedName: "fased-gateway",
+        expectedUid: "999",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a different numeric or named service identity", () => {
+    for (const configuredUser of ["998", "app", ""]) {
+      expect(
+        matchesHostedGatewayServiceUser({
+          configuredUser,
+          expectedName: "fased-gateway",
+          expectedUid: "999",
+        }),
+      ).toBe(false);
+    }
+    expect(
+      matchesHostedGatewayServiceUser({
+        configuredUser: "999",
+        expectedName: "fased-gateway",
+        expectedUid: "not-a-uid",
+      }),
+    ).toBe(false);
   });
 });
 
