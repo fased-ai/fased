@@ -58,7 +58,7 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
-  it("requires granular Node, Hosting, Local fresh, and Local update only when selected", () => {
+  it("requires granular Node and Hosting gates only when selected", () => {
     const selected = {
       "format and lint": "success",
       "strict types baseline": "success",
@@ -68,9 +68,6 @@ describe("required CI gate aggregation", () => {
       "release contracts": "success",
       "packed Local install": "success",
       "Hosting lifecycle": "success",
-      "Protected Local fixture artifact": "success",
-      "Protected Local lifecycle": "success",
-      "Protected Local update lifecycle": "success",
     };
     expect(() =>
       assertApplicableGates({
@@ -79,8 +76,6 @@ describe("required CI gate aggregation", () => {
         runNodePackaging: true,
         runNodeFull: true,
         runHosting: true,
-        runLocalFresh: true,
-        runLocalUpdate: true,
         results: { ...alwaysGreen, ...selected },
       }),
     ).not.toThrow();
@@ -91,8 +86,6 @@ describe("required CI gate aggregation", () => {
         runNodePackaging: true,
         runNodeFull: true,
         runHosting: true,
-        runLocalFresh: true,
-        runLocalUpdate: true,
         results: {
           ...alwaysGreen,
           ...selected,
@@ -104,29 +97,19 @@ describe("required CI gate aggregation", () => {
       assertApplicableGates({
         runNodeFocused: true,
         runNodeBuild: true,
-        runLocalUpdate: true,
+        runHosting: true,
         results: {
           ...alwaysGreen,
           ...selected,
-          "Protected Local update lifecycle": "failure",
+          "Hosting lifecycle": "failure",
         },
       }),
-    ).toThrow(/required Protected Local update lifecycle result was failure/);
+    ).toThrow(/required Hosting lifecycle result was failure/);
 
     expect(() =>
       assertApplicableGates({
         runHosting: true,
         results: { ...alwaysGreen, "Hosting lifecycle": "success" },
-      }),
-    ).not.toThrow();
-    expect(() =>
-      assertApplicableGates({
-        runLocalFresh: true,
-        results: {
-          ...alwaysGreen,
-          "Protected Local fixture artifact": "success",
-          "Protected Local lifecycle": "success",
-        },
       }),
     ).not.toThrow();
     expect(() =>
@@ -155,7 +138,6 @@ describe("required CI gate aggregation", () => {
         runNodeFocused: true,
         runNodeBuild: true,
         runSignerIntegration: true,
-        runLocalUpdate: true,
         runT2Contracts: true,
         results: {
           ...alwaysGreen,
@@ -164,8 +146,6 @@ describe("required CI gate aggregation", () => {
           "focused Node tests": "success",
           "dist build": "success",
           "signer integration": "success",
-          "Protected Local fixture artifact": "success",
-          "Protected Local update lifecycle": "success",
           "T2 harness contracts": "success",
         },
       }),
@@ -214,13 +194,12 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
-  it("requires selected platform-bootstrap, Docker, and split signer lanes", () => {
+  it("requires selected Docker and split signer lanes", () => {
     expect(() =>
       assertApplicableGates({
         runNativeSigner: true,
         runSignerIntegration: true,
         runSignerDarwinIntegration: true,
-        runPlatformBootstrap: true,
         runDocker: true,
         runCodeqlJavascript: true,
         runCodeqlGo: true,
@@ -230,7 +209,6 @@ describe("required CI gate aggregation", () => {
           "native signer": "success",
           "signer integration": "success",
           "Darwin signer integration": "success",
-          "platform bootstrap": "success",
           "Docker amd64": "success",
           "Docker arm64": "success",
           "CodeQL JavaScript": "success",
@@ -272,26 +250,5 @@ describe("required CI gate aggregation", () => {
         results: alwaysGreen,
       }),
     ).toThrow(/classification blocked: a stale gate plan requested manual review/u);
-  });
-
-  it("requires only supported full-matrix compatibility lanes", () => {
-    expect(() =>
-      assertApplicableGates({
-        fullMatrix: true,
-        results: {
-          ...alwaysGreen,
-          "Protected Local Rocky lifecycle": "success",
-        },
-      }),
-    ).not.toThrow();
-    expect(() =>
-      assertApplicableGates({
-        fullMatrix: true,
-        results: {
-          ...alwaysGreen,
-          "Protected Local Rocky lifecycle": "failure",
-        },
-      }),
-    ).toThrow(/required Protected Local Rocky lifecycle result was failure/u);
   });
 });

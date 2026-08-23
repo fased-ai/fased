@@ -1,8 +1,8 @@
-name: Nightly CI
+name: Weekly Diagnostics
 
 on:
   schedule:
-    - cron: "19 7 * * *"
+    - cron: "19 7 * * 0"
   workflow_dispatch:
     inputs:
       full_matrix:
@@ -67,41 +67,8 @@ jobs:
           test "$(git rev-parse origin/main)" = "$AUTHORIZED_BASE_COMMIT"
           git merge-base --is-ancestor "$AUTHORIZED_BASE_COMMIT" "$SOURCE_COMMIT"
 
-          mapfile -t changed_paths < <(
-            git diff --name-only "$AUTHORIZED_BASE_COMMIT" "$SOURCE_COMMIT"
-          )
-          test "${#changed_paths[@]}" -gt 0
-          runtime_builder_changed=false
-          native_helper_changed=false
-          for changed_path in "${changed_paths[@]}"; do
-            case "$changed_path" in
-              .github/workflows/ci.yml | \
-                .github/workflows/hosted-runtime-release.yml | \
-                scripts/build-hosted-release-manifest.mjs | \
-                scripts/build-hosted-release-manifest.test.ts | \
-                scripts/build-hosted-runtime-artifact.ts | \
-                scripts/build-native-release-assets.sh | \
-                scripts/ci-workflow-contract.test.ts | \
-                scripts/docker/protected-local-systemd/lifecycle-acceptance.sh | \
-                scripts/hosted-installer-artifact-layout.test.ts | \
-                scripts/lifecycle-version-neutral.test.ts | \
-                scripts/test-lifecycle-local-acceptance.sh | \
-                src/infra/hosted-runtime-artifact.ts)
-                ;;
-              *)
-                echo "Archive branch proof rejects out-of-scope path: $changed_path" >&2
-                exit 1
-                ;;
-            esac
-            [[ "$changed_path" == "scripts/build-hosted-runtime-artifact.ts" ]] && \
-              runtime_builder_changed=true
-            [[ "$changed_path" == "scripts/build-native-release-assets.sh" ]] && \
-              native_helper_changed=true
-          done
-          test "$runtime_builder_changed" = true
-          test "$native_helper_changed" = true
-          test "$(git diff --diff-filter=D --name-only "$AUTHORIZED_BASE_COMMIT" "$SOURCE_COMMIT")" = \
-            "src/infra/hosted-runtime-artifact.ts"
+          test -x scripts/build-linux-x64-release-artifact.sh
+          test -n "$(git diff --name-only "$AUTHORIZED_BASE_COMMIT" "$SOURCE_COMMIT")"
 
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
@@ -120,13 +87,11 @@ jobs:
         run: pnpm exec vitest run scripts/release-archive.test.ts
 
       - name: Build exact candidate generation archive once
-        env:
-          FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1"
-          FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: ${{ runner.temp }}/fased-archive-branch-proof
         shell: bash
         run: |
           set -o pipefail
-          bash scripts/test-lifecycle-local-acceptance.sh 2>&1 |
+          bash scripts/build-linux-x64-release-artifact.sh \
+            "$RUNNER_TEMP/fased-archive-branch-proof" 2>&1 |
             tee "$RUNNER_TEMP/fased-archive-branch-proof.log"
 
       - name: Verify exact candidate generation archive inventory
@@ -150,7 +115,7 @@ jobs:
           test -f "$proof"
           test ! -L "$proof"
           test -s "$build_log"
-          jq -e '.profile == "branch-x64" and .publishable == false' "$proof" >/dev/null
+          jq -e '.profile == "linux-x64" and .publishable == false' "$proof" >/dev/null
           node scripts/release-artifact-set.mjs verify \
             --directory "$candidate" \
             --version "$version" \
@@ -158,10 +123,14 @@ jobs:
             --tree "$source_tree" \
             --lockfile-digest "$lockfile_digest" \
             --source-ref "refs/tags/v$version" \
-            --workflow-run-id 1 >/dev/null
+            --workflow-run-id "$GITHUB_RUN_ID" >/dev/null
 
           artifact_count="$(jq -er '.artifacts | length' "$descriptor")"
           test "$artifact_count" -gt 0
+          test "$artifact_count" -le 96
+          artifact_bytes="$(jq -er '[.artifacts[].size] | add' "$descriptor")"
+          test "$artifact_bytes" -gt 0
+          test "$artifact_bytes" -le 805306368
           max_archive_bytes="$({
             jq -r '.artifacts[] | select(.name | endswith(".tar.gz")) | .size' "$descriptor"
           } | sort -nr | head -n 1)"
@@ -180,7 +149,7 @@ jobs:
           max_raw_archive_bytes="$({
             printf '%s\n' "${archive_receipts[@]}" | jq -r '.rawBytes'
           } | sort -nr | head -n 1)"
-          test "$max_raw_archive_bytes" -gt 38085632
+          test "$max_raw_archive_bytes" -gt 0
 
           mkdir -p "$evidence_dir"
           jq -n \
@@ -192,6 +161,7 @@ jobs:
             --arg workflowRunId "$GITHUB_RUN_ID" \
             --arg workflowRunAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson artifactCount "$artifact_count" \
+            --argjson artifactBytes "$artifact_bytes" \
             --argjson archiveCompletionCount "${#archive_receipts[@]}" \
             --argjson maxArchiveBytes "$max_archive_bytes" \
             --argjson maxRawArchiveBytes "$max_raw_archive_bytes" \
@@ -205,6 +175,7 @@ jobs:
               lockfileDigest: $lockfileDigest,
               descriptorSha256: $descriptorSha256,
               artifactCount: $artifactCount,
+              artifactBytes: $artifactBytes,
               archiveCompletionCount: $archiveCompletionCount,
               maxArchiveBytes: $maxArchiveBytes,
               maxRawArchiveBytes: $maxRawArchiveBytes,
@@ -249,7 +220,6 @@ jobs:
       docs_changed: ${{ steps.scope.outputs.docs_changed }}
       version_only: ${{ steps.scope.outputs.version_only }}
       ci_infrastructure_only: ${{ steps.scope.outputs.ci_infrastructure_only }}
-      t2_fixture_only: ${{ steps.scope.outputs.t2_fixture_only }}
       test_only: ${{ steps.scope.outputs.test_only }}
       fixture_only: ${{ steps.scope.outputs.fixture_only }}
       production_changed: ${{ steps.scope.outputs.production_changed }}
@@ -269,22 +239,15 @@ jobs:
       run_ui: ${{ steps.scope.outputs.run_ui }}
       run_macos_runtime: ${{ steps.scope.outputs.run_macos_runtime }}
       run_macos_app: ${{ steps.scope.outputs.run_macos_app }}
-      experimental_mobile_changed: ${{ steps.scope.outputs.experimental_mobile_changed }}
-      run_signer: ${{ steps.scope.outputs.run_signer }}
       run_native_signer: ${{ steps.scope.outputs.run_native_signer }}
       run_signer_integration: ${{ steps.scope.outputs.run_signer_integration }}
       run_signer_darwin_integration: ${{ steps.scope.outputs.run_signer_darwin_integration }}
-      run_platform_bootstrap: ${{ steps.scope.outputs.run_platform_bootstrap }}
       run_docker: ${{ steps.scope.outputs.run_docker }}
       run_codeql_javascript: ${{ steps.scope.outputs.run_codeql_javascript }}
       focused_codeql_javascript: ${{ steps.scope.outputs.focused_codeql_javascript }}
       run_codeql_go: ${{ steps.scope.outputs.run_codeql_go }}
       run_codeql_python: ${{ steps.scope.outputs.run_codeql_python }}
       run_hosting: ${{ steps.scope.outputs.run_hosting }}
-      run_hosting_fresh: ${{ steps.scope.outputs.run_hosting_fresh }}
-      run_hosting_update: ${{ steps.scope.outputs.run_hosting_update }}
-      run_local_fresh: ${{ steps.scope.outputs.run_local_fresh }}
-      run_local_update: ${{ steps.scope.outputs.run_local_update }}
       run_ci_contracts: ${{ steps.scope.outputs.run_ci_contracts }}
       run_t2_contracts: ${{ steps.scope.outputs.run_t2_contracts }}
       run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
@@ -308,7 +271,7 @@ jobs:
       - name: Detect changed scopes
         id: scope
         env:
-          FULL_MATRIX: "true"
+          FULL_MATRIX: ${{ github.event_name == 'schedule' || inputs.full_matrix == true }}
           REUSE_PR_CHECKS: "false"
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -605,9 +568,7 @@ jobs:
     needs: [change-scope]
     if: >-
       needs.change-scope.outputs.run_node_build == 'true' ||
-      needs.change-scope.outputs.run_hosting == 'true' ||
-      needs.change-scope.outputs.run_local_fresh == 'true' ||
-      needs.change-scope.outputs.run_local_update == 'true'
+      needs.change-scope.outputs.run_hosting == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -970,52 +931,6 @@ jobs:
       - name: Enforce safe external URL opening policy
         run: pnpm lint:ui:no-raw-window-open
 
-  # Build one immutable fixture artifact only when a Local lifecycle gate needs
-  # it. Hosting no longer serializes or owns this artifact.
-  protected-local-fixture-artifact:
-    name: "protected Local fixture artifact"
-    needs: [change-scope, build-artifacts]
-    if: >-
-      needs.change-scope.outputs.run_local_fresh == 'true' ||
-      needs.change-scope.outputs.run_local_update == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          submodules: false
-
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: tools/fased-signerd/go.mod
-          cache-dependency-path: tools/fased-signerd/go.sum
-
-      - name: Download exact dist artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: dist-build
-          path: dist/
-
-      - name: Build one exact fixture artifact
-        env:
-          FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1"
-          FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: ${{ runner.temp }}/protected-local-artifact
-        run: bash scripts/test-lifecycle-local-acceptance.sh
-
-      - name: Upload exact fixture artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: protected-local-fixture-artifact
-          path: ${{ runner.temp }}/protected-local-artifact/
-          retention-days: 1
-
   hosting-lifecycle:
     name: "hosting lifecycle"
     needs: [change-scope, build-artifacts]
@@ -1045,178 +960,6 @@ jobs:
           scripts/install-release-pin.test.ts
           scripts/go-lifecycle-routing.test.ts
           --pool=forks --maxWorkers=1
-
-  protected-local-lifecycle:
-    name: "protected Local fresh lifecycle (ubuntu)"
-    needs: [change-scope, protected-local-fixture-artifact]
-    if: needs.change-scope.outputs.run_local_fresh == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          submodules: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22.x
-
-      - name: Download exact Protected Local fixture artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: protected-local-fixture-artifact
-          path: ${{ runner.temp }}/protected-local-artifact/
-
-      - name: Restore cached systemd fixture base image
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/protected-local-image-cache/
-          key: >-
-            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
-            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
-            'scripts/docker/protected-local-systemd/*.conf') }}
-
-      - name: Check clean Protected Local bootstrap
-        env:
-          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
-          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
-          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
-          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-        run: bash scripts/test-lifecycle-local-acceptance.sh
-
-  protected-local-rocky-lifecycle:
-    name: "protected Local fresh lifecycle (rocky)"
-    needs: [change-scope, protected-local-fixture-artifact]
-    if: >-
-      needs.change-scope.outputs.run_local_fresh == 'true' &&
-      needs.change-scope.outputs.full_matrix == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          submodules: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22.x
-
-      - name: Download exact Protected Local fixture artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: protected-local-fixture-artifact
-          path: ${{ runner.temp }}/protected-local-artifact/
-
-      - name: Restore cached systemd fixture base image
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/protected-local-image-cache/
-          key: >-
-            protected-local-systemd-${{ runner.os }}-rocky-v1-
-            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
-            'scripts/docker/protected-local-systemd/*.conf') }}
-
-      - name: Check Rocky compatibility bootstrap
-        env:
-          FASED_SYSTEMD_FIXTURE_DISTROS: rocky
-          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
-          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
-          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-        run: bash scripts/test-lifecycle-local-acceptance.sh
-
-  protected-local-update-lifecycle:
-    name: "protected Local update lifecycle (ubuntu)"
-    needs: [change-scope, protected-local-fixture-artifact]
-    if: needs.change-scope.outputs.run_local_update == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          submodules: false
-
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-
-      - name: Run Go lifecycle routing T1
-        run: pnpm exec vitest run scripts/go-lifecycle-routing.test.ts
-
-      - name: Download exact Protected Local fixture artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: protected-local-fixture-artifact
-          path: ${{ runner.temp }}/protected-local-artifact/
-
-      - name: Restore cached systemd fixture base image
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/protected-local-image-cache/
-          key: >-
-            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
-            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
-            'scripts/docker/protected-local-systemd/*.conf') }}
-
-      - name: Check Protected Local update, rollback, retry, and idempotence
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
-          FASED_SYSTEMD_FIXTURE_SCENARIOS: managed-update
-          FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "0.1.75"
-          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
-          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "1"
-        run: bash scripts/test-lifecycle-local-acceptance.sh
-
-  platform-bootstrap-audit:
-    name: "platform bootstrap"
-    needs: [change-scope, protected-local-fixture-artifact]
-    if: needs.change-scope.outputs.run_platform_bootstrap == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          submodules: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22.x
-
-      - name: Download exact Protected Local fixture artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: protected-local-fixture-artifact
-          path: ${{ runner.temp }}/protected-local-artifact/
-
-      - name: Restore cached systemd fixture base image
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ runner.temp }}/protected-local-image-cache/
-          key: >-
-            protected-local-systemd-${{ runner.os }}-ubuntu-v1-
-            ${{ hashFiles('scripts/docker/protected-local-systemd/Containerfile.*',
-            'scripts/docker/protected-local-systemd/*.conf') }}
-
-      - name: Check package-manager and missing-tool bootstrap
-        env:
-          FASED_SYSTEMD_FIXTURE_DISTROS: ubuntu
-          FASED_SYSTEMD_FIXTURE_SCENARIOS: fresh-install
-          FASED_SYSTEMD_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/protected-local-artifact
-          FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR: ${{ runner.temp }}/protected-local-image-cache
-          FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS: "0"
-        run: bash scripts/test-lifecycle-local-acceptance.sh
 
   docker-amd64:
     name: "Docker amd64"
@@ -1764,10 +1507,6 @@ jobs:
       - dependency-integrity
       - check
       - hosting-lifecycle
-      - protected-local-fixture-artifact
-      - protected-local-lifecycle
-      - protected-local-rocky-lifecycle
-      - protected-local-update-lifecycle
       - version-identity
       - strict-types-baseline
       - checks
@@ -1777,7 +1516,6 @@ jobs:
       - signer-platform
       - signer-integration
       - signer-darwin-integration
-      - platform-bootstrap-audit
       - docker-amd64
       - docker-arm64
       - codeql-javascript
@@ -1815,14 +1553,11 @@ jobs:
           RUN_NATIVE_SIGNER: ${{ needs.change-scope.outputs.run_native_signer }}
           RUN_SIGNER_INTEGRATION: ${{ needs.change-scope.outputs.run_signer_integration }}
           RUN_SIGNER_DARWIN_INTEGRATION: ${{ needs.change-scope.outputs.run_signer_darwin_integration }}
-          RUN_PLATFORM_BOOTSTRAP: ${{ needs.change-scope.outputs.run_platform_bootstrap }}
           RUN_DOCKER: ${{ needs.change-scope.outputs.run_docker }}
           RUN_CODEQL_JAVASCRIPT: ${{ needs.change-scope.outputs.run_codeql_javascript }}
           RUN_CODEQL_GO: ${{ needs.change-scope.outputs.run_codeql_go }}
           RUN_CODEQL_PYTHON: ${{ needs.change-scope.outputs.run_codeql_python }}
           RUN_HOSTING: ${{ needs.change-scope.outputs.run_hosting }}
-          RUN_LOCAL_FRESH: ${{ needs.change-scope.outputs.run_local_fresh }}
-          RUN_LOCAL_UPDATE: ${{ needs.change-scope.outputs.run_local_update }}
           RUN_CI_CONTRACTS: ${{ needs.change-scope.outputs.run_ci_contracts }}
           RUN_T2_CONTRACTS: ${{ needs.change-scope.outputs.run_t2_contracts }}
           RUN_UI_MINING: ${{ needs.change-scope.outputs.run_ui_mining }}
@@ -1830,14 +1565,9 @@ jobs:
           RUN_SKILLS: ${{ needs.change-scope.outputs.run_skills }}
           RUN_MACOS_RUNTIME: ${{ needs.change-scope.outputs.run_macos_runtime }}
           RUN_MACOS_APP: ${{ needs.change-scope.outputs.run_macos_app }}
-          FULL_MATRIX: ${{ needs.change-scope.outputs.full_matrix }}
           CHANGE_SCOPE: ${{ needs.change-scope.result }}
           CHECK: ${{ needs.check.result }}
           HOSTING: ${{ needs.hosting-lifecycle.result }}
-          PROTECTED_LOCAL_ARTIFACT: ${{ needs.protected-local-fixture-artifact.result }}
-          PROTECTED_LOCAL: ${{ needs.protected-local-lifecycle.result }}
-          PROTECTED_LOCAL_ROCKY: ${{ needs.protected-local-rocky-lifecycle.result }}
-          PROTECTED_LOCAL_UPDATE: ${{ needs.protected-local-update-lifecycle.result }}
           CI_CONTRACTS: ${{ needs.ci-contracts.result }}
           T2_CONTRACTS: ${{ needs.t2-contracts.result }}
           VERSION_IDENTITY: ${{ needs.version-identity.result }}
@@ -1854,7 +1584,6 @@ jobs:
           SIGNER: ${{ needs.signer-platform.result }}
           SIGNER_INTEGRATION: ${{ needs.signer-integration.result }}
           SIGNER_DARWIN_INTEGRATION: ${{ needs.signer-darwin-integration.result }}
-          PLATFORM_BOOTSTRAP: ${{ needs.platform-bootstrap-audit.result }}
           DOCKER_AMD64: ${{ needs.docker-amd64.result }}
           DOCKER_ARM64: ${{ needs.docker-arm64.result }}
           CODEQL_JAVASCRIPT: ${{ needs.codeql-javascript.result }}

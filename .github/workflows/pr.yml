@@ -33,6 +33,10 @@ jobs:
       run_node_extensions: ${{ steps.scope.outputs.run_node_extensions }}
       run_native_signer: ${{ steps.scope.outputs.run_native_signer }}
       run_signer_integration: ${{ steps.scope.outputs.run_signer_integration }}
+      run_signer_darwin_integration: ${{ steps.scope.outputs.run_signer_darwin_integration }}
+      run_docker: ${{ steps.scope.outputs.run_docker }}
+      run_macos_runtime: ${{ steps.scope.outputs.run_macos_runtime }}
+      run_macos_app: ${{ steps.scope.outputs.run_macos_app }}
       run_ui: ${{ steps.scope.outputs.run_ui }}
       run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
       run_skills: ${{ steps.scope.outputs.run_skills }}
@@ -326,10 +330,90 @@ jobs:
           mapfile -t files < <(git diff --name-only "$BASE" HEAD -- '.github/workflows/*.yml' '.github/workflows/*.yaml')
           if [ "${#files[@]}" -gt 0 ]; then pre-commit run zizmor --files "${files[@]}"; fi
 
+  docker-owned:
+    name: docker-owned
+    needs: [classify]
+    if: needs.classify.outputs.run_docker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+      - name: Run focused Docker contracts
+        run: >-
+          pnpm exec vitest run
+          src/docker-setup.test.ts
+          scripts/docker-signer-update.backup.test.ts
+      - name: Build and inspect the owned amd64 image
+        run: |
+          docker build --tag "fased-pr:${GITHUB_SHA}" .
+          test "$(docker image inspect "fased-pr:${GITHUB_SHA}" --format '{{.Config.User}}')" = node
+
+  macos-owned:
+    name: macos-owned
+    needs: [classify]
+    if: >-
+      needs.classify.outputs.run_macos_runtime == 'true' ||
+      needs.classify.outputs.run_macos_app == 'true' ||
+      needs.classify.outputs.run_signer_darwin_integration == 'true'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          submodules: false
+      - name: Setup Node environment
+        if: >-
+          needs.classify.outputs.run_macos_runtime == 'true' ||
+          needs.classify.outputs.run_signer_darwin_integration == 'true'
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+      - name: Setup Go for signer-owned changes
+        if: needs.classify.outputs.run_signer_darwin_integration == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: tools/fased-signerd/go.mod
+          cache-dependency-path: tools/fased-signerd/go.sum
+      - name: Run focused Darwin runtime contracts
+        if: needs.classify.outputs.run_macos_runtime == 'true'
+        run: >-
+          pnpm exec vitest run
+          scripts/install-platform-preflight.test.ts
+          scripts/install-release-pin.test.ts
+          src/daemon/launchd.test.ts
+          src/daemon/runtime-paths.test.ts
+          src/commands/doctor-platform-notes.launchctl-env-overrides.test.ts
+          --pool=forks --maxWorkers=1
+      - name: Run signer-owned Darwin integration
+        if: needs.classify.outputs.run_signer_darwin_integration == 'true'
+        run: >-
+          pnpm exec vitest run
+          src/wallet/providers/local-socket-signer-adapter.integration.test.ts
+          src/wizard/onboarding.wallet.test.ts
+          --pool=forks --maxWorkers=1
+      - name: Run macOS application checks
+        if: needs.classify.outputs.run_macos_app == 'true'
+        run: |
+          brew install swiftlint swiftformat
+          swiftlint --config .swiftlint.yml
+          swiftformat --lint apps/macos/Sources --config .swiftformat
+          swiftformat --lint apps/shared/FasedAgentKit/Sources --config .swiftformat
+          swiftformat --lint Swabble/Sources --config .swiftformat
+          swift build --package-path apps/macos --configuration release
+          swift test --package-path apps/macos
+          swift test --package-path apps/shared/FasedAgentKit
+          swift test --package-path Swabble
+
   checks:
     name: checks
     if: always()
-    needs: [classify, selected-tests, security]
+    needs: [classify, selected-tests, security, docker-owned, macos-owned]
     runs-on: ubuntu-latest
     steps:
       - name: Require the compact PR gates
@@ -337,7 +421,13 @@ jobs:
           CLASSIFY: ${{ needs.classify.result }}
           SELECTED: ${{ needs.selected-tests.result }}
           SECURITY: ${{ needs.security.result }}
+          RUN_DOCKER: ${{ needs.classify.outputs.run_docker }}
+          DOCKER: ${{ needs.docker-owned.result }}
+          RUN_MACOS: ${{ needs.classify.outputs.run_macos_runtime == 'true' || needs.classify.outputs.run_macos_app == 'true' || needs.classify.outputs.run_signer_darwin_integration == 'true' }}
+          MACOS: ${{ needs.macos-owned.result }}
         run: |
           test "$CLASSIFY" = success
           test "$SELECTED" = success
           test "$SECURITY" = success
+          if [[ "$RUN_DOCKER" == true ]]; then test "$DOCKER" = success; else test "$DOCKER" = skipped; fi
+          if [[ "$RUN_MACOS" == true ]]; then test "$MACOS" = success; else test "$MACOS" = skipped; fi

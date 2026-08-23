@@ -186,16 +186,4 @@ describe("production lifecycle release index", () => {
       }),
     ).rejects.toThrow("dependency digest differs for x64");
   });
-
-  it("keeps branch trust plugin-lock hashing byte-identical to Go canonical JSON", async () => {
-    for (const script of [
-      "prepare-candidate-fixture-trust.sh",
-      "test-lifecycle-local-acceptance.sh",
-    ]) {
-      const source = await fs.readFile(path.join(import.meta.dirname, script), "utf8");
-      expect(source).toContain(
-        "jq -cj '{schemaVersion,type,entries:[.entries[]|{id,origin,digest,apiCapability,required}]}'",
-      );
-    }
-  });
 });

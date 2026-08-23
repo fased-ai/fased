@@ -304,13 +304,11 @@
       "profiles": ["*"],
       "owner": "platform-adapters-and-acceptance",
       "implementation": [
-        "scripts/test-lifecycle-local-acceptance.sh",
-        "scripts/test-lifecycle-hosting-acceptance.sh",
-        "scripts/run-lifecycle-local0.sh"
+        "scripts/build-linux-x64-release-artifact.sh",
+        "scripts/test-lifecycle-hosting-acceptance.sh"
       ],
       "evidence": [
         "scripts/lifecycle-acceptance-contract.test.ts",
-        "scripts/test-lifecycle-local-acceptance.sh",
         "scripts/test-lifecycle-local-t2-systemd.sh",
         "tools/fased-lifecycled/platform/t2_systemd_test.go"
       ],
@@ -359,9 +357,7 @@
       ],
       "evidence": [
         "tools/fased-lifecycled/platform/repair_current_test.go",
-        "tools/fased-lifecycled/daemon/service_test.go",
-        "scripts/test-lifecycle-local-acceptance.sh",
-        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"
+        "tools/fased-lifecycled/daemon/service_test.go"
       ],
       "status": "implemented"
     },
@@ -378,9 +374,7 @@
       "evidence": [
         "tools/fased-lifecycled/platform/managed_uninstall_test.go",
         "tools/fased-lifecycled/hostsecurity/participant_test.go",
-        "tools/fased-lifecycled/cmd/fased-bootstrap/main_test.go",
-        "scripts/test-lifecycle-local-acceptance.sh",
-        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"
+        "tools/fased-lifecycled/cmd/fased-bootstrap/main_test.go"
       ],
       "status": "implemented"
     },

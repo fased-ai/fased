@@ -39,10 +39,10 @@ runtime bytes can change.
 ## Lifecycle branch proof
 
 When lifecycle product behavior changed, use one unpublished Linux-x64 artifact
-keyed by commit, tree, and lockfile digest. Run only affected Local/Hosting
-topologies. If both fresh and stable-update are required, run them concurrently
-with isolated state. Reuse the artifact for rollback/retry, restart,
-preservation, and `Already current`. Fixture-only corrections cannot rebuild it.
+keyed by commit, tree, and lockfile digest. Exercise only the affected real
+Local or Hosting environment. Reuse the artifact for rollback/retry, restart,
+preservation, P1, tag and publication. A container may retain transaction-level
+diagnostic value, but it is optional `SUPPORTING` evidence and never acceptance.
 
 For an exact-runner packaging or archive proof, run one attempt per materially
 changed producer commit after focused local and protected PR checks pass. The job

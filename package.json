@@ -243,7 +243,6 @@
     "test:live": "FASED_LIVE_TEST=1 vitest run --config vitest.live.config.ts",
     "test:loopback": "FASED_TEST_LOOPBACK=1 vitest run --config vitest.loopback.config.ts",
     "test:macmini": "FASED_TEST_VM_FORKS=0 FASED_TEST_PROFILE=serial node scripts/test-parallel.mjs",
-    "test:protected-local:systemd": "bash scripts/test-lifecycle-local-acceptance.sh",
     "test:sectriage": "pnpm exec vitest run --config vitest.gateway.config.ts && vitest run --config vitest.unit.config.ts --exclude src/daemon/launchd.integration.test.ts --exclude src/process/exec.test.ts",
     "test:signer:compat": "vitest run src/wallet/providers/local-socket-signer-adapter.integration.test.ts --pool=forks --maxWorkers=1",
     "test:signer:portable": "bash scripts/test-fased-signerd-portable-builds.sh",

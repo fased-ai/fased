@@ -18,14 +18,12 @@ export const RELEASE_GATE_PHASES = Object.freeze([
   "pre-candidate",
   "pre-tag-p1",
   "candidate-finalization",
-  "candidate-p1-replay",
   "candidate-publication",
 ]);
 
 const REQUIRED_CLAIMS = Object.freeze({
   "pre-candidate": Object.freeze([
     "hostingStagingReceiptDigest",
-    "local0ReceiptDigest",
     "mainChecksJobId",
     "mainRunId",
     "managedPredecessorVersion",
@@ -36,7 +34,6 @@ const REQUIRED_CLAIMS = Object.freeze({
   ]),
   "pre-tag-p1": Object.freeze([
     "hostingStagingReceiptDigest",
-    "local0ReceiptDigest",
     "managedPredecessorVersion",
     "preCandidateRunId",
     "predecessorVersion",
@@ -45,7 +42,6 @@ const REQUIRED_CLAIMS = Object.freeze({
     "workflowRunId",
   ]),
   "candidate-finalization": Object.freeze(["preCandidateRunId", "preTagP1RunId", "workflowRunId"]),
-  "candidate-p1-replay": Object.freeze(["p1ReplayRunId", "sourceRunId", "workflowRunId"]),
   "candidate-publication": Object.freeze(["publicationRunId", "sourceRunId", "workflowRunId"]),
 });
 
@@ -53,8 +49,7 @@ const UPSTREAM_PHASES = Object.freeze({
   "pre-candidate": Object.freeze([]),
   "pre-tag-p1": Object.freeze(["pre-candidate"]),
   "candidate-finalization": Object.freeze(["pre-tag-p1"]),
-  "candidate-p1-replay": Object.freeze(["candidate-finalization"]),
-  "candidate-publication": Object.freeze(["candidate-finalization", "candidate-p1-replay"]),
+  "candidate-publication": Object.freeze(["candidate-finalization"]),
 });
 
 function fail(message) {
@@ -206,12 +201,7 @@ export function parseReleaseGateReceipt(receipt, expected = {}) {
     fail("pre-candidate receipt cannot bind candidate bytes");
   }
   if (
-    [
-      "pre-tag-p1",
-      "candidate-finalization",
-      "candidate-p1-replay",
-      "candidate-publication",
-    ].includes(receipt.phase) &&
+    ["pre-tag-p1", "candidate-finalization", "candidate-publication"].includes(receipt.phase) &&
     receipt.artifact === null
   ) {
     fail(`${receipt.phase} receipt must bind candidate bytes`);
@@ -290,7 +280,6 @@ function validateClaimContinuity(phase, claims, upstream) {
   }
   if (phase === "pre-tag-p1") {
     for (const name of [
-      "local0ReceiptDigest",
       "managedPredecessorVersion",
       "predecessorVersion",
       "releaseSequence",
@@ -314,21 +303,8 @@ function validateClaimContinuity(phase, claims, upstream) {
     }
     return;
   }
-  if (phase === "candidate-p1-replay") {
-    if (
-      claims.sourceRunId !== upstream.claims.workflowRunId ||
-      claims.p1ReplayRunId !== claims.workflowRunId
-    ) {
-      fail("P1 replay workflow identity is not bound to finalization");
-    }
-    return;
-  }
-  const expectedSourceRunId =
-    upstream.phase === "candidate-p1-replay"
-      ? upstream.claims.sourceRunId
-      : upstream.claims.workflowRunId;
   if (
-    claims.sourceRunId !== expectedSourceRunId ||
+    claims.sourceRunId !== upstream.claims.workflowRunId ||
     claims.publicationRunId !== claims.workflowRunId
   ) {
     fail("publication workflow identity is not bound to its upstream candidate");
@@ -353,7 +329,7 @@ export function buildReleaseGateReceipt({ phase, source, release, artifact, clai
       fail("source commit changed after the pre-tag gate");
     }
     if (
-      ["candidate-p1-replay", "candidate-publication"].includes(phase) &&
+      phase === "candidate-publication" &&
       canonicalJSON(upstream.artifact) !== canonicalJSON(artifact)
     ) {
       fail("candidate bytes changed after finalization");

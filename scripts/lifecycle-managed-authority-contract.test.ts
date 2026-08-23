@@ -45,17 +45,16 @@ describe("managed lifecycle authority contract", () => {
     );
     const expected = {
       "retained-platform-command-acceptance": [
-        "scripts/test-lifecycle-local-acceptance.sh",
         "scripts/test-lifecycle-local-t2-systemd.sh",
         "tools/fased-lifecycled/platform/t2_systemd_test.go",
       ],
       "managed-repair": [
-        "scripts/test-lifecycle-local-acceptance.sh",
-        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh",
+        "tools/fased-lifecycled/platform/repair_current_test.go",
+        "tools/fased-lifecycled/daemon/service_test.go",
       ],
       "managed-uninstall": [
-        "scripts/test-lifecycle-local-acceptance.sh",
-        "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh",
+        "tools/fased-lifecycled/platform/managed_uninstall_test.go",
+        "tools/fased-lifecycled/hostsecurity/participant_test.go",
       ],
       "authorized-rollback-and-pruning": [
         "scripts/test-lifecycle-local-t2-systemd.sh",

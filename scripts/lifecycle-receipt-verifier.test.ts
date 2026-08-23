@@ -101,44 +101,32 @@ describe("lifecycle receipt verifier", () => {
     ).toThrow("evidenceClass mismatch");
   });
 
-  it("rejects a branch PASS receipt at a public acquisition boundary", () => {
+  it("rejects construction of a substituted branch PASS receipt", () => {
     const evidence = REQUIRED_PREDICATES.hosting["fresh-install"].map((id) => ({
       id,
       status: id === "public-installer-acquisition" ? "SUPPORTING" : "PASS",
       evidenceDigest: sha,
       summary: id.endsWith("already-current") ? "Already current: 1.2.3" : "verified",
     }));
-    const receipt = buildAcceptanceReceipt({
-      contract,
-      profile: "hosting",
-      scenario: "fresh-install",
-      version: "1.2.3",
-      commit: "b".repeat(40),
-      candidateDescriptorDigest: sha,
-      evidenceClass: "PASS",
-      acquisitionEvidenceClass: "SUPPORTING",
-      acquisition: {
-        mode: "substituted-fixture",
-        releaseBaseUrl,
-        metadataBaseUrl: releaseBaseUrl,
-        transportSubstituted: true,
-        trustInventoryDigest: sha,
-      },
-      evidence,
-    });
-    expect(
-      verifyLifecycleReceipt({
-        contract,
-        receipt,
-        expected: { evidenceClass: "PASS", acquisitionEvidenceClass: "SUPPORTING" },
-      }),
-    ).toBe(receipt);
     expect(() =>
-      verifyLifecycleReceipt({
+      buildAcceptanceReceipt({
         contract,
-        receipt,
-        expected: { evidenceClass: "PASS", acquisitionEvidenceClass: "PASS" },
+        profile: "hosting",
+        scenario: "fresh-install",
+        version: "1.2.3",
+        commit: "b".repeat(40),
+        candidateDescriptorDigest: sha,
+        evidenceClass: "PASS",
+        acquisitionEvidenceClass: "SUPPORTING",
+        acquisition: {
+          mode: "substituted-fixture",
+          releaseBaseUrl,
+          metadataBaseUrl: releaseBaseUrl,
+          transportSubstituted: true,
+          trustInventoryDigest: sha,
+        },
+        evidence,
       }),
-    ).toThrow("acquisitionEvidenceClass mismatch");
+    ).toThrow("acquisition evidence is invalid for its evidence class");
   });
 });

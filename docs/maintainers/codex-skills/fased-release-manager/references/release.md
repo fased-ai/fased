@@ -12,58 +12,28 @@ classes; the owner's installed RC is never a separate product contract.
 
 ```text
 exact branch head
--> one unpublished, tag-free candidate-shaped Linux-x64 build
--> serial LOCAL0 fresh/update/takeover Local and Hosting fixtures
--> concurrent LOCAL0 confirmation against the identical cached artifact
--> rollback/retry/restart/preservation/identity/Already current
+-> focused changed-surface checks
 -> protected source PR with byte-identical squash tree
+-> affected real-environment proof on exact merged source
 -> PRE-CANDIDATE on exact merged main
 -> version-only protected PR
--> build production product bytes once on exact merged main
--> pre-tag fixture overlay and P1 for supported topology classes
+-> build one production Linux-x64 artifact on exact versioned main
+-> P1 verifies that artifact, provenance and bound real-environment receipts
 -> owner immutable proof-enabling tag at exact main
--> discard the fixture overlay and attest the preserved product bytes
+-> attest the preserved product bytes without rebuilding or executing them
 -> protected publication approval
 ```
 
-`LOCAL0` is the development exit gate, not release evidence. It uses the exact
-fixture entrypoints, mounts, acquisition map, candidate-shaped inventory,
-predecessor capsules, and receipt verifier that pre-tag P1 will use. Its first
-diagnostic execution is serial so the first failed fixture and receipt survive.
-It binds commit, tree, lockfile, artifact digest, compatibility inventory,
-capsule digests, entrypoints, acquisition map, and acceptance-contract digest.
-It proves the affected product predicates locally with substituted acquisition
-classified as `SUPPORTING`; it cannot prove public acquisition, owner Local, or
-real Hosting.
-
-Run it through the single repository entrypoint:
-
-```bash
-bash scripts/run-lifecycle-local0.sh --mode all
-```
-
-The driver builds or reuses one commit/tree/lockfile/descriptor-bound Linux-x64
-artifact, runs diagnostic lanes serially, then runs the complete lanes
-concurrently against those same bytes. For a correction after a failure, use
-`--mode serial --lane <failed-lane>`; that focused receipt is diagnostic and
-does not replace the later complete receipt.
-
 Do not reserve or write the next RC version, dispatch PRE-CANDIDATE, or create a
-version-only PR until `LOCAL0` passes completely. Any change to a bound input or
-to installer/bootstrap/lifecycle/signer bytes, archive handling, artifact
-inventory, descriptor, generation ownership, capsule creation, fixture
-transport, acceptance scripts/receipts, or release workflows invalidates the
-whole receipt. Rebuild once when product bytes change. A fixture-only change may
-reuse an explicitly supplied artifact from an ancestor or content-equivalent
-squash source only across the driver's closed allowlist and identical lockfile;
-the replacement receipt binds the old product source and exact new fixture
-source. On failure, preserve the first
-fixture and bounded diagnostics, correct locally, and rerun there; never
-allocate another RC to discover whether the correction works.
+version-only PR until the required focused checks and affected real-environment
+predicates pass. Any change to a bound product input invalidates the artifact;
+rebuild once after source is final. A harness-only change may reuse unchanged
+bytes only when the complete product tree and lockfile remain exact. Never
+allocate an RC to discover whether a correction works.
 
 Before PRE-CANDIDATE, run `scripts/pre-candidate-readiness.mjs` locally against
-the exact complete LOCAL0 receipt and pass `--hosting-staging-receipt` for the
-exact unpublished artifact. Produce that receipt only with
+the exact real Hosting staging receipt when Hosting is affected. Produce that
+receipt only with
 `scripts/hosting-staging-vps-receipt.mjs` after the literal 2 GB/no-swap staging
 VPS install and identical-command `Already current` proof. It rejects a dirty or mismatched source,
 missing fresh-login `fased` command evidence, missing `Already current`, an
@@ -71,42 +41,28 @@ unresolved exact-source failure marker, or an unavailable exact predecessor
 release. Its receipt digest is a required PRE-CANDIDATE input and evidence
 field.
 
-PRE-CANDIDATE verifies frozen dependencies, production audit, release/package
-identity, compatibility inventory, and public acquisition inputs. It must not
-discover a new product command or product predicate. It accepts an exact merged
-main only when its tree, lockfile, and bound release-contract inputs match the
-green `LOCAL0` receipt.
+PRE-CANDIDATE is metadata-only. It verifies release/package identity,
+compatibility inventory and the exact real-environment receipt. It does not
+install dependencies, build bytes or execute an installation.
 
-The pre-tag P1 uses the exact Local and Hosting fixture entrypoints, container
-mount layout, acquisition URL map, candidate-shaped artifact inventory, and
-receipt verifier used after tagging. It runs on the same protected Linux runner
-class. A tag is forbidden when any supported topology, executable fixture,
-artifact name, transport route, or acceptance predicate has not executed
-there. A recognized healthy pre-bootstrap managed control plane uses the
-verified installer once for in-place takeover, followed by an installed-updater
-`Already current` proof. Ambiguous, damaged, or incompatible state uses the
-explicit repair route. Neither path becomes a target-tag-dependent ordinary
-updater lane.
+P1 installs frozen dependencies once, builds the Linux-x64 product once, and
+verifies artifact, provenance, compatibility and the bound real-environment
+receipt. It does not run a protected-Local container or repeat packaged Hosting
+execution. Build optional packs separately through their signed component
+transaction; the base candidate contains only the core inventory.
 
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names/sizes/digests, provenance, SBOM/VEX, signer/controller identity,
-and acceptance-contract identity. Build each supported target once before the
-tag. Pre-tag P1 uses a separate non-publishable trust overlay while preserving
-the production product bytes. After the proof-enabling tag, finalization removes
-the overlay, verifies the original product digests, adds only tag-scoped
-attestations and signed release metadata, and publishes. It never rebuilds or
-repeats packaged P1.
-
-P1 covers fresh protected Local, every materially distinct supported public
-topology, rollback/retry, restart, declared-state preservation,
-product/service health, and `Already current`. Independent topology lanes run
-concurrently and consume the same candidate artifact. Literal owner Local
-acceptance remains a post-publication machine check, not a version-selected
-compatibility branch.
+and acceptance-contract identity. After the proof-enabling tag, publication
+downloads that exact artifact, verifies its descriptor and checksum, adds only
+tag-scoped attestations and signed release metadata, and publishes. It neither
+rebuilds nor replays P1. Literal owner Local remains a post-publication
+owner-machine check using the documented curl, `fased status`, and
+`fased update` commands.
 
 Product failure returns to one normal fix. Freeze candidate allocation, close
-the failure through a new complete `LOCAL0` receipt, and require exact
-merged-main PRE-CANDIDATE before assigning a new immutable identity.
+the failure in its exact affected environment, and require exact merged-main
+PRE-CANDIDATE before assigning a new immutable identity.
 Infrastructure failure may retry the failed job once against unchanged bytes.
 
 Once source changes after an immutable tag, mark that candidate obsolete. Its

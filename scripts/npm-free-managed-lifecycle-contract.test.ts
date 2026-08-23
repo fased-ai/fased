@@ -195,12 +195,12 @@ describe("npm-free managed lifecycle", () => {
       await source("extensions/nextcloud-talk/package.json"),
     ) as { fased?: { install?: { npmSpec?: string } } };
     const updateCommand = await source("src/cli/update-cli/update-command.ts");
-    const local0 = await source("scripts/run-lifecycle-local0.sh");
+    const artifactBuilder = await source("scripts/build-linux-x64-release-artifact.sh");
 
     expect(pluginInstaller).toContain("installPluginFromNpmSpec");
     expect(thirdPartyManifest.fased?.install?.npmSpec).toBe("@fased/nextcloud-talk");
     expect(updateCommand).not.toContain("installPluginFromNpmSpec");
-    expect(local0).not.toContain("installPluginFromNpmSpec");
+    expect(artifactBuilder).not.toContain("installPluginFromNpmSpec");
   });
 
   it("uses pnpm, not npm, to assemble and validate release artifacts", async () => {
@@ -209,7 +209,7 @@ describe("npm-free managed lifecycle", () => {
     const packedSmoke = await source("scripts/smoke-packed-core.ts");
     const workflow = await source(".github/workflows/hosted-runtime-release.yml");
     const channelPublisher = await source("scripts/publish-lifecycle-channel.sh");
-    const local0 = await source("scripts/run-lifecycle-local0.sh");
+    const linuxArtifactBuilder = await source("scripts/build-linux-x64-release-artifact.sh");
 
     expect(artifactBuilder).not.toMatch(/run\(\s*["']npm["']/u);
     expect(releaseCheck).not.toMatch(/execFileSync\(\s*["']npm["']/u);
@@ -217,7 +217,7 @@ describe("npm-free managed lifecycle", () => {
     expect(workflow).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
     expect(channelPublisher).not.toMatch(/\bnpm\b/u);
     expect(channelPublisher).toContain("fased-channel-$channel-v1");
-    expect(local0).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
+    expect(linuxArtifactBuilder).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
   });
 
   it("keeps offline production deploy independent of registry metadata", async () => {
@@ -283,10 +283,10 @@ describe("npm-free managed lifecycle", () => {
     );
 
     expect(skill).toMatch(
-      /Candidate and release work begins only after the literal end-user command\s+passes\./u,
+      /Candidate and release work begins only after the literal affected-environment\s+command passes\./u,
     );
-    expect(skill).toMatch(
-      /never publish a sequence of first-error patches to discover\s+the next\s+phase on the owner's VPS/u,
+    expect(skill).toContain(
+      "Exercise adjacent durable transitions once; never publish first-error patches.",
     );
     expect(skill).toMatch(/a root container is H0 `SUPPORTING` evidence\s+only/u);
     expect(skill).toMatch(/real-init\s+staging VM\/VPS run using the exact unpublished artifact/u);
@@ -297,10 +297,10 @@ describe("npm-free managed lifecycle", () => {
     expect(lifecycle).toMatch(
       /Do not synthesize an interrupted phase by editing\s+a successfully\s+committed receipt/u,
     );
-    expect(skill).toContain("publication must not rebuild");
-    expect(release).toContain("one unpublished, tag-free candidate-shaped Linux-x64 build");
-    expect(release).toContain("serial LOCAL0 fresh/update/takeover Local and Hosting fixtures");
-    expect(release).toContain("Any change to a bound input");
+    expect(skill).toMatch(/publication must verify\s+receipts and must not rebuild/u);
+    expect(release).toContain("build one production Linux-x64 artifact");
+    expect(release).toContain("PRE-CANDIDATE is metadata-only");
+    expect(release).toContain("Any change to a bound product input");
     expect(redesign).toContain("Only after both pass may the next unused RC be allocated");
   });
 
@@ -315,9 +315,7 @@ describe("npm-free managed lifecycle", () => {
     expect(skill).toContain(
       "Proceed only when that predicate and every earlier required predicate are",
     );
-    expect(skill).toContain("Never use a new RC, tag, or publication to discover");
-    expect(skill).toContain(
-      "never present release progress as completion\nof later architecture phases",
-    );
+    expect(skill).toContain("Never use a release to discover whether a correction works.");
+    expect(skill).toContain("superseded plans are evidence only.");
   });
 });

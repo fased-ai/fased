@@ -136,6 +136,10 @@ describe("lifecycle acceptance contract", () => {
     const current = contract();
     const rc80 = {
       ...current,
+      evidencePolicy: {
+        ...current.evidencePolicy,
+        branch: { ...current.evidencePolicy.branch, evidenceClass: "PASS" },
+      },
       profiles: Object.fromEntries(
         Object.entries(current.profiles).map(([profile, scenarios]) => [
           profile,
@@ -159,9 +163,7 @@ describe("lifecycle acceptance contract", () => {
     expect(digestPublishedAcceptanceContract(rc80)).toBe(
       "sha256:8cf857831936399150ce4fef5339dc4371ba64bffc54509a768c5f45cc022a14",
     );
-    expect(() => validateAcceptanceContract(rc80)).toThrow(
-      "protected-local/fresh-install predicates are incomplete or reordered",
-    );
+    expect(() => validateAcceptanceContract(rc80)).toThrow("evidence policy is invalid");
     expect(() =>
       validatePublishedAcceptanceContract({
         ...rc80,
@@ -173,7 +175,7 @@ describe("lifecycle acceptance contract", () => {
           },
         },
       }),
-    ).toThrow("protected-local/fresh-install predicates are incomplete or reordered");
+    ).toThrow("evidence policy is invalid");
   });
 
   it("defines identical evidence classes for Local and Hosting", () => {
@@ -286,32 +288,25 @@ describe("lifecycle acceptance contract", () => {
     ).toBe("SUPPORTING");
   });
 
-  it("separates branch product PASS from substituted acquisition SUPPORTING", () => {
+  it("rejects substituted acquisition from claiming branch product PASS", () => {
     const value = contract();
     const branchEvidence = evidence("hosting", "fresh-install").map((record) =>
       record.id === "public-installer-acquisition" ? { ...record, status: "SUPPORTING" } : record,
     );
-    const receipt = buildAcceptanceReceipt({
-      contract: value,
-      profile: "hosting",
-      scenario: "fresh-install",
-      version: "0.1.76-rc.70",
-      commit: "a".repeat(40),
-      candidateDescriptorDigest: digest,
-      evidenceClass: "PASS",
-      acquisitionEvidenceClass: "SUPPORTING",
-      acquisition: acquisition("0.1.76-rc.70", "SUPPORTING"),
-      evidence: branchEvidence,
-    });
-    expect(receipt.evidenceClass).toBe("PASS");
-    expect(receipt.acquisitionEvidenceClass).toBe("SUPPORTING");
     expect(() =>
-      verifyAcceptanceReceipt({
+      buildAcceptanceReceipt({
         contract: value,
-        receipt,
-        expected: { evidenceClass: "PASS", acquisitionEvidenceClass: "PASS" },
+        profile: "hosting",
+        scenario: "fresh-install",
+        version: "0.1.76-rc.70",
+        commit: "a".repeat(40),
+        candidateDescriptorDigest: digest,
+        evidenceClass: "PASS",
+        acquisitionEvidenceClass: "SUPPORTING",
+        acquisition: acquisition("0.1.76-rc.70", "SUPPORTING"),
+        evidence: branchEvidence,
       }),
-    ).toThrow("acquisitionEvidenceClass mismatch");
+    ).toThrow("acquisition evidence is invalid for its evidence class");
   });
 
   it("binds reused product bytes separately from exact fixture source", () => {
@@ -369,66 +364,38 @@ describe("lifecycle acceptance contract", () => {
     ).toThrow("fixtureTree mismatch");
   });
 
-  it("wires the v2 contract and capsule verifier into candidate proof", () => {
-    const wrapper = readFileSync(
-      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
+  it("wires the v2 contract into the standalone candidate builder", () => {
+    const builder = readFileSync(
+      new URL("./build-linux-x64-release-artifact.sh", import.meta.url),
       "utf8",
     );
-    const driver = readFileSync(new URL("./run-lifecycle-local0.sh", import.meta.url), "utf8");
     const workflow = readFileSync(
       new URL("../.github/workflows/pre-tag-p1.yml", import.meta.url),
       "utf8",
     );
-    expect(wrapper).toContain("fased-lifecycle-acceptance-v2.json");
-    expect(wrapper).toContain("capsule_descriptor_attestation");
-    expect(wrapper).toContain("capsule_archive_attestation");
-    expect(wrapper).toContain("gh attestation verify");
-    expect(workflow).toContain("test-lifecycle-local-acceptance.sh");
-    expect(driver).toContain('local workflow="$ROOT_DIR/.github/workflows/pre-tag-p1.yml"');
-    expect(driver).toContain("prepare-branch-predecessor-capsule.sh");
-    expect(driver).toContain('current_phase="pre-tag-predecessor-capsule-contract"');
+    expect(builder).toContain("fased-lifecycle-acceptance-v2.json");
+    expect(builder).toContain("release-artifact-set.mjs");
+    expect(workflow).not.toContain("  local-fresh:");
+    expect(workflow).not.toContain("  local-update:");
+    expect(workflow).not.toContain("test-lifecycle-hosting-acceptance.sh");
   });
 
-  it("binds fixture release sequence into cache identity, verification, and trust overlay", () => {
-    const driver = readFileSync(new URL("./run-lifecycle-local0.sh", import.meta.url), "utf8");
-    expect(driver).toContain('FIXTURE_RELEASE_SEQUENCE="${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}"');
-    expect(driver).toContain(
-      'identity_key="${commit}-${tree}-${lockfile_digest#sha256:}-sequence${FIXTURE_RELEASE_SEQUENCE}"',
-    );
-    expect(driver).toContain('FASED_LIFECYCLE_RELEASE_SEQUENCE="$FIXTURE_RELEASE_SEQUENCE"');
-    expect(driver).toContain(".signed.releaseSequence == $fixtureReleaseSequence");
-    expect(driver).toContain("fixtureReleaseSequence:($fixtureReleaseSequence | tonumber)");
-  });
-
-  it("keeps fixture-image preparation outside normal aggregate LOCAL0", () => {
-    const localWrapper = readFileSync(
-      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
-      "utf8",
-    );
+  it("keeps the optional fixture-image preparer Hosting-only", () => {
     const hostingWrapper = readFileSync(
       new URL("./test-lifecycle-hosting-acceptance.sh", import.meta.url),
       "utf8",
     );
-    const driver = readFileSync(new URL("./run-lifecycle-local0.sh", import.meta.url), "utf8");
     const prepare = readFileSync(
       new URL("./prepare-lifecycle-systemd-fixture-images.sh", import.meta.url),
       "utf8",
     );
-    for (const wrapper of [localWrapper, hostingWrapper]) {
-      expect(wrapper).not.toContain("run_container build");
-      expect(wrapper).not.toContain('$RUNTIME" build');
-      expect(wrapper).toContain("fased_fixture_image_ref");
-      expect(wrapper).toContain("Fixture image is unavailable; prepare it explicitly");
-    }
-    expect(driver.match(/FASED_SYSTEMD_FIXTURE_PREPARE_IMAGES=0/gu)?.length).toBe(2);
-    expect(driver).toContain("$CACHE_ROOT/images/local");
-    expect(driver).toContain("$CACHE_ROOT/images/hosting");
-    expect(driver).not.toContain("$CACHE_ROOT/images/$tree/local");
-    expect(driver).not.toContain("$CACHE_ROOT/images/$tree/hosting");
+    expect(hostingWrapper).not.toContain("run_container build");
+    expect(hostingWrapper).toContain("fased_fixture_image_ref");
+    expect(hostingWrapper).toContain("Fixture image is unavailable; prepare it explicitly");
     expect(prepare).toContain("run_container build");
     expect(prepare).toContain("io.fased.fixture.input-digest");
-    expect(prepare).toContain("protected-local-systemd");
     expect(prepare).toContain("hosting-systemd");
+    expect(prepare).not.toContain("protected-local-systemd");
   });
 
   it("waits up to 30 seconds for the substituted Hosting release server", () => {
@@ -682,76 +649,31 @@ describe("lifecycle acceptance contract", () => {
     expect(adapter).toContain("Unsupported fixture curl --write-out template");
   });
 
-  it("requires managed update to execute the predecessor-installed updater", () => {
-    const fixture = readFileSync(
-      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    const managedUpdate = fixture.slice(fixture.indexOf('if [[ "$phase" == "managed-update" ]]'));
-    expect(managedUpdate).toContain("run_installed_updater()");
-    expect(managedUpdate).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
-    expect(managedUpdate).toContain("/bin/bash --login -c");
-    expect(managedUpdate).toContain('fased status && exec fased update "$@"');
-    expect(managedUpdate.match(/run_installed_updater/g)?.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("requires Local and Hosting fixtures to resolve the public command outside the owner state", () => {
-    const local = readFileSync(
-      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
+  it("requires the optional Hosting diagnostic to resolve the public command", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
       "utf8",
     );
-    for (const fixture of [local, hosting]) {
-      expect(fixture).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
-      expect(fixture).toContain("/bin/bash --login -c");
-      expect(fixture).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
-      expect(fixture).toContain('fased status && exec fased update "$@"');
-      expect(fixture).toContain("test -f /usr/local/bin/fased");
-      expect(fixture).toContain("test ! -L /usr/local/bin/fased");
-      expect(fixture).toContain(
-        `test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"`,
-      );
-    }
-    expect(local).toContain("run_installed_updater() {\n    assert_public_command_projection");
-    expect(local.match(/assert_public_command_projection/gu)?.length).toBe(3);
+    expect(hosting).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
+    expect(hosting).toContain("/bin/bash --login -c");
+    expect(hosting).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
+    expect(hosting).toContain('fased status && exec fased update "$@"');
+    expect(hosting).toContain("test -f /usr/local/bin/fased");
+    expect(hosting).toContain("test ! -L /usr/local/bin/fased");
+    expect(hosting).toContain(
+      `test "$(stat -c '%U:%G:%a' /usr/local/bin/fased)" = "root:root:755"`,
+    );
     expect(hosting).toContain("run_public_updater() {\n  assert_public_command_projection");
     expect(hosting.match(/assert_public_command_projection/gu)?.length).toBe(2);
-    expect(local).not.toContain('"$state/bin/fased" update');
     expect(hosting).not.toContain("/home/app/.fased/bin/fased update");
   });
 
-  it("binds the Local SAT fixture identity before the first Gateway start", () => {
-    const local = readFileSync(
-      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    const environmentInstall = local.indexOf("install_fixture_sat_runtime_environment\n");
-    const publicInstall = local.indexOf('runuser -u testop -- env "${fresh_env[@]}"');
-    const helperStart = local.indexOf("install_fixture_sat_runtime_environment() {");
-    const helper = local.slice(helperStart, local.indexOf("\n}\n", helperStart));
-
-    expect(environmentInstall).toBeGreaterThan(helperStart);
-    expect(publicInstall).toBeGreaterThan(environmentInstall);
-    expect(helper).toContain("[Manager]");
-    expect(helper).toContain("DefaultEnvironment=FASED_SAT_PROGRAM_ID="); // pragma: allowlist secret
-    expect(helper).toContain("DefaultEnvironment=FASED_SAT_MINT_ADDRESS="); // pragma: allowlist secret
-    expect(helper).not.toContain("systemctl restart");
-    expect(local).not.toContain("95-fixture-sat-runtime.conf");
-  });
-
-  it("records exact bounded lifecycle performance evidence in Local and Hosting receipts", () => {
-    const local = readFileSync(
-      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
+  it("records bounded lifecycle performance evidence in the optional Hosting diagnostic", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
       "utf8",
     );
-    for (const fixture of [local, hosting]) {
+    for (const fixture of [hosting]) {
       expect(fixture).toContain("compact_performance_summary() {");
       expect(fixture).toContain(
         "transferred=[0-9]+B metadata-bytes=[0-9]+B artifact-bytes=[0-9]+B",
@@ -774,177 +696,11 @@ describe("lifecycle acceptance contract", () => {
       expect(fixture).toContain("record_noop_performance installer-noop-performance /tmp/");
       expect(fixture).toContain("record_noop_performance updater-noop-performance /tmp/");
     }
-    expect(local.match(/acceptance_mark lifecycle-performance/gu)?.length).toBe(3);
     expect(hosting.match(/acceptance_mark lifecycle-performance/gu)?.length).toBe(2);
-    expect(local).toContain("chmod 0775 /opt/fased/lifecycle");
-    expect(local).toContain("installer reused a bootstrap through writable ancestry");
-    expect(local).toContain("existing bootstrap projection is unsafe");
-    expect(local).toContain("chmod 0755 /opt/fased/lifecycle");
-    for (const profile of ["protected-local", "hosting"]) {
-      for (const scenario of ["fresh-install", "managed-update"]) {
-        expect(contract().profiles[profile][scenario]).toContain("installer-noop-performance");
-        expect(contract().profiles[profile][scenario]).toContain("updater-noop-performance");
-      }
+    for (const scenario of ["fresh-install", "managed-update"]) {
+      expect(contract().profiles.hosting[scenario]).toContain("installer-noop-performance");
+      expect(contract().profiles.hosting[scenario]).toContain("updater-noop-performance");
     }
-  });
-
-  it("records per-process Local runtime RSS rather than whole-container memory", () => {
-    const local = readFileSync(
-      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    const runner = readFileSync(
-      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    expect(local).toContain("record_runtime_process_evidence() {");
-    expect(local).toContain('systemctl show --property MainPID --value "fased-local-controller-');
-    expect(local).toContain('systemctl show --property MainPID --value "fased-signerd-');
-    expect(local).toContain('systemctl show --property MainPID --value "fased-gateway-');
-    expect(local).toContain('record_runtime_process_evidence "$instance"');
-    expect(runner).toContain('runtime_receipt="$receipt.runtime-processes.json"');
-    expect(runner).toContain("all(.pid > 1 and .rssBytes > 0)");
-  });
-
-  it("proves a distinct managed-plugin install, digest-changing update, and no-op in protected Local", () => {
-    const local = readFileSync(
-      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    expect(local).toContain("run_managed_plugin_transaction_acceptance() {");
-    expect(local).toContain("/usr/local/bin/fased plugins install");
-    expect(local).toContain('--catalog "$v1_catalog" --catalog-digest "$v1_catalog_digest"');
-    expect(local).toContain("local plugin_id=fixture-transaction-plugin");
-    expect(local).toContain('jq -cjn --arg id "$plugin_id"');
-    expect(local).toContain('local v1_root="$input_root/v1" v2_root="$input_root/v2"');
-    expect(local).toContain("managed_plugin_tree_digest()");
-    expect(local).toContain('plugins install --catalog "$v1_catalog"');
-    expect(local).toContain('plugins update --catalog "$v2_catalog"');
-    expect(local).toContain('test "$v1_digest" != "$v2_digest"');
-    expect(local).toContain('test "$v1_candidate_lock" != "$v2_candidate_lock"');
-    expect(local).toContain(
-      "local v2_ready_marker=/var/lib/fased-protected-local-fixture/managed-plugin-v2-ready",
-    );
-    expect(local).toContain('const fixtureManagedPluginVersion = "v2";');
-    expect(local).not.toContain('if (!existsSync("%s"))');
-    expect(local).toContain(
-      'local v2_fault_dropin_dir="/etc/systemd/system/fased-gateway-$instance.service.d"',
-    );
-    expect(local).toContain("ExecStartPre=$v2_fault_script");
-    expect(local).toContain(".digest == \\$digest)");
-    expect(local).toContain("systemctl daemon-reload");
-    expect(local).toContain('rm -f "$v2_fault_dropin"');
-    expect(local).toContain("fixture v2 activation failure was accepted");
-    expect(local).toContain('systemctl is-active --quiet "fased-gateway-$instance.service"');
-    expect(local).toContain('install -m 0444 /dev/null "$v2_ready_marker"');
-    expect(local).toContain("rollbackRetry:true");
-    expect(local).toContain("failedOutputDigest:$failedOutputDigest");
-    const failedUpdate =
-      'plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2-failed.out';
-    const successfulUpdate =
-      'plugins update --catalog "$v2_catalog" --catalog-digest "$v2_catalog_digest" --archive "$plugin_id=$v2_archive" >/tmp/fased-managed-plugin-update-v2.out';
-    expect(local).toContain(failedUpdate);
-    expect(local).toContain(successfulUpdate);
-    expect(local.indexOf('install -m 0444 /dev/null "$v2_ready_marker"')).toBeLessThan(
-      local.indexOf('update_started_ms="$(date +%s%3N)"'),
-    );
-    expect(local).toContain("Managed plugins: status=INSTALLED");
-    expect(local).toContain("Managed plugins: status=ALREADY_CURRENT");
-    expect(local).toContain('role:"fased-managed-plugin-transaction-acceptance"');
-    expect(local).toContain('test "$install_duration_ms" -le 60000');
-    expect(local).toContain('test "$update_duration_ms" -le 60000');
-    expect(local).toContain('test "$noop_duration_ms" -le 5000');
-    expect(local).toContain("run_managed_plugin_transaction_acceptance");
-    expect(local).toContain(
-      'run_managed_plugin_transaction_acceptance "$stable_bridge_plugin_object"',
-    );
-    expect(local).not.toContain("fased plugins install npm:");
-    const wrapper = readFileSync(
-      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    expect(wrapper).toContain('plugin_receipt="$receipt.plugins"');
-    expect(wrapper).toContain('FIXTURE_SOURCE_TREE="$(git -C "$ROOT_DIR" rev-parse');
-    expect(wrapper).toContain('-e "FASED_FIXTURE_PRODUCT_COMMIT=$COMMIT"');
-    expect(wrapper).toContain('-e "FASED_FIXTURE_SOURCE_COMMIT=$FIXTURE_SOURCE_COMMIT"');
-    expect(wrapper).toContain('--artifact-set-digest "$ARTIFACT_SET_DIGEST"');
-    expect(wrapper).toContain(".fixtureCommit == $fixture_commit");
-    expect(wrapper).toContain(".fixtureTree == $fixture_tree");
-    expect(wrapper).toContain(".performance.installBudgetMs == 60000");
-    expect(wrapper).toContain(".performance.noopBudgetMs == 5000");
-    expect(wrapper).toContain("managed plugin transaction receipt verified");
-    expect(wrapper).toContain(
-      'if [[ "$MANAGED_PREDECESSOR_CLASS" == "public-stable" ]]; then\n' +
-        '      plugin_receipt="$receipt.plugins"',
-    );
-    expect(wrapper).toContain(
-      "printf 'managed plugin transaction receipt verified: %s\\n' \"$plugin_receipt\"\n" +
-        "    fi\n" +
-        '    if ! run_container exec "$name" /bin/bash',
-    );
-  });
-
-  it("restores the protected Local system command ancestry after Node extraction", () => {
-    for (const containerfile of [
-      "./docker/protected-local-systemd/Containerfile.ubuntu",
-      "./docker/protected-local-systemd/Containerfile.rocky",
-    ]) {
-      const source = readFileSync(new URL(containerfile, import.meta.url), "utf8");
-      const extraction = source.indexOf("tar -xJ --strip-components=1 -C /usr/local");
-      const ownership = source.indexOf("chown root:root /usr/local/bin /usr/local/bin/node");
-      const mode = source.indexOf("chmod 0755 /usr/local/bin");
-      expect(extraction).toBeGreaterThanOrEqual(0);
-      expect(ownership).toBeGreaterThan(extraction);
-      expect(mode).toBeGreaterThan(ownership);
-    }
-  });
-
-  it("proves repair and uninstall after reboot without escaping fixture trust", () => {
-    const fixture = readFileSync(
-      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    const wrapper = readFileSync(
-      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    const operations = fixture.slice(
-      fixture.indexOf('if [[ "$phase" == "verify-operations" ]]'),
-      fixture.indexOf(
-        '[[ "$phase" == "fresh-install"',
-        fixture.indexOf('if [[ "$phase" == "verify-operations" ]]'),
-      ),
-    );
-    const verifyReboot = fixture.slice(
-      fixture.indexOf('if [[ "$phase" == "verify-reboot" ]]'),
-      fixture.indexOf('if [[ "$phase" == "verify-operations" ]]'),
-    );
-    expect(operations).toContain('grep -Fqx "127.0.0.1 github.com" /etc/hosts');
-    expect(operations).toContain('exec fased repair "$@"');
-    expect(operations).toContain('exec fased uninstall "$@"');
-    expect(operations).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
-    expect(operations).toContain("test ! -e /usr/local/bin/fased");
-    expect(operations).toContain('predecessor_class="$(jq -er .predecessorClass "$snapshot")"');
-    expect(verifyReboot).not.toContain(".predecessorClass");
-    expect(fixture.match(/predecessorClass: \$predecessorClass/g)?.length).toBe(2);
-    expect(operations).toContain('case "$predecessor_class" in');
-    expect(operations).toContain("public-stable)");
-    expect(operations).toContain('"$state/extensions/stable-bridge/fased.plugin.json"');
-    expect(operations).toContain('"$state/plugin-data/stable-bridge/state.json"');
-    expect(operations).toContain('"$state/sat-mining/stable-bridge-history.json"');
-    expect(operations).toContain('"$state/workspace/stable-bridge.txt"');
-    expect(operations).toContain("canonical-managed)");
-    expect(operations).toContain('"$state/sat-mining/wallets/agent/mining.sqlite"');
-    expect(operations).toContain('"$state/plugin-data/fixture/state.json"');
-    expect(operations).toContain("predecessorClass:$predecessorClass");
-    expect(operations).toContain('sha256sum --check "$owner_preservation"');
-    expect(operations).toContain('sha256sum --check "$signer_preservation"');
-    expect(wrapper).toContain(
-      "/usr/local/bin/fased-protected-local-systemd-fixture verify-operations",
-    );
-    expect(wrapper).toContain('--arg predecessor_class "$MANAGED_PREDECESSOR_CLASS"');
-    expect(wrapper).toContain(".predecessorClass == $predecessor_class");
-    expect(wrapper).toContain('operations_receipt="$receipt.operations"');
   });
 
   it("fails closed when root T2 source identity is dirty or drifts", () => {

@@ -27,12 +27,12 @@ on:
         description: Current lifecycle security epoch
         required: true
         type: string
-      local0_receipt_sha256:
-        description: Digest emitted by the exact local pre-candidate readiness check
-        required: true
-        type: string
       hosting_staging_receipt_sha256:
         description: Digest of the exact unpublished Hosting staging-VPS PASS receipt
+        required: true
+        type: string
+      hosting_staging_receipt_json:
+        description: Exact bounded Hosting staging-VPS PASS receipt JSON
         required: true
         type: string
 
@@ -80,8 +80,8 @@ jobs:
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
           SECURITY_EPOCH: ${{ inputs.security_epoch }}
-          LOCAL0_RECEIPT_SHA256: ${{ inputs.local0_receipt_sha256 }}
           HOSTING_STAGING_RECEIPT_SHA256: ${{ inputs.hosting_staging_receipt_sha256 }}
+          HOSTING_STAGING_RECEIPT_JSON: ${{ inputs.hosting_staging_receipt_json }}
         shell: bash
         run: |
           set -euo pipefail
@@ -92,8 +92,21 @@ jobs:
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]]
           [[ "$SECURITY_EPOCH" =~ ^[1-9][0-9]*$ ]]
-          [[ "$LOCAL0_RECEIPT_SHA256" =~ ^sha256:[a-f0-9]{64}$ ]]
           [[ "$HOSTING_STAGING_RECEIPT_SHA256" =~ ^sha256:[a-f0-9]{64}$ ]]
+          staging_receipt="$RUNNER_TEMP/hosting-staging-receipt.json"
+          printf '%s\n' "$HOSTING_STAGING_RECEIPT_JSON" >"$staging_receipt"
+          test "sha256:$(sha256sum "$staging_receipt" | awk '{print $1}')" = \
+            "$HOSTING_STAGING_RECEIPT_SHA256"
+          node --input-type=module - "$staging_receipt" "$SOURCE_COMMIT" \
+            "$(git rev-parse "$SOURCE_COMMIT^{tree}")" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { validateHostingStagingReadiness } from "./scripts/pre-candidate-readiness.mjs";
+          const [, , receiptPath, commit, tree] = process.argv;
+          validateHostingStagingReadiness(JSON.parse(readFileSync(receiptPath, "utf8")), {
+            commit,
+            tree,
+          });
+          NODE
           test "$NEXT_RELEASE_VERSION" != "$PREDECESSOR_VERSION"
           test "$NEXT_RELEASE_VERSION" != "$MANAGED_PREDECESSOR_VERSION"
           test "$(node -p "require('./package.json').version")" != "$NEXT_RELEASE_VERSION"
@@ -102,9 +115,6 @@ jobs:
 
       - name: Verify immutable lifecycle root pin
         run: node scripts/verify-lifecycle-root-pin.mjs
-
-      - name: Install exact frozen dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Enforce production vulnerability threshold
         run: pnpm audit --prod --audit-level high
@@ -161,12 +171,15 @@ jobs:
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
           RELEASE_SEQUENCE: ${{ inputs.release_sequence }}
           SECURITY_EPOCH: ${{ inputs.security_epoch }}
-          LOCAL0_RECEIPT_SHA256: ${{ inputs.local0_receipt_sha256 }}
           HOSTING_STAGING_RECEIPT_SHA256: ${{ inputs.hosting_staging_receipt_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .artifacts/pre-candidate
+          install -m 0600 "$RUNNER_TEMP/hosting-staging-receipt.json" \
+            .artifacts/pre-candidate/hosting-staging-receipt.json
+          test "sha256:$(sha256sum .artifacts/pre-candidate/hosting-staging-receipt.json | awk '{print $1}')" = \
+            "$HOSTING_STAGING_RECEIPT_SHA256"
           node scripts/release-gate.mjs record \
             --phase pre-candidate \
             --source-commit "$SOURCE_COMMIT" \
@@ -180,7 +193,6 @@ jobs:
             --claim "mainRunId=$MAIN_RUN_ID" \
             --claim "mainChecksJobId=$MAIN_CHECKS_JOB_ID" \
             --claim "workflowRunId=$GITHUB_RUN_ID" \
-            --claim "local0ReceiptDigest=$LOCAL0_RECEIPT_SHA256" \
             --claim "hostingStagingReceiptDigest=$HOSTING_STAGING_RECEIPT_SHA256" \
             --output .artifacts/pre-candidate/evidence.json
 
@@ -188,6 +200,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fased-pre-candidate-evidence
-          path: .artifacts/pre-candidate/evidence.json
+          path: .artifacts/pre-candidate/
           if-no-files-found: error
           retention-days: 30

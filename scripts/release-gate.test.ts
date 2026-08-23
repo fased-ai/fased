@@ -16,7 +16,6 @@ const treeB = "d".repeat(40);
 const lockfileDigest = `sha256:${"1".repeat(64)}`;
 const descriptorDigest = `sha256:${"2".repeat(64)}`;
 const artifactSetDigest = `sha256:${"3".repeat(64)}`;
-const local0ReceiptDigest = `sha256:${"4".repeat(64)}`;
 const hostingStagingReceiptDigest = `sha256:${"5".repeat(64)}`;
 
 function source(commit = commitA, tree = treeA) {
@@ -31,7 +30,6 @@ function claims(phase: string) {
   if (phase === "pre-candidate") {
     return {
       hostingStagingReceiptDigest,
-      local0ReceiptDigest,
       mainChecksJobId: "1002",
       mainRunId: "1001",
       managedPredecessorVersion: "0.1.60",
@@ -44,7 +42,6 @@ function claims(phase: string) {
   if (phase === "pre-tag-p1") {
     return {
       hostingStagingReceiptDigest,
-      local0ReceiptDigest,
       managedPredecessorVersion: "0.1.60",
       preCandidateRunId: "1003",
       predecessorVersion: "0.1.75",
@@ -56,10 +53,7 @@ function claims(phase: string) {
   if (phase === "candidate-finalization") {
     return { preCandidateRunId: "1003", preTagP1RunId: "1004", workflowRunId: "1005" };
   }
-  if (phase === "candidate-p1-replay") {
-    return { p1ReplayRunId: "1006", sourceRunId: "1005", workflowRunId: "1006" };
-  }
-  return { publicationRunId: "1007", sourceRunId: "1005", workflowRunId: "1007" };
+  return { publicationRunId: "1006", sourceRunId: "1005", workflowRunId: "1006" };
 }
 
 function artifact() {
@@ -92,26 +86,18 @@ describe("release gate receipt", () => {
       claims: claims("candidate-finalization"),
       upstream: preTag,
     });
-    const replay = buildReleaseGateReceipt({
-      phase: "candidate-p1-replay",
-      source: source(commitB, treeB),
-      release: release(),
-      artifact: artifact(),
-      claims: claims("candidate-p1-replay"),
-      upstream: finalization,
-    });
     const publication = buildReleaseGateReceipt({
       phase: "candidate-publication",
       source: source(commitB, treeB),
       release: release(),
       artifact: artifact(),
       claims: claims("candidate-publication"),
-      upstream: replay,
+      upstream: finalization,
     });
 
     expect(publication.upstream).toMatchObject({
-      phase: "candidate-p1-replay",
-      receiptDigest: replay.receiptDigest,
+      phase: "candidate-finalization",
+      receiptDigest: finalization.receiptDigest,
       artifactSetDigest,
     });
     expect(publication.cacheKey).toBe(finalization.cacheKey);
@@ -146,11 +132,11 @@ describe("release gate receipt", () => {
 
     expect(() =>
       buildReleaseGateReceipt({
-        phase: "candidate-p1-replay",
+        phase: "candidate-publication",
         source: source(commitB, treeB),
         release: release(),
         artifact: { descriptorDigest, artifactSetDigest: `sha256:${"5".repeat(64)}` },
-        claims: claims("candidate-p1-replay"),
+        claims: claims("candidate-publication"),
         upstream: finalization,
       }),
     ).toThrow("candidate bytes changed after finalization");
@@ -186,9 +172,9 @@ describe("release gate receipt", () => {
       claims: claims("pre-candidate"),
       upstream: null,
     });
-    expect(() => parseReleaseGateReceipt({ ...receipt, cacheKey: local0ReceiptDigest })).toThrow(
-      "content-addressed cache key mismatch",
-    );
+    expect(() =>
+      parseReleaseGateReceipt({ ...receipt, cacheKey: `sha256:${"4".repeat(64)}` }),
+    ).toThrow("content-addressed cache key mismatch");
     const incomplete = { ...claims("pre-candidate") };
     delete incomplete.mainRunId;
     expect(() =>

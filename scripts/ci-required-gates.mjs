@@ -81,23 +81,11 @@ export function assertApplicableGates(input) {
   if (enabled(input.runHosting)) {
     requireSuccess(results, "Hosting lifecycle");
   }
-  if (enabled(input.runLocalFresh) || enabled(input.runLocalUpdate)) {
-    requireSuccess(results, "Protected Local fixture artifact");
-  }
-  if (enabled(input.runLocalFresh)) {
-    requireSuccess(results, "Protected Local lifecycle");
-  }
-  if (enabled(input.runLocalUpdate)) {
-    requireSuccess(results, "Protected Local update lifecycle");
-  }
   if (enabled(input.runCiContracts)) {
     requireSuccess(results, "CI contracts");
   }
   if (enabled(input.runT2Contracts)) {
     requireSuccess(results, "T2 harness contracts");
-  }
-  if (enabled(input.runPlatformBootstrap)) {
-    requireSuccess(results, "platform bootstrap");
   }
   if (enabled(input.runDocker)) {
     requireSuccess(results, "Docker amd64");
@@ -127,9 +115,6 @@ export function assertApplicableGates(input) {
   if (enabled(input.runMacosApp)) {
     requireSuccess(results, "macOS app");
   }
-  if (enabled(input.fullMatrix)) {
-    requireSuccess(results, "Protected Local Rocky lifecycle");
-  }
 }
 
 export function gateInputFromEnv(env = process.env) {
@@ -151,11 +136,8 @@ export function gateInputFromEnv(env = process.env) {
     runSignerIntegration: env.RUN_SIGNER_INTEGRATION,
     runSignerDarwinIntegration: env.RUN_SIGNER_DARWIN_INTEGRATION,
     runHosting: env.RUN_HOSTING,
-    runLocalFresh: env.RUN_LOCAL_FRESH,
-    runLocalUpdate: env.RUN_LOCAL_UPDATE,
     runCiContracts: env.RUN_CI_CONTRACTS,
     runT2Contracts: env.RUN_T2_CONTRACTS,
-    runPlatformBootstrap: env.RUN_PLATFORM_BOOTSTRAP,
     runDocker: env.RUN_DOCKER,
     runCodeqlJavascript: env.RUN_CODEQL_JAVASCRIPT,
     runCodeqlGo: env.RUN_CODEQL_GO,
@@ -165,7 +147,6 @@ export function gateInputFromEnv(env = process.env) {
     runSkills: env.RUN_SKILLS,
     runMacosRuntime: env.RUN_MACOS_RUNTIME,
     runMacosApp: env.RUN_MACOS_APP,
-    fullMatrix: env.FULL_MATRIX,
     results: {
       "change scope": env.CHANGE_SCOPE,
       secrets: env.SECRETS,
@@ -186,13 +167,8 @@ export function gateInputFromEnv(env = process.env) {
       "signer integration": env.SIGNER_INTEGRATION,
       "Darwin signer integration": env.SIGNER_DARWIN_INTEGRATION,
       "Hosting lifecycle": env.HOSTING,
-      "Protected Local fixture artifact": env.PROTECTED_LOCAL_ARTIFACT,
-      "Protected Local lifecycle": env.PROTECTED_LOCAL,
-      "Protected Local Rocky lifecycle": env.PROTECTED_LOCAL_ROCKY,
-      "Protected Local update lifecycle": env.PROTECTED_LOCAL_UPDATE,
       "CI contracts": env.CI_CONTRACTS,
       "T2 harness contracts": env.T2_CONTRACTS,
-      "platform bootstrap": env.PLATFORM_BOOTSTRAP,
       "Docker amd64": env.DOCKER_AMD64,
       "Docker arm64": env.DOCKER_ARM64,
       "CodeQL JavaScript": env.CODEQL_JAVASCRIPT,

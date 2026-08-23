@@ -168,15 +168,7 @@ describe("D8 unified lifecycle acceptance", () => {
     ).toThrow("secret-bearing");
   });
 
-  it("routes update fixtures through capsules rather than historical installers", () => {
-    const runner = readFileSync(
-      new URL("./docker/protected-local-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    const wrapper = readFileSync(
-      new URL("./test-lifecycle-local-acceptance.sh", import.meta.url),
-      "utf8",
-    );
+  it("routes the optional Hosting diagnostic through capsules rather than historical installers", () => {
     const hosting = readFileSync(
       new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
       "utf8",
@@ -193,13 +185,6 @@ describe("D8 unified lifecycle acceptance", () => {
       new URL("./lifecycle-fixture-only-paths.sh", import.meta.url),
       "utf8",
     );
-    expect(runner).toContain("restore-predecessor-capsule.mjs");
-    expect(runner).toContain("lifecycle-receipt-verifier.mjs");
-    expect(runner).not.toContain('"$predecessor_repo/install.sh"');
-    expect(wrapper).toContain("PREDECESSOR_CAPSULE_DIR");
-    expect(wrapper).toContain("gh attestation verify");
-    expect(wrapper).not.toContain(":/repo:");
-    expect(runner).not.toContain("EOF_FIXTURE_GH");
     expect(hosting).not.toContain("EOF_FIXTURE_GH");
     expect(hosting).not.toContain("/repo/");
     expect(hosting).toContain("lifecycle-receipt-verifier.mjs");
@@ -215,22 +200,16 @@ describe("D8 unified lifecycle acceptance", () => {
     expect(hosting).not.toContain("NOPASSWD: ALL");
     expect(hosting).toContain("lifecycle-configuration-preservation.mjs");
     expect(hosting).not.toContain("fased-hosting-target-config-without-mode.json");
-    expect(runner).toContain("acceptance_evidence_class=PASS");
-    expect(runner).toContain("acceptance_acquisition_evidence_class=SUPPORTING");
     expect(hosting).toContain("acceptance_evidence_class=SUPPORTING");
     expect(hosting).toContain("acceptance_acquisition_evidence_class=SUPPORTING");
-    expect(wrapper).toContain("--evidence-class PASS");
-    expect(wrapper).toContain("--acquisition-evidence-class SUPPORTING");
     expect(hostingWrapper).toContain("--evidence-class SUPPORTING");
     expect(hostingWrapper).toContain("--acquisition-evidence-class SUPPORTING");
-    expect(wrapper).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
     expect(fixtureOnlyPaths).toContain("lifecycle-d8-contract");
     expect(fixtureOnlyPaths).toContain(
       "scripts/lifecycle-configuration-preservation\\.(mjs|test\\.ts)",
     );
     expect(hostingWrapper).toContain("scripts/lifecycle-configuration-preservation.mjs");
     expect(capsuleWrapper).toContain('source "$ROOT_DIR/scripts/lifecycle-fixture-only-paths.sh"');
-    expect(runner).not.toContain("systemctl list-units --all --no-pager 'fased-*'");
     const hostingManagedUpdate = hosting.slice(hosting.indexOf("  managed-update)"));
     expect(hostingManagedUpdate.indexOf("acceptance_mark restart-health")).toBeLessThan(
       hostingManagedUpdate.indexOf("acceptance_mark state-preservation"),
