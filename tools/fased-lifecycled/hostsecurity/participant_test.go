@@ -1061,7 +1061,7 @@ func TestHostingCoordinatorCommittedBoundaryRejectsEnvironmentMismatch(t *testin
 		"channel":  func(candidate *Request) { candidate.Channel = "stable"; candidate.Release = "1.2.4" },
 		"operator": func(candidate *Request) { candidate.OperatorUser = "operator" },
 		"port":     func(candidate *Request) { candidate.GatewayPort++ },
-		"trust":    func(candidate *Request) { candidate.TrustRootSHA256 = strings.Repeat("f", 64) },
+		"platform": func(candidate *Request) { candidate.PlatformIdentity = "linux/arm64" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := request
@@ -1074,6 +1074,42 @@ func TestHostingCoordinatorCommittedBoundaryRejectsEnvironmentMismatch(t *testin
 			requireDurableFileUnchanged(t, participant.Store.StatePath, stateBefore)
 			requireDurableFileUnchanged(t, participant.Store.ReceiptPath, receiptBefore)
 		})
+	}
+}
+
+func TestHostingCoordinatorCommittedBoundaryAcceptsAuthenticatedTrustRootRotation(t *testing.T) {
+	participant, host, first := fixture(t)
+	first.Release = "0.1.76-rc.118"
+	state, err := participant.Prepare(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.inspection.SignerReady = true
+	state, err = markRuntimeReady(t, participant, state.TransactionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = participant.Commit(context.Background(), state.TransactionID, true)
+	if err != nil || state.Phase != PhaseCommitted {
+		t.Fatalf("commit staged build: state=%+v err=%v", state, err)
+	}
+
+	public := first
+	public.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	public.Release = "0.1.76-rc.119"
+	public.TrustRootSHA256 = strings.Repeat("f", 64)
+	public.RequireExistingHardening = true
+	prepared, err := participant.Prepare(context.Background(), public)
+	if err != nil {
+		t.Fatalf("authenticated trust-root rotation was rejected: %v", err)
+	}
+	if prepared.Release != public.Release || prepared.TransactionID != public.TransactionID ||
+		prepared.TrustRootSHA256 != public.TrustRootSHA256 || prepared.Phase != PhasePrivateNetworkReady {
+		t.Fatalf("rotated Hosting state did not advance exactly: %+v", prepared)
+	}
+	persisted, err := participant.Store.ReadState()
+	if err != nil || persisted != prepared {
+		t.Fatalf("rotated Hosting state was not durable: state=%+v err=%v", persisted, err)
 	}
 }
 
