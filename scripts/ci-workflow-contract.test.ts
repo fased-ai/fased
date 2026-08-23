@@ -180,6 +180,9 @@ describe("lean CI and release workflow contracts", () => {
     const channelPublisherBridge = value.jobs?.publish?.steps?.find(
       (step) => step.name === "Restore protected channel publisher bridge",
     );
+    const channelAttestationIdentity = value.jobs?.publish?.steps?.find(
+      (step) => step.name === "Bind channel advancement to immutable public attestation identity",
+    );
     const publicRelease = value.jobs?.publish?.steps?.find(
       (step) => step.name === "Publish one draft and expose it only after every byte uploads",
     );
@@ -207,14 +210,14 @@ describe("lean CI and release workflow contracts", () => {
     expect(publishIdentity?.run).toContain('--source-ref "refs/tags/v$RELEASE_VERSION"');
     expect(publishIdentity?.run).toContain('--source-ref "$GITHUB_REF"');
     expect(publishIdentity?.run).toContain('--source-digest "$GITHUB_SHA"');
-    expect(channelPublisher?.run).toContain('"${GITHUB_REF}"');
-    expect(channelPublisher?.run).toContain('"${GITHUB_SHA}"');
-    expect(channelPublisherBridge?.run).toContain(
-      'git show "$GITHUB_SHA:scripts/publish-lifecycle-channel.sh"',
-    );
-    expect(channelPublisherBridge?.run).toContain(
-      'install -m 0755 "$bridge" scripts/publish-lifecycle-channel.sh',
-    );
+    expect(channelPublisher?.run).toContain('"${CHANNEL_ATTESTATION_SOURCE_REF}"');
+    expect(channelPublisher?.run).toContain('"${CHANNEL_ATTESTATION_SOURCE_DIGEST}"');
+    expect(channelPublisherBridge?.run).toContain('git show "$GITHUB_SHA:$bridge_path"');
+    expect(channelPublisherBridge?.run).toContain("scripts/release-attestation-identity.mjs");
+    expect(channelAttestationIdentity?.run).toContain("release-attestation-identity.mjs resolve");
+    expect(channelAttestationIdentity?.run).toContain(".head_sha == $digest");
+    expect(channelAttestationIdentity?.run).toContain('.head_branch == "main"');
+    expect(channelAttestationIdentity?.run).toContain('--source-digest "$source_digest"');
     expect(channelScript).toContain('--source-ref "$attestation_source_ref"');
     expect(channelScript).toContain('--source-digest "$attestation_source_digest"');
     expect(channelScript).toContain("--source-ref refs/heads/main");

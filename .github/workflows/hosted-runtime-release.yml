@@ -87,7 +87,7 @@ jobs:
           if test "$remote_main" != "$SOURCE_COMMIT"; then
             git merge-base --is-ancestor "$SOURCE_COMMIT" "$remote_main"
             test "$(git diff --name-only "$SOURCE_COMMIT" "$remote_main" | sort)" = \
-              $'.github/workflows/hosted-runtime-release.yml\nscripts/ci-workflow-contract.test.ts\nscripts/publish-lifecycle-channel.sh'
+              $'.github/workflows/hosted-runtime-release.yml\nscripts/ci-workflow-contract.test.ts\nscripts/publish-lifecycle-channel.sh\nscripts/release-attestation-identity.mjs\nscripts/release-attestation-identity.test.ts'
           fi
           remote_tag_ref="refs/tags/v$RELEASE_VERSION"
           remote_tag_lines="$(git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}")"
@@ -742,11 +742,49 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bridge="$RUNNER_TEMP/publish-lifecycle-channel.sh"
           git cat-file -e "$GITHUB_SHA^{commit}"
-          git show "$GITHUB_SHA:scripts/publish-lifecycle-channel.sh" > "$bridge"
-          test -s "$bridge"
-          install -m 0755 "$bridge" scripts/publish-lifecycle-channel.sh
+          for bridge_path in \
+            scripts/publish-lifecycle-channel.sh \
+            scripts/release-attestation-identity.mjs
+          do
+            bridge="$RUNNER_TEMP/${bridge_path##*/}"
+            git show "$GITHUB_SHA:$bridge_path" > "$bridge"
+            test -s "$bridge"
+            install -m 0755 "$bridge" "$bridge_path"
+          done
+
+      - name: Bind channel advancement to immutable public attestation identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=.artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
+          index=.artifacts/hosted-runtime/fased-release-index-v1.json
+          identity="$(node scripts/release-attestation-identity.mjs resolve \
+            --bundle "$bundle" \
+            --repository "$GITHUB_REPOSITORY")"
+          source_ref="$(jq -er .sourceRef <<<"$identity")"
+          source_digest="$(jq -er .sourceDigest <<<"$identity")"
+          workflow_path="$(jq -er .workflowPath <<<"$identity")"
+          workflow_run_id="$(jq -er .workflowRunId <<<"$identity")"
+          workflow_run_attempt="$(jq -er .workflowRunAttempt <<<"$identity")"
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$workflow_run_id")"
+          jq -e \
+            --arg digest "$source_digest" \
+            --arg path "$workflow_path" \
+            --argjson attempt "$workflow_run_attempt" \
+            '.head_sha == $digest and .path == $path and .event == "workflow_dispatch" and
+             .run_attempt == $attempt and .head_branch == "main"' <<<"$run_json" >/dev/null
+          GH_PROMPT_DISABLED=1 gh attestation verify "$index" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$bundle" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "$source_ref" \
+            --source-digest "$source_digest" \
+            --deny-self-hosted-runners >/dev/null
+          printf 'CHANNEL_ATTESTATION_SOURCE_REF=%s\n' "$source_ref" >> "$GITHUB_ENV"
+          printf 'CHANNEL_ATTESTATION_SOURCE_DIGEST=%s\n' "$source_digest" >> "$GITHUB_ENV"
 
       - name: Advance signed managed channel to the exact public candidate
         env:
@@ -757,8 +795,8 @@ jobs:
           bash scripts/publish-lifecycle-channel.sh
           .artifacts/hosted-runtime
           "${SOURCE_COMMIT}"
-          "${GITHUB_REF}"
-          "${GITHUB_SHA}"
+          "${CHANNEL_ATTESTATION_SOURCE_REF}"
+          "${CHANNEL_ATTESTATION_SOURCE_DIGEST}"
 
       - name: Record successful candidate publication gate
         env:
