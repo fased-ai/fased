@@ -41,8 +41,10 @@ const lifecycleRelease = fs.readFileSync(
 
 describe("installer platform preflight", () => {
   it("fails closed before completion unless the public command works from another directory", () => {
-    const verification = installer.indexOf('echo "Fased: verifying public command..."');
-    const completion = installer.indexOf('echo "Fased: installation complete."');
+    const verification = installer.indexOf("verify_public_command() {");
+    const completion = installer.indexOf(
+      'print_installer_stage "Installation complete: ${release}"',
+    );
     expect(verification).toBeGreaterThan(0);
     expect(verification).toBeLessThan(completion);
     expect(installer).toContain('cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased');
@@ -50,7 +52,7 @@ describe("installer platform preflight", () => {
     expect(installer).toContain('fased update --channel "$2" --tag "$1"');
     expect(installer).toContain('/usr/sbin/runuser -u "$operator_user"');
     expect(installer).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
-    expect(installer).toContain("printf '%s\\n' \"$update_output\"");
+    expect(installer).toContain("printf '%s\\n' \"$update_output\" >&2");
     expect(installer).toContain('grep -Fqx "Already current: $release" <<<"$update_output"');
     expect(installer).toContain('/bin/bash -c "$command_probe" fased "$release" "$channel"');
   });
@@ -65,7 +67,9 @@ describe("installer platform preflight", () => {
 
   it("rejects deferred architectures before lifecycle acquisition or privileged mutation", () => {
     const architecturePreflight = installer.indexOf('case "$(uname -m)"');
-    const acquisition = installer.indexOf("Fased: acquiring verified lifecycle bootstrap");
+    const acquisition = installer.indexOf(
+      'print_installer_stage "Installing ${profile} release ${release}..."',
+    );
     const privilegedInstall = installer.indexOf('install -d -m 0755 "$bootstrap_dir"');
 
     expect(installer).toContain("first managed lifecycle release supports Linux x86_64 only");
@@ -73,6 +77,17 @@ describe("installer platform preflight", () => {
     expect(architecturePreflight).toBeGreaterThan(0);
     expect(architecturePreflight).toBeLessThan(acquisition);
     expect(architecturePreflight).toBeLessThan(privilegedInstall);
+  });
+
+  it("frames public installer stages instead of emitting loose phase logs", () => {
+    expect(installer).toContain("print_installer_stage()");
+    expect(installer).toContain("╭─ FASED INSTALL");
+    expect(installer).toContain(
+      'print_installer_stage "Installing ${profile} release ${release}..."',
+    );
+    expect(installer).toContain('print_installer_stage "Installation complete: ${release}"');
+    expect(installer).not.toContain('echo "Fased: applying ${profile} release ${release}..."');
+    expect(installer).not.toContain('print_installer_stage "Verifying public command..."');
   });
 
   it("does not build or advertise deferred managed release platforms", () => {

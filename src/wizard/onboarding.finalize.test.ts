@@ -12,6 +12,7 @@ import {
   formatHostedRootServiceRequiredFailure,
   matchesHostedGatewayServiceUser,
   formatLocalDashboardReady,
+  formatOperatorReadinessSummary,
   formatStrictRemoteAccessDetails,
   gatewayServiceMatchesCurrentInstall,
   isRootPreparedHostingFinalization,
@@ -275,6 +276,65 @@ describe("formatStrictRemoteAccessDetails", () => {
     expect(text).toContain("ssh -N -L 18790:127.0.0.1:18789 app@fased-vps.tailnet.ts.net");
     expect(text).toContain("http://localhost:18790/#token=abc123");
     expect(text).toContain("Only paste this if the browser asks for a token:");
+  });
+
+  it("labels root-managed Hosting access as pending without hiding URL, SSH, or token", () => {
+    const text = formatStrictRemoteAccessDetails({
+      tailscaleSshUser: "app",
+      tailscaleNodeName: "fased-vps.tailnet.ts.net",
+      dashboardUrl: "https://fased-vps.tailnet.ts.net/#token=abc123",
+      tunnelUrl: "http://localhost:18789/#token=abc123",
+      port: 18789,
+      gatewayToken: "abc123",
+      pendingInstallerActivation: true,
+    });
+
+    expect(text).toContain("become live when this installer finishes");
+    expect(text).toContain("https://fased-vps.tailnet.ts.net/#token=abc123");
+    expect(text).toContain("ssh app@fased-vps.tailnet.ts.net");
+    expect(text).toContain("abc123");
+  });
+});
+
+describe("formatOperatorReadinessSummary", () => {
+  it("reports default Fased Network auto-connect as pending during root activation", () => {
+    const text = formatOperatorReadinessSummary(
+      [
+        {
+          title: "Fased Network joined / trusted",
+          summary: "Not joined",
+          detail: "not joined yet",
+          tone: "warn",
+        },
+        {
+          title: "Fased Network reachability state",
+          summary: "Disabled",
+          detail: "not ready yet",
+          tone: "neutral",
+        },
+      ],
+      { federationActivationPending: true },
+    );
+
+    expect(text).toContain("Auto-connect pending");
+    expect(text).toContain("Pending Gateway activation");
+    expect(text).not.toContain("complete registration");
+    expect(text).not.toContain("check hosted token issuance");
+  });
+});
+
+describe("formatLocalDashboardReady", () => {
+  it("keeps the protected Local URL and generated token visible while root activation is pending", () => {
+    const text = formatLocalDashboardReady({
+      dashboardUrl: "http://127.0.0.1:18789/#token=local-token",
+      gatewayToken: "local-token",
+      opened: false,
+      pendingInstallerActivation: true,
+    });
+
+    expect(text).toContain("becomes live when the installer finishes");
+    expect(text).toContain("http://127.0.0.1:18789/#token=local-token");
+    expect(text).toContain("local-token");
   });
 });
 

@@ -14,6 +14,15 @@ import (
 	"time"
 )
 
+func TestHostingProgressUsesSetupFrame(t *testing.T) {
+	got := formatHostingProgressFrame("Fased: configuring private Tailscale Serve...")
+	for _, expected := range []string{"HOSTING SETUP", "configuring private Tailscale Serve", "╭─", "╰─"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("progress frame %q does not contain %q", got, expected)
+		}
+	}
+}
+
 type fakeHost struct {
 	inspection           Inspection
 	calls                []string

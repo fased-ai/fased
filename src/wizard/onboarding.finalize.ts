@@ -157,6 +157,7 @@ export function formatStrictRemoteAccessDetails(params: {
   tunnelUrl: string;
   port: number;
   gatewayToken?: string;
+  pendingInstallerActivation?: boolean;
 }): string {
   const sshTarget = params.tailscaleNodeName || params.tailscaleIpv4 || "(tailscale-node)";
   const tailscaleIpv4 = params.tailscaleIpv4?.trim();
@@ -172,6 +173,12 @@ export function formatStrictRemoteAccessDetails(params: {
     // Keep the generic localhost URL if the provided tunnel URL is not parseable.
   }
   return [
+    params.pendingInstallerActivation
+      ? noteInfo(
+          "These private access routes become live when this installer finishes root-managed Gateway activation.",
+        )
+      : undefined,
+    params.pendingInstallerActivation ? "" : undefined,
     noteHeading("Web UI"),
     "Open this on your own computer after signing into the same Tailscale account:",
     ...noteCommands([params.dashboardUrl]),
@@ -221,8 +228,15 @@ export function formatLocalDashboardReady(params: {
   opened: boolean;
   fallbackHint?: string;
   healthCheck?: string;
+  pendingInstallerActivation?: boolean;
 }): string {
   return [
+    params.pendingInstallerActivation
+      ? noteInfo(
+          "This local access route becomes live when the installer finishes root-managed Gateway activation.",
+        )
+      : undefined,
+    params.pendingInstallerActivation ? "" : undefined,
     noteHeading("Web UI"),
     params.opened ? "Opened in your browser. Keep that tab open." : "Open this on this machine:",
     ...noteCommands([params.dashboardUrl]),
@@ -1213,8 +1227,9 @@ function readSatMiningWalletId(config: FasedAgentConfig): string | null {
   return typeof walletId === "string" && walletId.trim().length > 0 ? walletId.trim() : null;
 }
 
-function formatOperatorReadinessSummary(
+export function formatOperatorReadinessSummary(
   items: ReturnType<typeof describeOperatorReadinessChecklist>,
+  options?: { federationActivationPending?: boolean },
 ): string {
   const titleLabel = (title: string) => {
     if (title === "Wallet Control Passkey ready") {
@@ -1238,6 +1253,14 @@ function formatOperatorReadinessSummary(
     return title;
   };
   const tone = (item: (typeof items)[number]) => {
+    if (options?.federationActivationPending) {
+      if (item.title === "Fased Network joined / trusted") {
+        return noteInfo("Auto-connect pending");
+      }
+      if (item.title === "Fased Network reachability state") {
+        return noteInfo("Pending Gateway activation");
+      }
+    }
     if (item.tone === "success") {
       return noteSuccess(item.summary);
     }
@@ -1271,6 +1294,7 @@ function formatOperatorReadinessSummary(
     nextActionLines.push(noteBullet("Mining: optional. Create/import @wallet:mining later."));
   }
   if (
+    !options?.federationActivationPending &&
     items.some(
       (item) => item.title === "Fased Network joined / trusted" && item.summary !== "Verified",
     )
@@ -1278,6 +1302,7 @@ function formatOperatorReadinessSummary(
     nextActionLines.push(noteBullet("Fased Network: complete registration and trust review."));
   }
   if (
+    !options?.federationActivationPending &&
     items.some(
       (item) =>
         item.title === "Fased Network reachability state" &&
@@ -2915,7 +2940,7 @@ export async function finalizeOnboardingWizard(
     }
   }
   const isStrict = strictVps || (opts.hostProfile === "local" && settings.tailscaleMode !== "off");
-  if (isStrict && !deferInstallerAccessHandoff) {
+  if (isStrict && (!deferInstallerAccessHandoff || rootPreparedHosting)) {
     const strictDashboardUrl = tailscaleAdminUrl
       ? buildOnboardingDashboardUrl({
           baseUrl: tailscaleAdminUrl,
@@ -2939,8 +2964,20 @@ export async function finalizeOnboardingWizard(
         tunnelUrl: tunnelDashboardUrl,
         port: settings.port,
         gatewayToken: gatewayTokenForUi || undefined,
+        pendingInstallerActivation: deferInstallerGatewayActivation,
       }),
-      "Hosted access",
+      deferInstallerGatewayActivation ? "Hosted access after installation" : "Hosted access",
+    );
+  } else if (deferInstallerAccessHandoff && protectedLocal) {
+    await prompter.note(
+      formatLocalDashboardReady({
+        dashboardUrl: authedUrl,
+        gatewayToken:
+          settings.authMode === "token" && gatewayTokenForUi ? gatewayTokenForUi : undefined,
+        opened: false,
+        pendingInstallerActivation: true,
+      }),
+      "Local access after installation",
     );
   } else if (!deferInstallerAccessHandoff && flow !== "quickstart") {
     await prompter.note(
@@ -3024,7 +3061,7 @@ export async function finalizeOnboardingWizard(
           };
     if (strictVps && rootPreparedHosting && !fedToken.exists) {
       await prompter.note(
-        "Fased Network will connect after the root installer commits service permissions and starts the Gateway.",
+        "Auto-connect is enabled by default. Fased Network will connect after the root installer commits service permissions and starts the Gateway; no additional choice is required.",
         "Fased Network",
       );
     }
@@ -3099,7 +3136,13 @@ export async function finalizeOnboardingWizard(
       : "No wallets are registered.",
     "Wallets",
   );
-  await prompter.note(formatOperatorReadinessSummary(operatorReadiness), "Operator readiness");
+  await prompter.note(
+    formatOperatorReadinessSummary(operatorReadiness, {
+      federationActivationPending:
+        federation.enabled && rootPreparedHosting && !persistedFederationToken,
+    }),
+    "Operator readiness",
+  );
   const capabilityReadiness = buildCapabilityReadinessReport({
     config: nextConfig,
     pluginReport: { plugins: [], diagnostics: [] },

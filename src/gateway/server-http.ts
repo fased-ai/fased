@@ -10088,9 +10088,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
       ) {
         return;
       }
-      if (await (await import("../slack/http/index.js")).handleSlackHttpRequest(req, res)) {
-        return;
-      }
       if (handlePluginRequest) {
         const canonicalPluginPath = canonicalizePathVariant(requestPath);
         const rawChannelCandidatePath = requestPath.toLowerCase().replace(/\/+/g, "/");
