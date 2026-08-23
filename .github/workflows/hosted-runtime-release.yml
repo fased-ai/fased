@@ -56,6 +56,7 @@ jobs:
       - name: Verify exact source and version
         env:
           GH_TOKEN: ${{ github.token }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
@@ -66,7 +67,7 @@ jobs:
           [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
           test "$GITHUB_REF" = refs/heads/main
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
-          test -z "${{ inputs.prepare_run_id }}"
+          test -z "$PREPARE_RUN_ID"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_COMMIT"
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
           if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

@@ -96,6 +96,8 @@ describe("lean attested Linux-x64 artifact layout", () => {
     );
     expect(releaseWorkflow).toContain("run-id: ${{ inputs.prepare_run_id }}");
     expect(releaseWorkflow).toContain("github-token: ${{ github.token }}");
+    expect(releaseWorkflow).toContain("PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}");
+    expect(releaseWorkflow).not.toContain('test -z "${{ inputs.prepare_run_id }}"');
     expect(releaseWorkflow).toContain("Verify every official attestation is tag-bound");
     expect(releaseWorkflow).toContain("verify-release-set");
 
