@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.121
+
+- Preserve the complete optimized Go-managed core, modular Wallet, signer,
+  Mining, task-ledger and digest-bound optional component architecture.
+- Recover an exact active managed swap after a canceled Hosting rollback and
+  verify root-managed Gateway units by canonical account name or exact UID.
+- Reprove literal 2 GB Hosting staging, onboarding recovery, state preservation
+  and identical-command convergence before immutable candidate allocation.
+
 ## 0.1.76-rc.119
 
 - Preserve the complete optimized Go-managed core, modular Wallet, signer,

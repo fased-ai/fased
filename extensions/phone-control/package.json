@@ -1,6 +1,6 @@
 {
   "name": "@fased/phone-control",
-  "version": "0.1.76-rc.119",
+  "version": "0.1.76-rc.121",
   "private": true,
   "description": "Optional high-risk phone node command controller",
   "files": [
@@ -9,7 +9,7 @@
   ],
   "type": "module",
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.119"
+    "@fased/fased": "^0.1.76-rc.121"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
