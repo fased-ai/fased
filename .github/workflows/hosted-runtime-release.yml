@@ -536,6 +536,7 @@ jobs:
       - name: Reverify immutable candidate tag before publication
         env:
           RELEASE_TAG: v${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
           set -euo pipefail
@@ -548,7 +549,7 @@ jobs:
             END { print peeled != "" ? peeled : direct }
           ')"
           test -n "$remote_tag_object"
-          test "$remote_tag_commit" = "$GITHUB_SHA"
+          test "$remote_tag_commit" = "$SOURCE_COMMIT"
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6

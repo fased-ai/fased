@@ -167,6 +167,9 @@ describe("lean CI and release workflow contracts", () => {
     const publishIdentity = value.jobs?.publish?.steps?.find(
       (step) => step.name === "Verify exact candidate identity",
     );
+    const publishTag = value.jobs?.publish?.steps?.find(
+      (step) => step.name === "Reverify immutable candidate tag before publication",
+    );
     const channelWitness = value.jobs?.["refresh-root-head"]?.steps?.find(
       (step) => step.name === "Prepare current channel root-head statement",
     );
@@ -192,6 +195,9 @@ describe("lean CI and release workflow contracts", () => {
     expect(publishIdentity?.run).toContain('--source-ref "refs/tags/v$RELEASE_VERSION"');
     expect(publishIdentity?.run).toContain('--source-ref "$GITHUB_REF"');
     expect(publishIdentity?.run).toContain('--source-digest "$GITHUB_SHA"');
+    expect(publishTag?.env?.SOURCE_COMMIT).toBe("${{ inputs.source_commit }}");
+    expect(publishTag?.run).toContain('test "$remote_tag_commit" = "$SOURCE_COMMIT"');
+    expect(publishTag?.run).not.toContain('test "$remote_tag_commit" = "$GITHUB_SHA"');
     expect(channelWitness?.run).toContain('--source-ref "$GITHUB_REF"');
     expect(channelWitness?.run).toContain('--source-digest "$GITHUB_SHA"');
     expect(finalizeText).not.toContain("pnpm install");
