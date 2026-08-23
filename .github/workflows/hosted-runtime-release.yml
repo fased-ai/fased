@@ -3,6 +3,13 @@ name: Hosted Runtime Release
 on:
   workflow_dispatch:
     inputs:
+      phase:
+        description: Prepare exact bytes on main or finalize them from the owner-created tag ref
+        required: true
+        type: choice
+        options:
+          - prepare
+          - finalize
       release_version:
         description: Exact version already committed on protected main
         required: true
@@ -10,6 +17,10 @@ on:
       source_commit:
         description: Exact protected-main commit to build and publish
         required: true
+        type: string
+      prepare_run_id:
+        description: Successful prepare workflow run ID; required only for finalize
+        required: false
         type: string
 
 permissions:
@@ -24,12 +35,11 @@ env:
 
 jobs:
   prepare:
-    name: Build and attest exact candidate once
+    name: Build exact candidate bytes once
+    if: inputs.phase == 'prepare'
     permissions:
       actions: read
-      attestations: write
       contents: read
-      id-token: write
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
@@ -46,6 +56,7 @@ jobs:
       - name: Verify exact source and version
         env:
           GH_TOKEN: ${{ github.token }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
@@ -54,7 +65,9 @@ jobs:
           [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
           [[ "$RELEASE_VERSION" == *-* ]]
           [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_REF" = refs/heads/main
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test -z "$PREPARE_RUN_ID"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_COMMIT"
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
           if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -137,6 +150,72 @@ jobs:
           mkdir -p .artifacts/hosted-runtime
           cp -a "$RUNNER_TEMP/candidate/product/." .artifacts/hosted-runtime/
 
+      - name: Upload exact prepared bytes once
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-hosting-prepared-candidate
+          path: .artifacts/hosted-runtime/*
+          if-no-files-found: error
+          retention-days: 30
+
+  finalize:
+    name: Attest from tag, publish, and promote exact candidate
+    if: inputs.phase == 'finalize'
+    environment: candidate-release
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout actual immutable tag ref
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+      - name: Download exact prepared bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fased-hosting-prepared-candidate
+          path: .artifacts/hosted-runtime
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.prepare_run_id }}
+
+      - name: Verify tag and exact successful prepare run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
+          test "$(git cat-file -t "$GITHUB_REF")" = tag
+          test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$SOURCE_COMMIT"
+          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
+          prepare="$RUNNER_TEMP/prepare-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREPARE_RUN_ID" > "$prepare"
+          jq -e --arg commit "$SOURCE_COMMIT" \
+            '.event == "workflow_dispatch" and .status == "completed" and
+             .conclusion == "success" and .head_branch == "main" and
+             .head_sha == $commit and
+             .path == ".github/workflows/hosted-runtime-release.yml"' \
+            "$prepare" >/dev/null
+          test ! -e .artifacts/hosted-runtime/fased-hosting-candidate.json
+          test ! -e .artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
+          jq -e --arg version "$RELEASE_VERSION" --arg commit "$SOURCE_COMMIT" \
+            '.version == $version and .commit == $commit' \
+            .artifacts/hosted-runtime/fased-release-index-v1.json >/dev/null
+
       - name: Attest signer
         id: signer
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
@@ -213,7 +292,7 @@ jobs:
             --version "$RELEASE_VERSION" --commit "$SOURCE_COMMIT" \
             --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --source-ref "$GITHUB_REF" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
@@ -225,38 +304,48 @@ jobs:
       - name: Stage descriptor attestation
         run: install -m 0644 "${{ steps.descriptor.outputs.bundle-path }}" .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json
 
-      - name: Upload exact candidate once
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-hosting-candidate
-          path: .artifacts/hosted-runtime/*
-          if-no-files-found: error
-          retention-days: 30
+      - name: Verify every official attestation is tag-bound
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pairs=(
+            'fased-signerd-linux-amd64:fased-signerd-release.attestation.json'
+            'fased-lifecycled-linux-amd64:fased-lifecycled-release.attestation.json'
+            'install.sh:install.sh.attestation.json'
+            'fased-hosted-release-v2.json:fased-hosted-release-v2.json.attestation.json'
+            'fased-privileged-provenance-v1.intoto.json:fased-privileged-provenance-v1.intoto.json.attestation.json'
+            'fased-lifecycle-trust-v1.json:fased-lifecycle-trust-v1.json.attestation.json'
+            'fased-release-index-v1.json:fased-release-index-v1.json.attestation.json'
+            'fased-lifecycle-root-head-v1.json:fased-lifecycle-root-head-v1.json.attestation.json'
+            'fased-hosting-candidate.json:fased-hosting-candidate.json.attestation.json'
+          )
+          for pair in "${pairs[@]}"; do
+            subject=".artifacts/hosted-runtime/${pair%%:*}"
+            bundle=".artifacts/hosted-runtime/${pair#*:}"
+            identity="$(node scripts/release-attestation-identity.mjs resolve \
+              --bundle "$bundle" --repository "$GITHUB_REPOSITORY")"
+            test "$(jq -er .sourceRef <<<"$identity")" = "$GITHUB_REF"
+            test "$(jq -er .sourceDigest <<<"$identity")" = "$SOURCE_COMMIT"
+            GH_PROMPT_DISABLED=1 gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" --bundle "$bundle" \
+              --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+              --source-ref "$GITHUB_REF" --source-digest "$SOURCE_COMMIT" \
+              --deny-self-hosted-runners >/dev/null
+          done
 
-  publish:
-    name: Publish and promote exact candidate
-    needs: [prepare]
-    environment: candidate-release
-    permissions:
-      actions: read
-      contents: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - name: Checkout exact candidate source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_commit }}
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-      - name: Download exact candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-hosting-candidate
-          path: .artifacts/hosted-runtime
+      - name: Verify staged set with production bootstrap trust policy
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          chmod 0755 .artifacts/hosted-runtime/fased-bootstrap-linux-x64
+          .artifacts/hosted-runtime/fased-bootstrap-linux-x64 verify-release-set \
+            --directory "$PWD/.artifacts/hosted-runtime" \
+            --version "$RELEASE_VERSION" --commit "$SOURCE_COMMIT"
 
       - name: Verify candidate and owner-created immutable tag
         env:
@@ -271,7 +360,7 @@ jobs:
             --directory .artifacts/hosted-runtime --version "$RELEASE_VERSION" \
             --commit "$SOURCE_COMMIT" --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
             --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
-            --source-ref "refs/tags/v$RELEASE_VERSION" --workflow-run-id "$GITHUB_RUN_ID"
+            --source-ref "$GITHUB_REF" --workflow-run-id "$GITHUB_RUN_ID"
           identity="$(node scripts/release-attestation-identity.mjs resolve \
             --bundle "$descriptor.attestation.json" --repository "$GITHUB_REPOSITORY")"
           GH_PROMPT_DISABLED=1 gh attestation verify "$descriptor" \

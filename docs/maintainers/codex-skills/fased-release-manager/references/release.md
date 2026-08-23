@@ -12,13 +12,15 @@ focused changed-surface checks
 -> protected source PR and exact merged tree
 -> affected real-environment proof when the change requires it
 -> version-only protected PR
--> one protected release workflow
+-> prepare on protected main
    -> derive the next signed channel sequence
-   -> build one Linux-x64 artifact
-   -> attest that artifact
-   -> create one immutable tag
-   -> publish those exact bytes
-   -> advance the signed channel
+   -> build one Linux-x64 artifact and record its exact identity
+-> owner creates the annotated tag at that tested commit
+-> finalize from the actual immutable tag ref
+   -> download and verify the prepared artifact without rebuilding
+   -> generate official attestations whose certificate SAN names the tag
+   -> run the production bootstrap/trust verifier on the complete staged set
+   -> publish those exact bytes and advance the signed channel
 ```
 
 Do not write the next RC version or start the release workflow until required
@@ -26,17 +28,26 @@ focused checks and the affected real-environment predicate pass. Any product
 change after that proof returns to the normal fix path. Never allocate an RC to
 discover whether a correction works.
 
-One protected workflow builds, attests, tags, publishes, and promotes. It derives
-the next release sequence from the current signed channel index instead of
-accepting an operator-supplied sequence. It installs dependencies once, builds
-one Linux-x64 core artifact, and never runs simulated Local or Hosting acceptance.
-Build optional packs separately through their signed component transaction.
+Preparation derives the next release sequence from the current signed channel index
+instead of accepting an operator-supplied sequence. It installs dependencies once,
+builds one Linux-x64 core artifact, and never runs simulated Local or Hosting
+acceptance. Build optional packs separately through their signed component
+transaction.
 
-The candidate descriptor binds version, commit, tree, lockfile, workflow run,
-artifact names, sizes and digests, provenance, SBOM/VEX, signer/controller
-identity, and the acceptance-contract identity. The publish job downloads the
-single job artifact, verifies it, creates or confirms the exact annotated tag,
-and publishes without rebuilding.
+The candidate descriptor binds version, commit, tree, lockfile, prepare run,
+artifact names, sizes and digests, provenance, SBOM/VEX, signer/controller identity,
+and the acceptance-contract identity. The owner creates the annotated tag only after
+preparation passes. Finalization must execute with its actual `GITHUB_REF` equal to
+`refs/tags/v<version>`; checking out the tag inside a branch-triggered run does not
+change the certificate identity. It downloads and verifies the prepared artifact,
+requires every official attestation's `SourceRepositoryRef` to equal that tag and
+`SourceRepositoryDigest` to equal the peeled tag commit, and never rebuilds.
+
+Before public mutation, run the same production bootstrap/trust verification used by
+the installer against the complete staged artifact set. Static workflow assertions,
+unit-only bundle parsing, signed-channel promotion, and same-commit branch attestations
+cannot substitute for this check. Any official release bundle carrying
+`refs/heads/main` fails closed even when its commit is identical.
 
 If source changes after an immutable tag, that candidate is obsolete. Its tag
 and bytes remain immutable. Fix and merge normally, prove the affected real

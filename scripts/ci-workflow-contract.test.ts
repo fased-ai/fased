@@ -139,22 +139,25 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).not.toContain("setup-go");
   });
 
-  it("builds and attests once, then verifies the owner tag before publication", async () => {
+  it("builds once on main and attests only from the owner tag before publication", async () => {
     const value = await workflow(".github/workflows/hosted-runtime-release.yml");
     const source = await text(".github/workflows/hosted-runtime-release.yml");
     const channelScript = await text("scripts/publish-lifecycle-channel.sh");
-    expect(Object.keys(value.jobs ?? {})).toEqual(["prepare", "publish"]);
+    expect(Object.keys(value.jobs ?? {})).toEqual(["prepare", "finalize"]);
     expect(value.jobs?.prepare?.["timeout-minutes"]).toBe(20);
-    expect(value.jobs?.publish?.["timeout-minutes"]).toBe(10);
+    expect(value.jobs?.finalize?.["timeout-minutes"]).toBe(10);
     expect(source).toContain("attestations: write");
     const prepareText = jobText(value.jobs?.prepare);
-    const publishText = jobText(value.jobs?.publish);
+    const finalizeText = jobText(value.jobs?.finalize);
     expect(source).toContain("Resolve exact next signed channel identity");
     expect(source).toContain("verify-next-release-sequence.mjs");
     expect(source).toContain("run Hosted Runtime Promote instead");
     expect(source).toContain("scripts/build-linux-x64-release-artifact.sh");
     expect(source).toContain("scripts/finalize-pretag-candidate.sh");
     expect(source.match(/actions\/attest@/gu)?.length).toBe(9);
+    expect(source).toContain("Verify every official attestation is tag-bound");
+    expect(source).toContain("Verify staged set with production bootstrap trust policy");
+    expect(source).toContain("run-id: ${{ inputs.prepare_run_id }}");
     expect(source).toContain("Verify candidate and owner-created immutable tag");
     expect(source).toContain(
       "Owner-created annotated tag $tag is required before candidate-release approval.",
@@ -170,8 +173,9 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).not.toContain("test-lifecycle-local-acceptance.sh");
     expect(source).not.toContain("test-lifecycle-hosting-acceptance.sh");
     expect(prepareText.match(/build-linux-x64-release-artifact\.sh/gu)?.length).toBe(1);
-    expect(publishText).not.toContain("build-linux-x64-release-artifact.sh");
-    expect(publishText).not.toContain("actions/attest");
+    expect(prepareText).not.toContain("actions/attest");
+    expect(finalizeText).not.toContain("build-linux-x64-release-artifact.sh");
+    expect(finalizeText.match(/actions\/attest@/gu)?.length).toBe(9);
     expect(channelScript).toContain('--source-ref "$attestation_source_ref"');
     expect(channelScript).toContain('--source-digest "$attestation_source_digest"');
     expect(channelScript).toContain("verify_historical_index_attestation");

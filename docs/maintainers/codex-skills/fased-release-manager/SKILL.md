@@ -113,14 +113,14 @@ cached artifacts. When distributable bytes change, build one cached unpublished
 Linux-x64 artifact after focused tests, exercise only the affected topology, and
 reuse those exact bytes. Fixture-only changes reuse prior verified product bytes.
 
-Candidate and release work begins only after the literal affected-environment
-command passes. One protected release workflow derives the next signed channel
-sequence, builds one Linux-x64 artifact after source is final, attests it, creates
-the immutable tag, publishes those bytes, and advances the channel. The
-publication must verify receipts and must not rebuild or replay product
-execution. A partial public-release retry uses only metadata. Broad Node, Go,
-Docker, CodeQL, multi-platform, and dead-code matrices are weekly/manual
-diagnostics, not ordinary-PR or release acceptance gates.
+Candidate work starts only after literal environment proof passes. Prepare bytes on
+main; owner tags the tested commit. Attestations must come from a finalizer whose
+actual GitHub ref is that tag; checkout
+cannot change a branch-run certificate SAN. Reuse those bytes, bind source ref to the
+tag and source digest to peeled commit; run the production bootstrap/trust
+verifier on the staged public set before upload. Branch attestations, static tests and
+promotion are not proof. The publication must verify receipts and must not rebuild.
+Metadata-only retries never reattest; broad matrices remain manual.
 
 When Hosting product bytes change, a root container is H0 `SUPPORTING` evidence
 only. Before candidate allocation, require one owner-authorized real-init
