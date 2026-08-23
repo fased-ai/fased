@@ -4,71 +4,54 @@ Read this file only after explicit candidate, publication, or stable authority.
 
 ## Candidate
 
-Start from one clean exact `origin/main` commit whose affected predicates and
-public-style Linux-x64 lifecycle transaction already pass. Bind every
-materially distinct supported installation class by topology, schemas,
-capabilities, and platform identity. Concrete versions only materialize those
-classes; the owner's installed RC is never a separate product contract.
+Start from one clean exact protected-main commit. Finish the normal fix path and
+the literal affected-environment proof before release work begins.
 
 ```text
-exact branch head
--> focused changed-surface checks
--> protected source PR with byte-identical squash tree
--> affected real-environment proof on exact merged source
--> PRE-CANDIDATE on exact merged main
+focused changed-surface checks
+-> protected source PR and exact merged tree
+-> affected real-environment proof when the change requires it
 -> version-only protected PR
--> build one production Linux-x64 artifact on exact versioned main
--> P1 verifies that artifact, provenance and bound real-environment receipts
--> owner immutable proof-enabling tag at exact main
--> attest the preserved product bytes without rebuilding or executing them
--> protected publication approval
+-> one protected release workflow
+   -> derive the next signed channel sequence
+   -> build one Linux-x64 artifact
+   -> attest that artifact
+   -> create one immutable tag
+   -> publish those exact bytes
+   -> advance the signed channel
 ```
 
-Do not reserve or write the next RC version, dispatch PRE-CANDIDATE, or create a
-version-only PR until the required focused checks and affected real-environment
-predicates pass. Any change to a bound product input invalidates the artifact;
-rebuild once after source is final. A harness-only change may reuse unchanged
-bytes only when the complete product tree and lockfile remain exact. Never
-allocate an RC to discover whether a correction works.
+Do not write the next RC version or start the release workflow until required
+focused checks and the affected real-environment predicate pass. Any product
+change after that proof returns to the normal fix path. Never allocate an RC to
+discover whether a correction works.
 
-Before PRE-CANDIDATE, run `scripts/pre-candidate-readiness.mjs` locally against
-the exact real Hosting staging receipt when Hosting is affected. Produce that
-receipt only with
-`scripts/hosting-staging-vps-receipt.mjs` after the literal 2 GB/no-swap staging
-VPS install and identical-command `Already current` proof. It rejects a dirty or mismatched source,
-missing fresh-login `fased` command evidence, missing `Already current`, an
-unresolved exact-source failure marker, or an unavailable exact predecessor
-release. Its receipt digest is a required PRE-CANDIDATE input and evidence
-field.
-
-PRE-CANDIDATE is metadata-only. It verifies release/package identity,
-compatibility inventory and the exact real-environment receipt. It does not
-install dependencies, build bytes or execute an installation.
-
-P1 installs frozen dependencies once, builds the Linux-x64 product once, and
-verifies artifact, provenance, compatibility and the bound real-environment
-receipt. It does not run a protected-Local container or repeat packaged Hosting
-execution. Build optional packs separately through their signed component
-transaction; the base candidate contains only the core inventory.
+One protected workflow builds, attests, tags, publishes, and promotes. It derives
+the next release sequence from the current signed channel index instead of
+accepting an operator-supplied sequence. It installs dependencies once, builds
+one Linux-x64 core artifact, and never runs simulated Local or Hosting acceptance.
+Build optional packs separately through their signed component transaction.
 
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
-artifact names/sizes/digests, provenance, SBOM/VEX, signer/controller identity,
-and acceptance-contract identity. After the proof-enabling tag, publication
-downloads that exact artifact, verifies its descriptor and checksum, adds only
-tag-scoped attestations and signed release metadata, and publishes. It neither
-rebuilds nor replays P1. Literal owner Local remains a post-publication
-owner-machine check using the documented curl, `fased status`, and
-`fased update` commands.
+artifact names, sizes and digests, provenance, SBOM/VEX, signer/controller
+identity, and the acceptance-contract identity. The publish job downloads the
+single job artifact, verifies it, creates or confirms the exact annotated tag,
+and publishes without rebuilding.
 
-Product failure returns to one normal fix. Freeze candidate allocation, close
-the failure in its exact affected environment, and require exact merged-main
-PRE-CANDIDATE before assigning a new immutable identity.
-Infrastructure failure may retry the failed job once against unchanged bytes.
+If source changes after an immutable tag, that candidate is obsolete. Its tag
+and bytes remain immutable. Fix and merge normally, prove the affected real
+environment, and choose the next unused version.
 
-Once source changes after an immutable tag, mark that candidate obsolete. Its
-tag and bytes remain immutable, but it cannot be repaired, rebuilt, republished,
-or used for owner acceptance. Allocate the next unused version only after the
-corrected branch paths and exact merged-main PRE-CANDIDATE pass.
+## Fast publication retry
+
+If the release and attestations already exist but channel advancement failed,
+run only `Hosted Runtime Promote`. It downloads bounded public metadata, verifies
+the existing tag, descriptor, attestations, inventory, and signed index, then
+advances or confirms the channel. It does not install dependencies, build,
+reattest, create a candidate, or rerun acceptance.
+
+Do not rerun the full release workflow after the immutable public release exists.
+An identical promotion retry must return `ALREADY_CURRENT`.
 
 ## Publication and acceptance
 
@@ -81,31 +64,23 @@ GitHub prerelease exact bytes
 -> stable promotion
 ```
 
-Publication makes the exact release public before advancing its channel. The
-channel publisher consumes the exact attested index, rejects replay/downgrade,
-stages replacement pairs, promotes their canonical names, and verifies
-readback; it never rebuilds. Channel discovery also requires the current
-36-hour attested root-head witness. The scheduled protected-main refresh may
-replace only that witness and its attestation; it must verify the committed
-root chain and current attested index and may never replace product bytes.
-PUBLIC0 is readback-only. It verifies the exact GitHub tag, release
-metadata, asset inventory, sizes, digests, attestations, root-head freshness,
-and signed channel binding. Owner Local uses the literal public
-command and proves four services, Wallet/signer, Mining, Network, plugins,
-restart, preserved state, and `Already current`. Real Hosting requires an
-authorized VPS/Tailscale environment; containers are supporting evidence only.
+PUBLIC0 is readback-only. It verifies the exact GitHub tag, release metadata,
+asset inventory, sizes, digests, attestations, root-head freshness, and signed
+channel binding. It does not provide Local or Hosting acceptance.
+
+Owner Local uses only the documented public curl command, `fased status`, and
+`fased update`. Real Hosting uses only an authorized real VPS and the documented
+public command; containers, generated VMs, and substituted fixtures are
+`SUPPORTING`, never `PASS`.
 
 Stable promotion reuses accepted candidate bytes and changes only authorized
 GitHub release/channel metadata.
 
 ## Authority
 
-Do not create, move, delete, publish, or promote versions/tags/releases without
-the current explicit authority. Never bypass protected checks or environment
-review.
+Do not create, move, delete, publish, or promote versions, tags, or releases
+without current explicit authority. Never bypass protected checks or environment
+review. One approval may authorize a named conditional chain; do not ask for the
+same approval again while its exact identities and predicates remain unchanged.
 
-When the owner has explicitly authorized the sequence through publication,
-submit that existing approval as soon as every immutable P1 lane passes. Do not
-ask for the same approval again, weaken the environment, or allow the workflow
-to self-approve. A failed or incomplete P1 cancels that publication action.
 Never publish npm packages or make npm registry state a release predicate.

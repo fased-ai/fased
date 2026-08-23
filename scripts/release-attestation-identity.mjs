@@ -43,17 +43,20 @@ export function resolveReleaseAttestationIdentity(bundleValue, repository) {
     object(buildDefinition.externalParameters, "attestation external parameters").workflow,
     "attestation workflow",
   );
-  const sourceRef = "refs/heads/main";
+  const sourceRef = workflow.ref;
   const workflowPath = ".github/workflows/hosted-runtime-release.yml";
   const repositoryUrl = `https://github.com/${repository}`;
+  const allowedSourceRef =
+    sourceRef === "refs/heads/main" ||
+    /^refs\/tags\/v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u.test(sourceRef);
   if (
     statement.predicateType !== "https://slsa.dev/provenance/v1" ||
     buildDefinition.buildType !== "https://actions.github.io/buildtypes/workflow/v1" ||
     workflow.repository !== repositoryUrl ||
-    workflow.ref !== sourceRef ||
+    !allowedSourceRef ||
     workflow.path !== workflowPath
   ) {
-    fail("attestation does not identify the protected release workflow on main");
+    fail("attestation does not identify the protected release workflow");
   }
   const sourceUri = `git+${repositoryUrl}@${sourceRef}`;
   const sourceDigests = (

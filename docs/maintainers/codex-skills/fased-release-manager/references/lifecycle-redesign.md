@@ -58,7 +58,7 @@ managed users.
    capsules are supporting failure-injection fixtures only, never a substitute
    for public acquisition or owner-machine evidence.
 9. Local and Hosting differ only through platform adapters.
-10. Candidate P1 verifies final artifact inventory, provenance, and bound receipts
+10. The single release workflow verifies final artifact inventory and provenance
     without repeating already-green product execution.
 11. Managed repair is bound to the exact installed manifest and generation; it
     cannot select a release or change state schemas. Managed uninstall is a
@@ -178,14 +178,13 @@ Execute one checkpoint at a time and stop with exact evidence.
 
 ### D12 — Release acceptance
 
-- Require exact real affected-environment evidence, then PRE-CANDIDATE on exact
-  merged main. Only after both pass may the next unused RC be allocated.
-- One immutable candidate and one build.
-- Receipt-and-inventory P1, exact publication, signed channel advancement from
-  those same bytes, PUBLIC0, owner Local and real Hosting.
-- PUBLIC0 supplies immutable-GitHub-Release readback after publication; P1
-  verifies the exact artifact inventory and receipts without replaying product
-  execution.
+- Require exact real affected-environment evidence on merged main before the
+  release workflow starts.
+- One immutable candidate, one build, one attestation set, exact publication,
+  and signed channel advancement from those same bytes.
+- A partial public-release retry is metadata-only promotion of the already
+  published bytes; it never rebuilds or reattests.
+- PUBLIC0 supplies immutable-GitHub-Release readback after publication.
 - Stable only after both real environments pass.
 
 ## Stop rules

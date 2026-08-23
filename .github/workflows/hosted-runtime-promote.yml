@@ -1,0 +1,191 @@
+name: Hosted Runtime Promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Existing immutable public release version
+        required: true
+        type: string
+      source_commit:
+        description: Exact commit selected by the immutable release tag
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: hosted-runtime-promote-${{ inputs.release_version }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  promote:
+    name: Verify public bytes and advance channel
+    environment: candidate-release
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout current protected release tools
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+
+      - name: Read and verify immutable public release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+          [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          tag="v$RELEASE_VERSION"
+          tag_lines="$(git ls-remote --exit-code --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")"
+          tag_commit="$(awk -v ref="refs/tags/$tag" '
+            $2 == ref { direct = $1 }
+            $2 == ref "^{}" { peeled = $1 }
+            END { print peeled != "" ? peeled : direct }
+          ' <<<"$tag_lines")"
+          test "$tag_commit" = "$SOURCE_COMMIT"
+          release_json="$RUNNER_TEMP/public-release.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json"
+          jq -e --arg tag "$tag" \
+            '.tag_name == $tag and .draft == false' "$release_json" >/dev/null
+          metadata=.artifacts/public-metadata
+          mkdir -p "$metadata"
+          download() {
+            local name="$1" output="$2" asset_id
+            asset_id="$(jq -er --arg name "$name" \
+              '[.assets[] | select(.name == $name)] |
+               if length == 1 then .[0].id else error("public asset is not unique") end' \
+              "$release_json")"
+            gh api -H "Accept: application/octet-stream" \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$output"
+            test -s "$output"
+          }
+          descriptor="$RUNNER_TEMP/fased-hosting-candidate.json"
+          descriptor_attestation="$RUNNER_TEMP/fased-hosting-candidate.json.attestation.json"
+          download fased-hosting-candidate.json "$descriptor"
+          download fased-hosting-candidate.json.attestation.json "$descriptor_attestation"
+          identity="$(node scripts/release-attestation-identity.mjs resolve \
+            --bundle "$descriptor_attestation" --repository "$GITHUB_REPOSITORY")"
+          GH_PROMPT_DISABLED=1 gh attestation verify "$descriptor" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$descriptor_attestation" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "$(jq -er .sourceRef <<<"$identity")" \
+            --source-digest "$(jq -er .sourceDigest <<<"$identity")" \
+            --deny-self-hosted-runners >/dev/null
+          git show "$SOURCE_COMMIT:pnpm-lock.yaml" > "$RUNNER_TEMP/pnpm-lock.yaml"
+          node --input-type=module - "$descriptor" "$release_json" \
+            "$RELEASE_VERSION" "$SOURCE_COMMIT" \
+            "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            "sha256:$(sha256sum "$RUNNER_TEMP/pnpm-lock.yaml" | awk '{print $1}')" <<'NODE'
+          import fs from "node:fs";
+          import { createHash } from "node:crypto";
+          import { parseCandidateDescriptor } from "./scripts/release-artifact-set.mjs";
+          const [, , descriptorPath, releasePath, version, commit, tree, lockfileDigest] = process.argv;
+          const descriptorBytes = fs.readFileSync(descriptorPath);
+          const descriptor = parseCandidateDescriptor(JSON.parse(descriptorBytes), {
+            version,
+            commit,
+            tree,
+            lockfileDigest,
+            sourceRef: `refs/tags/v${version}`,
+          });
+          const release = JSON.parse(fs.readFileSync(releasePath, "utf8"));
+          const remote = new Map(release.assets.map((asset) => [asset.name, asset]));
+          const expected = new Set([
+            ...descriptor.artifacts.map((artifact) => artifact.name),
+            "fased-hosting-candidate.json",
+            "fased-hosting-candidate.json.attestation.json",
+          ]);
+          if (remote.size !== expected.size || [...remote.keys()].some((name) => !expected.has(name))) {
+            throw new Error("public release inventory differs from the signed descriptor");
+          }
+          for (const artifact of descriptor.artifacts) {
+            const asset = remote.get(artifact.name);
+            if (asset?.size !== artifact.size || asset?.digest !== artifact.sha256) {
+              throw new Error(`public release identity mismatch: ${artifact.name}`);
+            }
+          }
+          const descriptorAsset = remote.get("fased-hosting-candidate.json");
+          const descriptorDigest = `sha256:${createHash("sha256").update(descriptorBytes).digest("hex")}`;
+          if (descriptorAsset?.size !== descriptorBytes.length || descriptorAsset?.digest !== descriptorDigest) {
+            throw new Error("public candidate descriptor identity mismatch");
+          }
+          NODE
+          while IFS= read -r name; do
+            download "$name" "$metadata/$name"
+          done < <(jq -r '.assets[].name | select(
+            test("^fased-lifecycle-root-v[0-9]+\\.json$") or
+            . == "fased-release-index-v1.json" or
+            . == "fased-release-index-v1.json.attestation.json" or
+            . == "fased-lifecycle-root-head-v1.json" or
+            . == "fased-lifecycle-root-head-v1.json.attestation.json")' "$release_json")
+          index="$metadata/fased-release-index-v1.json"
+          index_attestation="$metadata/fased-release-index-v1.json.attestation.json"
+          index_identity="$(node scripts/release-attestation-identity.mjs resolve \
+            --bundle "$index_attestation" --repository "$GITHUB_REPOSITORY")"
+          GH_PROMPT_DISABLED=1 gh attestation verify "$index" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$index_attestation" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "$(jq -er .sourceRef <<<"$index_identity")" \
+            --source-digest "$(jq -er .sourceDigest <<<"$index_identity")" \
+            --deny-self-hosted-runners >/dev/null
+          printf 'CHANNEL_ATTESTATION_SOURCE_REF=%s\n' \
+            "$(jq -er .sourceRef <<<"$index_identity")" >> "$GITHUB_ENV"
+          printf 'CHANNEL_ATTESTATION_SOURCE_DIGEST=%s\n' \
+            "$(jq -er .sourceDigest <<<"$index_identity")" >> "$GITHUB_ENV"
+
+      - name: Advance or confirm the signed channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: >-
+          bash scripts/publish-lifecycle-channel.sh
+          .artifacts/public-metadata
+          "${SOURCE_COMMIT}"
+          "${CHANNEL_ATTESTATION_SOURCE_REF}"
+          "${CHANNEL_ATTESTATION_SOURCE_DIGEST}"
+
+      - name: Record minimal promotion receipt
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/promotion-receipt
+          jq -n \
+            --arg version "$RELEASE_VERSION" \
+            --arg commit "$SOURCE_COMMIT" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg channelIndexDigest \
+              "sha256:$(sha256sum .artifacts/public-metadata/fased-release-index-v1.json | awk '{print $1}')" \
+            '{schemaVersion:1,role:"fased-public-channel-promotion",version:$version,
+              commit:$commit,workflowRunId:$runId,channelIndexDigest:$channelIndexDigest}' \
+            > .artifacts/promotion-receipt/evidence.json
+
+      - name: Upload promotion receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fased-public-channel-promotion
+          path: .artifacts/promotion-receipt/evidence.json
+          if-no-files-found: error
+          retention-days: 30

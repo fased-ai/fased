@@ -16,7 +16,8 @@ source_commit="$2"
 attestation_source_ref="$3"
 attestation_source_digest="$4"
 [[ -d "$candidate_dir" && "$source_commit" =~ ^[a-f0-9]{40}$ &&
-  "$attestation_source_ref" == refs/heads/main &&
+  ( "$attestation_source_ref" == refs/heads/main ||
+    "$attestation_source_ref" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ) &&
   "$attestation_source_digest" =~ ^[a-f0-9]{40}$ ]] || usage
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
@@ -76,6 +77,20 @@ GH_PROMPT_DISABLED=1 gh attestation verify "$index" \
   --source-ref "$attestation_source_ref" \
   --source-digest "$attestation_source_digest" \
   --deny-self-hosted-runners >/dev/null
+
+verify_historical_index_attestation() {
+  local historical_index="$1" historical_attestation="$2" identity
+  identity="$(node scripts/release-attestation-identity.mjs resolve \
+    --bundle "$historical_attestation" \
+    --repository "$GITHUB_REPOSITORY")"
+  GH_PROMPT_DISABLED=1 gh attestation verify "$historical_index" \
+    --repo "$GITHUB_REPOSITORY" \
+    --bundle "$historical_attestation" \
+    --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+    --source-ref "$(jq -er .sourceRef <<<"$identity")" \
+    --source-digest "$(jq -er .sourceDigest <<<"$identity")" \
+    --deny-self-hosted-runners >/dev/null
+}
 
 workspace="$(mktemp -d)"
 trap 'rm -rf "$workspace"' EXIT
@@ -249,31 +264,16 @@ else
       echo "Channel has an incomplete transaction without staged candidate assets" >&2
       exit 1
     }
-    if cmp -s "$index" "$current_index" && cmp -s "$attestation" "$current_attestation"; then
+    if cmp -s "$index" "$current_index"; then
+      verify_historical_index_attestation "$current_index" "$current_attestation"
       action=ALREADY_CURRENT
     else
+      verify_historical_index_attestation "$current_index" "$current_attestation"
       action="$(node scripts/lifecycle-channel-advance.mjs \
         --candidate "$index" \
         --current "$current_index" \
         --version "$version" \
         --commit "$source_commit")"
-      if ! cmp -s "$attestation" "$current_attestation" &&
-        ! cmp -s "$index" "$current_index"; then
-        current_version="$(jq -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"))' "$current_index")"
-        if ! GH_PROMPT_DISABLED=1 gh attestation verify "$current_index" \
-          --repo "$GITHUB_REPOSITORY" \
-          --bundle "$current_attestation" \
-          --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-          --source-ref refs/heads/main \
-          --deny-self-hosted-runners >/dev/null 2>&1; then
-          GH_PROMPT_DISABLED=1 gh attestation verify "$current_index" \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle "$current_attestation" \
-            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "refs/tags/v$current_version" \
-            --deny-self-hosted-runners >/dev/null
-        fi
-      fi
     fi
   else
     action=RECOVER

@@ -364,19 +364,18 @@ describe("lifecycle acceptance contract", () => {
     ).toThrow("fixtureTree mismatch");
   });
 
-  it("wires the v2 contract into the standalone candidate builder", () => {
+  it("wires the v2 contract into the single release builder", () => {
     const builder = readFileSync(
       new URL("./build-linux-x64-release-artifact.sh", import.meta.url),
       "utf8",
     );
     const workflow = readFileSync(
-      new URL("../.github/workflows/pre-tag-p1.yml", import.meta.url),
+      new URL("../.github/workflows/hosted-runtime-release.yml", import.meta.url),
       "utf8",
     );
     expect(builder).toContain("fased-lifecycle-acceptance-v2.json");
     expect(builder).toContain("release-artifact-set.mjs");
-    expect(workflow).not.toContain("  local-fresh:");
-    expect(workflow).not.toContain("  local-update:");
+    expect(workflow).toContain("scripts/build-linux-x64-release-artifact.sh");
     expect(workflow).not.toContain("test-lifecycle-hosting-acceptance.sh");
   });
 

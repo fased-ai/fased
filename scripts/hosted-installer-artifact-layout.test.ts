@@ -10,7 +10,6 @@ const installer = read("install.sh");
 const builder = read("scripts/build-linux-x64-release-artifact.sh");
 const finalizer = read("scripts/finalize-pretag-candidate.sh");
 const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
-const preTagWorkflow = read(".github/workflows/pre-tag-p1.yml");
 const hostedArtifactBuilder = read("scripts/build-hosted-runtime-artifact.ts");
 
 const removedMutationOwners = [
@@ -76,16 +75,12 @@ describe("lean attested Linux-x64 artifact layout", () => {
     expect(finalizer).not.toContain("hosted:artifact:from-dist");
   });
 
-  it("passes the same finalized bytes from pre-tag to publication", () => {
-    expect(preTagWorkflow).toContain("scripts/build-linux-x64-release-artifact.sh");
-    expect(preTagWorkflow).toContain("scripts/finalize-pretag-candidate.sh");
-    expect(preTagWorkflow).toContain("product.sha256");
-    expect(preTagWorkflow).not.toContain("test-lifecycle-hosting-acceptance.sh");
-    expect(releaseWorkflow).toContain("product.sha256");
+  it("builds, finalizes, and publishes the same bytes once", () => {
+    expect(releaseWorkflow).toContain("scripts/build-linux-x64-release-artifact.sh");
+    expect(releaseWorkflow).toContain("scripts/finalize-pretag-candidate.sh");
     expect(releaseWorkflow).toContain("gh attestation verify");
-    expect(releaseWorkflow).not.toContain("pnpm install");
-    expect(releaseWorkflow).not.toContain("pnpm build");
-    expect(releaseWorkflow).not.toContain("go build");
+    expect(releaseWorkflow.match(/build-linux-x64-release-artifact\.sh/gu)?.length).toBe(1);
+    expect(releaseWorkflow).not.toContain("test-lifecycle-hosting-acceptance.sh");
   });
 
   it("contains no simulated Protected Local acceptance implementation", () => {
