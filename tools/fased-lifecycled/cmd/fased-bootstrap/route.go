@@ -1676,9 +1676,7 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 		return protocol.Response{}, err
 	}
 	launcher := filepath.Join(operator.Home, ".fased", "bin", "fased")
-	args := onboardingCommandArgs(request, operator, config, launcher)
-	command := exec.CommandContext(ctx, "/usr/sbin/runuser", args...)
-	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
+	command := onboardingCommand(ctx, request, operator, config, launcher)
 	command.Stdout, command.Stderr = onboardingProcessOutputWriters(request, output, diagnostics)
 	nonInteractive := false
 	for _, argument := range request.OnboardArgs {
@@ -1716,6 +1714,18 @@ func runOnboarding(ctx context.Context, request publicLifecycleRequest, operator
 		return protocol.Response{}, fmt.Errorf("onboarding commit failed: %s", tail([]byte(err.Error()), 4096))
 	}
 	return response, nil
+}
+
+func onboardingCommand(ctx context.Context, request publicLifecycleRequest, operator publicOperator, config platform.Config, launcher string) *exec.Cmd {
+	args := onboardingCommandArgs(request, operator, config, launcher)
+	command := exec.CommandContext(ctx, "/usr/sbin/runuser", args...)
+	// The privileged installer is commonly invoked from /root. After runuser
+	// drops privilege, that directory is not searchable by the operator and any
+	// child process created with process.cwd() fails with EACCES. Bind onboarding
+	// to the validated operator home before the privilege drop.
+	command.Dir = operator.Home
+	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
+	return command
 }
 
 func completeOnboardingWithLease(ctx context.Context, socketPath, requestID string, lifecycleLease *hostsecurity.MutationLock) (protocol.Response, error) {

@@ -733,6 +733,33 @@ func TestOnboardingCommandBindsCanonicalProfileEnvironment(t *testing.T) {
 	}
 }
 
+func TestOnboardingCommandDoesNotInheritPrivilegedBootstrapDirectory(t *testing.T) {
+	bootstrapDirectory := filepath.Join(t.TempDir(), "root")
+	if err := os.Mkdir(bootstrapDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(bootstrapDirectory)
+
+	operator := publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}
+	config, err := platform.NewConfig(
+		model.ProfileHosting, "hosting", "/home/app/.fased",
+		platform.Principal{UID: 1001, GID: 1001}, platform.Principal{UID: 1002, GID: 1002}, platform.Principal{UID: 1003, GID: 1003},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := onboardingCommand(
+		context.Background(),
+		publicLifecycleRequest{Profile: model.ProfileHosting, Channel: "beta", Version: "0.1.76-rc.124"},
+		operator,
+		config,
+		"/home/app/.fased/bin/fased",
+	)
+	if command.Dir != operator.Home {
+		t.Fatalf("onboarding working directory = %q, want %q", command.Dir, operator.Home)
+	}
+}
+
 func TestInteractiveOnboardingDoesNotInheritMachineDeadline(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
