@@ -17,6 +17,7 @@ import {
   isRootPreparedHostingFinalization,
   shouldDeferInstallerAccessHandoff,
   shouldDeferInstallerGatewayActivation,
+  shouldVerifyStrictHostedDashboardFinal,
   shouldVerifyLocalDashboardReadiness,
   shouldWaitForGatewayServiceActivation,
   validateLocalDashboardBootCheck,
@@ -183,6 +184,32 @@ describe("shouldVerifyLocalDashboardReadiness", () => {
         mode: "local",
         skipUi: false,
         skipHealth: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldVerifyStrictHostedDashboardFinal", () => {
+  it("defers the final probe until the lifecycle supervisor starts the exact Hosting Gateway", () => {
+    expect(
+      shouldVerifyStrictHostedDashboardFinal({
+        strictVps: true,
+        allowInsecure: false,
+        deferInstallerGatewayActivation: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldVerifyStrictHostedDashboardFinal({
+        strictVps: true,
+        allowInsecure: false,
+        deferInstallerGatewayActivation: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldVerifyStrictHostedDashboardFinal({
+        strictVps: true,
+        allowInsecure: true,
+        deferInstallerGatewayActivation: false,
       }),
     ).toBe(false);
   });
