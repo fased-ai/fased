@@ -59,6 +59,11 @@ import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-li
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
 import {
+  resolveInstallerOnboardingCwd,
+  shouldDeferRootManagedGatewayActivation,
+  shouldManageGatewayServiceDuringOnboarding,
+} from "./onboarding-managed-lifecycle.js";
+import {
   noteBullet,
   noteCommand,
   noteCommands,
@@ -258,7 +263,7 @@ async function runShell(
     const child = spawn("bash", ["-lc", command], {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
-      cwd: process.cwd(),
+      cwd: resolveInstallerOnboardingCwd(),
     });
     let stderr = "";
     let stdout = "";
@@ -1564,9 +1569,10 @@ export async function finalizeOnboardingWizard(
   });
   const protectedLocal = signerLifecycle?.profile === "protected-local";
   const installerOnboard = process.env.FASED_INSTALLER_ONBOARD?.trim() === "1";
-  const installerLifecycleCommitted = process.env.FASED_INSTALL_LIFECYCLE_COMMITTED?.trim() === "1";
-  const deferProtectedLocalGatewayActivation =
-    protectedLocal && installerOnboard && !installerLifecycleCommitted;
+  const deferProtectedLocalGatewayActivation = shouldDeferRootManagedGatewayActivation({
+    env: process.env,
+    hostProfile: opts.hostProfile ?? "local",
+  });
   const deferInstallerGatewayActivation = shouldDeferInstallerGatewayActivation({
     installerOnboard,
     deferProtectedLocalGatewayActivation,
@@ -1708,7 +1714,12 @@ export async function finalizeOnboardingWizard(
     installDaemon = false;
   }
 
-  if (installDaemon) {
+  if (
+    shouldManageGatewayServiceDuringOnboarding({
+      installDaemon,
+      deferRootManagedActivation: deferInstallerGatewayActivation,
+    })
+  ) {
     const rootPrepared = strictVps && process.env.FASED_HOST_ROOT_PREPARED?.trim() === "1";
     const protectedLocalPrepared =
       protectedLocal &&
