@@ -405,11 +405,11 @@ jobs:
           verify() {
             gh attestation verify "$directory/$1" \
               --repo "$GITHUB_REPOSITORY" \
-              --bundle "$directory/$2" \
-              --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-              --source-ref "$source_ref" \
-              --source-digest "$SOURCE_COMMIT" \
-              --deny-self-hosted-runners >/dev/null
+            --bundle "$directory/$2" \
+            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+            --source-ref "$source_ref" \
+            --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners >/dev/null
           }
           verify fased-hosted-release-v2.json fased-hosted-release-v2.json.attestation.json
           verify fased-lifecycle-trust-v1.json fased-lifecycle-trust-v1.json.attestation.json
@@ -449,11 +449,11 @@ jobs:
             .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json
           gh attestation verify .artifacts/hosted-runtime/fased-hosting-candidate.json \
             --repo "$GITHUB_REPOSITORY" \
-            --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
-            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "refs/tags/v$RELEASE_VERSION" \
-            --source-digest "$SOURCE_COMMIT" \
-            --deny-self-hosted-runners >/dev/null
+          --bundle .artifacts/hosted-runtime/fased-hosting-candidate.json.attestation.json \
+          --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+          --source-ref "refs/tags/v$RELEASE_VERSION" \
+          --source-digest "$GITHUB_SHA" \
+          --deny-self-hosted-runners >/dev/null
           node scripts/release-artifact-set.mjs verify \
             --directory .artifacts/hosted-runtime \
             --version "$RELEASE_VERSION" \
