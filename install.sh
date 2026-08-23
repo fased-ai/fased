@@ -6,6 +6,13 @@ bootstrap_sha256_x64="__FASED_BOOTSTRAP_SHA256_X64__"
 version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
 digest_pattern='^[0-9a-f]{64}$'
 
+print_installer_stage() {
+  local message="$1"
+  printf '\n  ╭─ FASED INSTALL ───────────────────────────────────────────────────────────────╮\n'
+  printf '  │ %-78s │\n' "$message"
+  printf '  ╰───────────────────────────────────────────────────────────────────────────────╯\n'
+}
+
 main() {
 source_path="${BASH_SOURCE[0]:-}"
 streamed=0
@@ -158,7 +165,7 @@ if [[ -e "$bootstrap" || -L "$bootstrap" ]]; then
 fi
 
 if [[ "$streamed" -eq 1 ]]; then cat >/dev/null || true; fi
-echo "Fased: acquiring verified lifecycle bootstrap..."
+print_installer_stage "Installing ${profile} release ${release}..."
 root_command=()
 if [[ "$(id -u)" -ne 0 ]]; then root_command=(sudo); fi
 if [[ "$bootstrap_cache_hit" != "true" ]]; then
@@ -200,9 +207,7 @@ bootstrap_args=(
 [[ "$tailnet_access_confirmed" -eq 1 ]] && bootstrap_args+=(--tailnet-access-confirmed)
 if [[ ${#onboard_args[@]} -gt 0 ]]; then bootstrap_args+=(-- "${onboard_args[@]}"); fi
 
-echo "Fased: applying ${profile} release ${release}..."
 "${root_command[@]}" "$bootstrap" "${bootstrap_args[@]}"
-echo "Fased: verifying public command..."
 verify_public_command() {
   local command_probe='cd /tmp && test "$(command -v fased)" = /usr/local/bin/fased && fased status && fased update --channel "$2" --tag "$1"'
   local update_output
@@ -213,8 +218,13 @@ verify_public_command() {
     update_output="$(/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin \
       /bin/bash -c "$command_probe" fased "$release" "$channel")"
   fi
-  printf '%s\n' "$update_output"
-  grep -Fqx "Already current: $release" <<<"$update_output"
+  if ! grep -Fqx "Already current: $release" <<<"$update_output"; then
+    printf '%s\n' "$update_output" >&2
+    return 1
+  fi
+  if [[ "$verbose" -eq 1 ]]; then
+    printf '%s\n' "$update_output"
+  fi
 }
 verify_public_command
 if [[ "$verbose" -eq 1 ]]; then
@@ -222,7 +232,7 @@ if [[ "$verbose" -eq 1 ]]; then
   printf 'Installer performance: total=%sms bootstrap-download=%ss transferred=%sB cache-hit=%s\n' \
     "$install_total_ms" "$bootstrap_download_seconds" "$bootstrap_transferred_bytes" "$bootstrap_cache_hit"
 fi
-echo "Fased: installation complete."
+print_installer_stage "Installation complete: ${release}"
 }
 
 main "$@"

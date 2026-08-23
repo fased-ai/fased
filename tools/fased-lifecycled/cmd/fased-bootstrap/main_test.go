@@ -779,6 +779,24 @@ func TestInteractiveOnboardingDoesNotInheritMachineDeadline(t *testing.T) {
 	}
 }
 
+func TestTailnetAccessHandoffUsesOneFramedWebAndSSHSummary(t *testing.T) {
+	got := formatTailnetAccessFrame(hostsecurity.State{
+		TailscaleDNS: "fased-vps.tailnet.ts.net",
+		OperatorUser: "app",
+	})
+	for _, expected := range []string{
+		"PRIVATE HOSTING ACCESS",
+		"WEB UI",
+		"https://fased-vps.tailnet.ts.net",
+		"TAILSCALE SSH",
+		"tailscale ssh app@fased-vps.tailnet.ts.net",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("access frame %q does not contain %q", got, expected)
+		}
+	}
+}
+
 func TestPublicInstallRejectsOnboardingProfileOverride(t *testing.T) {
 	_, err := parsePublicLifecycleRequest("install", []string{
 		"--profile", "hosting", "--channel", "beta", "--version", "0.1.76-rc.114", "--operator-user", "app",
@@ -793,8 +811,8 @@ func TestLifecyclePhaseProgressIsBoundedAndKeepsJSONSilent(t *testing.T) {
 	var nonTerminal bytes.Buffer
 	nonTerminalProgress := beginLifecyclePhase(&nonTerminal, false, "acquiring the verified lifecycle release")
 	nonTerminalProgress.Stop()
-	if got, want := nonTerminal.String(), "Phase: acquiring the verified lifecycle release\n"; got != want {
-		t.Fatalf("non-terminal progress = %q, want %q", got, want)
+	if got := nonTerminal.String(); !strings.Contains(got, "LIFECYCLE") || !strings.Contains(got, "acquiring the verified lifecycle release") {
+		t.Fatalf("non-terminal progress was not framed: %q", got)
 	}
 
 	var jsonOutput bytes.Buffer
@@ -816,6 +834,20 @@ func TestLifecyclePhaseProgressIsBoundedAndKeepsJSONSilent(t *testing.T) {
 	}
 	if !strings.Contains(stopped, "Phase: applying the lifecycle generation") || !strings.HasSuffix(stopped, "\r\033[2K") {
 		t.Fatalf("terminal progress did not render and clear its phase: %q", stopped)
+	}
+}
+
+func TestLifecycleOutcomeKeepsAutomationExactAndOffersOneInteractiveFrame(t *testing.T) {
+	var automation bytes.Buffer
+	if err := writeLifecycleOutcome(&automation, "Already current: 0.1.76-rc.126"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := automation.String(), "Already current: 0.1.76-rc.126\n"; got != want {
+		t.Fatalf("automation outcome = %q, want %q", got, want)
+	}
+	interactive := formatLifecycleOutcomeFrame("Updated successfully: 0.1.76-rc.127")
+	if !strings.Contains(interactive, "FASED UPDATE") || !strings.Contains(interactive, "Updated successfully: 0.1.76-rc.127") {
+		t.Fatalf("interactive update frame is incomplete: %q", interactive)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 type Host interface {
@@ -40,7 +41,6 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 	if err := request.Validate(); err != nil || participant.Host == nil {
 		return State{}, errors.Join(err, errors.New("Hosting security participant is incomplete"))
 	}
-	participant.progress("Fased: checking private Hosting access...")
 	var resumed *State
 	if previous, err := participant.Store.ReadState(); err == nil {
 		switch previous.Phase {
@@ -299,7 +299,6 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 }
 
 func (participant Participant) BindRuntimeReady(ctx context.Context, transactionID, generationID, convergenceReceiptDigest string, onboardingRequired bool) (State, error) {
-	participant.progress("Fased: verifying isolated Gateway and signer...")
 	if !sha256IDPattern.MatchString(generationID) || !sha256IDPattern.MatchString(convergenceReceiptDigest) {
 		return State{}, errors.New("Hosting runtime binding is invalid")
 	}
@@ -448,8 +447,13 @@ func (participant Participant) Commit(ctx context.Context, transactionID string,
 
 func (participant Participant) progress(message string) {
 	if participant.User != nil {
-		_, _ = fmt.Fprintln(participant.User, message)
+		_, _ = fmt.Fprintln(participant.User, formatHostingProgressFrame(message))
 	}
+}
+
+func formatHostingProgressFrame(message string) string {
+	message = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(message, "Fased:"), "..."))
+	return fmt.Sprintf("\n  ╭─ HOSTING SETUP ───────────────────────────────────────────────────────────────╮\n  │ %-78s │\n  ╰───────────────────────────────────────────────────────────────────────────────╯", message)
 }
 
 func (participant Participant) Abort(ctx context.Context, transactionID string) error {

@@ -129,7 +129,7 @@ func beginLifecyclePhase(output io.Writer, jsonOutput bool, phase string) *lifec
 func newLifecyclePhaseProgress(output io.Writer, phase string, terminal bool, heartbeat time.Duration) *lifecyclePhaseProgress {
 	progress := &lifecyclePhaseProgress{output: output, terminal: terminal}
 	if !terminal {
-		_, _ = fmt.Fprintf(output, "Phase: %s\n", phase)
+		_, _ = fmt.Fprintln(output, formatLifecyclePhaseFrame(phase))
 		return progress
 	}
 	progress.done = make(chan struct{})
@@ -155,6 +155,10 @@ func newLifecyclePhaseProgress(output io.Writer, phase string, terminal bool, he
 		}
 	}()
 	return progress
+}
+
+func formatLifecyclePhaseFrame(phase string) string {
+	return fmt.Sprintf("\n  ╭─ LIFECYCLE ───────────────────────────────────────────────────────────────────╮\n  │ %-78s │\n  ╰───────────────────────────────────────────────────────────────────────────────╯", phase)
 }
 
 func (progress *lifecyclePhaseProgress) Stop() {
@@ -944,17 +948,32 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			Performance              publicLifecyclePerformance `json:"performance"`
 		}{outcome, result.Version, result.ReleaseSequence, result.SecurityEpoch, convergence.ActiveGenerationID, convergence.ConvergenceReceiptDigest, performance}
 		err = json.NewEncoder(output).Encode(response)
-	} else if outcome == "ALREADY_CURRENT" {
-		_, err = fmt.Fprintf(output, "Already current: %s\n", result.Version)
-	} else if request.Operation == "repair" {
-		_, err = fmt.Fprintf(output, "Repaired successfully: %s\n", result.Version)
 	} else {
-		_, err = fmt.Fprintf(output, "Updated successfully: %s\n", result.Version)
+		message := "Updated successfully: " + result.Version
+		if outcome == "ALREADY_CURRENT" {
+			message = "Already current: " + result.Version
+		} else if request.Operation == "repair" {
+			message = "Repaired successfully: " + result.Version
+		}
+		err = writeLifecycleOutcome(output, message)
 	}
 	if err == nil && request.Verbose && !request.JSON {
 		_, err = fmt.Fprintln(output, formatLifecyclePerformance(performance))
 	}
 	return err
+}
+
+func writeLifecycleOutcome(output io.Writer, message string) error {
+	if outputIsTerminal(output) {
+		_, err := fmt.Fprintln(output, formatLifecycleOutcomeFrame(message))
+		return err
+	}
+	_, err := fmt.Fprintln(output, message)
+	return err
+}
+
+func formatLifecycleOutcomeFrame(message string) string {
+	return fmt.Sprintf("\n  ╭─ FASED UPDATE ────────────────────────────────────────────────────────────────╮\n  │ %-78s │\n  ╰───────────────────────────────────────────────────────────────────────────────╯", message)
 }
 
 // convergeManagedPluginsBeforeCoreGeneration is deliberately called with the
@@ -1299,9 +1318,7 @@ func confirmTailnetAccess(state hostsecurity.State, output io.Writer) (bool, err
 	if err := state.Validate(); err != nil || state.TailscaleDNS == "" || state.OperatorUser == "" {
 		return false, errors.Join(err, errors.New("Hosting tailnet confirmation state is invalid"))
 	}
-	_, _ = fmt.Fprintf(output, "\nFased Hosting is private at https://%s\n", state.TailscaleDNS)
-	_, _ = fmt.Fprintf(output, "Before public SSH is disabled, connect from your Tailscale computer:\n  tailscale ssh %s@%s\n", state.OperatorUser, state.TailscaleDNS)
-	_, _ = fmt.Fprintln(output, "Keep this provider console open while testing. You will not be asked to retype the DNS name.")
+	_, _ = fmt.Fprintln(output, formatTailnetAccessFrame(state))
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
 		return false, errors.New("non-interactive Hosting setup preserved provider SSH; rerun with --tailnet-access-confirmed only after the external Tailscale SSH test succeeds")
@@ -1319,6 +1336,26 @@ func confirmTailnetAccess(state hostsecurity.State, output io.Writer) (bool, err
 		return false, errors.New("provider SSH remains open because independent tailnet access was not confirmed")
 	}
 	return true, nil
+}
+
+func formatTailnetAccessFrame(state hostsecurity.State) string {
+	rows := []string{
+		"WEB UI",
+		"https://" + state.TailscaleDNS,
+		"",
+		"TAILSCALE SSH",
+		"tailscale ssh " + state.OperatorUser + "@" + state.TailscaleDNS,
+		"",
+		"Test SSH from your Tailscale computer before public SSH is disabled.",
+		"Keep this provider console open while testing.",
+	}
+	var frame strings.Builder
+	frame.WriteString("\n  ╭─ PRIVATE HOSTING ACCESS ──────────────────────────────────────────────────────╮\n")
+	for _, row := range rows {
+		_, _ = fmt.Fprintf(&frame, "  │ %-78s │\n", row)
+	}
+	frame.WriteString("  ╰───────────────────────────────────────────────────────────────────────────────╯")
+	return frame.String()
 }
 
 func shouldRunOnboarding(request publicLifecycleRequest, outcome string, ownerConfigExisted bool) bool {

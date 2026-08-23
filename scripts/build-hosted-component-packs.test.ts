@@ -384,6 +384,16 @@ describe("managed component pack identity", () => {
     expect(coreRuntime).not.toContain('from "../../signal/send.js"');
     expect(coreRuntime).not.toContain('from "../../imessage/send.js"');
     expect(coreRuntime).not.toContain('import("../../web/outbound.js")');
+    const gatewayHttp = await fs.readFile(
+      path.join(process.cwd(), "src", "gateway", "server-http.ts"),
+      "utf8",
+    );
+    const slackEntrypoint = await fs.readFile(
+      path.join(process.cwd(), "extensions", "slack", "index.ts"),
+      "utf8",
+    );
+    expect(gatewayHttp).not.toContain('import("../slack/http/index.js")');
+    expect(slackEntrypoint).toContain("api.registerHttpHandler(handleSlackHttpRequest)");
   });
 
   it("keeps the CLI process alive until the selected command completes", async () => {
