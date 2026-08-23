@@ -271,6 +271,7 @@ jobs:
       - name: Verify and stage only the pre-tag product bytes
         env:
           EXPECTED_DESCRIPTOR_SHA256: ${{ needs.preflight.outputs.pretag_descriptor_sha256 }}
+          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
           RELEASE_SEQUENCE: ${{ needs.preflight.outputs.release_sequence }}
           SECURITY_EPOCH: ${{ needs.preflight.outputs.security_epoch }}
           RELEASE_VERSION: ${{ inputs.release_version }}
