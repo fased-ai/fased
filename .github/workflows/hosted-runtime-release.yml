@@ -87,7 +87,7 @@ jobs:
           if test "$remote_main" != "$SOURCE_COMMIT"; then
             git merge-base --is-ancestor "$SOURCE_COMMIT" "$remote_main"
             test "$(git diff --name-only "$SOURCE_COMMIT" "$remote_main" | sort)" = \
-              $'.github/workflows/hosted-runtime-release.yml\nscripts/ci-workflow-contract.test.ts'
+              $'.github/workflows/hosted-runtime-release.yml\nscripts/ci-workflow-contract.test.ts\nscripts/publish-lifecycle-channel.sh'
           fi
           remote_tag_ref="refs/tags/v$RELEASE_VERSION"
           remote_tag_lines="$(git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}")"
@@ -99,11 +99,6 @@ jobs:
           ')"
           test -n "$remote_tag_object"
           test "$remote_tag_commit" = "$SOURCE_COMMIT"
-          if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Candidate release already exists: v$RELEASE_VERSION" >&2
-            exit 1
-          fi
-
       - name: Verify immutable pre-candidate pass
         id: pre-candidate
         env:
@@ -723,6 +718,8 @@ jobs:
           bash scripts/publish-lifecycle-channel.sh
           .artifacts/hosted-runtime
           "${SOURCE_COMMIT}"
+          "${GITHUB_REF}"
+          "${GITHUB_SHA}"
 
       - name: Record successful candidate publication gate
         env:

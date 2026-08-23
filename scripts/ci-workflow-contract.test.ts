@@ -150,6 +150,7 @@ describe("lean CI and release workflow contracts", () => {
   it("attests and publishes pre-tag product bytes without rebuilding or reinstalling", async () => {
     const value = await workflow(".github/workflows/hosted-runtime-release.yml");
     const source = await text(".github/workflows/hosted-runtime-release.yml");
+    const channelScript = await text("scripts/publish-lifecycle-channel.sh");
     const finalizeText = jobText(value.jobs?.["finalize-candidate"]);
     const publishText = jobText(value.jobs?.publish);
     const stage = value.jobs?.["finalize-candidate"]?.steps?.find(
@@ -173,13 +174,18 @@ describe("lean CI and release workflow contracts", () => {
     const channelWitness = value.jobs?.["refresh-root-head"]?.steps?.find(
       (step) => step.name === "Prepare current channel root-head statement",
     );
+    const channelPublisher = value.jobs?.publish?.steps?.find(
+      (step) => step.name === "Advance signed managed channel to the exact public candidate",
+    );
     expect(stage?.env?.PRE_TAG_P1_RUN_ID).toBe("${{ inputs.pre_tag_p1_run_id }}");
     expect(stage?.run).toContain('--workflow-run-id "$PRE_TAG_P1_RUN_ID"');
     expect(identity?.run).toContain('test "$GITHUB_REF" = "refs/heads/main"');
     expect(identity?.run).toContain('git merge-base --is-ancestor "$SOURCE_COMMIT" "$remote_main"');
     expect(identity?.run).toContain(".github/workflows/hosted-runtime-release.yml");
     expect(identity?.run).toContain("scripts/ci-workflow-contract.test.ts");
+    expect(identity?.run).toContain("scripts/publish-lifecycle-channel.sh");
     expect(identity?.run).not.toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
+    expect(identity?.run).not.toContain("Candidate release already exists");
     expect(finalizeText).toContain("product.sha256");
     expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
     expect(finalizeText).toContain("release-artifact-set.mjs verify");
@@ -195,6 +201,12 @@ describe("lean CI and release workflow contracts", () => {
     expect(publishIdentity?.run).toContain('--source-ref "refs/tags/v$RELEASE_VERSION"');
     expect(publishIdentity?.run).toContain('--source-ref "$GITHUB_REF"');
     expect(publishIdentity?.run).toContain('--source-digest "$GITHUB_SHA"');
+    expect(channelPublisher?.run).toContain('"${GITHUB_REF}"');
+    expect(channelPublisher?.run).toContain('"${GITHUB_SHA}"');
+    expect(channelScript).toContain('--source-ref "$attestation_source_ref"');
+    expect(channelScript).toContain('--source-digest "$attestation_source_digest"');
+    expect(channelScript).toContain("--source-ref refs/heads/main");
+    expect(channelScript).toContain('--source-ref "refs/tags/v$current_version"');
     expect(publishTag?.env?.SOURCE_COMMIT).toBe("${{ inputs.source_commit }}");
     expect(publishTag?.run).toContain('test "$remote_tag_commit" = "$SOURCE_COMMIT"');
     expect(publishTag?.run).not.toContain('test "$remote_tag_commit" = "$GITHUB_SHA"');
