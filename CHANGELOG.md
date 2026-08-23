@@ -4,6 +4,17 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.118
+
+- Preserve the complete optimized Go-managed core, modular Wallet, signer,
+  Mining, task-ledger and digest-bound optional component architecture.
+- Make the lifecycle trust root reproducible across builds and bind fixture
+  release sequences explicitly so real cross-build Hosting updates remain
+  monotonic without weakening immutable candidate authority.
+- Prove the exact unpublished bytes on a 2 GB Hosting VPS, including managed
+  swap, state preservation and identical-command convergence, while advancing
+  signed lifecycle authority to release sequence 25 and security epoch 1.
+
 ## 0.1.76-rc.117
 
 - Preserve the complete optimized Go-managed core, modular Wallet, signer,
