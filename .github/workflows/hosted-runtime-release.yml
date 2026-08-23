@@ -258,7 +258,7 @@ jobs:
           name: fased-hosting-candidate
           path: .artifacts/hosted-runtime
 
-      - name: Verify candidate and create immutable tag if absent
+      - name: Verify candidate and owner-created immutable tag
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
@@ -281,14 +281,14 @@ jobs:
             --source-digest "$(jq -er .sourceDigest <<<"$identity")" \
             --deny-self-hosted-runners >/dev/null
           tag="v$RELEASE_VERSION"
-          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-            git config user.name github-actions
-            git config user.email github-actions@github.com
-            git tag -a "$tag" "$SOURCE_COMMIT" -m "Fased Agent $tag"
-            git push origin "refs/tags/$tag"
+          if ! lines="$(git ls-remote --exit-code --tags origin \
+            "refs/tags/$tag" "refs/tags/$tag^{}")"; then
+            echo "Owner-created annotated tag $tag is required before candidate-release approval." >&2
+            exit 1
           fi
-          lines="$(git ls-remote --exit-code --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")"
-          commit="$(awk -v ref="refs/tags/$tag" '$2 == ref {d=$1} $2 == ref "^{}" {p=$1} END {print p != "" ? p : d}' <<<"$lines")"
+          tag_object="$(awk -v ref="refs/tags/$tag" '$2 == ref {print $1}' <<<"$lines")"
+          commit="$(awk -v ref="refs/tags/$tag^{}" '$2 == ref {print $1}' <<<"$lines")"
+          [[ "$tag_object" =~ ^[a-f0-9]{40}$ && "$tag_object" != "$commit" ]]
           test "$commit" = "$SOURCE_COMMIT"
 
       - name: Publish exact release once

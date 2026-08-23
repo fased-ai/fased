@@ -129,8 +129,10 @@ Important:
 - [ ] make sure the worktree is clean
 - [ ] commit the version/changelog/docs updates
 - [ ] push `main`
-- [ ] create an annotated tag on the pushed release commit
-- [ ] push the branch and tag
+- [ ] dispatch Hosted Runtime Release for the exact pushed release commit
+- [ ] wait for its prepare job to build and attest the candidate exactly once
+- [ ] create and push an annotated tag on that tested release commit
+- [ ] approve the waiting `candidate-release` environment once
 
 Typical shape:
 
@@ -141,8 +143,9 @@ pnpm build
 git add .
 git commit -m "chore(release): cut vX.Y.Z"
 git push origin main
-git tag -a vX.Y.Z -m "Fased Agent vX.Y.Z"
-git push origin vX.Y.Z
+# After the workflow prepare job passes:
+git tag -a vX.Y.Z <exact-tested-commit> -m "Fased Agent vX.Y.Z"
+git push origin refs/tags/vX.Y.Z
 ```
 
 Verify the tag points at the release commit:

@@ -64,8 +64,12 @@ describe("version-neutral lifecycle release architecture", () => {
     expect(release).toContain(
       'test "$(node -p "require(\'./package.json\').version")" = "$RELEASE_VERSION"',
     );
-    expect(release).toContain('git tag -a "$tag" "$SOURCE_COMMIT"');
+    expect(release).toContain('"refs/tags/$tag^{}"');
+    expect(release).toContain(
+      '[[ "$tag_object" =~ ^[a-f0-9]{40}$ && "$tag_object" != "$commit" ]]',
+    );
     expect(release).toContain('test "$commit" = "$SOURCE_COMMIT"');
+    expect(release).not.toContain('git tag -a "$tag"');
     expect(release).not.toMatch(/case\s+[^\n]*RELEASE_VERSION/u);
   });
 

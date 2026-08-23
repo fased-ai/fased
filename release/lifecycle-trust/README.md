@@ -46,8 +46,10 @@ Normal work remains:
 developer opens PR
 -> CI validates it
 -> maintainer merges it
--> owner creates the exact immutable candidate tag
--> protected GitHub workflow builds and attests release assets
+-> protected GitHub workflow builds and attests release assets once
+-> owner creates the exact annotated tag at the tested commit
+-> owner approves the waiting candidate-release environment
+-> workflow verifies the tag, publishes the same assets, and advances the channel
 -> installer/updater verifies the offline GitHub attestation bundle
 -> exact release metadata and artifact digests are verified
 -> activation commits or rolls back transactionally
