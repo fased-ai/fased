@@ -135,7 +135,12 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 				}
 				return previous, nil
 			}
-			if !previous.matchesIncompleteBoundary(request) {
+			// Acquisition has already authenticated request.TrustRootSHA256 before
+			// the host-security participant runs. A committed host boundary must
+			// therefore survive an authorized lifecycle trust-root rotation while
+			// still rejecting changes to the host, channel, or platform identity.
+			// Incomplete transactions remain pinned to their original trust root.
+			if !previous.matchesCommittedHostBoundary(request) {
 				return State{}, errors.New("committed Hosting security transaction has a different update channel or platform identity")
 			}
 			if _, err := participant.Store.EnsureOwnership(previous); err != nil {
@@ -539,6 +544,11 @@ func (state State) matchesIncompleteBoundary(request Request) bool {
 	return state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser &&
 		(state.PlatformIdentity == "" || state.PlatformIdentity == request.PlatformIdentity) &&
 		(state.TrustRootSHA256 == "" || state.TrustRootSHA256 == request.TrustRootSHA256)
+}
+
+func (state State) matchesCommittedHostBoundary(request Request) bool {
+	return state.Channel == request.Channel && state.GatewayPort == request.GatewayPort && state.OperatorUser == request.OperatorUser &&
+		(state.PlatformIdentity == "" || state.PlatformIdentity == request.PlatformIdentity)
 }
 
 func (state State) matchesPreparedHost(inspection Inspection) bool {
