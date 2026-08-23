@@ -75,15 +75,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
-          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
           [[ "$PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$MANAGED_PREDECESSOR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
           test "$PREDECESSOR_VERSION" != "$RELEASE_VERSION"
           test "$MANAGED_PREDECESSOR_VERSION" != "$RELEASE_VERSION"
           remote_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-          test "$remote_main" = "$SOURCE_COMMIT"
+          test "$remote_main" = "$GITHUB_SHA"
+          if test "$remote_main" != "$SOURCE_COMMIT"; then
+            git merge-base --is-ancestor "$SOURCE_COMMIT" "$remote_main"
+            test "$(git diff --name-only "$SOURCE_COMMIT" "$remote_main" | sort)" = \
+              $'.github/workflows/hosted-runtime-release.yml\nscripts/ci-workflow-contract.test.ts'
+          fi
           remote_tag_ref="refs/tags/v$RELEASE_VERSION"
           remote_tag_lines="$(git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}")"
           remote_tag_object="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '$2 == ref {print $1}')"
