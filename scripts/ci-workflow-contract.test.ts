@@ -177,6 +177,9 @@ describe("lean CI and release workflow contracts", () => {
     const channelPublisher = value.jobs?.publish?.steps?.find(
       (step) => step.name === "Advance signed managed channel to the exact public candidate",
     );
+    const publicRelease = value.jobs?.publish?.steps?.find(
+      (step) => step.name === "Publish one draft and expose it only after every byte uploads",
+    );
     expect(stage?.env?.PRE_TAG_P1_RUN_ID).toBe("${{ inputs.pre_tag_p1_run_id }}");
     expect(stage?.run).toContain('--workflow-run-id "$PRE_TAG_P1_RUN_ID"');
     expect(identity?.run).toContain('test "$GITHUB_REF" = "refs/heads/main"');
@@ -207,6 +210,14 @@ describe("lean CI and release workflow contracts", () => {
     expect(channelScript).toContain('--source-digest "$attestation_source_digest"');
     expect(channelScript).toContain("--source-ref refs/heads/main");
     expect(channelScript).toContain('--source-ref "refs/tags/v$current_version"');
+    expect(publicRelease?.env?.SOURCE_COMMIT).toBe("${{ inputs.source_commit }}");
+    expect(publicRelease?.run).toContain("existing-public-candidate");
+    expect(publicRelease?.run).toContain("releases/assets/$asset_id");
+    expect(publicRelease?.run).toContain('--directory "$public_dir"');
+    expect(publicRelease?.run).toContain('--workflow-run-id "$public_run_id"');
+    expect(publicRelease?.run).toContain('--workflow-run-attempt "$public_run_attempt"');
+    expect(publicRelease?.run).toContain("--source-ref refs/heads/main");
+    expect(publicRelease?.run).toContain('cp -a "$public_dir/." .artifacts/hosted-runtime/');
     expect(publishTag?.env?.SOURCE_COMMIT).toBe("${{ inputs.source_commit }}");
     expect(publishTag?.run).toContain('test "$remote_tag_commit" = "$SOURCE_COMMIT"');
     expect(publishTag?.run).not.toContain('test "$remote_tag_commit" = "$GITHUB_SHA"');
