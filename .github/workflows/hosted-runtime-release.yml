@@ -85,8 +85,16 @@ jobs:
           test "$MANAGED_PREDECESSOR_VERSION" != "$RELEASE_VERSION"
           remote_main="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
           test "$remote_main" = "$SOURCE_COMMIT"
-          remote_tag="$(git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION" | awk '{print $1}')"
-          test "$remote_tag" = "$SOURCE_COMMIT"
+          remote_tag_ref="refs/tags/v$RELEASE_VERSION"
+          remote_tag_lines="$(git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}")"
+          remote_tag_object="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '$2 == ref {print $1}')"
+          remote_tag_commit="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '
+            $2 == ref { direct = $1 }
+            $2 == ref "^{}" { peeled = $1 }
+            END { print peeled != "" ? peeled : direct }
+          ')"
+          test -n "$remote_tag_object"
+          test "$remote_tag_commit" = "$SOURCE_COMMIT"
           if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Candidate release already exists: v$RELEASE_VERSION" >&2
             exit 1
@@ -528,8 +536,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          remote_tag="$(git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
-          test "$remote_tag" = "$GITHUB_SHA"
+          remote_tag_ref="refs/tags/$RELEASE_TAG"
+          remote_tag_lines="$(git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}")"
+          remote_tag_object="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '$2 == ref {print $1}')"
+          remote_tag_commit="$(printf '%s\n' "$remote_tag_lines" | awk -v ref="$remote_tag_ref" '
+            $2 == ref { direct = $1 }
+            $2 == ref "^{}" { peeled = $1 }
+            END { print peeled != "" ? peeled : direct }
+          ')"
+          test -n "$remote_tag_object"
+          test "$remote_tag_commit" = "$GITHUB_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
