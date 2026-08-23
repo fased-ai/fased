@@ -87,6 +87,14 @@ metadata_base="http://127.0.0.1:${LOOPBACK_PORT}/v${version}"
 chmod 0755 "$OUTPUT_DIR/fased-bootstrap-linux-x64"
 source_installer="$(mktemp "${TMPDIR:-/tmp}/fased-staging-install.XXXXXX")"
 git -C "$ROOT_DIR" show "$commit:install.sh" >"$source_installer"
+node -e '
+  const fs = require("node:fs");
+  const [file, replacement] = process.argv.slice(1);
+  const expected = `release_base="https://github.com/fased-ai/fased/releases/download/v\${release}"`;
+  const source = fs.readFileSync(file, "utf8");
+  if (source.split(expected).length !== 2) throw new Error("staging installer release base is not unique");
+  fs.writeFileSync(file, source.replace(expected, `release_base="${replacement}"`));
+' "$source_installer" "$metadata_base"
 node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
   --source "$source_installer" --output "$OUTPUT_DIR/install.sh" --version "$version" \
   --bootstrap-x64 "$OUTPUT_DIR/fased-bootstrap-linux-x64" --architecture x64
