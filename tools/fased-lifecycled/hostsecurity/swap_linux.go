@@ -84,6 +84,14 @@ func (host LinuxHost) managedSwapReady() (bool, error) {
 		if err := validateManagedSwapFile(managedInfo); err != nil {
 			return false, err
 		}
+		if inspection.managedPathActive && exactEntries == 0 {
+			// A canceled rollback can remove the durable fstab entry after the
+			// kernel has already activated the exact root-owned managed file.
+			// Report this safe, bounded state as incomplete so a new transaction
+			// snapshots it as required and stageManagedSwap restores the entry
+			// without recreating or reactivating the file.
+			return false, nil
+		}
 		if !inspection.managedPathActive || exactEntries != 1 {
 			return false, errors.New("Hosting managed swap residue is incomplete")
 		}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -144,6 +145,47 @@ func TestLowMemoryHostingRejectsUnjournaledManagedSwapResidue(t *testing.T) {
 	}
 	if _, err := host.SnapshotHardening(context.Background(), "app", io.Discard); err == nil || !strings.Contains(err.Error(), "managed swap file is unsafe") {
 		t.Fatalf("unsafe managed swap residue was accepted: %v", err)
+	}
+}
+
+func TestLowMemoryHostingAdoptsActiveManagedSwapAfterCanceledRollback(t *testing.T) {
+	host, runner, root := linuxHostFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "proc/meminfo"), []byte("MemTotal:       1048576 kB\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	swapPath := filepath.Join(root, strings.TrimPrefix(managedSwapPath, "/"))
+	file, err := os.OpenFile(swapPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(managedSwapFileBytes()); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	usableKiB := managedSwapBytes / 1024
+	if err := os.WriteFile(filepath.Join(root, "proc/swaps"), []byte("Filename\tType\tSize\tUsed\tPriority\n"+swapPath+" file "+strconv.FormatInt(usableKiB, 10)+" 0 -2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := host.snapshotManagedSwap()
+	if err != nil || !snapshot.Required {
+		t.Fatalf("active swap without its fstab entry was not staged for repair: snapshot=%+v err=%v", snapshot, err)
+	}
+	if err := host.stageManagedSwap(context.Background(), snapshot, io.Discard); err != nil {
+		t.Fatalf("active managed swap was not adopted: %v", err)
+	}
+	fstab, err := os.ReadFile(filepath.Join(root, "etc/fstab"))
+	if err != nil || strings.Count(string(fstab), managedSwapFstabEntry) != 1 {
+		t.Fatalf("managed swap persistence was not restored exactly: %q err=%v", fstab, err)
+	}
+	ready, err := host.managedSwapReady()
+	if err != nil || !ready {
+		t.Fatalf("adopted managed swap is not ready: ready=%v err=%v", ready, err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("already-active managed swap was reinitialized: %v", runner.calls)
 	}
 }
 
