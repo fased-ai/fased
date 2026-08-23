@@ -7,7 +7,6 @@ FASED_FIXTURE_IMAGE_LOCK_FD=""
 
 fased_fixture_image_dir() {
   case "${1:?fixture profile is required}" in
-    local) printf '%s\n' "$FASED_FIXTURE_IMAGE_ROOT/scripts/docker/protected-local-systemd" ;;
     hosting) printf '%s\n' "$FASED_FIXTURE_IMAGE_ROOT/scripts/docker/hosting-systemd" ;;
     *) echo "Unsupported fixture image profile: $1" >&2; return 1 ;;
   esac
@@ -22,14 +21,7 @@ fased_fixture_image_digest() {
   local -a inputs=()
   image_dir="$(fased_fixture_image_dir "$profile")"
   inputs+=("$image_dir/Containerfile.$distro")
-  if [[ "$profile" == "local" && "$distro" == "rocky" ]]; then
-    inputs+=(
-      "$image_dir/user-at-no-pam.conf"
-      "$image_dir/sudo-no-pam.conf"
-    )
-  elif [[ "$profile" == "hosting" ]]; then
-    inputs+=("$image_dir/updater-request.mjs")
-  fi
+  inputs+=("$image_dir/updater-request.mjs")
   for path in "${inputs[@]}"; do
     [[ -f "$path" && ! -L "$path" ]] || {
       echo "Fixture image input is missing or unsafe: $path" >&2
@@ -44,9 +36,11 @@ fased_fixture_image_ref() {
   local profile="${1:?fixture profile is required}"
   local distro="${2:?fixture distro is required}"
   local digest="${3:?fixture digest is required}"
-  local prefix="fased-protected-local-systemd"
-  [[ "$profile" == "local" ]] || prefix="fased-hosting-systemd"
-  printf '%s-%s:fixture-%s\n' "$prefix" "$distro" "${digest:0:24}"
+  [[ "$profile" == "hosting" ]] || {
+    echo "Unsupported fixture image profile: $profile" >&2
+    return 1
+  }
+  printf 'fased-hosting-systemd-%s:fixture-%s\n' "$distro" "${digest:0:24}"
 }
 
 fased_fixture_image_archive() {
@@ -69,7 +63,7 @@ fased_fixture_verify_image() {
 }
 
 fased_fixture_prepare_main() {
-  local profile="${FASED_SYSTEMD_FIXTURE_PROFILE:-local}"
+  local profile="${FASED_SYSTEMD_FIXTURE_PROFILE:-hosting}"
   local runtime="${FASED_CONTAINER_RUNTIME:-podman}"
   local oci_runtime="${FASED_CONTAINER_OCI_RUNTIME:-}"
   local cache_home="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}"
@@ -95,10 +89,6 @@ fased_fixture_prepare_main() {
   trap 'exit 129' HUP
 
   case "$profile" in
-    local)
-      distros="${FASED_SYSTEMD_FIXTURE_DISTROS:-ubuntu,rocky}"
-      cache_dir="${FASED_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-$cache_home/fased-dev/lifecycle-fixture-images/local}"
-      ;;
     hosting)
       distros="${FASED_HOSTING_SYSTEMD_FIXTURE_DISTROS:-ubuntu}"
       cache_dir="${FASED_HOSTING_SYSTEMD_FIXTURE_IMAGE_CACHE_DIR:-$cache_home/fased-dev/lifecycle-fixture-images/hosting}"

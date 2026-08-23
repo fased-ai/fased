@@ -33,31 +33,31 @@ reject_text tools/fased-lifecycled/cmd/fased-bootstrap/main.go 'updates.fased.ai
 # verbosity only adds quiet-output flags or the bootstrap logging selector.
 require_text install.sh "curl_args=(-fL --proto '=https' --tlsv1.2 --retry 2 --retry-delay 1)"
 require_text install.sh 'if [[ "$verbose" -eq 0 ]]; then curl_args+=(-sS); fi'
-require_text install.sh 'curl "${curl_args[@]}" "${release_base}/${bootstrap_asset}" -o "$download"'
+require_text install.sh "curl \"\${curl_args[@]}\" --write-out '%{size_download} %{time_total}\\n'"
+require_text install.sh '"${release_base}/${bootstrap_asset}" -o "$download"'
 require_text install.sh '[[ "$verbose" -eq 1 ]] && bootstrap_args+=(--verbose)'
 
-# DEV-004 and DEV-006: substituted fixture transport can only be SUPPORTING,
-# while pre-tag closure must replay both affected public lifecycle profiles.
+# DEV-004 and DEV-006: substituted Hosting transport can only be SUPPORTING;
+# real Local and Hosting acceptance remain external evidence.
 require_text scripts/lifecycle-acceptance-contract.mjs \
   'acquisitionMode: "substituted-fixture"'
 require_text scripts/lifecycle-acceptance-contract.mjs \
   'acquisitionMode: "immutable-github-release"'
-require_text scripts/docker/protected-local-systemd/lifecycle-acceptance.sh \
-  'acceptance_acquisition_evidence_class=SUPPORTING'
 require_text scripts/docker/hosting-systemd/lifecycle-acceptance.sh \
   'acceptance_acquisition_evidence_class=SUPPORTING'
-require_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-local-acceptance.sh'
-require_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-hosting-acceptance.sh'
+require_text .github/workflows/pre-tag-p1.yml 'build-linux-x64-release-artifact.sh'
+reject_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-hosting-acceptance.sh'
+reject_text .github/workflows/pre-tag-p1.yml 'test-lifecycle-local-acceptance.sh'
 require_text .github/workflows/hosted-runtime-release.yml \
   'Verify immutable protected pre-tag P1 pass'
 require_text docs/maintainers/codex-skills/fased-release-manager/SKILL.md \
-  'Before PRE-CANDIDATE, a version-only change, or RC allocation, require one'
+  'Before candidate allocation, require one owner-authorized real-init'
 require_text docs/maintainers/codex-skills/fased-release-manager/SKILL.md \
-  'new RC as a test iteration.'
+  'Never use a release to discover whether a correction works.'
 require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \
-  'one unpublished, tag-free candidate-shaped Linux-x64 build'
+  'build one production Linux-x64 artifact on exact versioned main'
 require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \
-  'allocate another RC to discover whether the correction works.'
+  'allocate an RC to discover whether a correction works.'
 
 # DEV-007: PUBLIC0 is a readback boundary and cannot be lifecycle acceptance.
 require_text docs/maintainers/codex-skills/fased-release-manager/references/release.md \

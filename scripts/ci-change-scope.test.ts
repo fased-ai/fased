@@ -55,13 +55,42 @@ describe("lean CI changed-surface classification", () => {
       runNodeFocused: true,
       runInstallerReleaseVerification: false,
       runNodeBuild: false,
-      runLocalUpdate: false,
-      runHostingUpdate: false,
     });
     expect(classifyChangedPaths(["install.sh"])).toMatchObject({
       runInstallerReleaseVerification: true,
       runNodeBuild: false,
     });
+  });
+
+  it("selects platform checks only for their owned paths", () => {
+    expect(classifyChangedPaths(["Dockerfile"])).toMatchObject({
+      runDocker: true,
+      runMacosRuntime: false,
+      runMacosApp: false,
+    });
+    expect(classifyChangedPaths(["apps/macos/Sources/Fased/App.swift"])).toMatchObject({
+      runDocker: false,
+      runMacosApp: true,
+    });
+    expect(classifyChangedPaths(["src/daemon/launchd.ts"])).toMatchObject({
+      runMacosRuntime: true,
+    });
+    expect(classifyChangedPaths(["tools/fased-signerd/v2_schema.go"])).toMatchObject({
+      runSignerDarwinIntegration: true,
+    });
+    expect(() => classifyChangedPaths(["release/channel-policy.json"])).toThrow(
+      /no directly changed focused test/u,
+    );
+    expect(() => classifyChangedPaths(["deploy/hosting/fly.toml"])).toThrow(
+      /no directly changed focused test/u,
+    );
+    expect(classifyChangedPaths(["docs/launchd.md"])).toMatchObject({
+      docsOnly: true,
+      runMacosRuntime: false,
+    });
+    expect(() => classifyChangedPaths(["apps/ios/Sources/App.swift"])).toThrow(
+      /mobile-owned change requires a dedicated focused route/u,
+    );
   });
 
   it("fails an unknown path and production code without a focused test", () => {
@@ -95,12 +124,22 @@ describe("lean CI changed-surface classification", () => {
       run_node_full: "false",
       run_codeql_javascript: "false",
     });
+    expect(outputEntries(plan, remediation)).not.toHaveProperty("run_platform_bootstrap");
+    for (const ghost of [
+      "t2_fixture_only",
+      "experimental_mobile_changed",
+      "run_signer",
+      "run_hosting_fresh",
+      "run_hosting_update",
+    ]) {
+      expect(outputEntries(plan, remediation)).not.toHaveProperty(ghost);
+    }
   });
 
-  it("uses the complete matrix only for nightly", () => {
+  it("uses the complete matrix only for weekly or manual diagnostics", () => {
     const plan = classifyChangedPaths([], { fullMatrix: true });
     expect(plan).toMatchObject({
-      phase: "nightly",
+      phase: "weekly",
       fullMatrix: true,
       runNodeFull: true,
       runNodeBuild: true,

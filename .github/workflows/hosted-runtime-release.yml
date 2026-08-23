@@ -6,15 +6,15 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: Exact immutable tagged package version to build once and promote
+        description: Exact immutable tagged package version to attest and promote
         required: true
         type: string
       source_commit:
-        description: Exact protected-main commit to build once
+        description: Exact protected-main commit whose pre-tag bytes are reused
         required: true
         type: string
       predecessor_version:
-        description: Exact supported public stable version used by packaged update P1
+        description: Exact supported public stable compatibility predecessor
         required: true
         type: string
       managed_predecessor_version:
@@ -47,8 +47,6 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     outputs:
-      p1_local_predecessors: ${{ steps.p1-plan.outputs.local_predecessors }}
-      p1_hosting_predecessors: ${{ steps.p1-plan.outputs.hosting_predecessors }}
       release_sequence: ${{ steps.pre-candidate.outputs.release_sequence }}
       security_epoch: ${{ steps.pre-candidate.outputs.security_epoch }}
       pretag_descriptor_sha256: ${{ steps.pretag.outputs.descriptor_sha256 }}
@@ -71,6 +69,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
+          PRE_TAG_P1_RUN_ID: ${{ inputs.pre_tag_p1_run_id }}
           MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
           PREDECESSOR_VERSION: ${{ inputs.predecessor_version }}
         shell: bash
@@ -141,6 +140,19 @@ jobs:
             --claim "predecessorVersion=$PREDECESSOR_VERSION" \
             --claim "managedPredecessorVersion=$MANAGED_PREDECESSOR_VERSION" \
             --claim "workflowRunId=$PRE_CANDIDATE_RUN_ID" >/dev/null
+          staging_receipt="$evidence_dir/hosting-staging-receipt.json"
+          staging_digest="$(jq -er .claims.hostingStagingReceiptDigest "$evidence")"
+          test "sha256:$(sha256sum "$staging_receipt" | awk '{print $1}')" = "$staging_digest"
+          node --input-type=module - "$staging_receipt" "$base_commit" \
+            "$(git rev-parse "$base_commit^{tree}")" <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { validateHostingStagingReadiness } from "./scripts/pre-candidate-readiness.mjs";
+          const [, , receiptPath, commit, tree] = process.argv;
+          validateHostingStagingReadiness(JSON.parse(readFileSync(receiptPath, "utf8")), {
+            commit,
+            tree,
+          });
+          NODE
           printf 'release_sequence=%s\n' \
             "$(jq -er .claims.releaseSequence "$evidence")" >>"$GITHUB_OUTPUT"
           printf 'security_epoch=%s\n' \
@@ -204,8 +216,7 @@ jobs:
           printf 'descriptor_sha256=%s\n' \
             "$(jq -er .artifact.descriptorDigest "$evidence")" >>"$GITHUB_OUTPUT"
 
-      - name: Verify public compatibility coverage and derive P1 topology
-        id: p1-plan
+      - name: Verify public compatibility coverage
         env:
           GH_TOKEN: ${{ github.token }}
           MANAGED_PREDECESSOR_VERSION: ${{ inputs.managed_predecessor_version }}
@@ -218,12 +229,6 @@ jobs:
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$PREDECESSOR_VERSION")"
           test -n "$(node scripts/lifecycle-compatibility-inventory.mjs --p1-scenarios "$MANAGED_PREDECESSOR_VERSION")"
           gh release view "v$MANAGED_PREDECESSOR_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
-          local_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" --arg managed "$MANAGED_PREDECESSOR_VERSION" \
-            '[{version:$stable,installationClass:"public-stable"},
-              {version:$managed,installationClass:"canonical-managed"}] | unique_by([.version,.installationClass])')"
-          hosting_predecessors="$(jq -cn --arg stable "$PREDECESSOR_VERSION" '[$stable]')"
-          printf 'local_predecessors=%s\n' "$local_predecessors" >>"$GITHUB_OUTPUT"
-          printf 'hosting_predecessors=%s\n' "$hosting_predecessors" >>"$GITHUB_OUTPUT"
 
   finalize-candidate:
     name: Attest the exact pre-tag P1 product bytes
@@ -246,21 +251,6 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.x
-
-      - name: Setup pnpm + cache store
-        uses: ./.github/actions/setup-pnpm-store-cache
-        with:
-          pnpm-version: "10.34.5"
-          cache-key-suffix: "candidate-finalization-node24"
-
-      - name: Restore frozen finalizer dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
-
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: tools/fased-lifecycled/go.mod
-          cache-dependency-path: tools/fased-lifecycled/go.sum
 
       - name: Download the exact pre-tag P1 artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -288,18 +278,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source_dir="$RUNNER_TEMP/fased-pre-tag-candidate"
-          test "sha256:$(sha256sum "$source_dir/fased-hosting-candidate.json" | awk '{print $1}')" = \
+          package_dir="$RUNNER_TEMP/fased-pre-tag-candidate"
+          raw_dir="$package_dir/raw"
+          product_dir="$package_dir/product"
+          test "sha256:$(sha256sum "$raw_dir/fased-hosting-candidate.json" | awk '{print $1}')" = \
             "$EXPECTED_DESCRIPTOR_SHA256"
+          node scripts/release-artifact-set.mjs verify \
+            --directory "$raw_dir" \
+            --version "$RELEASE_VERSION" \
+            --commit "$SOURCE_COMMIT" \
+            --tree "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
+            --lockfile-digest "sha256:$(sha256sum pnpm-lock.yaml | awk '{print $1}')" \
+            --source-ref "refs/tags/v$RELEASE_VERSION" \
+            --workflow-run-id "$PRE_TAG_P1_RUN_ID"
+          test -s "$package_dir/product.sha256"
+          test -z "$(find "$product_dir" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          (cd "$product_dir" && sha256sum -c "$package_dir/product.sha256")
           mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts"
-          bash scripts/finalize-pretag-candidate.sh \
-            "$source_dir" \
-            "$GITHUB_WORKSPACE/.artifacts/hosted-runtime" \
-            "$RELEASE_VERSION" \
-            "$SOURCE_COMMIT" \
-            "$(git rev-parse "$SOURCE_COMMIT^{tree}")" \
-            "$RELEASE_SEQUENCE" \
-            "$SECURITY_EPOCH"
+          mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts/hosted-runtime"
+          cp -a "$product_dir/." "$GITHUB_WORKSPACE/.artifacts/hosted-runtime/"
 
       - name: Attest native signer product bytes
         id: attest-native-signer

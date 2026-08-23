@@ -41,22 +41,17 @@ overrides the controlling plan. Before PRE-CANDIDATE, RC allocation, P1, tag,
 publication, promotion, or version-only change:
 
 1. Read the controlling plan's ordered checkpoints.
-2. Reconcile them with current failures and unfinished branches/worktrees.
+2. Reconcile them with failures and unfinished branches/worktrees.
 3. Identify the requested action's immediately preceding predicate.
 4. Proceed only when that predicate and every earlier required predicate are
    `PASS` for the required commit, tree, artifact, receipt, and environment class.
 
-Any required `FAIL`, `BLOCKED`, `SUPPORTING`, stale receipt, or unclassified
-implementation keeps the task in `FIX` or `LIFECYCLE`. Only an explicit named
-`WAIVED` risk decision can waive a predicate. Never use a new RC, tag, or publication to discover
-whether a correction works, and never present release progress as completion
-of later architecture phases.
+Any `FAIL`, `BLOCKED`, `SUPPORTING`, stale receipt, or unclassified work keeps
+the task in `FIX` or `LIFECYCLE`; only an explicit named `WAIVED` decision can
+waive it. Never use a release to discover whether a correction works.
 
 Continue until owner stop, identity/plan change, unavailable authority, or an
-unnamed boundary. Bare `fix` uses the narrow flow below; never inventory a whole
-subsystem without evidence. If same predicate failing twice or evidence couples
-adjacent owners, name only those predicates; block another candidate until they
-pass.
+unnamed boundary. If same predicate failing twice, report it and block release.
 
 If the owner defines `fix`, `continue`, or `finish` as a named chain, record it
 once and run its push, PR, CI, merge, P1, tag, and publication as `PASS` gates
@@ -82,13 +77,16 @@ diagnosing. `fix and ship` means one locally proven final diff, one push, one
 protected PR, one changed-surface CI result, and an authorized exact-head squash
 merge.
 
-For a Hosting install, update, recovery, or uninstall failure, the literal
-predicate includes the complete coupled transaction even when the first error is
-narrow. Inventory prerequisites, private network, lifecycle generation,
-signer/Gateway readiness, onboarding, hardening, durable recovery and identical
-retry before choosing the correction. Exercise adjacent durable transitions in
-one pass; never publish a sequence of first-error patches to discover the next
-phase on the owner's VPS.
+Never create a container, VM, disposable user/home, or simulated fresh install
+for an ordinary correction. Use focused checks, then the affected existing owner
+installation only when runtime proof is required. Substituted, non-interactive,
+preseeded, container, or agent-created machines can never receive Local `PASS`.
+Fresh Local is owner-run on an independent machine using the documented curl,
+`fased status`, and `fased update`; accept literal owner output when unreachable.
+
+For Hosting failures, inventory prerequisites, private network, generation,
+readiness, onboarding, hardening, recovery, and identical retry before fixing.
+Exercise adjacent durable transitions once; never publish first-error patches.
 
 ## Load details only when selected
 
@@ -101,10 +99,9 @@ phase on the owner's VPS.
 - Explicit candidate, publication, or stable action:
   [references/release.md](references/release.md)
 
-Docs and skills run only their validator. Workflow changes run static contracts.
-Permission or fixture changes run their exact regression. Do not run dependency
-installs, containers, systemd, full suites, CodeQL, or builds unless the changed
-surface requires them.
+Docs/skills run their validator; workflows run static contracts; permission or
+fixture changes run their exact regression. Avoid unrelated installs, builds,
+containers, systemd, full suites, or CodeQL.
 
 ## Runtime and artifact discipline
 
@@ -117,10 +114,13 @@ cached artifacts. When distributable bytes change, build one cached unpublished
 Linux-x64 artifact after focused tests, exercise only the affected topology, and
 reuse those exact bytes. Fixture-only changes reuse prior verified product bytes.
 
-Candidate and release work begins only after the literal end-user command
-passes. Reuse identical bytes across acceptance, P1, tag, and publication;
-publication must not rebuild. Full `LOCAL0`, PRE-CANDIDATE, P1, tag, and
-publication belong only to an explicit release plan.
+Candidate and release work begins only after the literal affected-environment
+command passes. Build one Linux-x64 artifact after source is final and reuse its
+identical bytes through P1, tag, and publication; publication must verify
+receipts and must not rebuild or replay product execution. PRE-CANDIDATE, P1,
+tag, and publication belong only to an explicit release plan. Broad Node, Go,
+Docker, CodeQL, multi-platform, and dead-code matrices are weekly/manual
+diagnostics, not ordinary-PR or release acceptance gates.
 
 When Hosting product bytes change, a root container is H0 `SUPPORTING` evidence
 only. Before candidate allocation, require one owner-authorized real-init

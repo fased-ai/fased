@@ -212,7 +212,7 @@ export function validateAcceptanceContract(contract) {
         transportSubstituted: false,
       },
       branch: {
-        evidenceClass: "PASS",
+        evidenceClass: "SUPPORTING",
         acquisitionEvidenceClass: "SUPPORTING",
         acquisitionMode: "substituted-fixture",
         transportSubstituted: true,

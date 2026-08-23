@@ -141,22 +141,26 @@ then be physically deleted. Never dual-write one installation. Compatibility
 readers may remain only for a named supported predecessor topology and must not
 provide a second managed mutation route.
 
-## Required local proof
+## Required runtime proof
 
-For changed lifecycle product bytes:
+For an ordinary correction, stop after focused tests and changed-file checks.
+Do not build an artifact or create a fresh installation. When runtime proof is
+actually required, build once after the correction is final and exercise only
+the exact affected existing installation.
 
-`focused tests -> one cached Linux-x64 artifact -> affected public command -> services and product health -> rollback/retry when affected -> restart -> state preservation -> Already current`
+Owner Local update proof is the accessible installed owner machine running
+`fased status` and `fased update`; exact `Already current` closes convergence.
+Fresh Local is required only when first-install/onboarding behavior changed or
+for final post-public acceptance. The owner runs the documented public curl on
+an independently provisioned machine, then `fased status` and `fased update`.
+Containers, nested VMs, disposable homes/users, preseeded state, non-interactive
+onboarding and substituted release transport are not fresh Local evidence.
 
-Use exact immutable bytes and machine-readable receipts. Fresh and update are
-independent; test only affected topologies during development. Candidate P1
-later replays the same contract against final bytes.
-
-A fixture-only correction invalidates the old acceptance receipt, not unchanged
-product bytes. The LOCAL0 driver may reuse an explicitly supplied ancestor
-artifact only across its closed fixture/policy allowlist with an identical
-lockfile. The new receipt must bind the artifact product commit/tree separately
-from the exact current fixture commit/tree. Any other changed path fails closed
-and rebuilds once.
+A test-harness-only correction invalidates its own evidence, not unchanged
+product bytes. It may reuse an ancestor artifact only when the lockfile and
+complete product tree remain exact; otherwise rebuild once after source is
+final. Simulated containers and substituted transport are always `SUPPORTING`
+and cannot satisfy Local or Hosting acceptance.
 
 Signer changes additionally require authenticated, authorized, replay-safe
 typed RPC; no secret material in JS/UI/Gateway; exact Wallet/network/policy

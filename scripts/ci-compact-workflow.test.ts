@@ -12,12 +12,14 @@ async function workflow(name: string) {
 }
 
 describe("compact CI topology", () => {
-  it("exposes exactly four ordinary PR jobs", async () => {
+  it("exposes the compact core and exact owned-surface PR jobs", async () => {
     const { document } = await workflow("pr.yml");
     expect(Object.keys(document.jobs ?? {})).toEqual([
       "classify",
       "selected-tests",
       "security",
+      "docker-owned",
+      "macos-owned",
       "checks",
     ]);
   });

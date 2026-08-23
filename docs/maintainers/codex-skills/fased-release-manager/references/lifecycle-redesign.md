@@ -58,7 +58,8 @@ managed users.
    capsules are supporting failure-injection fixtures only, never a substitute
    for public acquisition or owner-machine evidence.
 9. Local and Hosting differ only through platform adapters.
-10. Candidate P1 repeats already-green branch predicates against final bytes.
+10. Candidate P1 verifies final artifact inventory, provenance, and bound receipts
+    without repeating already-green product execution.
 11. Managed repair is bound to the exact installed manifest and generation; it
     cannot select a release or change state schemas. Managed uninstall is a
     monotonic Go transaction that preserves owner data and signer custody by
@@ -161,36 +162,30 @@ Execute one checkpoint at a time and stop with exact evidence.
   peer-auth adapter has command-backed evidence; an empty Darwin or WSL2
   adapter is not parity.
 
-### D10 — Branch proof
+### D10 — Historical branch proof (superseded)
 
-- Build one cached unpublished candidate-shaped Linux-x64 artifact without a
-  tag, GitHub Release, RC reservation, or version-only commit.
-- Run the first fresh/update/takeover Local and Hosting fixture sequence
-  serially so the first failed fixture, log, and partial receipt survive.
-- Reuse exact bytes for rollback, reboot, preservation and `Already current`.
-- Bind commit, tree, lockfile, artifact, inventory, capsules, fixture
-  entrypoints, acquisition map, and acceptance-contract digest in `LOCAL0`.
-- Treat any change to a bound release input as complete `LOCAL0` invalidation.
-- Record product predicates as `PASS` and substituted acquisition as
-  `SUPPORTING`; bind both in one receipt. Never promote that receipt into
-  public acquisition evidence.
+- The former LOCAL0/container branch proof is retired. It never constituted
+  Local or Hosting acceptance.
+- Build one cached unpublished Linux-x64 artifact after source is final and bind
+  its commit, tree, lockfile, inventory, provenance and contract digest.
+- Execute only the affected real environment; keep focused transaction tests as
+  source evidence and optional containers as `SUPPORTING` diagnostics.
 
 ### D11 — Protected delivery
 
-- One clean branch, one focused PR, focused CI and founder squash merge. Reuse
-  `LOCAL0` only when the merged tree and every bound release input are
-  byte-identical.
+- One clean branch, one focused PR, focused changed-surface CI and founder
+  squash merge. Broad matrices run weekly or manually.
 
 ### D12 — Release acceptance
 
-- Require a green, still-valid `LOCAL0`, then PRE-CANDIDATE on exact merged
-  main. Only after both pass may the next unused RC be allocated.
+- Require exact real affected-environment evidence, then PRE-CANDIDATE on exact
+  merged main. Only after both pass may the next unused RC be allocated.
 - One immutable candidate and one build.
-- Parallel P1, exact publication, signed channel advancement from those same
-  bytes, PUBLIC0, owner Local and real Hosting.
-- PUBLIC0 supplies the first immutable-GitHub-Release acquisition `PASS` after
-  publication; P1 before publication replays the product predicates and exact
-  artifact inventory without claiming public transport.
+- Receipt-and-inventory P1, exact publication, signed channel advancement from
+  those same bytes, PUBLIC0, owner Local and real Hosting.
+- PUBLIC0 supplies immutable-GitHub-Release readback after publication; P1
+  verifies the exact artifact inventory and receipts without replaying product
+  execution.
 - Stable only after both real environments pass.
 
 ## Stop rules

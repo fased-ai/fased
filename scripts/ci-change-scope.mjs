@@ -187,7 +187,6 @@ function fullMatrixPlan() {
     docsChanged: true,
     versionOnly: false,
     ciInfrastructureOnly: false,
-    t2FixtureOnly: false,
     testOnly: false,
     fixtureOnly: false,
     productionChanged: true,
@@ -205,21 +204,14 @@ function fullMatrixPlan() {
     runUi: true,
     runMacosRuntime: true,
     runMacosApp: true,
-    experimentalMobileChanged: true,
-    runSigner: true,
     runNativeSigner: true,
     runSignerIntegration: true,
     runSignerDarwinIntegration: true,
-    runPlatformBootstrap: true,
     runDocker: true,
     runCodeqlJavascript: true,
     runCodeqlGo: true,
     runCodeqlPython: true,
     runHosting: true,
-    runHostingFresh: true,
-    runHostingUpdate: true,
-    runLocalFresh: true,
-    runLocalUpdate: true,
     runCiContracts: true,
     runT2Contracts: true,
     runUiMining: true,
@@ -228,7 +220,7 @@ function fullMatrixPlan() {
   };
   return Object.freeze({
     authorityVersion: 7,
-    phase: "nightly",
+    phase: "weekly",
     changeKind: "full-matrix",
     paths: [],
     lanes: [],
@@ -271,6 +263,29 @@ export function classifyChangedPaths(inputPaths, options = {}) {
   const lifecycle = lane("lifecycle");
   const signer = lane("signer");
   const installer = paths.includes("install.sh");
+  const dockerOwned = paths.some(
+    (path) =>
+      path === "Dockerfile" ||
+      path === "docker-compose.yml" ||
+      path === "docker-setup.sh" ||
+      path === "setup-podman.sh",
+  );
+  const macosRuntimeOwned = paths.some(
+    (path) =>
+      (path.startsWith("src/") && (path.includes("darwin") || path.includes("launchd"))) ||
+      path === "scripts/install-platform-preflight.test.ts" ||
+      path === "scripts/install-release-pin.test.ts",
+  );
+  const macosAppOwned = paths.some(
+    (path) =>
+      path.startsWith("apps/macos/") ||
+      path.startsWith("apps/shared/FasedAgentKit/") ||
+      path.startsWith("Swabble/") ||
+      path === "appcast.xml",
+  );
+  const unsupportedMobileOwned = paths.some(
+    (path) => path.startsWith("apps/android/") || path.startsWith("apps/ios/"),
+  );
   const dependencyCandidate =
     paths.includes("pnpm-lock.yaml") &&
     paths.every(
@@ -278,11 +293,18 @@ export function classifyChangedPaths(inputPaths, options = {}) {
         path === "pnpm-lock.yaml" || path === "package.json" || path.endsWith("/package.json"),
     );
 
+  if (unsupportedMobileOwned) {
+    throw new Error("ci-change-scope: mobile-owned change requires a dedicated focused route");
+  }
+
   if (
     productionChanged &&
     !versionOnly &&
     !lifecycle &&
     !signer &&
+    !dockerOwned &&
+    !macosAppOwned &&
+    !macosRuntimeOwned &&
     !dependencyCandidate &&
     selectedTestPaths.length === 0
   ) {
@@ -322,7 +344,6 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     docsChanged: lane("documentation"),
     versionOnly,
     ciInfrastructureOnly,
-    t2FixtureOnly: false,
     testOnly,
     fixtureOnly,
     productionChanged,
@@ -338,23 +359,16 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     runNodeGateway,
     runNodeExtensions,
     runUi,
-    runMacosRuntime: false,
-    runMacosApp: false,
-    experimentalMobileChanged: lane("native"),
-    runSigner: signer,
+    runMacosRuntime: macosRuntimeOwned,
+    runMacosApp: macosAppOwned,
     runNativeSigner: signer || paths.some((path) => path.startsWith("tools/fased-lifecycled/")),
     runSignerIntegration: signer,
-    runSignerDarwinIntegration: false,
-    runPlatformBootstrap: false,
-    runDocker: false,
+    runSignerDarwinIntegration: signer,
+    runDocker: dockerOwned,
     runCodeqlJavascript: false,
     runCodeqlGo: false,
     runCodeqlPython: false,
     runHosting: false,
-    runHostingFresh: false,
-    runHostingUpdate: false,
-    runLocalFresh: false,
-    runLocalUpdate: false,
     runCiContracts: lane("ci-contract"),
     runT2Contracts: false,
     runUiMining: runUi && paths.some((path) => path.includes("mining")),
@@ -422,7 +436,6 @@ export function outputEntries(plan, options = {}) {
     docs_changed: "docsChanged",
     version_only: "versionOnly",
     ci_infrastructure_only: "ciInfrastructureOnly",
-    t2_fixture_only: "t2FixtureOnly",
     test_only: "testOnly",
     fixture_only: "fixtureOnly",
     production_changed: "productionChanged",
@@ -440,22 +453,15 @@ export function outputEntries(plan, options = {}) {
     run_ui: "runUi",
     run_macos_runtime: "runMacosRuntime",
     run_macos_app: "runMacosApp",
-    experimental_mobile_changed: "experimentalMobileChanged",
-    run_signer: "runSigner",
     run_native_signer: "runNativeSigner",
     run_signer_integration: "runSignerIntegration",
     run_signer_darwin_integration: "runSignerDarwinIntegration",
-    run_platform_bootstrap: "runPlatformBootstrap",
     run_docker: "runDocker",
     run_codeql_javascript: "runCodeqlJavascript",
     focused_codeql_javascript: "runCodeqlJavascript",
     run_codeql_go: "runCodeqlGo",
     run_codeql_python: "runCodeqlPython",
     run_hosting: "runHosting",
-    run_hosting_fresh: "runHostingFresh",
-    run_hosting_update: "runHostingUpdate",
-    run_local_fresh: "runLocalFresh",
-    run_local_update: "runLocalUpdate",
     run_ci_contracts: "runCiContracts",
     run_t2_contracts: "runT2Contracts",
     run_ui_mining: "runUiMining",

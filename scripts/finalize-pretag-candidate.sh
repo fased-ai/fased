@@ -22,24 +22,26 @@ descriptor="$SOURCE_DIR/fased-hosting-candidate.json"
 overlay="$SOURCE_DIR/fased-candidate-fixture-overlay.json"
 originals="$SOURCE_DIR/fased-candidate-original"
 test -f "$descriptor"
-test -f "$overlay"
-test -d "$originals"
 jq -e \
   --arg version "$VERSION" --arg commit "$COMMIT" --arg tree "$TREE" \
   '.version == $version and .commit == $commit and .tree == $tree and
    .sourceRef == ("refs/tags/v" + $version)' "$descriptor" >/dev/null
-jq -e \
-  --arg digest "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
-  '.schemaVersion == 1 and .role == "fased-candidate-fixture-trust-overlay" and
-   .publishable == false and .candidate.descriptorSha256 == $digest and
-   .overriddenPaths == ["fased-bootstrap-linux-x64","install.sh"]' \
-  "$overlay" >/dev/null
+if [[ -e "$overlay" || -e "$originals" ]]; then
+  test -f "$overlay"
+  test -d "$originals"
+  jq -e \
+    --arg digest "sha256:$(sha256sum "$descriptor" | awk '{print $1}')" \
+    '.schemaVersion == 1 and .role == "fased-candidate-fixture-trust-overlay" and
+     .publishable == false and .candidate.descriptorSha256 == $digest and
+     .overriddenPaths == ["fased-bootstrap-linux-x64","install.sh"]' \
+    "$overlay" >/dev/null
+fi
 
 mkdir -m 0700 "$OUTPUT_DIR"
 while IFS=$'\t' read -r name expected_size expected_digest; do
   source="$SOURCE_DIR/$name"
-  case "$name" in
-    install.sh|fased-bootstrap-linux-x64)
+  case "$name:$([[ -d "$originals" ]] && echo overlay || echo direct)" in
+    install.sh:overlay|fased-bootstrap-linux-x64:overlay)
       source="$originals/$name"
       ;;
   esac

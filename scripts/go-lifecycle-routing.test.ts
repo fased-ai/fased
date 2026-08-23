@@ -219,16 +219,4 @@ describe("single Go lifecycle production routing", () => {
     expect(route).toContain("signed channel index is older than the installed release authority");
     expect(route).toContain("validateSignedChannelResult");
   });
-
-  it("keeps the missing-tool bootstrap transport independent of jq", async () => {
-    const runner = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
-      "utf8",
-    );
-    const start = runner.indexOf("cat >/usr/local/bin/curl <<'EOF_FIXTURE_CURL'");
-    const end = runner.indexOf("\nEOF_FIXTURE_CURL", start);
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    expect(runner.slice(start, end)).not.toContain("/usr/bin/jq");
-  });
 });

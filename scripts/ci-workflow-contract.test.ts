@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -6,38 +6,33 @@ import { parse } from "yaml";
 
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
+type WorkflowStep = {
+  name?: string;
+  run?: string;
+};
+
 type WorkflowJob = {
-  if?: string;
-  needs?: string[];
-  permissions?: Record<string, string>;
-  "runs-on"?: string;
+  steps?: WorkflowStep[];
   "timeout-minutes"?: number;
-  steps?: Array<{
-    env?: Record<string, string>;
-    if?: string;
-    id?: string;
-    name?: string;
-    run?: string;
-    uses?: string;
-    with?: Record<string, boolean | number | string>;
-  }>;
 };
 
 type Workflow = {
-  concurrency?: {
-    "cancel-in-progress"?: boolean;
-    group?: string;
-  };
+  name?: string;
+  on?: Record<string, unknown>;
   jobs?: Record<string, WorkflowJob>;
 };
 
-async function readWorkflow(path: string): Promise<Workflow> {
+async function workflow(path: string): Promise<Workflow> {
   return parse(await readFile(resolve(repoRoot, path), "utf8")) as Workflow;
+}
+
+async function text(path: string): Promise<string> {
+  return readFile(resolve(repoRoot, path), "utf8");
 }
 
 async function exists(path: string): Promise<boolean> {
   try {
-    await stat(path);
+    await stat(resolve(repoRoot, path));
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -47,1093 +42,148 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function listFiles(path: string): Promise<string[]> {
-  const entries = await readdir(path, { withFileTypes: true });
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const child = resolve(path, entry.name);
-      return entry.isDirectory() ? listFiles(child) : [child];
-    }),
-  );
-  return files.flat();
+function jobText(job: WorkflowJob | undefined): string {
+  return JSON.stringify(job ?? {});
 }
 
-function usesAction(step: { uses?: string }, action: string): boolean {
-  return step.uses?.startsWith(`${action}@`) === true;
-}
-
-describe("CI workflow routing", () => {
-  it("keeps the candidate-shaped archive branch proof exact and non-publishable", async () => {
-    const workflow = await readWorkflow(".github/workflows/ci.yml");
-    const jobs = workflow.jobs ?? {};
-    const proof = jobs["archive-branch-proof"];
-    const proofSteps = proof?.steps ?? [];
-    const binding = proofSteps.find(
-      (step) => step.name === "Bind proof to exact protected-main source",
+describe("lean CI and release workflow contracts", () => {
+  it("keeps pull requests on one compact changed-surface gate", async () => {
+    const value = await workflow(".github/workflows/pr.yml");
+    expect(Object.keys(value.jobs ?? {}).toSorted()).toEqual([
+      "checks",
+      "classify",
+      "docker-owned",
+      "macos-owned",
+      "security",
+      "selected-tests",
+    ]);
+    expect(value.jobs?.["selected-tests"]?.["timeout-minutes"]).toBe(10);
+    expect(value.jobs?.security?.["timeout-minutes"]).toBe(5);
+    const source = await text(".github/workflows/pr.yml");
+    expect(source).toContain("ci-run-changed-tests.mjs");
+    expect(source).not.toContain("build-linux-x64-release-artifact.sh");
+    expect(source).not.toContain("run-lifecycle-local0.sh");
+    expect(source).not.toContain("test-lifecycle-hosting-acceptance.sh");
+    expect(source).not.toContain("codeql-action");
+    expect(value.jobs?.["docker-owned"]?.["timeout-minutes"]).toBe(12);
+    expect(value.jobs?.["macos-owned"]?.["timeout-minutes"]).toBe(20);
+    expect(jobText(value.jobs?.["docker-owned"])).toContain(
+      "needs.classify.outputs.run_docker == 'true'",
     );
-    const build = proofSteps.find(
+    expect(jobText(value.jobs?.["macos-owned"])).toContain(
+      "needs.classify.outputs.run_macos_runtime == 'true'",
+    );
+  });
+
+  it("runs broad diagnostics weekly or manually, never as a protected PR gate", async () => {
+    const value = await workflow(".github/workflows/ci.yml");
+    expect(value.name).toBe("Weekly Diagnostics");
+    expect(value.on).toHaveProperty("schedule");
+    expect(value.on).toHaveProperty("workflow_dispatch");
+    expect(value.on).not.toHaveProperty("pull_request");
+    expect(value.on).not.toHaveProperty("push");
+    const source = await text(".github/workflows/ci.yml");
+    expect(source).toContain('cron: "19 7 * * 0"');
+    expect(source).toContain(
+      "FULL_MATRIX: ${{ github.event_name == 'schedule' || inputs.full_matrix == true }}",
+    );
+    expect(source).toContain("codeql-javascript:");
+    expect(source).toContain("docker-amd64:");
+    expect(source).toContain("macos-runtime:");
+    expect(source).not.toContain("run_local_fresh");
+    expect(source).not.toContain("run_local_update");
+    expect(source).not.toContain("run_platform_bootstrap");
+  });
+
+  it("uses the standalone Linux-x64 builder for the optional archive diagnostic", async () => {
+    const value = await workflow(".github/workflows/ci.yml");
+    const source = await text(".github/workflows/ci.yml");
+    const proof = value.jobs?.["archive-branch-proof"];
+    const build = proof?.steps?.find(
       (step) => step.name === "Build exact candidate generation archive once",
     );
-    const verify = proofSteps.find(
-      (step) => step.name === "Verify exact candidate generation archive inventory",
-    );
-    const upload = proofSteps.find((step) => step.name === "Upload archive proof evidence");
-    const cleanup = proofSteps.find(
-      (step) => step.name === "Remove unpublished branch proof bytes",
-    );
-    const allProofText = proofSteps.map((step) => step.run ?? "").join("\n");
-    const proofOnly =
-      "github.event_name != 'workflow_dispatch' || inputs.archive_branch_proof != true";
-
-    expect(proof?.if).toBe(
-      "github.event_name == 'workflow_dispatch' && inputs.archive_branch_proof == true",
-    );
-    expect(proof?.permissions).toEqual({ contents: "read" });
-    expect(proof?.["runs-on"]).toBe("ubuntu-24.04");
     expect(proof?.["timeout-minutes"]).toBe(30);
-    expect(binding?.run).toContain('test "$GITHUB_SHA" = "$SOURCE_COMMIT"');
-    expect(binding?.run).toContain(
-      'test "$(git rev-parse origin/main)" = "$AUTHORIZED_BASE_COMMIT"',
-    );
-    expect(binding?.run).toContain("git merge-base --is-ancestor");
-    expect(binding?.run).toContain("scripts/build-hosted-runtime-artifact.ts");
-    expect(binding?.run).toContain("scripts/build-native-release-assets.sh");
-    expect(binding?.run).toContain("src/infra/hosted-runtime-artifact.ts");
-    expect(binding?.run).toContain("Archive branch proof rejects out-of-scope path");
-    expect(proof?.name).toBe("candidate generation archive branch proof");
-    expect(build?.run).toContain("bash scripts/test-lifecycle-local-acceptance.sh");
-    expect(build?.run).toContain("fased-archive-branch-proof.log");
-    expect(build?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
-      FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: "${{ runner.temp }}/fased-archive-branch-proof",
-    });
-    expect(verify?.run).toContain("node scripts/release-artifact-set.mjs verify");
-    expect(verify?.run).toContain(".artifacts[]");
-    expect(verify?.run).toContain("maxArchiveBytes");
-    expect(verify?.run).toContain("completionReceipt");
-    expect(verify?.run).toContain("all(.[];");
-    expect(verify?.run).toContain('test "${#archive_receipts[@]}" -eq 2');
-    expect(verify?.run).toContain('test "$max_raw_archive_bytes" -gt 38085632');
-    expect(verify?.run).toContain("maxRawArchiveBytes");
-    expect(upload?.with).toEqual(
-      expect.objectContaining({
-        name: "fased-archive-branch-proof-evidence",
-        path: "${{ runner.temp }}/fased-archive-branch-proof-evidence/evidence.json",
-      }),
-    );
-    expect(upload?.with?.path).not.toContain("/fased-archive-branch-proof/*");
-    expect(cleanup?.if).toBe("always()");
-    expect(allProofText).not.toContain("gh release create");
-    expect(allProofText).not.toContain("npm publish");
-    expect(jobs["change-scope"]?.if).toBe(proofOnly);
-    expect(jobs.secrets?.if).toBe(proofOnly);
-    expect(jobs["required-checks"]?.if).toBe(`always() && (${proofOnly})`);
+    expect(build?.run).toContain("scripts/build-linux-x64-release-artifact.sh");
+    expect(build?.run).not.toContain("test-lifecycle-local-acceptance.sh");
+    expect(source).toContain('--workflow-run-id "$GITHUB_RUN_ID"');
+    expect(source).not.toContain("38085632");
+    expect(jobText(proof)).not.toContain("runtime_builder_changed");
+    expect(jobText(proof)).not.toContain("native_helper_changed");
   });
 
-  it("uses one change-scope authority and one required aggregate", async () => {
-    const workflow = await readWorkflow(".github/workflows/ci.yml");
-    const jobs = workflow.jobs ?? {};
-
-    expect(workflow.concurrency).toEqual({
-      group: "ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}",
-      "cancel-in-progress": false,
-    });
-
-    expect(jobs["change-scope"]).toBeDefined();
-    expect(jobs["docs-scope"]).toBeUndefined();
-    expect(jobs["changed-scope"]).toBeUndefined();
-    expect(jobs["android"]).toBeUndefined();
-    expect(jobs["version-identity"]).toBeDefined();
-    expect(
-      jobs["version-identity"]?.steps?.find(
-        (step) => step.name === "Validate exact version-only diff",
-      )?.run,
-    ).toBe("node scripts/ci-version-identity.mjs --allow-obsolete-tagged-candidate-restore");
-    expect(jobs["ci-contracts"]).toBeDefined();
-    expect(jobs["t2-contracts"]).toBeDefined();
-    expect(jobs["node-focused"]).toBeDefined();
-    expect(jobs["hosting-lifecycle"]).toBeDefined();
-    expect(jobs["protected-local-fixture-artifact"]).toBeDefined();
-    expect(jobs["protected-local-rocky-lifecycle"]).toBeDefined();
-    expect(jobs["protected-local-update-lifecycle"]).toBeDefined();
-
-    const fixtureArtifact = jobs["protected-local-fixture-artifact"];
-    const fixtureArtifactBuild = fixtureArtifact?.steps?.find(
-      (step) => step.name === "Build one exact fixture artifact",
-    );
-    expect(fixtureArtifactBuild?.run).toBe("bash scripts/test-lifecycle-local-acceptance.sh");
-    expect(fixtureArtifactBuild?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
-      FASED_SYSTEMD_FIXTURE_OUTPUT_DIR: "${{ runner.temp }}/protected-local-artifact",
-    });
-
-    const releaseCheck = jobs["release-check"];
-    expect(
-      releaseCheck?.steps?.find((step) => usesAction(step, "actions/checkout"))?.with?.[
-        "fetch-depth"
-      ],
-    ).toBe(0);
-
-    const protectedLocalUpdate = jobs["protected-local-update-lifecycle"];
-    expect(protectedLocalUpdate?.needs).toEqual(
-      expect.arrayContaining(["change-scope", "protected-local-fixture-artifact"]),
-    );
-    expect(protectedLocalUpdate?.if).toBe("needs.change-scope.outputs.run_local_update == 'true'");
-    expect(protectedLocalUpdate?.["timeout-minutes"]).toBe(15);
-    expect(
-      protectedLocalUpdate?.steps?.find((step) => usesAction(step, "actions/checkout"))?.with?.[
-        "fetch-depth"
-      ],
-    ).toBe(0);
-    const localRecoveryT1 = protectedLocalUpdate?.steps?.find((step) =>
-      String(step.run ?? "").includes("scripts/go-lifecycle-routing.test.ts"),
-    );
-    const localSystemdFixture = protectedLocalUpdate?.steps?.find(
-      (step) => step.env?.FASED_SYSTEMD_FIXTURE_SCENARIOS === "managed-update",
-    );
-    expect(
-      protectedLocalUpdate?.steps?.find((step) => step.uses === "./.github/actions/setup-node-env")
-        ?.with?.["install-bun"],
-    ).toBe("false");
-    expect(localRecoveryT1?.run).toContain("pnpm exec vitest run");
-    expect(protectedLocalUpdate?.steps?.indexOf(localRecoveryT1)).toBeLessThan(
-      protectedLocalUpdate?.steps?.indexOf(localSystemdFixture),
-    );
-    expect(localSystemdFixture?.run).toBe("bash scripts/test-lifecycle-local-acceptance.sh");
-    expect(localSystemdFixture?.env).toMatchObject({
-      FASED_SYSTEMD_FIXTURE_MANAGED_PREDECESSOR_VERSION: "0.1.75",
-    });
-
-    const required = jobs["required-checks"];
-    expect(required?.needs).toEqual(
-      expect.arrayContaining([
-        "change-scope",
-        "ci-contracts",
-        "t2-contracts",
-        "node-focused",
-        "node-unit",
-        "node-gateway",
-        "node-extensions",
-        "dependency-integrity",
-        "version-identity",
-        "hosting-lifecycle",
-        "protected-local-fixture-artifact",
-        "protected-local-rocky-lifecycle",
-        "protected-local-update-lifecycle",
-        "ui-mining",
-        "ui",
-        "macos-runtime",
-        "macos-app",
-        "signer-integration",
-        "signer-darwin-integration",
-        "platform-bootstrap-audit",
-        "docker-amd64",
-        "docker-arm64",
-        "codeql-javascript",
-        "codeql-go",
-        "codeql-python",
-        "secrets",
-      ]),
-    );
-    expect(required?.steps?.at(-1)?.run).toBe("node scripts/ci-required-gates.mjs");
-    expect(required?.steps?.at(-1)?.env).toMatchObject({
-      VERSION_ONLY: "${{ needs.change-scope.outputs.version_only }}",
-      DEPENDENCY_REMEDIATION: "${{ needs.change-scope.outputs.dependency_remediation }}",
-      MANUAL_REVIEW_REQUIRED: "${{ needs.change-scope.outputs.manual_review_required }}",
-      RUN_HOSTING: "${{ needs.change-scope.outputs.run_hosting }}",
-      RUN_LOCAL_FRESH: "${{ needs.change-scope.outputs.run_local_fresh }}",
-      RUN_LOCAL_UPDATE: "${{ needs.change-scope.outputs.run_local_update }}",
-      RUN_CI_CONTRACTS: "${{ needs.change-scope.outputs.run_ci_contracts }}",
-      RUN_T2_CONTRACTS: "${{ needs.change-scope.outputs.run_t2_contracts }}",
-      RUN_NODE_FOCUSED: "${{ needs.change-scope.outputs.run_node_focused }}",
-      RUN_NODE_UNIT: "${{ needs.change-scope.outputs.run_node_unit }}",
-      RUN_NODE_GATEWAY: "${{ needs.change-scope.outputs.run_node_gateway }}",
-      RUN_NODE_EXTENSIONS: "${{ needs.change-scope.outputs.run_node_extensions }}",
-      RUN_DEPENDENCY_INTEGRITY: "${{ needs.change-scope.outputs.run_dependency_integrity }}",
-      RUN_NODE_BUILD: "${{ needs.change-scope.outputs.run_node_build }}",
-      RUN_NODE_PACKAGING: "${{ needs.change-scope.outputs.run_node_packaging }}",
-      RUN_NODE_FULL: "${{ needs.change-scope.outputs.run_node_full }}",
-      RUN_NATIVE_SIGNER: "${{ needs.change-scope.outputs.run_native_signer }}",
-      RUN_SIGNER_INTEGRATION: "${{ needs.change-scope.outputs.run_signer_integration }}",
-      RUN_SIGNER_DARWIN_INTEGRATION:
-        "${{ needs.change-scope.outputs.run_signer_darwin_integration }}",
-      RUN_PLATFORM_BOOTSTRAP: "${{ needs.change-scope.outputs.run_platform_bootstrap }}",
-      RUN_DOCKER: "${{ needs.change-scope.outputs.run_docker }}",
-      RUN_CODEQL_JAVASCRIPT: "${{ needs.change-scope.outputs.run_codeql_javascript }}",
-      RUN_CODEQL_GO: "${{ needs.change-scope.outputs.run_codeql_go }}",
-      RUN_CODEQL_PYTHON: "${{ needs.change-scope.outputs.run_codeql_python }}",
-      RUN_UI_MINING: "${{ needs.change-scope.outputs.run_ui_mining }}",
-      RUN_UI: "${{ needs.change-scope.outputs.run_ui }}",
-      RUN_MACOS_RUNTIME: "${{ needs.change-scope.outputs.run_macos_runtime }}",
-      RUN_MACOS_APP: "${{ needs.change-scope.outputs.run_macos_app }}",
-      PROTECTED_LOCAL_ARTIFACT: "${{ needs.protected-local-fixture-artifact.result }}",
-      PROTECTED_LOCAL_ROCKY: "${{ needs.protected-local-rocky-lifecycle.result }}",
-      PROTECTED_LOCAL_UPDATE: "${{ needs.protected-local-update-lifecycle.result }}",
-      T2_CONTRACTS: "${{ needs.t2-contracts.result }}",
-      FOCUSED_TESTS: "${{ needs.node-focused.result }}",
-      NODE_UNIT_TESTS: "${{ needs.node-unit.result }}",
-      NODE_GATEWAY_TESTS: "${{ needs.node-gateway.result }}",
-      NODE_EXTENSION_TESTS: "${{ needs.node-extensions.result }}",
-      DEPENDENCY_INTEGRITY: "${{ needs.dependency-integrity.result }}",
-      SIGNER_INTEGRATION: "${{ needs.signer-integration.result }}",
-      SIGNER_DARWIN_INTEGRATION: "${{ needs.signer-darwin-integration.result }}",
-      PLATFORM_BOOTSTRAP: "${{ needs.platform-bootstrap-audit.result }}",
-      DOCKER_AMD64: "${{ needs.docker-amd64.result }}",
-      DOCKER_ARM64: "${{ needs.docker-arm64.result }}",
-      CODEQL_JAVASCRIPT: "${{ needs.codeql-javascript.result }}",
-      CODEQL_GO: "${{ needs.codeql-go.result }}",
-      CODEQL_PYTHON: "${{ needs.codeql-python.result }}",
-      UI: "${{ needs.ui.result }}",
-      MACOS_RUNTIME: "${{ needs.macos-runtime.result }}",
-      MACOS_APP: "${{ needs.macos-app.result }}",
-    });
+  it("keeps pre-candidate metadata-only and binds real Hosting staging", async () => {
+    const value = await workflow(".github/workflows/pre-candidate.yml");
+    const source = await text(".github/workflows/pre-candidate.yml");
+    const dispatch = value.on?.workflow_dispatch as { inputs?: Record<string, unknown> };
+    expect(dispatch.inputs).toHaveProperty("hosting_staging_receipt_sha256");
+    expect(dispatch.inputs).toHaveProperty("hosting_staging_receipt_json");
+    expect(dispatch.inputs).not.toHaveProperty("local0_receipt_sha256");
+    expect(source).toContain("hostingStagingReceiptDigest=");
+    expect(source).toContain("validateHostingStagingReadiness");
+    expect(source).toContain('sha256sum "$staging_receipt"');
+    expect(source).toContain(".artifacts/pre-candidate/hosting-staging-receipt.json");
+    expect(source).not.toContain("local0ReceiptDigest=");
+    expect(source).not.toContain("pnpm install --frozen-lockfile");
+    expect(source).not.toContain("pnpm build");
   });
 
-  it("classifies PRs from protected-base policy without private release state", async () => {
-    const workflow = await readWorkflow(".github/workflows/ci.yml");
-    const jobs = workflow.jobs ?? {};
-    const scopeSteps = jobs["change-scope"]?.steps ?? [];
-    const privateRoute = scopeSteps.find((step) => step.id === "private-route");
-    const authorityCheckout = scopeSteps.find((step) => step.name === "Checkout trusted authority");
-    const scope = scopeSteps.find((step) => step.id === "scope");
-
-    expect(privateRoute).toBeUndefined();
-    expect(authorityCheckout?.with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha || github.sha }}",
-      path: ".ci-authority",
-    });
-    expect(scope?.run).toBe("node .ci-authority/scripts/ci-change-scope.mjs");
-    expect(scope?.env).not.toHaveProperty("GATE_ROUTE");
-    expect(scope?.env).not.toHaveProperty("GATE_PHASE");
-    expect(scope?.env).not.toHaveProperty("GATE_ENTRY_POINT");
-    expect(scope?.env).not.toHaveProperty("GATE_EXPECTED_PLAN_DIGEST");
-    const ciContractCommand =
-      jobs["ci-contracts"]?.steps?.find(
-        (step) => step.name === "Check CI routing and gate contracts",
-      )?.run ?? "";
-    expect(ciContractCommand).not.toContain("scripts/ci-private-route-status.test.ts");
-
-    const focused = jobs["node-focused"];
-    expect(focused?.if).toBe("needs.change-scope.outputs.run_node_focused == 'true'");
-    const focusedCommands = focused?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    expect(focusedCommands).toContain("scripts/go-lifecycle-routing.test.ts");
-    expect(focusedCommands).toContain("scripts/npm-free-managed-lifecycle-contract.test.ts");
-    expect(focusedCommands).toContain("src/wallet/wallet-application-state-permissions.test.ts");
-
-    for (const [jobName, group] of [
-      ["node-unit", "unit"],
-      ["node-gateway", "gateway"],
-      ["node-extensions", "extensions"],
-    ] as const) {
-      const job = jobs[jobName];
-      expect(
-        job?.steps?.some((step) => step.run === `node scripts/ci-run-changed-tests.mjs ${group}`),
-      ).toBe(true);
-    }
-
-    expect(jobs["checks"]?.if).toBe("needs.change-scope.outputs.run_node_full == 'true'");
-    expect(jobs["build-artifacts"]?.if).toContain("run_node_build");
-    expect(jobs["release-check"]?.if).toBe(
-      "needs.change-scope.outputs.run_node_packaging == 'true'",
-    );
-    expect(jobs["packed-core-smoke"]?.if).toBe(
-      "needs.change-scope.outputs.run_node_packaging == 'true'",
-    );
-
-    const dependency = jobs["dependency-integrity"];
-    expect(dependency?.if).toBe("needs.change-scope.outputs.run_dependency_integrity == 'true'");
-    expect(dependency?.["timeout-minutes"]).toBeLessThanOrEqual(3);
-    const dependencyCommands = dependency?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    expect(dependencyCommands).toContain("node scripts/ci-dependency-integrity.mjs");
-    expect(dependencyCommands).toContain("pnpm install --lockfile-only");
-    expect(dependencyCommands).toContain("pnpm audit --prod --audit-level high");
-
-    const secretsCommands = jobs["secrets"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    expect(secretsCommands).not.toContain("pnpm-audit-prod");
-    expect(secretsCommands).not.toContain("pnpm audit");
-
-    expect(jobs["signer-platform"]?.if).toBe(
-      "needs.change-scope.outputs.run_native_signer == 'true'",
-    );
-    expect(jobs["signer-integration"]?.if).toBe(
-      "needs.change-scope.outputs.run_signer_integration == 'true'",
-    );
-    expect(jobs["signer-darwin-integration"]?.if).toBe(
-      "needs.change-scope.outputs.run_signer_darwin_integration == 'true'",
-    );
-    const darwinSignerSetupGo = jobs["signer-darwin-integration"]?.steps?.find(
-      (step) => step.name === "Setup Go",
-    );
-    expect(darwinSignerSetupGo?.uses).toBe(
-      "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
-    );
-    expect(darwinSignerSetupGo?.with?.["go-version-file"]).toBe("tools/fased-signerd/go.mod");
-
-    for (const jobName of ["protected-local-lifecycle", "protected-local-update-lifecycle"]) {
-      const fixture = jobs[jobName]?.steps?.find(
-        (step) => step.env?.FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS !== undefined,
-      );
-      expect(fixture?.env?.FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS, jobName).toBe("1");
-    }
-    const bootstrap = jobs["platform-bootstrap-audit"];
-    expect(bootstrap?.if).toBe("needs.change-scope.outputs.run_platform_bootstrap == 'true'");
-    expect(
-      bootstrap?.steps?.find(
-        (step) => step.env?.FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS !== undefined,
-      )?.env?.FASED_SYSTEMD_FIXTURE_PREINSTALLED_TOOLS,
-    ).toBe("0");
-
-    expect(jobs["docker-amd64"]?.if).toBe("needs.change-scope.outputs.run_docker == 'true'");
-    expect(jobs["docker-arm64"]?.if).toBe("needs.change-scope.outputs.run_docker == 'true'");
-    expect(jobs["codeql-javascript"]?.if).toBe(
-      "needs.change-scope.outputs.run_codeql_javascript == 'true'",
-    );
-    expect(jobs["codeql-javascript"]?.["timeout-minutes"]).toBeGreaterThanOrEqual(20);
-    const javascriptSteps = jobs["codeql-javascript"]?.steps ?? [];
-    const focusedInit = javascriptSteps.find((step) => step.name === "Initialize focused CodeQL");
-    const fullInit = javascriptSteps.find((step) => step.name === "Initialize full CodeQL");
-    expect(focusedInit?.if).toBe("needs.change-scope.outputs.focused_codeql_javascript == 'true'");
-    expect(fullInit?.if).toBe("needs.change-scope.outputs.focused_codeql_javascript != 'true'");
-    const focusedConfig = parse(String(focusedInit?.with?.config ?? "")) as {
-      paths?: string[];
-    };
-    const coveredRoots = focusedConfig.paths ?? [];
-    expect(coveredRoots).toEqual(
-      expect.arrayContaining([
-        "src/commands/wallet.ts",
-        "src/federation/federation-state-permissions.ts",
-      ]),
-    );
-    expect(jobs["codeql-go"]?.if).toBe("needs.change-scope.outputs.run_codeql_go == 'true'");
-    expect(jobs["codeql-python"]?.if).toBe(
-      "needs.change-scope.outputs.run_codeql_python == 'true'",
-    );
-  });
-
-  it("keeps expensive compatibility lanes opt-in or path-scoped", async () => {
-    const workflow = await readWorkflow(".github/workflows/ci.yml");
-    const jobs = workflow.jobs ?? {};
-
-    expect(jobs["checks-windows"]).toBeUndefined();
-    expect(jobs["ios"]).toBeUndefined();
-    expect(jobs["android"]).toBeUndefined();
-    expect(jobs["ui"]?.if).toBe("needs.change-scope.outputs.run_ui == 'true'");
-    expect(jobs["macos-runtime"]?.if).toBe(
-      "needs.change-scope.outputs.run_macos_runtime == 'true'",
-    );
-    expect(jobs["macos-app"]?.if).toBe("needs.change-scope.outputs.run_macos_app == 'true'");
-    expect(jobs["ui-mining"]?.if).toBe("needs.change-scope.outputs.run_ui_mining == 'true'");
-    const uiCommands = jobs["ui"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    expect(uiCommands).toContain("node scripts/ci-run-changed-tests.mjs ui");
-    expect(uiCommands).toContain("pnpm ui:build");
-    expect(uiCommands).toContain("pnpm test:ui");
-
-    const macosRuntimeCommands =
-      jobs["macos-runtime"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    expect(macosRuntimeCommands).toContain("src/daemon/launchd.test.ts");
-    expect(macosRuntimeCommands).not.toMatch(/(^|\s)pnpm test($|\s)/u);
-    const macosAppCommands =
-      jobs["macos-app"]?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    expect(macosAppCommands).toContain("swift build --package-path apps/macos");
-    expect(macosAppCommands).toContain("swift test --package-path apps/macos");
-
-    expect(jobs["hosting-lifecycle"]?.if).toBe("needs.change-scope.outputs.run_hosting == 'true'");
-    expect(jobs["protected-local-lifecycle"]?.if).toBe(
-      "needs.change-scope.outputs.run_local_fresh == 'true'",
-    );
-    expect(jobs["protected-local-rocky-lifecycle"]?.if).toContain(
-      "needs.change-scope.outputs.full_matrix == 'true'",
-    );
-    expect(jobs["ci-contracts"]?.if).toBe("needs.change-scope.outputs.run_ci_contracts == 'true'");
-    expect(jobs["t2-contracts"]?.if).toBe("needs.change-scope.outputs.run_t2_contracts == 'true'");
-
-    const t2Commands = jobs["t2-contracts"]?.steps?.map((step) => step.run).filter(Boolean) ?? [];
-    expect(t2Commands).toEqual(
-      expect.arrayContaining([expect.stringContaining("go -C tools/fased-lifecycled test")]),
-    );
-    expect(t2Commands.join("\n")).toContain("./platform");
-    expect(jobs["t2-contracts"]?.["timeout-minutes"]).toBe(5);
-
-    for (const jobName of [
-      "ci-contracts",
-      "t2-contracts",
-      "hosting-lifecycle",
-      "protected-local-fixture-artifact",
-      "protected-local-lifecycle",
-      "protected-local-rocky-lifecycle",
-      "protected-local-update-lifecycle",
-    ]) {
-      expect(jobs[jobName]?.["timeout-minutes"], jobName).toBeGreaterThan(0);
-      expect(jobs[jobName]?.["timeout-minutes"], jobName).toBeLessThanOrEqual(15);
-    }
-  });
-
-  it("keeps auxiliary compatibility workflows off unrelated pull requests", async () => {
-    const formal = await readFile(
-      resolve(repoRoot, ".github/workflows/formal-conformance.yml"),
-      "utf8",
-    );
-    const sanity = await readFile(
-      resolve(repoRoot, ".github/workflows/workflow-sanity.yml"),
-      "utf8",
-    );
-
-    expect(formal).not.toContain("  pull_request:");
-    expect(formal).toContain("  schedule:");
-    expect(formal).toContain("  workflow_dispatch:");
-    expect(sanity).not.toContain("  pull_request:");
-    expect(sanity).not.toContain("  push:");
-    expect(sanity).toContain("  workflow_dispatch:");
-  });
-
-  it("keeps Bun and Docker tooling out of the ordinary PR lane", async () => {
-    const pr = await readFile(resolve(repoRoot, ".github/workflows/pr.yml"), "utf8");
-    const setup = await readFile(
-      resolve(repoRoot, ".github/actions/setup-node-env/action.yml"),
-      "utf8",
-    );
-
-    expect(pr).not.toContain("docker/setup-buildx-action");
-    expect(pr).not.toContain("docker/build-push-action");
-    expect(pr).not.toContain("docker/login-action");
-    expect(pr).toContain('install-bun: "false"');
-    expect(setup).toMatch(/install-bun:[\s\S]*?default: "false"/u);
-  });
-
-  it("keeps full Node, builds, packaging, and CodeQL off the PR runner", async () => {
-    const workflow = await readWorkflow(".github/workflows/pr.yml");
-    const selected = workflow.jobs?.["selected-tests"]?.steps ?? [];
-    const security = workflow.jobs?.security?.steps ?? [];
-
-    expect(selected.some((step) => step.name?.includes("full Node"))).toBe(false);
-    expect(selected.some((step) => step.name?.includes("Build once"))).toBe(false);
-    expect(selected.some((step) => step.name?.includes("package"))).toBe(false);
-    expect(security.some((step) => step.uses?.startsWith("github/codeql-action/"))).toBe(false);
-  });
-
-  it("pins every third-party Action to an immutable commit", async () => {
-    const githubRoot = resolve(repoRoot, ".github");
-    const files = (await listFiles(githubRoot)).filter((path) => /\.ya?ml$/u.test(path));
-    const violations: string[] = [];
-
-    for (const path of files) {
-      const source = await readFile(path, "utf8");
-      for (const match of source.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)) {
-        const reference = match[1] ?? "";
-        if (!reference.startsWith("./") && !/@[0-9a-f]{40}$/u.test(reference)) {
-          violations.push(`${path.slice(repoRoot.length + 1)}: ${reference}`);
-        }
-      }
-    }
-
-    expect(violations).toEqual([]);
-  });
-
-  it("keeps lifecycle fixtures out of the product Docker release workflow", async () => {
-    const dockerWorkflow = await readFile(
-      resolve(repoRoot, ".github/workflows/docker-release.yml"),
-      "utf8",
-    );
-
-    expect(dockerWorkflow).not.toContain("scripts/docker/protected-local-systemd/**");
-    expect(dockerWorkflow).not.toContain("scripts/docker/hosting-systemd/**");
-    expect(dockerWorkflow).not.toContain("scripts/docker/streamed-hosting-bootstrap/**");
-    expect(dockerWorkflow).not.toContain("pull_request:");
-  });
-
-  it("keeps Docker validation-only without an exact Docker release receipt", async () => {
-    const dockerWorkflow = await readFile(
-      resolve(repoRoot, ".github/workflows/docker-release.yml"),
-      "utf8",
-    );
-
-    expect(dockerWorkflow).not.toMatch(/\n\s+push:\s*\n\s+tags:/u);
-    expect(dockerWorkflow).not.toContain("packages: write");
-    expect(dockerWorkflow).not.toContain("push-by-digest=true");
-    expect(dockerWorkflow).not.toContain("push=true");
-    expect(dockerWorkflow).not.toContain("imagetools create");
-    expect(dockerWorkflow).not.toContain("gh release create");
-    expect(dockerWorkflow).not.toContain("gh release upload");
-  });
-
-  it("publishes only exact pre-tag P1 product bytes without rebuilding or replaying P1", async () => {
-    const workflow = await readWorkflow(".github/workflows/hosted-runtime-release.yml");
-    const jobs = workflow.jobs ?? {};
-    const preflight = jobs.preflight;
-    const finalizeCandidate = jobs["finalize-candidate"];
-    const publish = jobs.publish;
-    const refreshRootHead = jobs["refresh-root-head"];
-    const preflightText = preflight?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const finalizeText = finalizeCandidate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const publishText = publish?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-    const publishIdentity = publish?.steps?.find(
-      (step) => step.name === "Verify exact candidate identity",
-    );
-    const preTagReceiptDownload = finalizeCandidate?.steps?.find(
-      (step) => step.name === "Download the exact pre-tag gate receipt",
-    );
-    const finalizationGate = finalizeCandidate?.steps?.find(
-      (step) => step.name === "Record content-addressed candidate finalization gate",
-    );
-    const refreshRootHeadText =
-      refreshRootHead?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-
-    expect(workflow.on).not.toHaveProperty("push");
-    expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
-    expect(workflow.on.workflow_dispatch.inputs.pre_tag_p1_run_id.required).toBe(true);
-    expect(workflow.on.workflow_dispatch.inputs.managed_predecessor_version.required).toBe(true);
-    expect(Object.keys(jobs).toSorted()).toEqual([
-      "finalize-candidate",
-      "preflight",
-      "publish",
-      "refresh-root-head",
-      "release-gate",
-    ]);
-    for (const removed of [
-      "build",
-      "linux",
-      "signer",
+  it("builds one Linux-x64 artifact in pre-tag without fixture execution", async () => {
+    const value = await workflow(".github/workflows/pre-tag-p1.yml");
+    const source = await text(".github/workflows/pre-tag-p1.yml");
+    expect(Object.keys(value.jobs ?? {}).toSorted()).toEqual([
       "candidate",
-      "p1-local-fresh",
-      "predecessor-capsules",
-      "p1-local-update",
-      "p1-hosting",
-      "tag-ready",
-    ]) {
-      expect(jobs[removed]).toBeUndefined();
-    }
+      "evidence",
+      "preflight",
+    ]);
+    expect(value.jobs?.candidate?.["timeout-minutes"]).toBe(20);
+    expect(source).toContain("scripts/build-linux-x64-release-artifact.sh");
+    expect(source).toContain('.profile == "linux-x64" and .publishable == false');
+    expect(source).toContain("scripts/finalize-pretag-candidate.sh");
+    expect(source).toContain("product.sha256");
+    expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
+    expect(source).not.toContain("test-lifecycle-local-acceptance.sh");
+    expect(source).not.toContain("test-lifecycle-hosting-acceptance.sh");
+    expect(source).not.toContain("prepare-candidate-fixture-trust.sh");
+  });
 
-    expect(finalizeCandidate?.needs).toEqual(["preflight"]);
-    expect(
-      finalizeCandidate?.steps?.find((step) => usesAction(step, "actions/download-artifact"))?.with,
-    ).toMatchObject({
-      name: "fased-pre-tag-candidate",
-      "run-id": "${{ inputs.pre_tag_p1_run_id }}",
-    });
-    expect(preTagReceiptDownload?.with).toMatchObject({
-      name: "fased-pre-tag-p1-evidence",
-      path: "${{ runner.temp }}/fased-pre-tag-p1-evidence",
-      "run-id": "${{ inputs.pre_tag_p1_run_id }}",
-    });
-    expect(finalizationGate?.run).toContain(
-      '--upstream-receipt "$RUNNER_TEMP/fased-pre-tag-p1-evidence/evidence.json"',
-    );
-    const prepareArtifactParent = finalizeText.indexOf(
-      'mkdir -m 0700 "$GITHUB_WORKSPACE/.artifacts"',
-    );
-    const finalizePreTagCandidate = finalizeText.indexOf("scripts/finalize-pretag-candidate.sh");
-    const restoreFinalizerDependencies = finalizeCandidate?.steps?.findIndex(
-      (step) => step.name === "Restore frozen finalizer dependencies",
-    );
-    const finalizeCandidateStep = finalizeCandidate?.steps?.findIndex(
-      (step) => step.name === "Verify and stage only the pre-tag product bytes",
-    );
-    expect(restoreFinalizerDependencies).toBeGreaterThan(-1);
-    expect(finalizeCandidateStep).toBeGreaterThan(restoreFinalizerDependencies ?? -1);
-    expect(finalizeCandidate?.steps?.[restoreFinalizerDependencies ?? -1]?.run).toBe(
-      "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline",
-    );
-    expect(prepareArtifactParent).toBeGreaterThan(-1);
-    expect(finalizePreTagCandidate).toBeGreaterThan(prepareArtifactParent);
-    expect(finalizeText).toContain("release-artifact-set.mjs build");
+  it("attests and publishes pre-tag product bytes without rebuilding or reinstalling", async () => {
+    const value = await workflow(".github/workflows/hosted-runtime-release.yml");
+    const source = await text(".github/workflows/hosted-runtime-release.yml");
+    const finalizeText = jobText(value.jobs?.["finalize-candidate"]);
+    const publishText = jobText(value.jobs?.publish);
+    expect(finalizeText).toContain("product.sha256");
+    expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
+    expect(finalizeText).toContain("release-artifact-set.mjs verify");
+    expect(finalizeText).not.toContain("pnpm install");
     expect(finalizeText).not.toContain("pnpm build");
     expect(finalizeText).not.toContain("go build");
-    expect(finalizeText).not.toContain("hosted:artifact:from-dist");
-    expect(finalizeText).not.toContain("test-lifecycle-local-acceptance.sh");
-    expect(finalizeText).not.toContain("test-lifecycle-hosting-acceptance.sh");
-
-    expect(publish?.needs).toEqual(["finalize-candidate", "release-gate"]);
-    expect(publish?.environment).toBe("candidate-release");
+    expect(finalizeText).not.toContain("finalize-pretag-candidate.sh");
+    expect(publishText).not.toContain("pnpm install");
     expect(publishText).not.toContain("pnpm build");
     expect(publishText).not.toContain("go build");
-    expect(publishText).not.toContain("--workflow-run-attempt");
-    expect(publishText).not.toContain("git tag");
-    expect(publishText).not.toContain("git push origin");
-    expect(publishIdentity?.env).toMatchObject({
-      PRE_CANDIDATE_RUN_ID: "${{ inputs.pre_candidate_run_id }}",
-      PRE_TAG_P1_RUN_ID: "${{ inputs.pre_tag_p1_run_id }}",
-    });
-    expect(publishIdentity?.run).toContain('--claim "preCandidateRunId=$PRE_CANDIDATE_RUN_ID"');
-    expect(publishIdentity?.run).toContain('--claim "preTagP1RunId=$PRE_TAG_P1_RUN_ID"');
-    expect(publishIdentity?.run).not.toContain("${{ inputs.pre_candidate_run_id }}");
-    expect(publishIdentity?.run).not.toContain("${{ inputs.pre_tag_p1_run_id }}");
-    expect(publishText).toContain("git ls-remote --exit-code --tags origin");
-    expect(publishText).toContain("release-artifact-set.mjs verify-assets");
-    expect(publishText).toContain('gh release create "$RELEASE_TAG"');
-    expect(publishText).toContain("--verify-tag");
-    expect(publishText).toContain("--draft");
-    expect(publishText).toContain("cleanup_draft");
-    expect(publishText).toContain("--method DELETE");
-    expect(publishText).toContain("--method PATCH");
-    expect(
-      publish?.steps?.find(
-        (step) => step.name === "Advance signed managed channel to the exact public candidate",
-      )?.run,
-    ).toContain("scripts/publish-lifecycle-channel.sh");
-
-    expect(workflow.concurrency?.group).toContain("github.event_name == 'schedule'");
-    expect(workflow.concurrency?.group).toContain("fased-root-head-refresh-{0}");
-    expect(workflow.concurrency?.group).toContain("fased-lifecycle-channel-{0}");
-    expect(workflow.on?.schedule).toEqual([{ cron: "17 */6 * * *" }]);
-    expect(refreshRootHead?.if).toBe("github.event_name == 'schedule'");
-    expect(refreshRootHeadText).toContain("publish-lifecycle-root-head.sh");
-
-    expect(preflightText).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
-    expect(preflightText).toContain(
-      'git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}"',
-    );
-    expect(preflightText).toContain('$2 == ref "^{}" { peeled = $1 }');
-    expect(preflightText).toContain('print peeled != "" ? peeled : direct');
-    expect(preflightText).toContain('test "$remote_tag_commit" = "$SOURCE_COMMIT"');
-    expect(publishText).toContain(
-      'git ls-remote --exit-code --tags origin "$remote_tag_ref" "$remote_tag_ref^{}"',
-    );
-    expect(publishText).toContain('$2 == ref "^{}" { peeled = $1 }');
-    expect(publishText).toContain('print peeled != "" ? peeled : direct');
-    expect(publishText).toContain('test "$remote_tag_commit" = "$GITHUB_SHA"');
-    expect(preflightText).toContain(".mainRunId");
-    expect(preflightText).toContain(".mainChecksJobId");
-    expect(preflightText).toContain('.path == ".github/workflows/pre-tag-p1.yml"');
-    expect(preflightText).toContain("fased-pre-tag-p1-evidence");
-    expect(preflightText).not.toContain("pnpm build");
-    expect(preflightText).not.toContain("pnpm audit --prod --audit-level high");
+    expect(publishText).toContain("gh release create");
   });
 
-  it("binds pre-candidate evidence before a version is allocated", async () => {
-    const workflow = await readWorkflow(".github/workflows/pre-candidate.yml");
-    const validate = workflow.jobs?.validate;
-    const commands = validate?.steps?.map((step) => step.run ?? "").join("\n") ?? "";
-
-    expect(workflow.on).not.toHaveProperty("push");
-    expect(workflow.on).not.toHaveProperty("pull_request");
-    expect(workflow.on).toHaveProperty("workflow_dispatch");
-    expect(workflow.on.workflow_dispatch.inputs.managed_predecessor_version.required).toBe(true);
-    expect(workflow.on.workflow_dispatch.inputs.release_sequence.required).toBe(true);
-    expect(workflow.on.workflow_dispatch.inputs.security_epoch.required).toBe(true);
-    expect(workflow.on.workflow_dispatch.inputs.local0_receipt_sha256.required).toBe(true);
-    expect(workflow.on.workflow_dispatch.inputs.hosting_staging_receipt_sha256.required).toBe(true);
-    expect(validate?.["timeout-minutes"]).toBeLessThanOrEqual(5);
-    expect(commands).toContain("pnpm install --frozen-lockfile");
-    expect(commands).toContain("actions/workflows/main.yml/runs?head_sha=$SOURCE_COMMIT");
-    expect(commands).toContain('.name == "checks" and .conclusion == "success"');
-    expect(commands).toContain("mainRunId");
-    expect(commands).toContain("mainChecksJobId");
-    expect(commands).not.toContain("pnpm release:check");
-    expect(commands).not.toMatch(/(^|\s)pnpm build($|\s)/u);
-    expect(commands).not.toContain("pnpm signer:protocol:check");
-    expect(commands).not.toContain("pnpm sat:signer-codecs:check");
-    expect(commands).not.toContain("pnpm check:dependency-ownership");
-    expect(commands).not.toContain("pnpm test:signer:compat");
-    expect(commands).not.toContain("pnpm test:local-source-update-compat");
-    expect(commands).not.toContain("pnpm test:managed-updater");
-    expect(commands).not.toContain("pnpm check:plugin-sdk:types");
-    expect(commands).not.toContain("scripts/release-check.ts");
-    expect(commands).not.toContain("pnpm release:validate-dist:packed");
-    expect(commands).not.toContain("--verify-public-github");
-    expect(commands).toContain("--verify-git");
-    expect(commands.match(/--verify-release/g)).toHaveLength(2);
-    expect(commands).toContain("node scripts/release-gate.mjs record");
-    expect(commands).toContain("--phase pre-candidate");
-    expect(commands).toContain("--lockfile-digest");
-    expect(commands).toContain("managedPredecessorVersion=");
-    expect(commands).toContain("local0ReceiptDigest=");
-    expect(commands).toContain("hostingStagingReceiptDigest=");
-    expect(commands).toContain("releaseSequence=");
-    expect(commands).toContain("securityEpoch=");
-    expect(commands).toContain("node scripts/verify-lifecycle-root-pin.mjs");
-    expect(
-      validate?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
-    ).toBe("fased-pre-candidate-evidence");
-  });
-
-  it("uses one version-neutral release gate and reusable receipt workflow", async () => {
-    const gateSource = await readFile(resolve(repoRoot, "scripts/release-gate.mjs"), "utf8");
-    const reusable = await readWorkflow(".github/workflows/release-gate-verify.yml");
-    const preCandidate = await readFile(
-      resolve(repoRoot, ".github/workflows/pre-candidate.yml"),
-      "utf8",
-    );
-    const preTag = await readFile(resolve(repoRoot, ".github/workflows/pre-tag-p1.yml"), "utf8");
-    const release = await readFile(
-      resolve(repoRoot, ".github/workflows/hosted-runtime-release.yml"),
-      "utf8",
-    );
-    const replay = await readFile(
-      resolve(repoRoot, ".github/workflows/candidate-p1-replay.yml"),
-      "utf8",
-    );
-    const publication = await readFile(
-      resolve(repoRoot, ".github/workflows/candidate-publication-replay.yml"),
-      "utf8",
-    );
-
-    expect(reusable.on).toHaveProperty("workflow_call");
-    expect(reusable.jobs?.verify?.["timeout-minutes"]).toBeLessThanOrEqual(3);
-    const reusableText = reusable.jobs?.verify?.steps?.map((step) => step.run ?? "").join("\n");
-    expect(reusableText).toContain("node scripts/release-gate.mjs");
-    expect(reusableText).not.toContain("pnpm build");
-    expect(reusableText).not.toContain("go build");
-    expect(gateSource).toContain("role: RELEASE_GATE_ROLE");
-    expect(gateSource).toContain("cacheKey");
-    expect(gateSource).toContain("artifactSetDigest");
-    expect(gateSource).not.toMatch(/\b(?:gh|pnpm|go)\b/u);
-    expect(preCandidate).toContain("./.github/actions/setup-pnpm-store-cache");
-    expect(preTag).toContain("actions/cache@");
-    expect(preTag).toContain("${{ hashFiles(");
-
-    expect(preCandidate).toContain("--phase pre-candidate");
-    expect(preTag).toContain("--phase pre-tag-p1");
-    expect(release).toContain("--phase candidate-finalization");
-    expect(replay).toContain("--phase candidate-p1-replay");
-    expect(publication).toContain("--phase candidate-publication");
-    expect(publication).toContain('"Record exact candidate P1 replay gate"');
-    expect(publication).toContain('"fased-release-gate-candidate-p1-replay"');
-    for (const source of [preTag, release, replay, publication]) {
-      expect(source).toContain("--upstream-receipt");
-    }
-    expect(release).toContain("uses: ./.github/workflows/release-gate-verify.yml");
-    expect(publication).toContain("uses: ./.github/workflows/release-gate-verify.yml");
-    expect(replay).not.toContain("pnpm build");
-    expect(publication).not.toContain("pnpm build");
-    expect(publication).not.toContain("go build");
-  });
-
-  it("runs candidate-shaped Local and Hosting P1 before the immutable tag", async () => {
-    const workflow = await readWorkflow(".github/workflows/pre-tag-p1.yml");
-    const jobs = workflow.jobs ?? {};
-    const preflight = jobs.preflight;
-    const candidate = jobs.candidate;
-    const localFresh = jobs["local-fresh"];
-    const localUpdate = jobs["local-update"];
-    const hosting = jobs.hosting;
-    const evidence = jobs.evidence;
-    const candidateBuild = candidate?.steps?.find(
-      (step) => step.name === "Build exact non-publishable x64 artifact once",
-    );
-    const candidateFinalize = candidate?.steps?.find(
-      (step) => step.name === "Prove nonpublishing finalization before immutable tag",
-    );
-    const hostingRun = hosting?.steps?.find((step) => step.name === "Run exact Hosting entrypoint");
-    const predecessorTopology = localUpdate?.steps?.find(
-      (step) => step.name === "Derive exact predecessor topology",
-    );
-    const evidenceRecord = evidence?.steps?.find(
-      (step) => step.name === "Record immutable pre-tag evidence",
-    );
-    const evidenceUpstreamDownload = evidence?.steps?.find(
-      (step) => step.name === "Download exact pre-candidate gate receipt",
-    );
-    const allText = Object.values(jobs)
-      .flatMap((job) => job.steps ?? [])
-      .map((step) => step.run ?? "")
-      .join("\n");
-
-    expect(workflow.on).toEqual({
-      workflow_dispatch: expect.any(Object),
-    });
-    expect(workflow.on.workflow_dispatch.inputs.pre_candidate_run_id.required).toBe(true);
-    expect(preflight?.["timeout-minutes"]).toBeLessThanOrEqual(5);
-    expect(candidate?.needs).toEqual(["preflight"]);
-    expect(localFresh?.needs).toEqual(["preflight", "candidate"]);
-    expect(localUpdate?.needs).toEqual(["preflight", "candidate"]);
-    expect(hosting?.needs).toEqual(["preflight", "candidate"]);
-    expect(evidence?.needs).toEqual([
-      "preflight",
-      "candidate",
-      "local-fresh",
-      "local-update",
-      "hosting",
-    ]);
-    expect(evidenceUpstreamDownload?.with).toMatchObject({
-      name: "fased-pre-candidate-evidence",
-      path: "${{ runner.temp }}/pre-candidate-evidence",
-      "run-id": "${{ inputs.pre_candidate_run_id }}",
-    });
-    expect(
-      localFresh?.steps?.some(
-        (step) =>
-          usesAction(step, "actions/download-artifact") &&
-          step.with?.name === "fased-pre-candidate-evidence",
-      ),
-    ).toBe(false);
-    expect(allText).toContain('test "$GITHUB_REF" = "refs/heads/main"');
-    expect(allText).toContain("node scripts/ci-version-identity.mjs");
-    expect(allText).toContain("node scripts/verify-lifecycle-root-pin.mjs");
-    expect(allText).toContain('! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$RELEASE_VERSION"');
-    expect(candidateBuild?.env).toMatchObject({
-      FASED_LIFECYCLE_RELEASE_SEQUENCE: "${{ needs.preflight.outputs.release_sequence }}",
-      FASED_LIFECYCLE_SECURITY_EPOCH: "${{ needs.preflight.outputs.security_epoch }}",
-      FASED_SYSTEMD_FIXTURE_BUILD_ONLY: "1",
-    });
-    expect(allText).toContain("scripts/prepare-candidate-fixture-trust.sh");
-    expect(allText).toContain("fased-pre-tag-candidate-raw");
-    expect(candidateFinalize?.env).toMatchObject({
-      RELEASE_SEQUENCE: "${{ needs.preflight.outputs.release_sequence }}",
-      SECURITY_EPOCH: "${{ needs.preflight.outputs.security_epoch }}",
-      RELEASE_VERSION: "${{ inputs.release_version }}",
-      SOURCE_COMMIT: "${{ inputs.source_commit }}",
-    });
-    expect(candidateFinalize?.run).toContain("scripts/finalize-pretag-candidate.sh");
-    expect(candidateFinalize?.run).toContain("fased-pre-tag-finalized");
-    expect(candidateFinalize?.run).not.toContain("gh release");
-    expect(candidateFinalize?.run).not.toContain("gh attestation");
-    expect(candidate?.steps?.indexOf(candidateFinalize!)).toBeLessThan(
-      candidate?.steps?.findIndex(
-        (step) => step.name === "Upload exact pre-tag candidate-shaped artifact",
-      ) ?? -1,
-    );
-    expect(predecessorTopology?.env).toMatchObject({
-      GH_TOKEN: "${{ github.token }}",
-    });
-    expect(allText).toContain("bash scripts/test-lifecycle-local-acceptance.sh");
-    expect(allText).toContain("bash scripts/test-lifecycle-hosting-acceptance.sh");
-    expect(hostingRun?.env).toMatchObject({
-      FASED_HOSTING_SYSTEMD_FIXTURE_SCENARIOS: "fresh-install,managed-update",
-    });
-    expect(evidenceRecord?.run).toContain("node scripts/release-gate.mjs record");
-    expect(evidenceRecord?.run).toContain("--phase pre-tag-p1");
-    expect(evidenceRecord?.run).toContain("--candidate-descriptor-digest");
-    expect(evidenceRecord?.run).toContain("--artifact-set-digest");
-    expect(evidenceRecord?.run).toContain("--upstream-receipt");
-    expect(allText).toContain('{version:$stable,installationClass:"public-stable"}');
-    expect(allText).toContain('{version:$managed,installationClass:"canonical-managed"}');
-    expect(allText).not.toContain("gh release create");
-    expect(allText).not.toContain("git tag");
-    expect(allText).not.toContain("git push");
-    expect(
-      evidence?.steps?.find((step) => usesAction(step, "actions/upload-artifact"))?.with?.name,
-    ).toBe("fased-pre-tag-p1-evidence");
-  });
-
-  it("keeps every GitHub Release publisher behind immutable evidence and protection", async () => {
-    const dockerWorkflow = await readFile(
-      resolve(repoRoot, ".github/workflows/docker-release.yml"),
-      "utf8",
-    );
-    const hostedWorkflow = await readFile(
-      resolve(repoRoot, ".github/workflows/hosted-runtime-release.yml"),
-      "utf8",
-    );
-
-    expect(dockerWorkflow).not.toContain("gh release create");
-    expect(dockerWorkflow).not.toContain("gh release upload");
-    expect(hostedWorkflow).toContain('gh release create "$RELEASE_TAG"');
-    expect(hostedWorkflow).toContain("environment: candidate-release");
-    const replayPath = resolve(repoRoot, ".github/workflows/candidate-p1-replay.yml");
-    expect(await exists(replayPath)).toBe(true);
-    const replay = await readWorkflow(".github/workflows/candidate-p1-replay.yml");
-    const replayText = await readFile(replayPath, "utf8");
-    expect(replay.on).toHaveProperty("workflow_dispatch");
-    expect(replay.on.workflow_dispatch.inputs.source_run_id.required).toBe(true);
-    expect(replay.on.workflow_dispatch.inputs.candidate_descriptor_sha256.required).toBe(true);
-    expect(
-      replay.jobs?.verify?.steps?.find((step) => usesAction(step, "actions/download-artifact"))
-        ?.with,
-    ).toMatchObject({
-      name: "fased-hosting-candidate",
-      "run-id": "${{ inputs.source_run_id }}",
-    });
-    expect(replayText).toContain("scripts/release-artifact-set.mjs verify");
-    expect(replayText).toContain("Upload exact unmodified replay candidate");
-    expect(replayText).toContain(
-      'test ! -e "$RUNNER_TEMP/fased-hosting-candidate/fased-candidate-fixture-overlay.json"',
-    );
-    expect(replayText).not.toContain("scripts/prepare-candidate-fixture-trust.sh");
-    expect(replayText).toContain('.conclusion == "failure"');
-    for (const jobName of ["local-fresh", "local-update", "hosting"] as const) {
-      const checkout = replay.jobs?.[jobName]?.steps?.find((step) =>
-        usesAction(step, "actions/checkout"),
-      );
-      expect(checkout?.with?.["fetch-depth"]).toBe(0);
-    }
-    for (const jobName of ["local-fresh", "local-update"] as const) {
-      const replayStep = replay.jobs?.[jobName]?.steps?.find((step) =>
-        step.run?.includes("scripts/test-lifecycle-local-acceptance.sh"),
-      );
-      expect(replayStep?.env?.FASED_SYSTEMD_FIXTURE_EXACT_CANDIDATE_REPLAY).toBe("1");
-    }
-    expect(replayText).not.toContain("pnpm build");
-    expect(replayText).not.toContain("gh release create");
-    expect(replayText).not.toContain("git tag");
-    expect(replayText).not.toContain("contents: write");
-
-    const publicationReplayPath = resolve(
-      repoRoot,
+  it("removes replay workflows and simulated Local acceptance", async () => {
+    for (const removed of [
+      ".github/workflows/candidate-p1-replay.yml",
       ".github/workflows/candidate-publication-replay.yml",
-    );
-    expect(await exists(publicationReplayPath)).toBe(true);
-    const publicationReplay = await readWorkflow(
-      ".github/workflows/candidate-publication-replay.yml",
-    );
-    const publicationReplayText = await readFile(publicationReplayPath, "utf8");
-    const channelPublisher = await readFile(
-      resolve(repoRoot, "scripts/publish-lifecycle-channel.sh"),
-      "utf8",
-    );
-    const rootHeadPublisher = await readFile(
-      resolve(repoRoot, "scripts/publish-lifecycle-root-head.sh"),
-      "utf8",
-    );
-    expect(publicationReplay.on.workflow_dispatch.inputs).toMatchObject({
-      source_run_id: { required: true },
-      p1_replay_run_id: { required: true },
-      candidate_descriptor_sha256: { required: true },
-      release_version: { required: true },
-      source_commit: { required: true },
-      predecessor_version: { required: true },
-      managed_predecessor_version: { required: true },
-    });
-    expect(publicationReplay.permissions).toMatchObject({ actions: "read", contents: "read" });
-    expect(publicationReplay.jobs?.publish).toMatchObject({
-      needs: ["release-gate", "verify"],
-      environment: "candidate-release",
-      permissions: { actions: "read", contents: "write" },
-    });
-    expect(publicationReplay.concurrency?.group).toBe(
-      "fased-lifecycle-channel-${{ contains(inputs.release_version, '-') && 'beta' || 'stable' }}",
-    );
-    expect(publicationReplayText).toContain("fased-hosting-candidate");
-    expect(publicationReplayText).toContain("fased-p1-replay-*-receipts");
-    expect(publicationReplayText).toContain("scripts/lifecycle-receipt-verifier.mjs");
-    expect(publicationReplayText).toContain("--acquisition-evidence-class SUPPORTING");
-    expect(publicationReplayText).toContain("local_receipt_count=0");
-    expect(publicationReplayText).toContain('test -f "$local_receipts/ubuntu-fresh-install.json"');
-    expect(publicationReplayText).toContain('"$local_receipts/ubuntu-managed-update.json"');
-    expect(publicationReplayText).toContain('-eq "$local_receipt_count"');
-    expect(publicationReplayText).not.toContain("1 + 3 *");
-    expect(publicationReplayText).toContain("scripts/release-artifact-set.mjs verify");
-    expect(publicationReplayText).toContain("scripts/privileged-release-evidence.mjs verify");
-    expect(publicationReplayText).toContain('gh release create "$RELEASE_TAG" "$candidate"/*');
-    expect(publicationReplayText).toContain("run-id: ${{ inputs.source_run_id }}");
-    expect(
-      publicationReplay.jobs?.publish?.steps?.find((step) =>
-        usesAction(step, "actions/download-artifact"),
-      )?.with,
-    ).toMatchObject({
-      name: "fased-hosting-candidate",
-      "run-id": "${{ inputs.source_run_id }}",
-    });
-    expect(publicationReplayText).not.toContain("pnpm build");
-    expect(publicationReplayText).not.toContain("go build");
-    expect(publicationReplayText).not.toContain("git tag");
-    expect(publicationReplayText).toContain("scripts/publish-lifecycle-channel.sh");
-    expect(publicationReplayText).toContain("scripts/publish-lifecycle-(channel|root-head)\\.sh");
-    expect(publicationReplayText).toContain("publish-lifecycle-root-head)\\.test\\.ts");
-    expect(publicationReplayText).toContain("scripts/lib/github-release-draft\\.sh");
-    expect(publicationReplayText).toContain("github-release-draft-recovery");
-    expect(channelPublisher).toContain('channel_tag="fased-channel-$channel-v1"');
-    expect(channelPublisher).toContain("fased_discover_github_release_draft");
-    expect(channelPublisher).toContain("RECOVERED_DRAFT");
-    expect(channelPublisher).toContain("draft_created_here=false");
-    expect(channelPublisher).toContain("lifecycle-channel-advance.mjs");
-    expect(channelPublisher).toContain('staged_index_name="$index_name.next"');
-    expect(channelPublisher).toContain('staged_attestation_name="$attestation_name.next"');
-    expect(channelPublisher).toContain("publish-lifecycle-root-head.sh");
-    expect(rootHeadPublisher).toContain('staged_head_name="$head_name.next"');
-    expect(rootHeadPublisher).toContain("releaseIndexSHA256");
-    expect(rootHeadPublisher).toContain("48 * 60 * 60 * 1000");
-    expect(rootHeadPublisher).toContain("--deny-self-hosted-runners");
-    expect(channelPublisher).toContain("--method PATCH");
-    expect(channelPublisher).not.toContain("--clobber");
-    expect(channelPublisher).not.toMatch(/\bnpm\b/u);
-    expect(rootHeadPublisher).not.toMatch(/\bnpm\b/u);
+      "scripts/run-lifecycle-local0.sh",
+      "scripts/test-lifecycle-local-acceptance.sh",
+      "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh",
+      "scripts/prepare-candidate-fixture-trust.sh",
+    ]) {
+      expect(await exists(removed), removed).toBe(false);
+    }
   });
 
-  it("selects beta for every prerelease target in the Protected Local fixture", async () => {
-    const fixture = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
-      "utf8",
-    );
-
-    expect(fixture).toContain('if [[ "$version" == *-* ]]');
-    expect(fixture).toContain('target_update_args=(--channel "$target_channel" --tag "$version")');
-    expect(fixture.match(/exec fased update "\$@"/gu)).toHaveLength(3);
-    expect(fixture.match(/fased "\$\{target_update_args\[@\]\}" --timeout/gu)).toHaveLength(3);
-    expect(fixture).not.toContain("/etc/fased/testing");
-    expect(fixture).toContain("/var/lib/fased-protected-local-fixture");
-    expect(fixture).toContain('if [[ "$phase" == "managed-update" ]]');
-    expect(fixture).toContain("run_target_installer() {");
-    expect(fixture).toContain('/bin/bash "$candidate_installer"');
-    expect(fixture).toContain(
-      'grep -F "Already current: $version" /tmp/managed-installer-noop.out',
-    );
-    expect(fixture).toContain("materialize_predecessor_wallet_registry_fixture");
-    expect(fixture).toContain('managed_current_link="/opt/fased/local/$instance/current"');
-    expect(fixture).not.toContain("/opt/fased/local/$instance/application/current");
-    expect(fixture).toContain(
-      "managed packaged Protected Local rollback, retry, restart, preservation, and no-op passed",
-    );
-    expect(fixture).not.toContain("legacy-takeover");
-    expect(fixture).not.toContain("modern-update");
-    expect(fixture).toContain("install -m 0700 -o testop -g testop /artifacts/install.sh");
-    expect(fixture).toContain("install -m 0644 /artifacts/fased-hosted-release-v2.json");
-    expect(fixture).toContain('if [[ "$public_acquisition" == "1" ]]');
-    expect(fixture).not.toContain("EOF_FIXTURE_GH");
-    expect(fixture).toContain("lifecycle-installed-state-capsule.mjs");
-    expect(fixture).toContain("lifecycle-receipt-verifier.mjs");
-    expect(fixture).toContain('FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"');
-    const containerFixture = await readFile(
-      resolve(repoRoot, "scripts/test-lifecycle-local-acceptance.sh"),
-      "utf8",
-    );
-    expect(containerFixture).toContain('"install_entry_release_identity=\\"${VERSION}\\""');
-    expect(containerFixture).toContain("FASED_SYSTEMD_FIXTURE_PREDECESSOR_CAPSULE_DIR");
-    expect(containerFixture).toContain(".release.commit == $commit");
-    expect(containerFixture).toContain('bash "$ROOT_DIR/scripts/build-native-release-assets.sh"');
-    expect(containerFixture).toContain('node "$ROOT_DIR/scripts/stamp-release-installer.mjs"');
-    expect(containerFixture).toContain(
-      'node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs"',
-    );
-    expect(containerFixture).not.toContain(
-      'node "$ROOT_DIR/scripts/privileged-release-evidence.mjs" build',
-    );
-    expect(containerFixture).not.toContain(
-      'node "$ROOT_DIR/scripts/build-lifecycle-trust-metadata.mjs"',
-    );
-    expect(containerFixture).toContain(
-      'node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs"',
-    );
-    expect(containerFixture).toContain('--runtime-archive "$ARTIFACT_DIR/$x64_app"');
-    expect(containerFixture).toContain('--dependency-archive "$ARTIFACT_DIR/$x64_dependency"');
-    expect(containerFixture).toContain('node "$ROOT_DIR/scripts/release-artifact-set.mjs" build');
-    expect(containerFixture).toContain('--source-ref "refs/tags/v${VERSION}"');
-    expect(containerFixture).toContain(
-      '"$ARTIFACT_DIR/fased-hosting-candidate.json.attestation.json"',
-    );
-  });
-
-  it("keeps the managed predecessor runtime inside the root-controlled store", async () => {
-    const fixture = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
-      "utf8",
-    );
-    const resolverStart = fixture.indexOf("resolve_predecessor_runtime() {");
-    const resolverEnd = fixture.indexOf("\n}", resolverStart);
-    expect(resolverStart).toBeGreaterThanOrEqual(0);
-    expect(resolverEnd).toBeGreaterThan(resolverStart);
-    const resolver = fixture.slice(resolverStart, resolverEnd);
-    expect(resolver).toContain('test "$phase" = "managed-update"');
-    expect(resolver).toContain('resolve_protected_runtime "$instance"');
-    expect(resolver).not.toContain('"$state/runtime/releases/"*');
-
-    expect(fixture).toContain('runtime="$(resolve_predecessor_runtime "$phase" "$instance")"');
-    expect(fixture).toContain('runtime="$(resolve_protected_runtime "$instance")"');
-  });
-
-  it("keeps stale-session update resolution bound to the exact fixture candidate", async () => {
-    const fixture = await readFile(
-      resolve(repoRoot, "scripts/docker/protected-local-systemd/lifecycle-acceptance.sh"),
-      "utf8",
-    );
-    const helperStart = fixture.indexOf("run_as_stale_operator() {");
-    const helperEnd = fixture.indexOf("\n}", helperStart);
-    expect(helperStart).toBeGreaterThanOrEqual(0);
-    expect(helperEnd).toBeGreaterThan(helperStart);
-    expect(fixture.slice(helperStart, helperEnd)).toContain(
-      'npm_config_registry="http://127.0.0.1:$rpc_port"',
-    );
-    expect(fixture.slice(helperStart, helperEnd)).toContain(
-      'FASED_HOSTED_ARTIFACT_BASE_URL="http://127.0.0.1:$rpc_port"',
-    );
+  it("keeps merged-main verification as evidence reuse", async () => {
+    const value = await workflow(".github/workflows/main.yml");
+    expect(Object.keys(value.jobs ?? {})).toEqual(["checks"]);
+    expect(value.jobs?.checks?.["timeout-minutes"]).toBe(3);
+    const source = await text(".github/workflows/main.yml");
+    expect(source).toContain("ci-merged-main-reuse.mjs");
+    expect(source).not.toContain("pnpm install");
+    expect(source).not.toContain("go test");
   });
 });
