@@ -168,6 +168,8 @@ describe("lean CI and release workflow contracts", () => {
     expect(finalizeText).toContain("product.sha256");
     expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
     expect(finalizeText).toContain("release-artifact-set.mjs verify");
+    expect(finalizeText).toContain('--source-digest \\"$GITHUB_SHA\\"');
+    expect(finalizeText).not.toContain('--source-digest \\"$SOURCE_COMMIT\\"');
     expect(finalizeText).not.toContain("pnpm install");
     expect(finalizeText).not.toContain("pnpm build");
     expect(finalizeText).not.toContain("go build");
