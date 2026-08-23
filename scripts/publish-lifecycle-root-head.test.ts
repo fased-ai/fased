@@ -17,4 +17,17 @@ describe("lifecycle root-head publication", () => {
     expect(publisher).not.toContain('"$workspace/current-attestation"');
     expect(publisher).not.toContain('"$workspace/final-attestation"');
   });
+
+  it("binds protected-main attestations to the immutable witness commit", async () => {
+    const publisher = await readFile(
+      resolve(repoRoot, "scripts/publish-lifecycle-root-head.sh"),
+      "utf8",
+    );
+
+    expect(publisher).toContain('test "$attestation_source_digest" = "$witness_commit"');
+    expect(publisher).toContain('"$attestation_source_ref" == refs/heads/main');
+    expect(publisher).toContain('--source-ref "$attestation_source_ref"');
+    expect(publisher).toContain('--source-digest "$attestation_source_digest"');
+    expect(publisher).not.toContain('--source-ref "$witness_ref"');
+  });
 });

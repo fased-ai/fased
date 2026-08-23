@@ -41,6 +41,7 @@ verify_head_pair() {
     [[ -f "$file" && ! -L "$file" && -s "$file" ]]
   done
   local root_version root_file channel release_version witness_ref witness_commit index_commit
+  local attestation_identity attestation_source_ref attestation_source_digest
   root_version="$(jq -er '.rootVersion | select(type == "number" and . >= 1 and floor == .)' "$candidate_head")"
   root_file="$roots/fased-lifecycle-root-v${root_version}.json"
   [[ -f "$root_file" && ! -L "$root_file" && -s "$root_file" ]]
@@ -66,6 +67,13 @@ verify_head_pair() {
   else
     test "$witness_ref" = refs/heads/main
   fi
+  attestation_identity="$(node scripts/release-attestation-identity.mjs resolve \
+    --bundle "$candidate_attestation" --repository "$GITHUB_REPOSITORY")"
+  attestation_source_ref="$(jq -er .sourceRef <<<"$attestation_identity")"
+  attestation_source_digest="$(jq -er .sourceDigest <<<"$attestation_identity")"
+  test "$attestation_source_digest" = "$witness_commit"
+  [[ "$attestation_source_ref" == refs/heads/main ||
+    "$attestation_source_ref" == "$witness_ref" ]]
   node -e '
     const fs = require("node:fs");
     const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -78,7 +86,8 @@ verify_head_pair() {
     --repo "$GITHUB_REPOSITORY" \
     --bundle "$candidate_attestation" \
     --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-    --source-ref "$witness_ref" \
+    --source-ref "$attestation_source_ref" \
+    --source-digest "$attestation_source_digest" \
     --deny-self-hosted-runners >/dev/null
 }
 
