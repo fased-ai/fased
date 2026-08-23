@@ -27,6 +27,7 @@ jobs:
     name: Build and attest exact candidate once
     permissions:
       actions: read
+      attestations: write
       contents: read
       id-token: write
     runs-on: ubuntu-24.04

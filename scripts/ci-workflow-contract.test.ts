@@ -146,6 +146,7 @@ describe("lean CI and release workflow contracts", () => {
     expect(Object.keys(value.jobs ?? {})).toEqual(["prepare", "publish"]);
     expect(value.jobs?.prepare?.["timeout-minutes"]).toBe(20);
     expect(value.jobs?.publish?.["timeout-minutes"]).toBe(10);
+    expect(source).toContain("attestations: write");
     const prepareText = jobText(value.jobs?.prepare);
     const publishText = jobText(value.jobs?.publish);
     expect(source).toContain("Resolve exact next signed channel identity");
