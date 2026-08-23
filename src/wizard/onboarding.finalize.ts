@@ -1544,6 +1544,14 @@ export function shouldVerifyLocalDashboardReadiness(params: {
   );
 }
 
+export function shouldVerifyStrictHostedDashboardFinal(params: {
+  strictVps: boolean;
+  allowInsecure?: boolean;
+  deferInstallerGatewayActivation: boolean;
+}): boolean {
+  return params.strictVps && !params.allowInsecure && !params.deferInstallerGatewayActivation;
+}
+
 export async function finalizeOnboardingWizard(
   options: FinalizeOnboardingOptions,
 ): Promise<{ launchedTui: boolean }> {
@@ -3090,7 +3098,13 @@ export async function finalizeOnboardingWizard(
     "Components",
   );
 
-  if (strictVps && !opts.allowInsecure) {
+  if (
+    shouldVerifyStrictHostedDashboardFinal({
+      strictVps,
+      allowInsecure: opts.allowInsecure,
+      deferInstallerGatewayActivation,
+    })
+  ) {
     await withWizardProgress(
       "Final dashboard check",
       { doneMessage: undefined },
