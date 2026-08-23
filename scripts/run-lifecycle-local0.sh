@@ -13,6 +13,7 @@ CANONICAL_MANAGED_VERSION="${FASED_LOCAL0_CANONICAL_MANAGED_VERSION:-0.1.76-rc.8
 DISTROS="${FASED_LOCAL0_DISTROS:-ubuntu}"
 CACHE_HOME="${XDG_CACHE_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache}"
 CACHE_ROOT="${FASED_LOCAL0_CACHE_DIR:-$CACHE_HOME/fased-dev/local0}"
+FIXTURE_RELEASE_SEQUENCE="${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}"
 
 usage() {
   cat >&2 <<'EOF_USAGE'
@@ -84,13 +85,17 @@ if [[ -n "$SUPPLIED_RECEIPT_DIR" && "$SUPPLIED_RECEIPT_DIR" != /* ]]; then
   echo "--receipt-dir must be absolute." >&2
   exit 1
 fi
+[[ "$FIXTURE_RELEASE_SEQUENCE" =~ ^[1-9][0-9]*$ ]] || {
+  echo "FASED_LIFECYCLE_RELEASE_SEQUENCE must be a positive integer." >&2
+  exit 1
+}
 
 command -v jq >/dev/null
 command -v flock >/dev/null
 commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 tree="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
 lockfile_digest="sha256:$(sha256sum "$ROOT_DIR/pnpm-lock.yaml" | awk '{print $1}')"
-identity_key="${commit}-${tree}-${lockfile_digest#sha256:}"
+identity_key="${commit}-${tree}-${lockfile_digest#sha256:}-sequence${FIXTURE_RELEASE_SEQUENCE}"
 failure_marker="$CACHE_ROOT/failures/$identity_key.json"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_id="${commit:0:12}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -214,6 +219,7 @@ write_receipt() {
     --arg artifactProductTree "$artifact_product_tree" \
     --arg artifactProductLockfileDigest "$artifact_product_lockfile_digest" \
     --arg artifactFixtureOnlyDescendant "$artifact_fixture_only_descendant" \
+    --arg fixtureReleaseSequence "$FIXTURE_RELEASE_SEQUENCE" \
     --arg localEntrypointDigest "$local_entrypoint_digest" \
     --arg hostingEntrypointDigest "$hosting_entrypoint_digest" \
     --arg publicStableVersion "$PUBLIC_STABLE_VERSION" \
@@ -229,6 +235,7 @@ write_receipt() {
       artifact:{directory:$artifactDirectory,descriptorDigest:$descriptorDigest,
         compatibilityDigest:$compatibilityDigest,acceptanceContractDigest:$acceptanceDigest,
         fixtureTrustOverlayDigest:$overlayDigest,publishable:false,platforms:["linux-x64"],
+        fixtureReleaseSequence:($fixtureReleaseSequence | tonumber),
         productSource:{commit:$artifactProductCommit,tree:$artifactProductTree,
           lockfileDigest:$artifactProductLockfileDigest},
         fixtureOnlyDescendant:($artifactFixtureOnlyDescendant == "true")},
@@ -276,6 +283,7 @@ verify_artifact() {
     -f "$descriptor" && ! -L "$descriptor" &&
     -f "$identity" && ! -L "$identity" &&
     -f "$overlay" && ! -L "$overlay" &&
+    -f "$candidate/fased-branch-release-index.json" && ! -L "$candidate/fased-branch-release-index.json" &&
     -f "$candidate/fased-branch-proof-x64.json" ]] || return 1
   artifact_product_commit="$(jq -er .commit "$descriptor")" || return 1
   artifact_product_tree="$(jq -er .tree "$descriptor")" || return 1
@@ -307,6 +315,9 @@ verify_artifact() {
      .fixture.installSha256 == $install and .fixture.bootstrapSha256 == $bootstrap and
      .overriddenPaths == ["fased-bootstrap-linux-x64","install.sh"]' \
     "$overlay" >/dev/null || return 1
+  jq -e --argjson fixtureReleaseSequence "$FIXTURE_RELEASE_SEQUENCE" \
+    '.signed.releaseSequence == $fixtureReleaseSequence' \
+    "$candidate/fased-branch-release-index.json" >/dev/null || return 1
   while IFS=$'\t' read -r name expected_size expected_digest; do
     selected="$candidate/$name"
     if [[ "$name" == "install.sh" || "$name" == "fased-bootstrap-linux-x64" ]]; then
@@ -374,7 +385,8 @@ resolve_or_build_artifact() {
     fail_local0 "The unpublished Linux-x64 candidate-shaped artifact build failed."
   fi
   current_phase="fixture-trust-overlay"
-  if ! bash "$ROOT_DIR/scripts/prepare-candidate-fixture-trust.sh" "$raw" "$prepared" >/dev/null; then
+  if ! FASED_LIFECYCLE_RELEASE_SEQUENCE="$FIXTURE_RELEASE_SEQUENCE" \
+    bash "$ROOT_DIR/scripts/prepare-candidate-fixture-trust.sh" "$raw" "$prepared" >/dev/null; then
     rm -rf -- "$staging"
     flock -u "$lock_fd"
     fail_local0 "The tag-free fixture trust overlay could not be bound to the artifact."
