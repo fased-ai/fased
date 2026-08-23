@@ -155,8 +155,16 @@ describe("lean CI and release workflow contracts", () => {
     const stage = value.jobs?.["finalize-candidate"]?.steps?.find(
       (step) => step.name === "Verify and stage only the pre-tag product bytes",
     );
+    const identity = value.jobs?.preflight?.steps?.find(
+      (step) => step.name === "Verify exact immutable tagged candidate identity",
+    );
     expect(stage?.env?.PRE_TAG_P1_RUN_ID).toBe("${{ inputs.pre_tag_p1_run_id }}");
     expect(stage?.run).toContain('--workflow-run-id "$PRE_TAG_P1_RUN_ID"');
+    expect(identity?.run).toContain('test "$GITHUB_REF" = "refs/heads/main"');
+    expect(identity?.run).toContain('git merge-base --is-ancestor "$SOURCE_COMMIT" "$remote_main"');
+    expect(identity?.run).toContain(".github/workflows/hosted-runtime-release.yml");
+    expect(identity?.run).toContain("scripts/ci-workflow-contract.test.ts");
+    expect(identity?.run).not.toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
     expect(finalizeText).toContain("product.sha256");
     expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
     expect(finalizeText).toContain("release-artifact-set.mjs verify");
