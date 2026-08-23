@@ -4,6 +4,16 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.119
+
+- Preserve the complete optimized Go-managed core, modular Wallet, signer,
+  Mining, task-ledger and digest-bound optional component architecture.
+- Resolve annotated candidate tags to their peeled source commits in both
+  release preflight and publication while retaining lightweight-tag support.
+- Reprove the exact unpublished bytes through aggregate Local and literal
+  2 GB Hosting staging acceptance, including state preservation and exact
+  identical-command convergence.
+
 ## 0.1.76-rc.118
 
 - Preserve the complete optimized Go-managed core, modular Wallet, signer,
