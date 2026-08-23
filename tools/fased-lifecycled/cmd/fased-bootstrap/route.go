@@ -1355,7 +1355,7 @@ func validUnpublishedMetadataBase(base, productionBase string) bool {
 		return true
 	}
 	parsed, err := url.Parse(base)
-	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return false
 	}
 	host, port, err := net.SplitHostPort(parsed.Host)

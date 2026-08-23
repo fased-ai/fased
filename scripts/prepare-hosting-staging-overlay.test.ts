@@ -10,7 +10,7 @@ describe("real Hosting staging overlay", () => {
     const [source, metadata] = await Promise.all([readFile(scriptPath, "utf8"), stat(scriptPath)]);
 
     expect(metadata.mode & 0o111).not.toBe(0);
-    expect(source).toContain('metadata_base="http://127.0.0.1:${LOOPBACK_PORT}/v${version}"');
+    expect(source).toContain('metadata_base="https://127.0.0.1:${LOOPBACK_PORT}/v${version}"');
     expect(source).toContain('role:"fased-hosting-staging-overlay",publishable:false');
     expect(source).toContain("fased-hosting-candidate.json");
     expect(source).toContain("fased-lifecycled-release.json");
