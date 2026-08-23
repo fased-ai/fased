@@ -738,6 +738,16 @@ jobs:
           release_id=""
           trap - EXIT
 
+      - name: Restore protected channel publisher bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          bridge="$RUNNER_TEMP/publish-lifecycle-channel.sh"
+          git cat-file -e "$GITHUB_SHA^{commit}"
+          git show "$GITHUB_SHA:scripts/publish-lifecycle-channel.sh" > "$bridge"
+          test -s "$bridge"
+          install -m 0755 "$bridge" scripts/publish-lifecycle-channel.sh
+
       - name: Advance signed managed channel to the exact public candidate
         env:
           GH_TOKEN: ${{ github.token }}
