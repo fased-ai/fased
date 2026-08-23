@@ -11,7 +11,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -1335,7 +1337,8 @@ func publicTrustRoute(version string) (publicReleaseRoute, error) {
 	if branchFixtureMetadataBase == "" || branchFixturePinnedRootSHA256 == "" {
 		return publicReleaseRoute{}, errors.New("branch fixture trust route is incomplete")
 	}
-	if branchFixtureMetadataBase != expectedBase || len(branchFixturePinnedRootSHA256) != 64 {
+	pinBytes, pinErr := hex.DecodeString(branchFixturePinnedRootSHA256)
+	if !validUnpublishedMetadataBase(branchFixtureMetadataBase, expectedBase) || pinErr != nil || len(pinBytes) != sha256.Size || strings.ToLower(branchFixturePinnedRootSHA256) != branchFixturePinnedRootSHA256 {
 		return publicReleaseRoute{}, errors.New("branch fixture trust route is malformed")
 	}
 	route := immutableReleaseRoute(branchFixtureMetadataBase, branchFixturePinnedRootSHA256)
@@ -1345,6 +1348,24 @@ func publicTrustRoute(version string) (publicReleaseRoute, error) {
 	// ordinary production verifier.
 	route.VerifyIndex = verifyDelegatedBranchReleaseIndex
 	return route, nil
+}
+
+func validUnpublishedMetadataBase(base, productionBase string) bool {
+	if base == productionBase {
+		return true
+	}
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	host, port, err := net.SplitHostPort(parsed.Host)
+	if err != nil || host != "127.0.0.1" || port == "" {
+		return false
+	}
+	if parsed.EscapedPath() != parsed.Path || filepath.Clean(parsed.Path) != parsed.Path || strings.HasSuffix(parsed.Path, "/") {
+		return false
+	}
+	return filepath.Base(parsed.Path) == filepath.Base(productionBase)
 }
 
 func verifyDelegatedBranchReleaseIndex(root trust.VerifiedRoot, indexJSON, delegationJSON []byte, now time.Time) (bootstrapVerifiedReleaseIndex, error) {
