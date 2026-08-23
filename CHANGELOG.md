@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.122
+
+- Preserve the complete optimized Go-managed core, modular Wallet, signer,
+  Mining, task-ledger and digest-bound optional component architecture.
+- Close the pristine Hosting onboarding ordering deadlock by deferring the
+  dashboard probe until the lifecycle supervisor activates the exact Gateway.
+- Prove literal 2 GB Hosting installation, independent Tailscale access,
+  hardening, managed swap and identical-command convergence before allocation.
+
 ## 0.1.76-rc.121
 
 - Preserve the complete optimized Go-managed core, modular Wallet, signer,
