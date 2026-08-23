@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildProtectedLocalGatewayVerificationCommand,
   buildGatewayServiceRestartAttempts,
   buildGatewayWsUrlFromHttpUrl,
   buildOnboardingDashboardUrl,
@@ -20,6 +21,30 @@ import {
   validateLocalDashboardBootCheck,
   waitForGatewayHttpListener,
 } from "./onboarding.finalize.js";
+
+describe("buildProtectedLocalGatewayVerificationCommand", () => {
+  const identity = {
+    unitName: "fased-gateway-1b3e8b2250b338e3.service",
+    expectedUser: "fsgw-1b3e8b2250b338e3",
+  };
+
+  it("accepts the exact generated account name or numeric UID while Gateway is deferred", () => {
+    const command = buildProtectedLocalGatewayVerificationCommand({
+      ...identity,
+      requireActive: false,
+    });
+    expect(command).toContain(`gateway_uid="$(id -u ${identity.expectedUser})"`);
+    expect(command).toContain(`test "$gateway_user" = ${identity.expectedUser}`);
+    expect(command).toContain('test "$gateway_user" = "$gateway_uid"');
+    expect(command).toContain("systemctl is-enabled");
+    expect(command).not.toContain("systemctl is-active");
+  });
+
+  it("also requires the exact service to be active after onboarding commits", () => {
+    const command = buildProtectedLocalGatewayVerificationCommand(identity);
+    expect(command).toContain(`systemctl is-active ${identity.unitName} 2>/dev/null)" = active`);
+  });
+});
 
 describe("isRootPreparedHostingFinalization", () => {
   it("defers app-owned network setup only for the verified root-prepared Hosting handoff", () => {

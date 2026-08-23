@@ -706,6 +706,25 @@ export function buildGatewayServiceRestartAttempts(
   ];
 }
 
+export function buildProtectedLocalGatewayVerificationCommand(params: {
+  unitName: string;
+  expectedUser: string;
+  requireActive?: boolean;
+}): string {
+  const activeCheck =
+    params.requireActive === false
+      ? ""
+      : `test "$(systemctl is-active ${params.unitName} 2>/dev/null)" = active && `;
+  return (
+    `gateway_uid="$(id -u ${params.expectedUser})" && ` +
+    `gateway_user="$(systemctl show ${params.unitName} --property User --value 2>/dev/null)" && ` +
+    `test "$(systemctl show ${params.unitName} --property LoadState --value 2>/dev/null)" = loaded && ` +
+    `test "$(systemctl is-enabled ${params.unitName} 2>/dev/null)" = enabled && ` +
+    activeCheck +
+    `{ test "$gateway_user" = ${params.expectedUser} || test "$gateway_user" = "$gateway_uid"; }`
+  );
+}
+
 async function verifyProtectedLocalGatewayService(params: {
   unitName: string;
   expectedUser: string;
@@ -717,17 +736,9 @@ async function verifyProtectedLocalGatewayService(params: {
   if (!/^fsgw-[a-f0-9]{16}$/u.test(params.expectedUser)) {
     return { ok: false, detail: "Protected Local Gateway identity is invalid" };
   }
-  const activeChecks =
-    params.requireActive === false
-      ? ""
-      : `test "$(systemctl is-enabled ${params.unitName} 2>/dev/null)" = enabled && ` +
-        `test "$(systemctl is-active ${params.unitName} 2>/dev/null)" = active && `;
-  const result = await runShell(
-    `test "$(systemctl show ${params.unitName} --property LoadState --value 2>/dev/null)" = loaded && ` +
-      activeChecks +
-      `test "$(systemctl show ${params.unitName} --property User --value 2>/dev/null)" = ${params.expectedUser}`,
-    { timeoutMs: 5_000 },
-  );
+  const result = await runShell(buildProtectedLocalGatewayVerificationCommand(params), {
+    timeoutMs: 5_000,
+  });
   return result.ok
     ? { ok: true }
     : { ok: false, detail: result.detail ?? "Protected Local Gateway service is not active" };
