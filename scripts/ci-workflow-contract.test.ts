@@ -158,6 +158,18 @@ describe("lean CI and release workflow contracts", () => {
     const identity = value.jobs?.preflight?.steps?.find(
       (step) => step.name === "Verify exact immutable tagged candidate identity",
     );
+    const bind = value.jobs?.["finalize-candidate"]?.steps?.find(
+      (step) => step.name === "Bind and verify the final candidate artifact set",
+    );
+    const descriptor = value.jobs?.["finalize-candidate"]?.steps?.find(
+      (step) => step.name === "Stage and verify the final candidate descriptor",
+    );
+    const publishIdentity = value.jobs?.publish?.steps?.find(
+      (step) => step.name === "Verify exact candidate identity",
+    );
+    const channelWitness = value.jobs?.["refresh-root-head"]?.steps?.find(
+      (step) => step.name === "Prepare current channel root-head statement",
+    );
     expect(stage?.env?.PRE_TAG_P1_RUN_ID).toBe("${{ inputs.pre_tag_p1_run_id }}");
     expect(stage?.run).toContain('--workflow-run-id "$PRE_TAG_P1_RUN_ID"');
     expect(identity?.run).toContain('test "$GITHUB_REF" = "refs/heads/main"');
@@ -168,8 +180,20 @@ describe("lean CI and release workflow contracts", () => {
     expect(finalizeText).toContain("product.sha256");
     expect(source).toContain('staging_receipt="$evidence_dir/hosting-staging-receipt.json"');
     expect(finalizeText).toContain("release-artifact-set.mjs verify");
+    expect(bind?.run).toContain('product_source_ref="refs/tags/v$RELEASE_VERSION"');
+    expect(bind?.run).toContain('--source-ref "$product_source_ref"');
+    expect(bind?.run).toContain('--source-ref "$GITHUB_REF"');
+    expect(bind?.run).toContain('--source-digest "$GITHUB_SHA"');
+    expect(descriptor?.run).toContain('--source-ref "$GITHUB_REF"');
+    expect(descriptor?.run).toContain('--source-digest "$GITHUB_SHA"');
+    expect(descriptor?.run).toContain('--source-ref "refs/tags/v$RELEASE_VERSION"');
     expect(finalizeText).toContain('--source-digest \\"$GITHUB_SHA\\"');
     expect(finalizeText).not.toContain('--source-digest \\"$SOURCE_COMMIT\\"');
+    expect(publishIdentity?.run).toContain('--source-ref "refs/tags/v$RELEASE_VERSION"');
+    expect(publishIdentity?.run).toContain('--source-ref "$GITHUB_REF"');
+    expect(publishIdentity?.run).toContain('--source-digest "$GITHUB_SHA"');
+    expect(channelWitness?.run).toContain('--source-ref "$GITHUB_REF"');
+    expect(channelWitness?.run).toContain('--source-digest "$GITHUB_SHA"');
     expect(finalizeText).not.toContain("pnpm install");
     expect(finalizeText).not.toContain("pnpm build");
     expect(finalizeText).not.toContain("go build");
