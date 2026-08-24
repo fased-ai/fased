@@ -242,9 +242,10 @@ jobs:
         env:
           FASED_LIFECYCLE_RELEASE_SEQUENCE: ${{ steps.channel.outputs.release_sequence }}
           FASED_LIFECYCLE_SECURITY_EPOCH: ${{ steps.channel.outputs.security_epoch }}
-        run: bash scripts/build-linux-x64-release-artifact.sh \
-          "$RUNNER_TEMP/candidate/raw" "$RUNNER_TEMP/candidate/arm64" \
-          "$RUNNER_TEMP/candidate/darwin-x64" "$RUNNER_TEMP/candidate/darwin-arm64"
+        run: |
+          bash scripts/build-linux-x64-release-artifact.sh \
+            "$RUNNER_TEMP/candidate/raw" "$RUNNER_TEMP/candidate/arm64" \
+            "$RUNNER_TEMP/candidate/darwin-x64" "$RUNNER_TEMP/candidate/darwin-arm64"
 
       - name: Finalize exact product inventory once
         env:

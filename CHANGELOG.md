@@ -4,6 +4,12 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.134
+
+- Preserve native multi-platform supplements as four distinct release-builder
+  arguments so final assembly, attestation, and publication receive the exact
+  Linux ARM64 and Darwin x64/ARM64 directories.
+
 ## 0.1.76-rc.133
 
 - Build Darwin runtime artifacts without repeating platform-neutral plugin SDK

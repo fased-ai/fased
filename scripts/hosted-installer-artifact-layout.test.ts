@@ -102,6 +102,13 @@ describe("lean attested Linux managed artifact layout", () => {
 
   it("builds, finalizes, and publishes the same bytes once", () => {
     expect(releaseWorkflow).toContain("scripts/build-linux-x64-release-artifact.sh");
+    expect(releaseWorkflow).toContain(`run: |
+          bash scripts/build-linux-x64-release-artifact.sh \\
+            "$RUNNER_TEMP/candidate/raw" "$RUNNER_TEMP/candidate/arm64" \\
+            "$RUNNER_TEMP/candidate/darwin-x64" "$RUNNER_TEMP/candidate/darwin-arm64"`);
+    expect(releaseWorkflow).not.toContain(
+      "run: bash scripts/build-linux-x64-release-artifact.sh \\\n",
+    );
     expect(releaseWorkflow).toContain("scripts/finalize-pretag-candidate.sh");
     expect(releaseWorkflow).toContain("gh attestation verify");
     expect(releaseWorkflow.match(/build-linux-x64-release-artifact\.sh/gu)?.length).toBe(1);
