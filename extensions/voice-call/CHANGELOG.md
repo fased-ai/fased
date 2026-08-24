@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.76-rc.131
+
+### Changes
+
+- Version alignment with core FasedAgent release numbers.
+
 ## 0.1.76-rc.130
 
 ### Changes

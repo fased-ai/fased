@@ -176,12 +176,13 @@ See [Memory](/concepts/memory).
 
 ## Install and update behavior
 
-| Install type                    | Fresh install                                  | Normal `fased update`                                                                            |
-| ------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Linux Local recommended install | Verified Linux release artifact                | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
-| VPS Hosting install             | Verified Linux release artifact                | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
-| macOS or source install         | Source checkout, dependencies, and local build | Stable Git tag, dependency refresh, and rebuild                                                  |
-| Legacy global npm install       | Migration-only compatibility path              | Transition to the verified managed layout; npm is not lifecycle authority                        |
+| Install type                   | Fresh install                                      | Normal `fased update`                                                                            |
+| ------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Linux/WSL2 Local               | Verified platform-qualified release artifact       | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
+| macOS Local                    | Verified Darwin release artifact and LaunchDaemons | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
+| VPS Hosting                    | Verified Linux x86_64 release artifact             | Verified release artifact, checksum and pre-swap checks, atomic activation, then service refresh |
+| Explicit source development    | Source checkout, dependencies, and local build     | Stable Git tag, dependency refresh, and rebuild                                                  |
+| Legacy global npm installation | Migration-only compatibility path                  | Transition to the verified managed layout; npm is not lifecycle authority                        |
 
 Fased-owned extensions update only with the signed generation. Independent
 third-party extensions are intentionally outside that transaction and must use

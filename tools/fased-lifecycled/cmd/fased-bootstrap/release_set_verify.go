@@ -43,7 +43,7 @@ func runVerifyReleaseSet(args []string, output io.Writer) error {
 			return verified.Index(), verified.Digest(), nil
 		},
 		func(headJSON, bundleJSON []byte, now time.Time) (trust.RootHead, string, error) {
-			verified, err := trust.VerifyAttestedRootHead(headJSON, bundleJSON, now)
+			verified, err := trust.VerifyAttestedRootHeadForIndexSchema(headJSON, bundleJSON, now, 2)
 			if err != nil {
 				return trust.RootHead{}, "", err
 			}
@@ -64,11 +64,11 @@ func verifyReleaseSet(directory, version, commit string, now time.Time, output i
 	if err != nil {
 		return err
 	}
-	indexJSON, err := readReleaseSetMetadata(directory, "fased-release-index-v1.json")
+	indexJSON, err := readReleaseSetMetadata(directory, releaseIndexAssetName)
 	if err != nil {
 		return err
 	}
-	indexBundle, err := readReleaseSetMetadata(directory, "fased-release-index-v1.json.attestation.json")
+	indexBundle, err := readReleaseSetMetadata(directory, releaseIndexAttestationAssetName)
 	if err != nil {
 		return err
 	}
@@ -79,11 +79,11 @@ func verifyReleaseSet(directory, version, commit string, now time.Time, output i
 	if index.Version != version || index.Commit != commit {
 		return errors.New("verified release index differs from requested release")
 	}
-	headJSON, err := readReleaseSetMetadata(directory, "fased-lifecycle-root-head-v1.json")
+	headJSON, err := readReleaseSetMetadata(directory, releaseRootHeadAssetName)
 	if err != nil {
 		return err
 	}
-	headBundle, err := readReleaseSetMetadata(directory, "fased-lifecycle-root-head-v1.json.attestation.json")
+	headBundle, err := readReleaseSetMetadata(directory, releaseRootHeadAttestationAssetName)
 	if err != nil {
 		return err
 	}

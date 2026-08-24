@@ -75,6 +75,8 @@ GOTMPDIR="$go_tmp" GOCACHE="$go_cache" \
 cp "$OUTPUT_DIR/fased-branch-root.json" "$OUTPUT_DIR/fased-lifecycle-root-v1.json"
 cp "$OUTPUT_DIR/fased-branch-release-index.json" "$OUTPUT_DIR/fased-release-index-v1.json"
 cp "$OUTPUT_DIR/fased-branch-delegation.json" "$OUTPUT_DIR/fased-release-index-v1.json.attestation.json"
+cp "$OUTPUT_DIR/fased-branch-release-index.json" "$OUTPUT_DIR/fased-release-index-v2.json"
+cp "$OUTPUT_DIR/fased-branch-delegation.json" "$OUTPUT_DIR/fased-release-index-v2.json.attestation.json"
 root_pin="$(tr -d '\n' <"$OUTPUT_DIR/fased-branch-root.sha256")"
 metadata_base="https://127.0.0.1:${LOOPBACK_PORT}/v${version}"
 (

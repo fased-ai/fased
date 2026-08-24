@@ -169,6 +169,21 @@ func TestOfflineRootBootstrapStagesAndExecutesVerifiedHost(t *testing.T) {
 	}
 }
 
+func TestPlatformAssetSelectionPreventsDarwinLinuxAlias(t *testing.T) {
+	linux := trust.Asset{Name: "linux", Size: 1, SHA256: "sha256:" + strings.Repeat("a", 64)}
+	darwin := trust.Asset{Name: "darwin", Size: 1, SHA256: "sha256:" + strings.Repeat("b", 64)}
+	assets := map[string]trust.Asset{"x64": linux, "linux-x64": linux, "darwin-x64": darwin}
+	if selected, ok := selectPlatformAsset(assets, bootstrapRequest{OperatingSystem: "darwin", Architecture: "x64"}); !ok || selected.Name != "darwin" {
+		t.Fatalf("Darwin selected wrong platform asset: %+v ok=%v", selected, ok)
+	}
+	if _, ok := selectPlatformAsset(map[string]trust.Asset{"x64": linux}, bootstrapRequest{OperatingSystem: "darwin", Architecture: "x64"}); ok {
+		t.Fatal("Darwin accepted an unqualified legacy Linux asset")
+	}
+	if selected, ok := selectPlatformAsset(map[string]trust.Asset{"x64": linux}, bootstrapRequest{OperatingSystem: "linux", Architecture: "x64"}); !ok || selected.Name != "linux" {
+		t.Fatal("Linux predecessor compatibility was lost")
+	}
+}
+
 func TestBootstrapRejectsCallerSelectedTrustPinAndNonHTTPS(t *testing.T) {
 	request := bootstrapRequest{StateRoot: "/var/lib/fased-lifecycled", HostRoot: "/opt/fased/lifecycle", RootURL: "http://example.invalid/root", IndexURL: "https://example.invalid/index", IndexAttestationURL: "https://example.invalid/index.attestation.json", ReleaseBaseURL: "https://example.invalid/release", Channel: "beta", Version: "0.1.0", Architecture: "x64", PinnedRootSHA256: productionPinnedRootSHA256, OwnerUID: uint32(os.Geteuid()), Now: time.Now(), Inspect: func(context.Context, host.StagedHost) error { return nil }}
 	if _, err := execute(context.Background(), request); err == nil {
@@ -1281,8 +1296,8 @@ func TestPublicTrustRouteUsesOnlyCompileTimeFixturePair(t *testing.T) {
 	route, err := publicTrustRoute("0.1.76-rc.74")
 	wantBase := productionReleaseBase + "/v0.1.76-rc.74"
 	if err != nil || route.ReleaseBaseURL != wantBase || route.RootURL != wantBase+"/fased-lifecycle-root-v1.json" ||
-		route.IndexURL != wantBase+"/fased-release-index-v1.json" ||
-		route.IndexAttestationURL != wantBase+"/fased-release-index-v1.json.attestation.json" ||
+		route.IndexURL != wantBase+"/fased-release-index-v2.json" ||
+		route.IndexAttestationURL != wantBase+"/fased-release-index-v2.json.attestation.json" ||
 		route.PinnedRootSHA256 != productionPinnedRootSHA256 || route.VerifyIndex != nil {
 		t.Fatalf("production trust route is not the exact immutable release: route=%+v err=%v", route, err)
 	}

@@ -60,14 +60,22 @@ function componentSbom(name: string, purl: string) {
 
 async function fixture() {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-release-evidence-"));
-  const application = {};
-  for (const architecture of ["x64"]) {
-    const appAsset = `fased-hosted-app-v2-linux-${architecture}-v${version}.tar.gz`;
-    const dependencyHash = digest(`lock-${architecture}`);
-    const dependencyAsset = `fased-hosted-deps-linux-${architecture}-${dependencyHash}.tar.gz`;
-    await fsp.writeFile(path.join(root, appAsset), `app-${architecture}\n`);
-    await fsp.writeFile(path.join(root, dependencyAsset), `deps-${architecture}\n`);
-    application[architecture] = {
+  const applications = { linux: {}, darwin: {} };
+  for (const [operatingSystem, architecture] of [
+    ["linux", "x64"],
+    ["linux", "arm64"],
+    ["darwin", "x64"],
+    ["darwin", "arm64"],
+  ]) {
+    const appAsset = `fased-hosted-app-v2-${operatingSystem}-${architecture}-v${version}.tar.gz`;
+    const dependencyHash = digest(`lock-${operatingSystem}-${architecture}`);
+    const dependencyAsset = `fased-hosted-deps-${operatingSystem}-${architecture}-${dependencyHash}.tar.gz`;
+    await fsp.writeFile(path.join(root, appAsset), `app-${operatingSystem}-${architecture}\n`);
+    await fsp.writeFile(
+      path.join(root, dependencyAsset),
+      `deps-${operatingSystem}-${architecture}\n`,
+    );
+    applications[operatingSystem][architecture] = {
       artifact: { asset: appAsset, sha256: await fileDigest(path.join(root, appAsset)) },
       dependencies: {
         asset: dependencyAsset,
@@ -76,14 +84,17 @@ async function fixture() {
       },
     };
     await fsp.writeFile(
-      path.join(root, `fased-hosted-components-linux-${architecture}-v${version}.spdx.json`),
+      path.join(
+        root,
+        `fased-hosted-components-${operatingSystem}-${architecture}-v${version}.spdx.json`,
+      ),
       `${JSON.stringify(
         componentSbom(`node-${architecture}`, `pkg:npm/example-${architecture}@1.0.0`),
       )}\n`,
     );
   }
   const platforms = {};
-  for (const platform of ["linux-amd64"]) {
+  for (const platform of ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"]) {
     const asset = `fased-signerd-${platform}`;
     await fsp.writeFile(path.join(root, asset), `${platform}\n`);
     platforms[platform] = { asset, sha256: await fileDigest(path.join(root, asset)) };
@@ -95,7 +106,7 @@ async function fixture() {
   const releaseManifest = {
     schemaVersion: 2,
     release: { version, tag: `v${version}`, commit },
-    application: { linux: application },
+    application: applications,
     signer: {
       release: {
         version,
@@ -115,6 +126,9 @@ async function fixture() {
   for (const [asset, contents] of [
     ["install.sh", "bootstrap\n"],
     ["fased-lifecycled-linux-amd64", "lifecycle x64\n"],
+    ["fased-lifecycled-linux-arm64", "lifecycle arm64\n"],
+    ["fased-lifecycled-darwin-amd64", "lifecycle mac x64\n"],
+    ["fased-lifecycled-darwin-arm64", "lifecycle mac arm64\n"],
     ["fased-privileged-release-evidence.mjs", "verifier\n"],
   ]) {
     await fsp.writeFile(path.join(root, asset), contents);

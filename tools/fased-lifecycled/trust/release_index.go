@@ -178,14 +178,14 @@ func cloneAssets(source map[string]Asset) map[string]Asset {
 }
 
 func validateReleaseIndex(index ReleaseIndex, now time.Time) error {
-	if index.SchemaVersion != 1 || index.Type != "fased-release-index" || (index.Channel != "beta" && index.Channel != "stable") || !versionPattern.MatchString(index.Version) || index.ReleaseSequence == 0 || index.SecurityEpoch == 0 || !gitPattern.MatchString(index.Commit) || !gitPattern.MatchString(index.Tree) || !digestPattern.MatchString(index.ArtifactSetDigest) || !digestPattern.MatchString(index.PluginLockDigest) {
+	if (index.SchemaVersion != 1 && index.SchemaVersion != 2) || index.Type != "fased-release-index" || (index.Channel != "beta" && index.Channel != "stable") || !versionPattern.MatchString(index.Version) || index.ReleaseSequence == 0 || index.SecurityEpoch == 0 || !gitPattern.MatchString(index.Commit) || !gitPattern.MatchString(index.Tree) || !digestPattern.MatchString(index.ArtifactSetDigest) || !digestPattern.MatchString(index.PluginLockDigest) {
 		return errors.New("release index identity is malformed")
 	}
 	if _, _, err := validity(index.IssuedAt, index.ExpiresAt, now, maxReleaseIndexLifetime); err != nil {
 		return err
 	}
 	for label, assets := range map[string]map[string]Asset{"application": index.Application, "dependencyLayer": index.DependencyLayer, "lifecycleHost": index.LifecycleHost, "signer": index.Signer} {
-		if err := validateAssets(label, assets); err != nil {
+		if err := validateAssets(index.SchemaVersion, label, assets); err != nil {
 			return err
 		}
 	}
@@ -219,7 +219,7 @@ func validateReleaseIndex(index ReleaseIndex, now time.Time) error {
 	return nil
 }
 
-func validateAssets(label string, assets map[string]Asset) error {
+func validateAssets(schemaVersion uint32, label string, assets map[string]Asset) error {
 	if len(assets) == 0 {
 		return fmt.Errorf("%s assets are empty", label)
 	}
@@ -230,7 +230,7 @@ func validateAssets(label string, assets map[string]Asset) error {
 	sort.Strings(arches)
 	for _, arch := range arches {
 		asset := assets[arch]
-		if (arch != "x64" && arch != "arm64") || !assetNamePattern.MatchString(asset.Name) || asset.Size == 0 || !digestPattern.MatchString(asset.SHA256) {
+		if !validPlatformAssetKey(schemaVersion, arch) || !assetNamePattern.MatchString(asset.Name) || asset.Size == 0 || !digestPattern.MatchString(asset.SHA256) {
 			return fmt.Errorf("%s asset %q is invalid", label, arch)
 		}
 		if label == "lifecycleHost" {
@@ -245,4 +245,11 @@ func validateAssets(label string, assets map[string]Asset) error {
 		}
 	}
 	return nil
+}
+
+func validPlatformAssetKey(schemaVersion uint32, key string) bool {
+	if schemaVersion == 1 {
+		return key == "x64" || key == "arm64"
+	}
+	return key == "linux-x64" || key == "linux-arm64" || key == "darwin-x64" || key == "darwin-arm64"
 }

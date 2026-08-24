@@ -14,7 +14,6 @@ import (
 
 const (
 	rootHeadType        = "fased-lifecycle-root-head"
-	rootHeadSubjectName = "fased-lifecycle-root-head-v1.json"
 	rootHeadRepository  = "fased-ai/fased"
 	rootHeadWorkflow    = "fased-ai/fased/.github/workflows/hosted-runtime-release.yml"
 	rootHeadMainRef     = "refs/heads/main"
@@ -66,6 +65,13 @@ func DecodeRootHead(data []byte, now time.Time) (RootHead, error) {
 }
 
 func VerifyAttestedRootHead(headJSON, bundleJSON []byte, now time.Time) (VerifiedRootHead, error) {
+	return VerifyAttestedRootHeadForIndexSchema(headJSON, bundleJSON, now, 1)
+}
+
+func VerifyAttestedRootHeadForIndexSchema(headJSON, bundleJSON []byte, now time.Time, indexSchemaVersion uint32) (VerifiedRootHead, error) {
+	if indexSchemaVersion != 1 && indexSchemaVersion != 2 {
+		return VerifiedRootHead{}, errors.New("lifecycle root-head index schema is unsupported")
+	}
 	head, err := DecodeRootHead(headJSON, now)
 	if err != nil {
 		return VerifiedRootHead{}, err
@@ -78,13 +84,17 @@ func VerifyAttestedRootHead(headJSON, bundleJSON []byte, now time.Time) (Verifie
 	attestationDigest, err := verifyGitHubArtifactAttestation(trustedMaterial, bundleJSON, githubAttestationExpectation{
 		Repository: rootHeadRepository, Workflow: rootHeadWorkflow,
 		SourceRef: head.WitnessRef, Commit: head.WitnessCommit,
-		SubjectName: rootHeadSubjectName, DigestAlgorithm: "sha256", Digest: digest[:],
+		SubjectName: rootHeadSubjectName(indexSchemaVersion), DigestAlgorithm: "sha256", Digest: digest[:],
 		DenySelfHosted: true,
 	})
 	if err != nil {
 		return VerifiedRootHead{}, err
 	}
 	return VerifiedRootHead{head: head, digest: hex.EncodeToString(digest[:]), attestationDigest: attestationDigest}, nil
+}
+
+func rootHeadSubjectName(indexSchemaVersion uint32) string {
+	return fmt.Sprintf("fased-lifecycle-root-head-v%d.json", indexSchemaVersion)
 }
 
 func validateRootHead(head RootHead, now time.Time) error {

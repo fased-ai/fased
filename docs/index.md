@@ -15,18 +15,19 @@ work is ready for them.
 
 Start by choosing one of two setup profiles:
 
-- **Local install** for your own computer. Use Terminal on macOS, WSL2 Ubuntu
-  on Windows, or your Linux distro terminal.
+- **Local install** for Linux x86_64/arm64 with systemd, Ubuntu WSL2 x86_64,
+  or native macOS x86_64/arm64 with launchd. Native Windows remains deferred.
 - **VPS Hosting install** for an always-on server. Ubuntu LTS is the
-  recommended VPS default. Fedora and RHEL-family systems are hosted targets
-  too. Alpine, Arch, macOS, and FreeBSD are local/dev targets until their
-  hosted hardening paths are validated separately.
+  recommended VPS default; Rocky-compatible x86_64 is the retained alternative.
+  Other distributions are not managed targets until their package, security,
+  rollback, and literal installation paths are accepted.
 
 <Warning>
-On Windows, PowerShell is used only to install or manage WSL2. Install WSL2
-Ubuntu, open the Ubuntu shell, and run the Fased installer and every `fased`
-command there. Do not run Fased through native PowerShell, Command Prompt, Git
-Bash, or native Windows Node.js. See [Windows (WSL2)](/platforms/windows).
+Windows users install Ubuntu WSL2 from Administrator PowerShell, then install
+and run Fased entirely inside the Ubuntu shell. Fased requires WSL2, Ubuntu
+x86_64, systemd, and a Linux home under `/home`; it never runs directly in
+PowerShell or native Windows Node.js. macOS users run the same Local installer
+in Terminal. See [Windows (WSL2)](/platforms/windows) and [macOS](/platforms/macos).
 </Warning>
 
 After the Gateway and browser dashboard are working, add only what you need:
@@ -133,9 +134,8 @@ one place.
 
 <Tabs>
   <Tab title="Local install">
-    Use this on your own computer. On macOS, use Terminal. On Windows, use WSL2
-    with Ubuntu and run the command below **inside the Ubuntu shell**, not in
-    PowerShell. On Linux, use your distro terminal.
+    Use this on Linux x86_64/arm64 with systemd, inside Ubuntu WSL2 x86_64, or
+    in native macOS Terminal. Do not run it in Windows PowerShell.
 
     ```bash
     curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
@@ -147,7 +147,8 @@ one place.
     fased dashboard
     ```
 
-    Local setup keeps the Gateway on this machine. Tailscale is optional.
+    Local setup keeps the Gateway on this machine. Tailscale is not part of the
+    managed Local profile.
 
   </Tab>
   <Tab title="VPS Hosting install">
@@ -166,9 +167,10 @@ one place.
     reaches `/home/app/fased`.
 
     <Accordion title="Hosted support boundary">
-      - Hosted VPS hardening: Ubuntu/Fedora/RHEL-family Linux with systemd.
-      - Local/dev install: Alpine, Arch, macOS, FreeBSD, WSL2, and common Linux
-        desktops until their hosted hardening paths are validated separately.
+      - Managed Local: Linux x86_64 or arm64 with systemd, including Ubuntu WSL2 x86_64.
+      - Managed Hosting: Ubuntu-compatible or Rocky-compatible x86_64 with systemd.
+      - Managed macOS Local: native x86_64 or arm64 with launchd.
+      - Deferred: native Windows and non-systemd Linux.
     </Accordion>
 
   </Tab>

@@ -11,7 +11,8 @@ sidebarTitle: "Onboarding: CLI"
 
 The onboarding wizard configures one of two setup profiles:
 
-- **Local** for a laptop, desktop, dev box, macOS local setup, or WSL2.
+- **Local** for Linux x86_64/arm64 with systemd, Ubuntu WSL2 x86_64, or native
+  macOS x86_64/arm64 with launchd. Native Windows remains deferred.
 - **VPS Hosting** for an always-on server with Tailscale-first access.
 
 It configures the machine first: host profile, workspace, Gateway,

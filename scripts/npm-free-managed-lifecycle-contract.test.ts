@@ -216,7 +216,7 @@ describe("npm-free managed lifecycle", () => {
     expect(packedSmoke).not.toMatch(/execFileSync\(\s*["']npm["']/u);
     expect(workflow).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
     expect(channelPublisher).not.toMatch(/\bnpm\b/u);
-    expect(channelPublisher).toContain("fased-channel-$channel-v1");
+    expect(channelPublisher).toContain('channel_tag="fased-channel-$channel-$index_schema"');
     expect(linuxArtifactBuilder).not.toMatch(/\bnpm (?:install|pack|publish|view)\b/u);
   });
 

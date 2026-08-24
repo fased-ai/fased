@@ -136,33 +136,43 @@ jobs:
             . == "fased-release-index-v1.json" or
             . == "fased-release-index-v1.json.attestation.json" or
             . == "fased-lifecycle-root-head-v1.json" or
-            . == "fased-lifecycle-root-head-v1.json.attestation.json")' "$release_json")
-          index="$metadata/fased-release-index-v1.json"
-          index_attestation="$metadata/fased-release-index-v1.json.attestation.json"
-          index_identity="$(node scripts/release-attestation-identity.mjs resolve \
-            --bundle "$index_attestation" --repository "$GITHUB_REPOSITORY")"
-          GH_PROMPT_DISABLED=1 gh attestation verify "$index" \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle "$index_attestation" \
-            --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
-            --source-ref "$(jq -er .sourceRef <<<"$index_identity")" \
-            --source-digest "$(jq -er .sourceDigest <<<"$index_identity")" \
-            --deny-self-hosted-runners >/dev/null
-          printf 'CHANNEL_ATTESTATION_SOURCE_REF=%s\n' \
-            "$(jq -er .sourceRef <<<"$index_identity")" >> "$GITHUB_ENV"
-          printf 'CHANNEL_ATTESTATION_SOURCE_DIGEST=%s\n' \
-            "$(jq -er .sourceDigest <<<"$index_identity")" >> "$GITHUB_ENV"
+            . == "fased-lifecycle-root-head-v1.json.attestation.json" or
+            . == "fased-release-index-v2.json" or
+            . == "fased-release-index-v2.json.attestation.json" or
+            . == "fased-lifecycle-root-head-v2.json" or
+            . == "fased-lifecycle-root-head-v2.json.attestation.json")' "$release_json")
+          for index_schema in v1 v2; do
+            index="$metadata/fased-release-index-${index_schema}.json"
+            index_attestation="${index}.attestation.json"
+            index_identity="$(node scripts/release-attestation-identity.mjs resolve \
+              --bundle "$index_attestation" --repository "$GITHUB_REPOSITORY")"
+            GH_PROMPT_DISABLED=1 gh attestation verify "$index" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$index_attestation" \
+              --signer-workflow fased-ai/fased/.github/workflows/hosted-runtime-release.yml \
+              --source-ref "$(jq -er .sourceRef <<<"$index_identity")" \
+              --source-digest "$(jq -er .sourceDigest <<<"$index_identity")" \
+              --deny-self-hosted-runners >/dev/null
+            printf 'CHANNEL_%s_SOURCE_REF=%s\n' "${index_schema^^}" \
+              "$(jq -er .sourceRef <<<"$index_identity")" >> "$GITHUB_ENV"
+            printf 'CHANNEL_%s_SOURCE_DIGEST=%s\n' "${index_schema^^}" \
+              "$(jq -er .sourceDigest <<<"$index_identity")" >> "$GITHUB_ENV"
+          done
 
       - name: Advance or confirm the signed channel
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
-        run: >-
-          bash scripts/publish-lifecycle-channel.sh
-          .artifacts/public-metadata
-          "${SOURCE_COMMIT}"
-          "${CHANNEL_ATTESTATION_SOURCE_REF}"
-          "${CHANNEL_ATTESTATION_SOURCE_DIGEST}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          for index_schema in v1 v2; do
+            ref_name="CHANNEL_${index_schema^^}_SOURCE_REF"
+            digest_name="CHANNEL_${index_schema^^}_SOURCE_DIGEST"
+            bash scripts/publish-lifecycle-channel.sh \
+              .artifacts/public-metadata "$SOURCE_COMMIT" \
+              "${!ref_name}" "${!digest_name}" "$index_schema"
+          done
 
       - name: Record minimal promotion receipt
         env:
@@ -176,10 +186,13 @@ jobs:
             --arg version "$RELEASE_VERSION" \
             --arg commit "$SOURCE_COMMIT" \
             --arg runId "$GITHUB_RUN_ID" \
-            --arg channelIndexDigest \
+            --arg legacyChannelIndexDigest \
               "sha256:$(sha256sum .artifacts/public-metadata/fased-release-index-v1.json | awk '{print $1}')" \
+            --arg channelIndexDigest \
+              "sha256:$(sha256sum .artifacts/public-metadata/fased-release-index-v2.json | awk '{print $1}')" \
             '{schemaVersion:1,role:"fased-public-channel-promotion",version:$version,
-              commit:$commit,workflowRunId:$runId,channelIndexDigest:$channelIndexDigest}' \
+              commit:$commit,workflowRunId:$runId,channelIndexDigest:$channelIndexDigest,
+              legacyChannelIndexDigest:$legacyChannelIndexDigest}' \
             > .artifacts/promotion-receipt/evidence.json
 
       - name: Upload promotion receipt

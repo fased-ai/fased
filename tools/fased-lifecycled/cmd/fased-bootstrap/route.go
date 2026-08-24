@@ -42,10 +42,10 @@ const (
 	productionReleaseBase               = "https://github.com/fased-ai/fased/releases/download"
 	productionChannelReleasePrefix      = productionReleaseBase + "/fased-channel-"
 	releaseRootAssetName                = "fased-lifecycle-root-v1.json"
-	releaseIndexAssetName               = "fased-release-index-v1.json"
-	releaseIndexAttestationAssetName    = "fased-release-index-v1.json.attestation.json"
-	releaseRootHeadAssetName            = "fased-lifecycle-root-head-v1.json"
-	releaseRootHeadAttestationAssetName = "fased-lifecycle-root-head-v1.json.attestation.json"
+	releaseIndexAssetName               = "fased-release-index-v2.json"
+	releaseIndexAttestationAssetName    = "fased-release-index-v2.json.attestation.json"
+	releaseRootHeadAssetName            = "fased-lifecycle-root-head-v2.json"
+	releaseRootHeadAttestationAssetName = "fased-lifecycle-root-head-v2.json.attestation.json"
 )
 
 type publicReleaseRoute struct {
@@ -186,7 +186,7 @@ func outputIsTerminal(output io.Writer) bool {
 type rootHeadVerifier func([]byte, []byte, time.Time) (trust.RootHead, error)
 
 func verifyAttestedRootHead(headJSON, bundleJSON []byte, now time.Time) (trust.RootHead, error) {
-	verified, err := trust.VerifyAttestedRootHead(headJSON, bundleJSON, now)
+	verified, err := trust.VerifyAttestedRootHeadForIndexSchema(headJSON, bundleJSON, now, 2)
 	if err != nil {
 		return trust.RootHead{}, err
 	}
@@ -553,7 +553,7 @@ func runPublicRollback(args []string, output io.Writer) error {
 		return fmt.Errorf("installed lifecycle update policy is invalid: %w", err)
 	}
 	now := time.Now().UTC()
-	channelBase := productionChannelReleasePrefix + policy.Channel + "-v1"
+	channelBase := productionChannelReleasePrefix + policy.Channel + "-v2"
 	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect}
 	selection, err := discoverSignedChannelRelease(ctx, policy.Channel, client, channelBase, productionPinnedRootSHA256,
 		platform.BootstrapCacheRootForOS(runtime.GOOS), 0, manifest.ReleaseSequence, manifest.SecurityEpoch, now, nil, nil)
@@ -760,7 +760,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		discoveryClient := &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect}
 		selection, selectionErr := discoverSignedChannelRelease(
 			ctx, request.Channel, discoveryClient,
-			productionChannelReleasePrefix+request.Channel+"-v1", productionPinnedRootSHA256,
+			productionChannelReleasePrefix+request.Channel+"-v2", productionPinnedRootSHA256,
 			platform.BootstrapCacheRootForOS(runtime.GOOS), 0, installedStatus.ReleaseSequence, installedStatus.SecurityEpoch, now, nil, nil,
 		)
 		resolutionProgress.Stop()
@@ -775,7 +775,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	releaseRoute.RootRotationBaseURL = productionChannelReleasePrefix + request.Channel + "-v1"
+	releaseRoute.RootRotationBaseURL = productionChannelReleasePrefix + request.Channel + "-v2"
 	if releaseRoute.VerifyIndex != nil {
 		// Unpublished branch fixtures are isolated from the production channel and
 		// must serve any test rotation chain beside their exact fixture metadata.
@@ -791,7 +791,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		StateRoot: platform.BootstrapCacheRootForOS(runtime.GOOS), HostRoot: platform.LifecycleHostRootForOS(runtime.GOOS),
 		RootURL: releaseRoute.RootURL, RootRotationBaseURL: releaseRoute.RootRotationBaseURL, IndexURL: releaseRoute.IndexURL,
 		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
-		Channel: request.Channel, Version: request.Version, Architecture: architecture(),
+		Channel: request.Channel, Version: request.Version, OperatingSystem: runtime.GOOS, Architecture: architecture(),
 		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: now, Inspect: inspectLifecycleHost,
 		VerifyIndex: releaseRoute.VerifyIndex, ExpectedRootVersion: expectedRootVersion,
 		ExpectedRootSHA256: expectedRootSHA256,

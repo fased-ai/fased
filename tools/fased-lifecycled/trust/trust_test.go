@@ -375,6 +375,31 @@ func testAssets() map[string]Asset {
 	return map[string]Asset{"x64": {Name: "asset-x64", Size: 1, SHA256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 }
 
+func TestReleaseIndexPlatformKeysAreSchemaBound(t *testing.T) {
+	for _, key := range []string{"x64", "arm64"} {
+		if !validPlatformAssetKey(1, key) {
+			t.Fatalf("schema 1 rejected legacy key %q", key)
+		}
+	}
+	if validPlatformAssetKey(1, "darwin-arm64") {
+		t.Fatal("schema 1 accepted a platform-qualified key")
+	}
+	for _, key := range []string{"linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"} {
+		if !validPlatformAssetKey(2, key) {
+			t.Fatalf("schema 2 rejected platform key %q", key)
+		}
+	}
+	if validPlatformAssetKey(2, "x64") {
+		t.Fatal("schema 2 accepted an ambiguous legacy key")
+	}
+	if releaseIndexSubjectName(1) != "fased-release-index-v1.json" ||
+		releaseIndexSubjectName(2) != "fased-release-index-v2.json" ||
+		rootHeadSubjectName(1) != "fased-lifecycle-root-head-v1.json" ||
+		rootHeadSubjectName(2) != "fased-lifecycle-root-head-v2.json" {
+		t.Fatal("release metadata attestation subjects are not schema-bound")
+	}
+}
+
 func testHostAssets() map[string]Asset {
 	protocols := &HostProtocols{Manifest: ProtocolRange{Min: 2, Max: 2}, Journal: ProtocolRange{Min: 1, Max: 1}, Participant: ProtocolRange{Min: 1, Max: 1}, Platform: ProtocolRange{Min: 1, Max: 2}}
 	return map[string]Asset{"x64": {Name: "fased-lifecycled-linux-x64", Size: 1, SHA256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrivilegedComponent: "lifecycle-host", Protocols: protocols}}

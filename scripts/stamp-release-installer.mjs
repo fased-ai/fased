@@ -8,6 +8,11 @@ import { pathToFileURL } from "node:url";
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const RELEASE_MARKER = 'install_entry_release_identity="__FASED_RELEASE_IDENTITY__"';
 const BOOTSTRAP_X64_MARKER = 'bootstrap_sha256_x64="__FASED_BOOTSTRAP_SHA256_X64__"';
+const BOOTSTRAP_ARM64_MARKER = 'bootstrap_sha256_arm64="__FASED_BOOTSTRAP_SHA256_ARM64__"';
+const BOOTSTRAP_DARWIN_X64_MARKER =
+  'bootstrap_sha256_darwin_x64="__FASED_BOOTSTRAP_SHA256_DARWIN_X64__"';
+const BOOTSTRAP_DARWIN_ARM64_MARKER =
+  'bootstrap_sha256_darwin_arm64="__FASED_BOOTSTRAP_SHA256_DARWIN_ARM64__"';
 
 async function bootstrapDigest(file) {
   const info = await fsp.lstat(file);
@@ -24,6 +29,9 @@ export async function stampReleaseInstaller({
   output,
   version,
   bootstrapX64,
+  bootstrapArm64,
+  bootstrapDarwinX64,
+  bootstrapDarwinArm64,
   architecture,
 }) {
   if (!VERSION_PATTERN.test(version || "")) {
@@ -34,21 +42,36 @@ export async function stampReleaseInstaller({
     throw new Error("release installer source must be one regular single-link file");
   }
   const body = await fsp.readFile(source, "utf8");
-  for (const marker of [RELEASE_MARKER, BOOTSTRAP_X64_MARKER]) {
+  for (const marker of [
+    RELEASE_MARKER,
+    BOOTSTRAP_X64_MARKER,
+    BOOTSTRAP_ARM64_MARKER,
+    BOOTSTRAP_DARWIN_X64_MARKER,
+    BOOTSTRAP_DARWIN_ARM64_MARKER,
+  ]) {
     if (body.indexOf(marker) < 0 || body.indexOf(marker) !== body.lastIndexOf(marker)) {
       throw new Error("installer release identity or bootstrap marker is missing or ambiguous");
     }
   }
-  if (architecture !== undefined && architecture !== "x64") {
-    throw new Error("the first managed release supports only x64 installers");
+  if (architecture !== undefined && !["x64", "arm64", "all"].includes(architecture)) {
+    throw new Error("managed release installer architecture is unsupported");
   }
   if (!bootstrapX64) {
     throw new Error("required x64 release bootstrap is missing");
   }
   const x64Digest = await bootstrapDigest(bootstrapX64);
+  const arm64Digest = bootstrapArm64 ? await bootstrapDigest(bootstrapArm64) : "";
+  const darwinX64Digest = bootstrapDarwinX64 ? await bootstrapDigest(bootstrapDarwinX64) : "";
+  const darwinArm64Digest = bootstrapDarwinArm64 ? await bootstrapDigest(bootstrapDarwinArm64) : "";
+  if ((architecture === "arm64" || architecture === "all") && !arm64Digest) {
+    throw new Error("required arm64 release bootstrap is missing");
+  }
   const stamped = body
     .replace(RELEASE_MARKER, `install_entry_release_identity="${version}"`)
-    .replace(BOOTSTRAP_X64_MARKER, `bootstrap_sha256_x64="${x64Digest}"`);
+    .replace(BOOTSTRAP_X64_MARKER, `bootstrap_sha256_x64="${x64Digest}"`)
+    .replace(BOOTSTRAP_ARM64_MARKER, `bootstrap_sha256_arm64="${arm64Digest}"`)
+    .replace(BOOTSTRAP_DARWIN_X64_MARKER, `bootstrap_sha256_darwin_x64="${darwinX64Digest}"`)
+    .replace(BOOTSTRAP_DARWIN_ARM64_MARKER, `bootstrap_sha256_darwin_arm64="${darwinArm64Digest}"`);
   await fsp.writeFile(output, stamped, { mode: 0o755 });
   await fsp.chmod(output, 0o755);
 }
@@ -60,6 +83,9 @@ function parseArgs(argv) {
     "--output",
     "--version",
     "--bootstrap-x64",
+    "--bootstrap-arm64",
+    "--bootstrap-darwin-x64",
+    "--bootstrap-darwin-arm64",
     "--architecture",
   ]);
   for (let index = 0; index < argv.length; index += 2) {
@@ -87,6 +113,15 @@ function parseArgs(argv) {
     version: values.get("--version"),
     bootstrapX64: values.has("--bootstrap-x64")
       ? path.resolve(values.get("--bootstrap-x64"))
+      : undefined,
+    bootstrapArm64: values.has("--bootstrap-arm64")
+      ? path.resolve(values.get("--bootstrap-arm64"))
+      : undefined,
+    bootstrapDarwinX64: values.has("--bootstrap-darwin-x64")
+      ? path.resolve(values.get("--bootstrap-darwin-x64"))
+      : undefined,
+    bootstrapDarwinArm64: values.has("--bootstrap-darwin-arm64")
+      ? path.resolve(values.get("--bootstrap-darwin-arm64"))
       : undefined,
     architecture,
   };

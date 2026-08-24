@@ -1,6 +1,6 @@
 ---
 title: "Release Checklist"
-summary: "Current Fased release flow: version bump, changelog, Git tag, GitHub release, and optional macOS appcast."
+summary: "Current Fased release flow: protected versioned change, annotated tag, one multi-platform build, and publication."
 read_when:
   - Cutting a new public release
   - Verifying how version, tag, GitHub release, and appcast relate
@@ -18,15 +18,18 @@ installable snapshot users should receive.
 
 ## Current public release model
 
-Today the public release model is:
+The public release model is:
 
-- curl bootstrap install for beginner/local/fresh VPS setup
-- published package payload for the installer/runtime path
-- annotated Git tag + GitHub release for user-installable snapshots
+- curl bootstrap install for managed Local and fresh VPS Hosting
+- platform-qualified signed release artifacts for the managed runtime
+- owner-created annotated Git tag selecting the immutable source snapshot
+- one tag-bound workflow that builds, attests, publishes, and advances the channel
 - optional macOS Sparkle/appcast if a signed desktop build is being shipped
 
-The beginner install path should stay curl-first because it can install missing
-OS tools, Git, Node, and pnpm:
+The beginner install path stays curl-first. Managed users do not install Git,
+Node, pnpm, or Go; the release bundles the application runtime and native
+lifecycle services. The bootstrap may install bounded operating-system
+prerequisites required by the selected profile:
 
 ```bash
 curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
@@ -98,11 +101,14 @@ rg -n '"version":|FASED_PRODUCT_VERSION|vX\.Y\.Z|X\.Y\.Z' package.json src docs 
 Do not edit `pnpm-lock.yaml` only to change the root package version unless the
 package manager changed it as part of a real dependency/install update.
 
-2. **Build**
+2. **Focused validation**
 
-- [ ] `pnpm build`
-- [ ] `pnpm ui:build`
-- [ ] run the smallest honest validation set for the scope
+- [ ] run the nearest regression and directly coupled contracts
+- [ ] run changed-file formatting
+- [ ] let protected changed-surface CI validate the exact PR head
+
+Do not construct release artifacts before the immutable annotated tag exists.
+The tag-bound workflow performs the one official build.
 
 3. **Docs**
 
@@ -125,27 +131,26 @@ Important:
 
 ## Git flow
 
-- [ ] merge approved work into `main`
-- [ ] make sure the worktree is clean
-- [ ] commit the version/changelog/docs updates
-- [ ] push `main`
-- [ ] dispatch Hosted Runtime Release for the exact pushed release commit
-- [ ] wait for its prepare job to build and attest the candidate exactly once
-- [ ] create and push an annotated tag on that tested release commit
-- [ ] approve the waiting `candidate-release` environment once
+- [ ] reserve an unused version in the product PR
+- [ ] merge the exact protected, passing PR head into `main`
+- [ ] validate the merged commit and tree
+- [ ] create and push an annotated tag on that merged commit
+- [ ] dispatch Hosted Runtime Release from the actual tag ref
+- [ ] wait for its single build/attest/publish/channel run
+- [ ] read back the public tag, assets, attestations, and signed channel
 
 Typical shape:
 
 ```bash
-git checkout main
-git pull --rebase
-pnpm build
-git add .
-git commit -m "chore(release): cut vX.Y.Z"
-git push origin main
-# After the workflow prepare job passes:
-git tag -a vX.Y.Z <exact-tested-commit> -m "Fased Agent vX.Y.Z"
+VERSION=X.Y.Z
+COMMIT=<exact-merged-main-commit>
+git tag -a "v$VERSION" "$COMMIT" -m "Fased Agent v$VERSION"
 git push origin refs/tags/vX.Y.Z
+gh workflow run hosted-runtime-release.yml \
+  --repo fased-ai/fased \
+  --ref "v$VERSION" \
+  -f release_version="$VERSION" \
+  -f source_commit="$COMMIT"
 ```
 
 Verify the tag points at the release commit:
@@ -157,30 +162,21 @@ git rev-list -n 1 vX.Y.Z
 
 Those two commit SHAs should match.
 
-## GitHub release
+## GitHub release and signed channels
 
-- [ ] create the GitHub release for `vX.Y.Z`
-- [ ] attach real artifacts only
-- [ ] paste the curated release notes into the release body
-- [ ] do not claim package-manager install paths that are not actually supportable yet
+The tag-bound workflow creates the GitHub prerelease and attaches only the
+artifacts produced and attested by that run. Do not create a parallel manual
+release or upload locally built artifacts.
 
-CLI shape:
+It advances two predecessor-compatible channel documents with the same release
+identity:
 
-```bash
-gh release create vX.Y.Z \
-  --repo fased-ai/fased \
-  --title "Fased Agent vX.Y.Z" \
-  --notes-file /tmp/fased-release-notes.md
-```
+- v1 remains Linux-only so existing Linux bootstraps keep updating;
+- v2 carries platform-qualified Linux and Darwin assets for current bootstraps.
 
-For a short hotfix release, inline notes are acceptable:
-
-```bash
-gh release create vX.Y.Z \
-  --repo fased-ai/fased \
-  --title "Fased Agent vX.Y.Z" \
-  --notes "Installer hotfix for ..."
-```
+The metadata schema is not a user-facing product version. Existing managed
+users continue to run `fased update`; they do not reinstall to move from v1 to
+v2 metadata.
 
 Verify:
 
@@ -190,8 +186,10 @@ gh release view vX.Y.Z --repo fased-ai/fased --web
 
 ## Hotfix and mistake policy
 
-- If a tag was created but no GitHub release exists yet, create the GitHub
-  release for that tag.
+- If a tag was created but publication failed before a GitHub release exists,
+  fix the failed predicate in a protected PR and use the next unused version.
+- If the release and attestations exist but only channel advancement failed,
+  run the metadata-only promotion workflow; do not rebuild or retag.
 - If a GitHub release is already public, do not move or rewrite its tag.
 - If the released commit is missing an installer/runtime fix, make a new commit
   and cut the next patch version.

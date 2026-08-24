@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ $# -eq 2 ]] || {
-  echo "usage: publish-lifecycle-root-head.sh <metadata-directory> <channel-tag>" >&2
+[[ $# -eq 2 || $# -eq 3 ]] || {
+  echo "usage: publish-lifecycle-root-head.sh <metadata-directory> <channel-tag> [v1|v2]" >&2
   exit 2
 }
 metadata_dir="$(realpath -e "$1")"
 channel_tag="$2"
-[[ -d "$metadata_dir" && "$channel_tag" =~ ^fased-channel-(stable|beta)-v1$ ]] || exit 2
+index_schema="${3:-v1}"
+[[ -d "$metadata_dir" && "$index_schema" =~ ^v[12]$ &&
+  "$channel_tag" =~ ^fased-channel-(stable|beta)-v[12]$ ]] || exit 2
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
-head_name=fased-lifecycle-root-head-v1.json
+head_name="fased-lifecycle-root-head-${index_schema}.json"
 attestation_name="$head_name.attestation.json"
-index_name=fased-release-index-v1.json
+index_name="fased-release-index-${index_schema}.json"
 head="$metadata_dir/$head_name"
 attestation="$metadata_dir/$attestation_name"
 index="$metadata_dir/$index_name"
@@ -54,7 +56,8 @@ verify_head_pair() {
   channel="$(jq -er '.channel | select(. == "stable" or . == "beta")' "$candidate_head")"
   release_version="$(jq -er .releaseVersion "$candidate_head")"
   index_commit="$(jq -er .indexCommit "$candidate_head")"
-  test "$channel_tag" = "fased-channel-$channel-v1"
+  test "$(jq -er .schemaVersion "$candidate_index")" = "${index_schema#v}"
+  test "$channel_tag" = "fased-channel-$channel-$index_schema"
   test "$release_version" = "$(jq -er .version "$candidate_index")"
   test "$channel" = "$(jq -er .channel "$candidate_index")"
   test "$(jq -er .releaseSequence "$candidate_head")" = "$(jq -er .releaseSequence "$candidate_index")"

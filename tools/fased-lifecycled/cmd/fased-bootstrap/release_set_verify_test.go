@@ -30,11 +30,11 @@ func TestVerifyReleaseSetUsesProductionRootAndBindsIndexedAssets(t *testing.T) {
 	assetDigest := sha256.Sum256(assetBody)
 	asset := trust.Asset{Name: "application.tar.gz", Size: uint64(len(assetBody)), SHA256: fmt.Sprintf("sha256:%x", assetDigest)}
 	for name, body := range map[string][]byte{
-		"application.tar.gz":                                 assetBody,
-		"fased-release-index-v1.json":                        []byte("index\n"),
-		"fased-release-index-v1.json.attestation.json":       []byte("index bundle\n"),
-		"fased-lifecycle-root-head-v1.json":                  []byte("head\n"),
-		"fased-lifecycle-root-head-v1.json.attestation.json": []byte("head bundle\n"),
+		"application.tar.gz":                assetBody,
+		releaseIndexAssetName:               []byte("index\n"),
+		releaseIndexAttestationAssetName:    []byte("index bundle\n"),
+		releaseRootHeadAssetName:            []byte("head\n"),
+		releaseRootHeadAttestationAssetName: []byte("head bundle\n"),
 	} {
 		if err := os.WriteFile(filepath.Join(directory, name), body, 0o600); err != nil {
 			t.Fatal(err)

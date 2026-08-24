@@ -22,9 +22,9 @@ GitHub Releases, and the Fased GitHub release publisher. The digest stamped in
 the shell binds the Go bootstrap downloaded afterward; it cannot authenticate
 the shell itself after Bash has already started it.
 
-The shell is intentionally small: it validates selectors and the retained
-Linux x86_64 platform, downloads one stamped static Go bootstrap, checks that
-digest, installs the bootstrap, and transfers control. It does not install or
+The shell is intentionally small: it validates selectors and the supported
+platform/architecture pair, downloads its platform-qualified stamped static Go
+bootstrap, checks that digest, installs the bootstrap, and transfers control. It does not install or
 build the TypeScript application, run npm/pnpm, configure services, mutate
 wallet/signer state, or configure Tailscale, firewall, SSH, or fail2ban. Those
 managed mutations begin only after the installed bootstrap verifies the signed
@@ -95,7 +95,7 @@ The streamed bootstrap reports which recovery path applies:
 
 | Mode                         | Intended use                                         | Entry contract                        |
 | ---------------------------- | ---------------------------------------------------- | ------------------------------------- |
-| `--local`                    | Fresh Linux x86_64 Local install                     | Stamped release asset                 |
+| `--local`                    | Fresh supported Linux, WSL2, or macOS Local install  | Stamped release asset                 |
 | `--hosting`                  | Fresh/recovering x86_64 Hosting install              | Stamped release asset                 |
 | `--release <vX.Y.Z>`         | Require the same immutable release as this installer | Exact release identity                |
 | `--update-channel <channel>` | Select `stable` or `beta`                            | Must match release kind               |
@@ -110,11 +110,13 @@ surface.
 ## Streamed installer restrictions
 
 The immutable release installer accepts one profile and its exact stamped
-release. A prerelease requires the `beta` channel. Unstamped streamed source,
-unknown flags, mismatched release selectors, non-Linux systems, and every
-architecture except x86_64 fail before bootstrap acquisition or privileged
-mutation. Contributor checkouts enter the explicit
-`scripts/install-development.sh` source workflow instead.
+release. A prerelease requires the `beta` channel. Local accepts Linux x86_64,
+Linux arm64, Ubuntu WSL2 x86_64 with systemd, and macOS x86_64/arm64 when the
+release contains their platform-qualified assets. Hosting remains Linux
+x86_64-only. Unstamped streamed source, unknown flags, mismatched release
+selectors, unsupported platform/profile pairs, and missing native assets fail
+before bootstrap acquisition or privileged mutation. Contributor checkouts
+enter the explicit `scripts/install-development.sh` source workflow instead.
 
 After transfer, the bootstrap verifies signed channel/root metadata, exact tag,
 commit, architecture, app/dependency/signer digests, archive paths, ownership,
@@ -137,8 +139,11 @@ enrollment, and mutating rotation are intentionally unavailable on the
 operator socket; use the installed bounded signer-owner helper after normal OS
 administrator authorization.
 
-macOS, WSL2, Linux arm64, and native Windows are deferred from this managed
-support matrix; source or companion-app code does not imply managed support.
+Ubuntu WSL2 x86_64 Local reuses this Linux lifecycle when systemd is active and
+state remains under the WSL Linux `/home` filesystem. Linux arm64 Local uses
+its separately attested native artifact set. macOS Local selects separately
+attested Darwin x86_64 or arm64 assets and system LaunchDaemons. Native Windows
+remains deferred; source or companion-app code does not imply managed support.
 
 ## Wallet setup contract
 

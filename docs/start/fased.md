@@ -11,8 +11,8 @@ title: "Fased Agent Setup"
 
 Fased Agent is the agent workbench you run through one of two setup profiles:
 
-- **Local** for your own computer. Use Terminal on macOS, WSL2 Ubuntu on
-  Windows, or your Linux distro terminal.
+- **Local** for Linux x86_64/arm64 with systemd, Ubuntu WSL2 x86_64, or native
+  macOS x86_64/arm64 with launchd. Native Windows is deferred.
 - **VPS Hosting** for an always-on server. Ubuntu LTS is the recommended first
   VPS target.
 
@@ -25,8 +25,8 @@ setup.
 
 <Tabs>
   <Tab title="Local install">
-    Run in macOS Terminal, Linux, or Ubuntu WSL2. Do not run it in Windows
-    PowerShell or native Windows Node.js.
+    Run on Linux with systemd, inside Ubuntu WSL2, or in macOS Terminal. Never
+    run it in Windows PowerShell.
 
     ```bash
     curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \

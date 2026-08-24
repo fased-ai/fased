@@ -14,7 +14,7 @@ const rootHead = read("../tools/fased-lifecycled/trust/root_head.go");
 
 describe("hosted signer security boundary", () => {
   it("enters privileged Hosting setup only through an immutable attested Go bundle", () => {
-    expect(install).toContain('bootstrap_asset="fased-bootstrap-linux-${arch}"');
+    expect(install).toContain('bootstrap_asset="fased-bootstrap-${operating_system}-${arch}"');
     expect(install).toContain("curl_args=(-fL --proto '=https' --tlsv1.2");
     expect(install).toContain('if [[ "$verbose" -eq 0 ]]; then curl_args+=(-sS); fi');
     expect(install).toContain("--proto '=https' --tlsv1.2");
@@ -33,7 +33,7 @@ describe("hosted signer security boundary", () => {
     expect(bootstrapRoute).toMatch(
       /productionReleaseBase\s*=\s*"https:\/\/github\.com\/fased-ai\/fased\/releases\/download"/u,
     );
-    expect(bootstrapRoute).toContain("fased-release-index-v1.json.attestation.json");
+    expect(bootstrapRoute).toContain("fased-release-index-v2.json.attestation.json");
     expect(bootstrapRoute).not.toContain("updates.fased.ai");
     expect(bootstrapRoute).not.toContain("delegation.json");
     expect(install).not.toContain("install_host_signer_and_updater_services()");

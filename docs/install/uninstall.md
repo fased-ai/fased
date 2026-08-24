@@ -122,9 +122,9 @@ systemctl --user daemon-reload
 
 ### Legacy native Windows installs (Scheduled Task)
 
-The current public Windows path runs inside WSL2 and uses the Linux/systemd
-instructions above. Use this section only to clean up an older native Windows
-installation created before WSL2 became the required public path.
+Managed Ubuntu WSL2 uses the Linux/systemd uninstall instructions above from
+inside the Ubuntu shell. Use this section only to clean up an older native
+Windows installation; current managed Fased does not run directly in Windows.
 
 Default task name is `FasedAgent Gateway` (or `FasedAgent Gateway (<profile>)`).
 The task script lives under your state dir.

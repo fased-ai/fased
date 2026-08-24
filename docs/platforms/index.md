@@ -31,10 +31,17 @@ flowchart TD
   class mac,mobile,always node;
 ```
 
-The first managed stable matrix is Linux x86_64 with systemd: protected Local,
-Ubuntu-compatible Hosting, and Rocky-compatible Hosting. macOS, WSL2, Linux
-arm64, and native Windows are deferred. Source development on those platforms
-does not constitute managed support.
+The managed matrix is Linux x86_64 or arm64 with systemd for protected Local,
+Ubuntu WSL2 x86_64 Local, native macOS x86_64 or arm64 Local with launchd, and
+x86_64 Ubuntu-compatible or Rocky-compatible Hosting. Native Windows remains
+deferred.
+
+Ubuntu inside WSL2 reuses the Linux x86_64 release but has a stricter preflight:
+WSL2 rather than WSL1, the Ubuntu distribution, systemd as PID 1, Local profile
+only, and operator state under the WSL Linux `/home` filesystem. The installer
+fails before acquisition when those predicates are absent. macOS selects
+separate signed Darwin assets and system LaunchDaemons; it never aliases a
+Linux artifact with the same CPU architecture.
 
 ## Current UI model
 
@@ -49,11 +56,11 @@ does not constitute managed support.
 
 ## Choose your OS
 
-- [macOS](/platforms/macos): compatibility and source-development information;
-  managed install/update is deferred.
+- [macOS](/platforms/macos): native managed Local on Apple Silicon and Intel,
+  plus the optional companion app.
 - [Linux](/platforms/linux): Gateway host, local machine, VPS, or always-on node.
-- [Windows](/platforms/windows): manage a supported remote Linux VPS; managed
-  WSL2/native Windows installation is deferred.
+- [Windows](/platforms/windows): run managed Local inside Ubuntu WSL2, or manage
+  a supported remote Linux VPS. Native Windows remains deferred.
 - [iOS](/platforms/ios): mobile node connected to another Gateway.
 - [Android](/platforms/android): mobile node connected to another Gateway.
 - [Raspberry Pi](/platforms/raspberry-pi): low-power always-on Gateway host.

@@ -10,7 +10,12 @@ import * as tar from "tar";
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u;
 const GIT = /^[a-f0-9]{40}$/u;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
-const architectures = [{ name: "x64", go: "amd64" }];
+const platforms = [
+  { key: "linux-x64", operatingSystem: "linux", architecture: "x64", go: "amd64" },
+  { key: "linux-arm64", operatingSystem: "linux", architecture: "arm64", go: "arm64" },
+  { key: "darwin-x64", operatingSystem: "darwin", architecture: "x64", go: "amd64" },
+  { key: "darwin-arm64", operatingSystem: "darwin", architecture: "arm64", go: "arm64" },
+];
 
 async function asset(directory, name) {
   const file = path.join(directory, name);
@@ -27,8 +32,8 @@ async function asset(directory, name) {
   };
 }
 
-async function generationMetadata(directory, version, architecture) {
-  const name = `fased-generation-linux-${architecture}-v${version}.tar.gz`;
+async function generationMetadata(directory, version, platform) {
+  const name = `fased-generation-${platform.operatingSystem}-${platform.architecture}-v${version}.tar.gz`;
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "fased-release-index-"));
   try {
     await tar.x({
@@ -47,7 +52,7 @@ async function generationMetadata(directory, version, architecture) {
     for (const file of [inventoryPath, envelopePath, pluginLockPath]) {
       const info = await fs.lstat(file);
       if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size <= 0) {
-        throw new Error(`release-index generation metadata is unsafe for ${architecture}`);
+        throw new Error(`release-index generation metadata is unsafe for ${platform.key}`);
       }
     }
     const inventoryJSON = await fs.readFile(inventoryPath);
@@ -64,14 +69,14 @@ async function generationMetadata(directory, version, architecture) {
       !DIGEST.test(envelope?.generation?.id ?? "") ||
       envelope.generation.id !== envelope.generation.artifactSetDigest
     ) {
-      throw new Error(`release-index generation envelope is invalid for ${architecture}`);
+      throw new Error(`release-index generation envelope is invalid for ${platform.key}`);
     }
     if (
       pluginLock?.schemaVersion !== 1 ||
       pluginLock?.type !== "fased-plugin-lock" ||
       !Array.isArray(pluginLock.entries)
     ) {
-      throw new Error(`release-index plugin lock is invalid for ${architecture}`);
+      throw new Error(`release-index plugin lock is invalid for ${platform.key}`);
     }
     return {
       asset: await asset(directory, name),
@@ -145,12 +150,14 @@ export async function buildLifecycleReleaseIndex(options) {
     securityEpoch,
     tree,
     version,
+    schemaVersion = 2,
   } = options;
   if (
     !VERSION.test(version) ||
     !GIT.test(commit) ||
     !GIT.test(tree) ||
     !["beta", "stable"].includes(channel) ||
+    ![1, 2].includes(schemaVersion) ||
     !Number.isSafeInteger(releaseSequence) ||
     releaseSequence < 1 ||
     !Number.isSafeInteger(securityEpoch) ||
@@ -168,10 +175,14 @@ export async function buildLifecycleReleaseIndex(options) {
     throw new Error("release-index validity is invalid");
   }
 
+  const selectedPlatforms =
+    schemaVersion === 1
+      ? platforms.filter((platform) => platform.operatingSystem === "linux")
+      : platforms;
   const records = {};
-  for (const architecture of architectures) {
-    records[architecture.name] = await generationMetadata(assetsDir, version, architecture.name);
-    const record = records[architecture.name];
+  for (const platform of selectedPlatforms) {
+    records[platform.key] = await generationMetadata(assetsDir, version, platform);
+    const record = records[platform.key];
     if (
       record.generation?.version !== version ||
       record.generation?.commit !== commit ||
@@ -182,23 +193,24 @@ export async function buildLifecycleReleaseIndex(options) {
       !DIGEST.test(record.pluginLockDigest) ||
       !record.inventory?.dependency
     ) {
-      throw new Error(`release-index generation identity differs for ${architecture.name}`);
+      throw new Error(`release-index generation identity differs for ${platform.key}`);
     }
   }
-  const baseline = records.x64.inventory;
+  const baseline = records["linux-x64"].inventory;
   const application = {};
   const dependencyLayer = {};
   const lifecycleHost = {};
   const signer = {};
-  for (const architecture of architectures) {
-    const record = records[architecture.name];
-    application[architecture.name] = record.asset;
-    dependencyLayer[architecture.name] = await asset(assetsDir, record.inventory.dependency.asset);
-    if (dependencyLayer[architecture.name].sha256 !== record.inventory.dependency.archiveSHA256) {
-      throw new Error(`release-index dependency digest differs for ${architecture.name}`);
+  for (const platform of selectedPlatforms) {
+    const record = records[platform.key];
+    const assetKey = schemaVersion === 1 ? platform.architecture : platform.key;
+    application[assetKey] = record.asset;
+    dependencyLayer[assetKey] = await asset(assetsDir, record.inventory.dependency.asset);
+    if (dependencyLayer[assetKey].sha256 !== record.inventory.dependency.archiveSHA256) {
+      throw new Error(`release-index dependency digest differs for ${platform.key}`);
     }
-    lifecycleHost[architecture.name] = {
-      ...(await asset(assetsDir, `fased-lifecycled-linux-${architecture.go}`)),
+    lifecycleHost[assetKey] = {
+      ...(await asset(assetsDir, `fased-lifecycled-${platform.operatingSystem}-${platform.go}`)),
       privilegedComponent: "lifecycle-host",
       protocols: {
         manifest: { min: 1, max: 2 },
@@ -207,7 +219,10 @@ export async function buildLifecycleReleaseIndex(options) {
         platform: { min: 1, max: 2 },
       },
     };
-    signer[architecture.name] = await asset(assetsDir, `fased-signerd-linux-${architecture.go}`);
+    signer[assetKey] = await asset(
+      assetsDir,
+      `fased-signerd-${platform.operatingSystem}-${platform.go}`,
+    );
   }
   const components = await componentAssets(assetsDir, version);
   const boundAssets = {
@@ -218,13 +233,13 @@ export async function buildLifecycleReleaseIndex(options) {
     ...(Object.keys(components).length > 0 ? { components } : {}),
     stateSchemas: baseline.stateSchemas,
     capabilities: baseline.capabilities,
-    pluginLockDigest: records.x64.pluginLockDigest,
+    pluginLockDigest: records["linux-x64"].pluginLockDigest,
   };
   const artifactSetDigest = `sha256:${createHash("sha256")
     .update(JSON.stringify(boundAssets))
     .digest("hex")}`;
   return {
-    schemaVersion: 1,
+    schemaVersion,
     type: "fased-release-index",
     channel,
     version,
@@ -276,6 +291,7 @@ function parseArgs(argv) {
     issuedAt: values.get("--issued-at"),
     expiresAt: values.get("--expires-at"),
     output: path.resolve(values.get("--output")),
+    schemaVersion: Number(values.get("--schema-version") ?? "2"),
   };
 }
 

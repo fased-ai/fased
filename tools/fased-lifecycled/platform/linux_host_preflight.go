@@ -44,6 +44,15 @@ func (preflight LinuxHostPreflight) Verify(ctx context.Context) error {
 	if wsl && !wsl2 {
 		return errors.New("WSL1 is unsupported; install Ubuntu on WSL2 before using the managed lifecycle")
 	}
+	if wsl2 {
+		identity, identityErr := preflight.read("/usr/lib/os-release", 16<<10)
+		if identityErr != nil {
+			identity, identityErr = preflight.read("/etc/os-release", 16<<10)
+		}
+		if identityErr != nil || linuxOSReleaseID(identity) != "ubuntu" {
+			return errors.New("managed WSL2 Local currently requires the Ubuntu distribution")
+		}
+	}
 	pid1, err := preflight.read("/proc/1/comm", 128)
 	if err != nil || strings.TrimSpace(string(pid1)) != "systemd" {
 		if wsl {
@@ -61,6 +70,22 @@ func (preflight LinuxHostPreflight) Verify(ctx context.Context) error {
 		return errors.Join(commandErr, errors.New("systemd is not in a usable running or degraded state"))
 	}
 	return nil
+}
+
+func linuxOSReleaseID(data []byte) string {
+	identity := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found || key != "ID" {
+			continue
+		}
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if identity != "" || value == "" {
+			return ""
+		}
+		identity = strings.ToLower(value)
+	}
+	return identity
 }
 
 func (preflight LinuxHostPreflight) path(path string) string {

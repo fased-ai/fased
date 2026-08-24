@@ -77,14 +77,14 @@ function parseOutputDir(): string {
   return path.resolve(rootDir, value?.trim() || ".artifacts/hosted-runtime");
 }
 
-function hostedArch(): string {
-  if (process.platform !== "linux") {
-    throw new Error(`Hosted runtime artifacts require Linux, found ${process.platform}.`);
+function managedPlatform(): { platform: "linux" | "darwin"; arch: "x64" | "arm64" } {
+  if (process.platform !== "linux" && process.platform !== "darwin") {
+    throw new Error(`Managed runtime artifacts require Linux or macOS, found ${process.platform}.`);
   }
   if (process.arch === "x64" || process.arch === "arm64") {
-    return process.arch;
+    return { platform: process.platform, arch: process.arch };
   }
-  throw new Error(`Unsupported hosted runtime architecture: ${process.arch}.`);
+  throw new Error(`Unsupported managed runtime architecture: ${process.arch}.`);
 }
 
 async function run(
@@ -361,7 +361,7 @@ async function smokeGateway(
 
 async function main(): Promise<void> {
   const outputDir = parseOutputDir();
-  const arch = hostedArch();
+  const { platform, arch } = managedPlatform();
   const packageJson = JSON.parse(
     await fs.readFile(path.join(rootDir, "package.json"), "utf8"),
   ) as PackageJson;
@@ -476,7 +476,7 @@ async function main(): Promise<void> {
         "--created",
         createdAt,
         "--output",
-        path.join(outputDir, `fased-hosted-components-linux-${arch}-v${version}.spdx.json`),
+        path.join(outputDir, `fased-hosted-components-${platform}-${arch}-v${version}.spdx.json`),
       ],
       rootDir,
     );
@@ -672,7 +672,7 @@ async function main(): Promise<void> {
     console.log(
       `hosted-artifact: Gateway ready RSS ${(gatewaySmoke.gatewayRssBytes / 1024 / 1024).toFixed(1)} MB; loaded ${gatewaySmoke.applicationModules.length} application modules and ${gatewaySmoke.dependencyPackages.length} dependency packages`,
     );
-    const runtimeEvidenceName = `fased-hosted-core-runtime-linux-${arch}-v${version}.json`;
+    const runtimeEvidenceName = `fased-hosted-core-runtime-${platform}-${arch}-v${version}.json`;
     await fs.writeFile(
       path.join(outputDir, runtimeEvidenceName),
       `${JSON.stringify(
@@ -681,6 +681,7 @@ async function main(): Promise<void> {
           type: "fased-hosted-core-runtime-evidence",
           version,
           commit,
+          operatingSystem: platform,
           architecture: arch,
           pluginLoadMs,
           gatewayReadyRssBytes: gatewaySmoke.gatewayRssBytes,
@@ -750,7 +751,7 @@ async function main(): Promise<void> {
       `${JSON.stringify(runtimeMetadata, null, 2)}\n`,
       "utf8",
     );
-    const unifiedAppAssetName = `fased-hosted-app-v2-linux-${arch}-v${version}.tar.gz`;
+    const unifiedAppAssetName = `fased-hosted-app-v2-${platform}-${arch}-v${version}.tar.gz`;
     const unifiedAppAssetPath = path.join(outputDir, unifiedAppAssetName);
     console.log(`hosted-artifact: writing ${unifiedAppAssetName}`);
     await writeReleaseArchive({
@@ -766,7 +767,7 @@ async function main(): Promise<void> {
       `hosted-artifact: ready ${unifiedAppAssetName} (${(unifiedAppStat.size / 1024 / 1024).toFixed(1)} MB, sha256 ${unifiedAppDigest})`,
     );
 
-    const dependencyAssetName = `fased-hosted-deps-linux-${arch}-${dependencyHash}.tar.gz`;
+    const dependencyAssetName = `fased-hosted-deps-${platform}-${arch}-${dependencyHash}.tar.gz`;
     const dependencyAssetPath = path.join(outputDir, dependencyAssetName);
     console.log(`hosted-artifact: writing ${dependencyAssetName}`);
     await writeReleaseArchive({
@@ -827,6 +828,7 @@ async function main(): Promise<void> {
           schemaVersion: 1,
           version,
           commit,
+          operatingSystem: platform,
           architecture: arch,
           dependencyHash,
           app: { asset: unifiedAppAssetName, sha256: unifiedAppDigest },

@@ -8,9 +8,10 @@ title: "Linux App"
 
 # Linux App
 
-The first managed stable matrix supports Linux x86_64 with systemd. Managed
-artifacts bundle an exact Node runtime. Linux arm64, WSL2, and non-systemd
-managed installation are deferred.
+Managed Local supports Linux x86_64 and arm64 with systemd, including Ubuntu
+WSL2 x86_64 with systemd active. Managed artifacts bundle the matching exact
+Node runtime, lifecycle supervisor, and signer. Hosting remains x86_64-only;
+non-systemd managed installation is deferred.
 
 Native Linux companion apps are planned. Contributions are welcome.
 

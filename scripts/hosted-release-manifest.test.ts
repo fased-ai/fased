@@ -61,6 +61,44 @@ describe("hosted release manifest v2 verification", () => {
     );
   });
 
+  it("keeps Darwin and Linux assets separate at the same CPU architecture", () => {
+    const base = valid();
+    const candidate = {
+      ...base,
+      application: {
+        linux: {
+          ...base.application.linux,
+          arm64: {
+            artifact: { ...artifact, asset: "app-linux-arm64.tar.gz" },
+            dependencies: { ...dependency, asset: "deps-linux-arm64.tar.gz" },
+          },
+        },
+        darwin: {
+          x64: {
+            artifact: { ...artifact, asset: "app-darwin-x64.tar.gz" },
+            dependencies: { ...dependency, asset: "deps-darwin-x64.tar.gz" },
+          },
+          arm64: {
+            artifact: { ...artifact, asset: "app-darwin-arm64.tar.gz" },
+            dependencies: { ...dependency, asset: "deps-darwin-arm64.tar.gz" },
+          },
+        },
+      },
+      signer: {
+        ...base.signer,
+        platforms: Object.fromEntries(
+          ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"].map((platform) => [
+            platform,
+            { asset: `fased-signerd-${platform}`, sha256: "d".repeat(64) },
+          ]),
+        ),
+      },
+    };
+    const parsed = parseHostedReleaseManifestV2(candidate);
+    expect(parsed.application.darwin.x64.artifact.asset).toBe("app-darwin-x64.tar.gz");
+    expect(parsed.application.linux.x64.artifact.asset).toBe("app.tar.gz");
+  });
+
   it("rejects unknown fields and a changed capability contract", () => {
     expect(() => parseHostedReleaseManifestV2({ ...valid(), unexpected: true })).toThrow(
       "unsupported or missing fields",

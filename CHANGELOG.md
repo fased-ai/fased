@@ -4,6 +4,15 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.131
+
+- Add managed Local release assets for Linux arm64, Ubuntu WSL2 x86_64, and
+  macOS x86_64/arm64 while retaining Linux x86_64 Local and Hosting.
+- Publish predecessor-compatible Linux v1 and platform-qualified v2 signed
+  lifecycle metadata from the same immutable release identity.
+- Keep Gateway, Go signer v2, and lifecycle services generation-bound across
+  systemd and launchd managed installations.
+
 ## 0.1.76-rc.122
 
 - Preserve the complete optimized Go-managed core, modular Wallet, signer,

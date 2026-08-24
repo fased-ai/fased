@@ -9,16 +9,17 @@ title: "Updating"
 
 # Updating
 
-The public installer keeps a checkout as the setup and repair anchor. The
-active runtime depends on the install profile:
+The public installer installs a verified bootstrap and generation; managed
+users do not maintain a source checkout. The active runtime depends on the
+install profile:
 
-- Supported Linux Local and VPS Hosting installs normally run a verified
-  prebuilt release artifact.
+- Supported Linux/WSL2/macOS Local and Linux VPS Hosting installs run verified
+  prebuilt release artifacts.
 - Their CLI and Gateway service resolve the active version through a stable
   launcher outside the versioned application directory.
-- Protected Local Linux and VPS Hosting coordinate the application and signer
-  through a root-owned paired release controller.
-- macOS and explicit `--source-install` installs run from the source checkout.
+- Managed Local and VPS Hosting coordinate the application and signer through
+  a root-owned paired release controller using systemd or launchd.
+- Explicit `--source-install` installs run from the source checkout.
 - `fased update` is the normal update command for both profiles.
 - A Local installation from before the protected supervisor handoff, or one
   with an incomplete legacy flat updater bundle, uses the documented Local
@@ -146,21 +147,23 @@ with sudo or describe that setup as the maintained Hosting boundary.
 
 ## Native signer artifacts
 
-Fresh dashboard, Gateway, and Fased Network setup do not require
-`fased-signerd`. The native signer is only needed after you choose the local
-signer wallet path.
+Every managed Local and Hosting generation includes `fased-signerd`. The Go
+lifecycle stages Gateway, signer, and controller together and requires their
+exact managed services to become healthy before onboarding completes. Wallet
+creation can still be deferred; that choice does not remove the signer from the
+managed service transaction.
 
-When that path is enabled, Fased downloads the signer asset from the matching
-versioned GitHub Release and verifies it against
-`fased-signerd-checksums.txt` and the release's GitHub/Sigstore attestation.
+Fased downloads the signer asset from the matching versioned GitHub Release and
+verifies it against `fased-signerd-checksums.txt` and the release's
+GitHub/Sigstore attestation.
 The release also includes an attested `fased-signerd-release.json`. Hosting
 accepts only a production identity whose exact version, commit, and build-input
 digest match both that manifest and the running signer's health response;
 development, missing, or mismatched identities fail closed.
-Normal Local, WSL, macOS, and Hosting users do not need Go. WSL uses the Linux
-asset; the Unix-socket signer is not supported by a native Windows Node.js
-install. Verification failure stops the install instead of falling back to an
-implicit source build.
+Normal supported Linux Local, Ubuntu WSL2 Local, macOS Local, and Hosting users
+do not need Go. Native Windows Node.js cannot use the Unix-socket signer.
+Verification failure stops installation instead of falling back to an implicit
+source build.
 
 Protected Local Linux treats the Gateway, signer, and controller as one
 root-coordinated transaction. It stages the exact version-matched signer,
@@ -250,8 +253,8 @@ Use `./install.sh --no-git-update` only when testing local changes.
 - updates to the configured channel; stable is the default end-user channel
   and resolves to the newest stable release tag
 - uses a verified release artifact for the managed VPS runtime when available
-- uses the same verified artifact for supported Linux Local installs
-- refreshes dependencies and rebuilds for macOS or explicit source installs
+- uses the matching verified platform artifact for Linux/WSL2/macOS Local
+- refreshes dependencies and rebuilds only for explicit source installs
 - updates every Fased-owned channel and runtime component atomically with the
   signed application generation
 - detects the exact protected Local per-instance system service, legacy Local
@@ -513,11 +516,13 @@ fased status
 
 Fresh installs and hosted systems should use the curl bootstrap:
 
-- curl bootstrap for fresh local machines, WSL2, and hosted VPS
+- curl bootstrap for supported Linux/systemd Local, Ubuntu WSL2 Local, macOS
+  Local, and hosted VPS machines
 - `fased update` for normal updates
-- verified GitHub Release artifacts for supported Linux Local and VPS Hosting
-  installs and updates
-- source checkout builds for macOS and explicit `--source-install` workflows
+- verified GitHub Release artifacts for supported Linux/WSL2/macOS Local and
+  Linux VPS Hosting installs and updates
+- source checkout builds and explicit `--source-install` workflows are
+  contributor paths; they are not managed installation evidence
 - legacy global npm installs are accepted only as migration inputs; use the
   verified installer for the maintained layout
 

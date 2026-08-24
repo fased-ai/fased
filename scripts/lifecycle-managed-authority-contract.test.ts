@@ -14,8 +14,8 @@ describe("managed lifecycle authority contract", () => {
   it("leaves only owner-operated Hosting/Tailscale acceptance as retained blockers", () => {
     const result = loadManagedAuthorityContract();
     expect(result.profileCount).toBe(6);
-    expect(result.retainedProfileCount).toBe(2);
-    expect(result.deferredProfileCount).toBe(4);
+    expect(result.retainedProfileCount).toBe(5);
+    expect(result.deferredProfileCount).toBe(1);
     expect(result.capabilityCount).toBeGreaterThan(25);
     expect(result.blockers).toEqual([
       "hosting-tailscale-install-auth-and-identity",
@@ -32,7 +32,7 @@ describe("managed lifecycle authority contract", () => {
     expect(result.blockers).not.toContain("darwin-principals-services-and-peer-auth");
     expect(result.blockers).not.toContain("wsl2-preflight-and-systemd-convergence");
     expect(result.blockers).not.toContain("retained-platform-native-assets");
-    expect(result.blockers).not.toContain("deferred-platform-pre-mutation-enforcement");
+    expect(result.blockers).not.toContain("unsupported-profile-pre-mutation-enforcement");
   });
 
   it("binds local command closure to the four promoted managed capabilities", () => {
@@ -68,7 +68,7 @@ describe("managed lifecycle authority contract", () => {
     }
   });
 
-  it("locks the first stable support matrix to x64 Local and Hosting", () => {
+  it("locks the managed matrix to Linux, WSL2, macOS Local and x64 Hosting", () => {
     const value = contract();
     const retained = value.profiles.filter(
       ({ support }: { support: string }) => support === "retained",
@@ -85,20 +85,32 @@ describe("managed lifecycle authority contract", () => {
         serviceManager: "systemd",
       },
       {
+        id: "linux-arm64-protected-local",
+        support: "retained",
+        platforms: ["linux-arm64"],
+        serviceManager: "systemd",
+      },
+      {
+        id: "wsl2-protected-local",
+        support: "retained",
+        platforms: ["linux-x64"],
+        serviceManager: "systemd",
+      },
+      {
         id: "linux-hosting",
         support: "retained",
         platforms: ["ubuntu-x64", "rocky-x64"],
         serviceManager: "systemd",
       },
+      {
+        id: "darwin-protected-local",
+        support: "retained",
+        platforms: ["darwin-x64", "darwin-arm64"],
+        serviceManager: "launchd",
+      },
     ]);
     expect(deferred.flatMap(({ platforms }: { platforms: string[] }) => platforms)).toEqual(
-      expect.arrayContaining([
-        "linux-arm64",
-        "ubuntu-arm64",
-        "rocky-arm64",
-        "darwin-x64",
-        "darwin-arm64",
-      ]),
+      expect.arrayContaining(["ubuntu-arm64", "rocky-arm64"]),
     );
   });
 
@@ -126,7 +138,7 @@ describe("managed lifecycle authority contract", () => {
     });
     expect(managedPluginTransaction).toMatchObject({
       boundary: "managed",
-      profiles: ["linux-protected-local", "linux-hosting"],
+      profiles: ["linux-protected-local", "linux-arm64-protected-local", "linux-hosting"],
       owner: "go-lifecycle",
       status: "implemented",
     });

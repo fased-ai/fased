@@ -10,6 +10,10 @@ import (
 
 var errLinuxHostingOnly = errors.New("Hosting host-security is supported only on Linux")
 
+func (host LinuxHost) lifecyclePrerequisitesReady() (bool, error) {
+	return false, errLinuxHostingOnly
+}
+
 func (host LinuxHost) SnapshotTailscaleInstall(context.Context) (string, error) {
 	return "", errLinuxHostingOnly
 }

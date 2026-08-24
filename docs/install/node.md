@@ -31,8 +31,8 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
 
 <Tabs>
   <Tab title="macOS">
-    **Homebrew** (recommended for source development). The public managed
-    installer does not support macOS in the first stable matrix.
+    **Homebrew** is recommended only for source development. Managed macOS
+    Local releases bundle Node and do not require Homebrew.
 
     ```bash
     brew install node
@@ -101,11 +101,10 @@ but still omit `node:sqlite`; those are not suitable for full memory support.
   </Tab>
   <Tab title="Windows / WSL2">
     Do not install Node with `winget`, Chocolatey, or a native Windows Node.js
-    installer for a managed Fased runtime. WSL2 and native Windows are deferred
-    from the first managed stable matrix. Maintainers may use WSL2 for source
-    development with the Ubuntu instructions above; do not present that as a
-    supported public managed install. Native Windows Node.js cannot run the
-    Unix-socket wallet signer path. See [Windows](/platforms/windows).
+    installer for a managed Fased runtime. Managed Ubuntu WSL2 uses the bundled
+    Linux Node runtime installed from inside the Ubuntu shell; users do not
+    install Node themselves. Native Windows Node.js cannot run the Unix-socket
+    wallet signer path. See [Windows](/platforms/windows).
   </Tab>
 </Tabs>
 
@@ -172,8 +171,8 @@ your shell has not reloaded its startup files yet.
       </Tab>
       <Tab title="Windows / WSL2">
         Add the same line to the Ubuntu shell startup file inside WSL2 for a
-        source-development checkout. WSL2 and native Windows are not in the
-        first public managed matrix.
+        source-development checkout. A managed Ubuntu WSL2 installation owns
+        its launcher path automatically; native Windows remains unsupported.
       </Tab>
     </Tabs>
 
