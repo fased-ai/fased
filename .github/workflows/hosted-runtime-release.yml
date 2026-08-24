@@ -3,24 +3,13 @@ name: Hosted Runtime Release
 on:
   workflow_dispatch:
     inputs:
-      phase:
-        description: Prepare exact bytes on main or finalize them from the owner-created tag ref
-        required: true
-        type: choice
-        options:
-          - prepare
-          - finalize
       release_version:
-        description: Exact version already committed on protected main
+        description: Exact version in the owner-created annotated tag
         required: true
         type: string
       source_commit:
-        description: Exact protected-main commit to build and publish
+        description: Exact protected-main commit peeled from the tag
         required: true
-        type: string
-      prepare_run_id:
-        description: Successful prepare workflow run ID; required only for finalize
-        required: false
         type: string
 
 permissions:
@@ -34,29 +23,27 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  prepare:
-    name: Build exact candidate bytes once
-    if: inputs.phase == 'prepare'
+  release:
+    name: Build, attest, publish, and promote exact tag once
+    environment: candidate-release
     permissions:
       actions: read
-      contents: read
+      attestations: write
+      contents: write
+      id-token: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    outputs:
-      release_sequence: ${{ steps.channel.outputs.release_sequence }}
-      security_epoch: ${{ steps.channel.outputs.security_epoch }}
+    timeout-minutes: 25
     steps:
-      - name: Checkout exact protected source
+      - name: Checkout actual immutable tag ref
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.source_commit }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
           submodules: false
 
-      - name: Verify exact source and version
+      - name: Verify exact annotated tag, protected source, and version
         env:
           GH_TOKEN: ${{ github.token }}
-          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
@@ -65,15 +52,16 @@ jobs:
           [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
           [[ "$RELEASE_VERSION" == *-* ]]
           [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
-          test "$GITHUB_REF" = refs/heads/main
-          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
-          test -z "$PREPARE_RUN_ID"
+          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
+          test "$(git cat-file -t "$GITHUB_REF")" = tag
+          test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$SOURCE_COMMIT"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_COMMIT"
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
           if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Immutable release already exists; run Hosted Runtime Promote instead." >&2
             exit 1
           fi
+          node scripts/ci-version-identity.mjs --inventory-only
 
       - name: Resolve exact next signed channel identity
         id: channel
@@ -150,66 +138,13 @@ jobs:
           mkdir -p .artifacts/hosted-runtime
           cp -a "$RUNNER_TEMP/candidate/product/." .artifacts/hosted-runtime/
 
-      - name: Upload exact prepared bytes once
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fased-hosting-prepared-candidate
-          path: .artifacts/hosted-runtime/*
-          if-no-files-found: error
-          retention-days: 30
-
-  finalize:
-    name: Attest from tag, publish, and promote exact candidate
-    if: inputs.phase == 'finalize'
-    environment: candidate-release
-    permissions:
-      actions: read
-      attestations: write
-      contents: write
-      id-token: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - name: Checkout actual immutable tag ref
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-      - name: Download exact prepared bytes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: fased-hosting-prepared-candidate
-          path: .artifacts/hosted-runtime
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.prepare_run_id }}
-
-      - name: Verify tag and exact successful prepare run
+      - name: Verify finalized product identity
         env:
-          GH_TOKEN: ${{ github.token }}
-          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           RELEASE_VERSION: ${{ inputs.release_version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
-          test "$(git cat-file -t "$GITHUB_REF")" = tag
-          test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$SOURCE_COMMIT"
-          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
-          prepare="$RUNNER_TEMP/prepare-run.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREPARE_RUN_ID" > "$prepare"
-          jq -e --arg commit "$SOURCE_COMMIT" \
-            '.event == "workflow_dispatch" and .status == "completed" and
-             .conclusion == "success" and .head_branch == "main" and
-             .head_sha == $commit and
-             .path == ".github/workflows/hosted-runtime-release.yml"' \
-            "$prepare" >/dev/null
           test ! -e .artifacts/hosted-runtime/fased-hosting-candidate.json
           test ! -e .artifacts/hosted-runtime/fased-release-index-v1.json.attestation.json
           jq -e --arg version "$RELEASE_VERSION" --arg commit "$SOURCE_COMMIT" \

@@ -83,32 +83,21 @@ describe("lean attested Linux-x64 artifact layout", () => {
     expect(releaseWorkflow).not.toContain("test-lifecycle-hosting-acceptance.sh");
   });
 
-  it("prepares on main and creates official attestations only from the immutable tag ref", () => {
-    expect(releaseWorkflow).toContain("phase:");
-    expect(releaseWorkflow).toContain("prepare_run_id:");
-    expect(releaseWorkflow).toContain("if: inputs.phase == 'prepare'");
-    expect(releaseWorkflow).toContain("if: inputs.phase == 'finalize'");
-    expect(releaseWorkflow).toContain('test "$GITHUB_REF" = refs/heads/main');
+  it("builds and publishes in one run from the immutable tag ref", () => {
+    expect(releaseWorkflow).not.toContain("prepare_run_id:");
+    expect(releaseWorkflow).not.toContain("inputs.phase");
     expect(releaseWorkflow).toContain('test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"');
     expect(releaseWorkflow).toContain('test "$(git cat-file -t "$GITHUB_REF")" = tag');
     expect(releaseWorkflow).toContain(
       'test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$SOURCE_COMMIT"',
     );
-    expect(releaseWorkflow).toContain("run-id: ${{ inputs.prepare_run_id }}");
-    expect(releaseWorkflow).toContain("github-token: ${{ github.token }}");
-    expect(releaseWorkflow).toContain("PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}");
-    expect(releaseWorkflow).not.toContain('test -z "${{ inputs.prepare_run_id }}"');
+    expect(releaseWorkflow).not.toContain("actions/download-artifact");
     expect(releaseWorkflow).toContain("Verify every official attestation is tag-bound");
     expect(releaseWorkflow).toContain("verify-release-set");
 
-    const prepare = releaseWorkflow.slice(
-      releaseWorkflow.indexOf("  prepare:"),
-      releaseWorkflow.indexOf("  finalize:"),
-    );
-    const finalize = releaseWorkflow.slice(releaseWorkflow.indexOf("  finalize:"));
-    expect(prepare).not.toContain("actions/attest@");
-    expect(finalize).not.toContain("build-linux-x64-release-artifact.sh");
-    expect(finalize).toContain("actions/attest@");
+    const release = releaseWorkflow.slice(releaseWorkflow.indexOf("  release:"));
+    expect(release.match(/build-linux-x64-release-artifact\.sh/gu)?.length).toBe(1);
+    expect(release.match(/actions\/attest@/gu)?.length).toBe(9);
   });
 
   it("contains no simulated Protected Local acceptance implementation", () => {
