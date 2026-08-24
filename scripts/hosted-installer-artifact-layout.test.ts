@@ -111,12 +111,8 @@ describe("lean attested Linux managed artifact layout", () => {
 
   it("builds, finalizes, and publishes the same bytes once", () => {
     expect(releaseWorkflow).toContain("scripts/build-linux-x64-release-artifact.sh");
-    expect(releaseWorkflow).toContain(`run: |
-          bash scripts/build-linux-x64-release-artifact.sh \\
-            "$RUNNER_TEMP/candidate/raw" "$RUNNER_TEMP/candidate/arm64" \\
-            "$RUNNER_TEMP/candidate/darwin-x64" "$RUNNER_TEMP/candidate/darwin-arm64"`);
-    expect(releaseWorkflow).not.toContain(
-      "run: bash scripts/build-linux-x64-release-artifact.sh \\\n",
+    expect(releaseWorkflow).toContain(
+      'run: bash scripts/build-linux-x64-release-artifact.sh "$RUNNER_TEMP/candidate/raw"',
     );
     expect(releaseWorkflow).toContain("scripts/finalize-pretag-candidate.sh");
     expect(releaseWorkflow).toContain("gh attestation verify");
@@ -132,9 +128,9 @@ describe("lean attested Linux managed artifact layout", () => {
     expect(releaseWorkflow).toContain(
       'test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$SOURCE_COMMIT"',
     );
-    expect(releaseWorkflow).toContain("actions/download-artifact");
-    expect(releaseWorkflow).toContain("build-linux-arm64-release-supplement.sh");
-    expect(releaseWorkflow).toContain("ubuntu-24.04-arm");
+    expect(releaseWorkflow).not.toContain("actions/download-artifact");
+    expect(releaseWorkflow).not.toContain("build-linux-arm64-release-supplement.sh");
+    expect(releaseWorkflow).not.toContain("ubuntu-24.04-arm");
     expect(releaseWorkflow).toContain("Verify every official attestation is tag-bound");
     expect(releaseWorkflow).toContain("verify-release-set");
 

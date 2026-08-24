@@ -144,7 +144,7 @@ describe("production lifecycle release index", () => {
     });
   });
 
-  it("binds Linux and macOS x64 and arm64 without a private release key", async () => {
+  it("binds only Linux x64 in the ordinary release index", async () => {
     const assetsDir = await fixture();
     const index = await buildLifecycleReleaseIndex({
       assetsDir,
@@ -165,15 +165,9 @@ describe("production lifecycle release index", () => {
       securityEpoch: 1,
       application: {
         "linux-x64": { name: `fased-generation-linux-x64-v${version}.tar.gz` },
-        "linux-arm64": { name: `fased-generation-linux-arm64-v${version}.tar.gz` },
-        "darwin-x64": { name: `fased-generation-darwin-x64-v${version}.tar.gz` },
-        "darwin-arm64": { name: `fased-generation-darwin-arm64-v${version}.tar.gz` },
       },
       lifecycleHost: {
         "linux-x64": { privilegedComponent: "lifecycle-host" },
-        "linux-arm64": { privilegedComponent: "lifecycle-host" },
-        "darwin-x64": { privilegedComponent: "lifecycle-host" },
-        "darwin-arm64": { privilegedComponent: "lifecycle-host" },
       },
     });
     expect(index.artifactSetDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
@@ -199,8 +193,8 @@ describe("production lifecycle release index", () => {
       version,
     });
     expect(index.schemaVersion).toBe(1);
-    expect(Object.keys(index.application)).toEqual(["x64", "arm64"]);
-    expect(Object.keys(index.lifecycleHost)).toEqual(["x64", "arm64"]);
+    expect(Object.keys(index.application)).toEqual(["x64"]);
+    expect(Object.keys(index.lifecycleHost)).toEqual(["x64"]);
   });
 
   it("rejects a dependency that differs from the generation inventory", async () => {

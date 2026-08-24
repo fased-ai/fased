@@ -63,22 +63,10 @@ done < <(jq -er '.artifacts[] | [.name, (.size|tostring), .sha256] | @tsv' "$des
 for required in \
   install.sh \
   fased-bootstrap-linux-x64 \
-  fased-bootstrap-linux-arm64 \
-  fased-bootstrap-darwin-x64 \
-  fased-bootstrap-darwin-arm64 \
   fased-lifecycled-linux-amd64 \
-  fased-lifecycled-linux-arm64 \
-  fased-lifecycled-darwin-amd64 \
-  fased-lifecycled-darwin-arm64 \
   fased-signerd-linux-amd64 \
-  fased-signerd-linux-arm64 \
-  fased-signerd-darwin-amd64 \
-  fased-signerd-darwin-arm64 \
   fased-hosted-release-v2.json \
-  "fased-generation-linux-x64-v${VERSION}.tar.gz" \
-  "fased-generation-linux-arm64-v${VERSION}.tar.gz" \
-  "fased-generation-darwin-x64-v${VERSION}.tar.gz" \
-  "fased-generation-darwin-arm64-v${VERSION}.tar.gz"; do
+  "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
   test -s "$OUTPUT_DIR/$required"
 done
 install -m 0755 "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \

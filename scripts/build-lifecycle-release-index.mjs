@@ -175,10 +175,7 @@ export async function buildLifecycleReleaseIndex(options) {
     throw new Error("release-index validity is invalid");
   }
 
-  const selectedPlatforms =
-    schemaVersion === 1
-      ? platforms.filter((platform) => platform.operatingSystem === "linux")
-      : platforms;
+  const selectedPlatforms = platforms.filter((platform) => platform.key === "linux-x64");
   const records = {};
   for (const platform of selectedPlatforms) {
     records[platform.key] = await generationMetadata(assetsDir, version, platform);

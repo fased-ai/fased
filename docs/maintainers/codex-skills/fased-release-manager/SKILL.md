@@ -116,6 +116,13 @@ bytes, run the production bootstrap/trust verifier, publish, and advance the
 channel. The tag ref and peeled commit bind every official attestation.
 Metadata-only promotion resumes an already published release without rebuilding.
 
+The ordinary RC workflow is Linux-x64 only: one release job that never dispatches,
+depends on, or waits for ARM64 or macOS. Portable supplements use a distinct,
+explicitly owner-selected workflow only for a requested multi-platform release.
+Assemble Linux-x64 once per public version because its JavaScript and native Go
+binaries bind the version, commit, tree, and digest. Reuse dependency downloads
+and Go compilation caches, never a prior assembled release or duplicate build.
+
 Fresh Local and Hosting checks are owner-initiated after publication. Update the
 existing owner-Local installation only when the owner authorizes it. Use literal
 output supplied by the owner for an unreachable fresh Local machine, and connect

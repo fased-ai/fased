@@ -48,15 +48,12 @@ describe("lifecycle trust metadata", () => {
       release: { version: "1.2.3", tag: "v1.2.3", commit: "a".repeat(40) },
       policy: {
         channels: ["beta", "stable"],
-        platforms: ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"],
+        platforms: ["linux-x64"],
         lifecycleProtocol: 1,
       },
       targets: {
         bootstrap: { asset: "install.sh" },
         lifecycleLinuxX64: { asset: "fased-lifecycled-linux-amd64" },
-        lifecycleLinuxArm64: { asset: "fased-lifecycled-linux-arm64" },
-        lifecycleDarwinX64: { asset: "fased-lifecycled-darwin-amd64" },
-        lifecycleDarwinArm64: { asset: "fased-lifecycled-darwin-arm64" },
         evidenceVerifier: { asset: "fased-privileged-release-evidence.mjs" },
       },
       evidence: {

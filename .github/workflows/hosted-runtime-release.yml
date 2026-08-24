@@ -23,111 +23,6 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  build-linux-arm64:
-    name: Build exact Linux-arm64 supplement
-    permissions:
-      contents: read
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
-    steps:
-      - name: Checkout actual immutable tag ref
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          submodules: false
-
-      - name: Verify exact tag source
-        env:
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
-          test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$SOURCE_COMMIT"
-          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
-          test "$(uname -m)" = aarch64
-
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: tools/fased-lifecycled/go.mod
-          cache-dependency-path: |
-            tools/fased-lifecycled/go.sum
-            tools/fased-signerd/go.sum
-
-      - name: Build native Linux-arm64 supplement
-        run: bash scripts/build-linux-arm64-release-supplement.sh "$RUNNER_TEMP/linux-arm64"
-
-      - name: Upload exact Linux-arm64 supplement
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: linux-arm64-${{ inputs.source_commit }}
-          path: ${{ runner.temp }}/linux-arm64/*
-          if-no-files-found: error
-          retention-days: 1
-
-  build-darwin:
-    name: Build exact macOS-${{ matrix.arch }} supplement
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15-intel
-            arch: x64
-          - runner: macos-15
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
-    steps:
-      - name: Checkout actual immutable tag ref
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          submodules: false
-      - name: Verify exact tag source and native architecture
-        env:
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-          EXPECTED_ARCH: ${{ matrix.arch }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = "refs/tags/v$RELEASE_VERSION"
-          test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$SOURCE_COMMIT"
-          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
-          test "$(node -p process.platform)" = darwin
-          test "$(node -p process.arch)" = "$EXPECTED_ARCH"
-      - name: Setup Node environment
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: tools/fased-lifecycled/go.mod
-          cache-dependency-path: |
-            tools/fased-lifecycled/go.sum
-            tools/fased-signerd/go.sum
-      - name: Build native macOS supplement
-        run: bash scripts/build-darwin-release-supplement.sh "$RUNNER_TEMP/darwin-${{ matrix.arch }}"
-      - name: Upload exact macOS supplement
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: darwin-${{ matrix.arch }}-${{ inputs.source_commit }}
-          path: ${{ runner.temp }}/darwin-${{ matrix.arch }}/*
-          if-no-files-found: error
-          retention-days: 1
-
   release:
     name: Build, attest, publish, and promote exact tag once
     permissions:
@@ -136,7 +31,6 @@ jobs:
       contents: write
       id-token: write
     runs-on: ubuntu-24.04
-    needs: [build-linux-arm64, build-darwin]
     timeout-minutes: 25
     steps:
       - name: Checkout actual immutable tag ref
@@ -220,32 +114,11 @@ jobs:
             tools/fased-lifecycled/go.sum
             tools/fased-signerd/go.sum
 
-      - name: Download exact Linux-arm64 supplement
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: linux-arm64-${{ inputs.source_commit }}
-          path: ${{ runner.temp }}/candidate/arm64
-
-      - name: Download exact macOS-x64 supplement
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: darwin-x64-${{ inputs.source_commit }}
-          path: ${{ runner.temp }}/candidate/darwin-x64
-
-      - name: Download exact macOS-arm64 supplement
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: darwin-arm64-${{ inputs.source_commit }}
-          path: ${{ runner.temp }}/candidate/darwin-arm64
-
-      - name: Build exact multi-architecture Linux artifact once
+      - name: Build exact Linux-x64 artifact once
         env:
           FASED_LIFECYCLE_RELEASE_SEQUENCE: ${{ steps.channel.outputs.release_sequence }}
           FASED_LIFECYCLE_SECURITY_EPOCH: ${{ steps.channel.outputs.security_epoch }}
-        run: |
-          bash scripts/build-linux-x64-release-artifact.sh \
-            "$RUNNER_TEMP/candidate/raw" "$RUNNER_TEMP/candidate/arm64" \
-            "$RUNNER_TEMP/candidate/darwin-x64" "$RUNNER_TEMP/candidate/darwin-arm64"
+        run: bash scripts/build-linux-x64-release-artifact.sh "$RUNNER_TEMP/candidate/raw"
 
       - name: Finalize exact product inventory once
         env:
@@ -395,13 +268,7 @@ jobs:
           set -euo pipefail
           pairs=(
             'fased-signerd-linux-amd64:fased-signerd-release.attestation.json'
-            'fased-signerd-linux-arm64:fased-signerd-release.attestation.json'
-            'fased-signerd-darwin-amd64:fased-signerd-release.attestation.json'
-            'fased-signerd-darwin-arm64:fased-signerd-release.attestation.json'
             'fased-lifecycled-linux-amd64:fased-lifecycled-release.attestation.json'
-            'fased-lifecycled-linux-arm64:fased-lifecycled-release.attestation.json'
-            'fased-lifecycled-darwin-amd64:fased-lifecycled-release.attestation.json'
-            'fased-lifecycled-darwin-arm64:fased-lifecycled-release.attestation.json'
             'install.sh:install.sh.attestation.json'
             'fased-hosted-release-v2.json:fased-hosted-release-v2.json.attestation.json'
             'fased-privileged-provenance-v1.intoto.json:fased-privileged-provenance-v1.intoto.json.attestation.json'
