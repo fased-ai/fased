@@ -58,6 +58,10 @@ func (host LinuxHost) hardeningReady(context.Context) bool {
 	return false
 }
 
+func (host LinuxHost) inspectHardening(context.Context) ([]HardeningIssue, error) {
+	return nil, errLinuxHostingOnly
+}
+
 func (host LinuxHost) signerWebAuthnReady(string) bool {
 	return false
 }

@@ -1,6 +1,6 @@
 {
   "name": "@fased/talk-voice",
-  "version": "0.1.76-rc.137",
+  "version": "0.1.76-rc.138",
   "private": true,
   "description": "Optional Talk voice configuration plugin",
   "files": [
@@ -9,7 +9,7 @@
   ],
   "type": "module",
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.137"
+    "@fased/fased": "^0.1.76-rc.138"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {

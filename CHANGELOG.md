@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.138
+
+- Restore the non-Linux Hosting adapter boundary so portable lifecycle host
+  binaries compile while continuing to reject Hosting outside Linux.
+
 ## 0.1.76-rc.137
 
 - Make Hosting updates hand off from a permanent root-owned authority receipt
