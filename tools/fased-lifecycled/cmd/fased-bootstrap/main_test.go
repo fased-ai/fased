@@ -661,11 +661,11 @@ func TestUpdateBindsExistingPlatformPortWithoutChangingTopology(t *testing.T) {
 	}
 }
 
-func TestPreparedHostingOperatorRefreshesFirstInstallPlaceholder(t *testing.T) {
+func TestPostApplyHostingOperatorRefreshesFirstInstallPlaceholder(t *testing.T) {
 	placeholder := publicOperator{Name: "app", Home: "/home/app"}
 	resolved := publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}
 	calls := 0
-	got, err := refreshPublicOperatorAfterPreparation(placeholder, model.ProfileHosting, "app", func(name string, profile model.Profile) (publicOperator, error) {
+	got, err := refreshPublicOperatorAfterLifecycleApply(placeholder, model.ProfileHosting, "app", func(name string, profile model.Profile) (publicOperator, error) {
 		calls++
 		if name != "app" || profile != model.ProfileHosting {
 			t.Fatalf("resolver received name=%q profile=%q", name, profile)
@@ -680,9 +680,9 @@ func TestPreparedHostingOperatorRefreshesFirstInstallPlaceholder(t *testing.T) {
 	}
 }
 
-func TestPreparedOperatorPreservesExistingLocalIdentity(t *testing.T) {
+func TestPostApplyOperatorPreservesExistingLocalIdentity(t *testing.T) {
 	local := publicOperator{Name: "owner", Home: "/home/owner", UID: 1000, GID: 1000}
-	got, err := refreshPublicOperatorAfterPreparation(local, model.ProfileProtectedLocal, "", func(string, model.Profile) (publicOperator, error) {
+	got, err := refreshPublicOperatorAfterLifecycleApply(local, model.ProfileProtectedLocal, "", func(string, model.Profile) (publicOperator, error) {
 		t.Fatal("existing Local operator unexpectedly re-resolved")
 		return publicOperator{}, nil
 	})
@@ -694,9 +694,9 @@ func TestPreparedOperatorPreservesExistingLocalIdentity(t *testing.T) {
 	}
 }
 
-func TestPreparedHostingOperatorPreservesExistingIdentity(t *testing.T) {
+func TestPostApplyHostingOperatorPreservesExistingIdentity(t *testing.T) {
 	hosting := publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}
-	got, err := refreshPublicOperatorAfterPreparation(hosting, model.ProfileHosting, "app", func(string, model.Profile) (publicOperator, error) {
+	got, err := refreshPublicOperatorAfterLifecycleApply(hosting, model.ProfileHosting, "app", func(string, model.Profile) (publicOperator, error) {
 		t.Fatal("existing Hosting operator unexpectedly re-resolved")
 		return publicOperator{}, nil
 	})
@@ -708,7 +708,7 @@ func TestPreparedHostingOperatorPreservesExistingIdentity(t *testing.T) {
 	}
 }
 
-func TestPreparedHostingOperatorRejectsChangedIdentity(t *testing.T) {
+func TestPostApplyHostingOperatorRejectsChangedIdentity(t *testing.T) {
 	placeholder := publicOperator{Name: "app", Home: "/home/app"}
 	for name, resolver := range map[string]publicOperatorResolver{
 		"wrong prepared owner": func(string, model.Profile) (publicOperator, error) {
@@ -726,10 +726,64 @@ func TestPreparedHostingOperatorRejectsChangedIdentity(t *testing.T) {
 			if name == "wrong prepared owner" {
 				preparedOwner = "other"
 			}
-			if _, err := refreshPublicOperatorAfterPreparation(placeholder, model.ProfileHosting, preparedOwner, resolver); err == nil {
+			if _, err := refreshPublicOperatorAfterLifecycleApply(placeholder, model.ProfileHosting, preparedOwner, resolver); err == nil {
 				t.Fatal("unsafe prepared operator identity was accepted")
 			}
 		})
+	}
+}
+
+func TestHostingOperatorRefreshRunsAfterLifecycleApply(t *testing.T) {
+	placeholder := publicOperator{Name: "app", Home: "/home/app"}
+	resolved := publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}
+	events := []string{}
+	response, output, operator, applied, err := invokeLifecycleHostWithProvisionedOperator(
+		context.Background(), publicLifecycleRequest{Profile: model.ProfileHosting}, placeholder, bootstrapResult{}, nil, "app",
+		func(context.Context, publicLifecycleRequest, publicOperator, bootstrapResult, *hostsecurity.MutationLock) (protocol.Response, []byte, error) {
+			events = append(events, "apply")
+			return protocol.Response{Outcome: "UPDATED"}, []byte("applied"), nil
+		},
+		func(string, model.Profile) (publicOperator, error) {
+			events = append(events, "resolve")
+			return resolved, nil
+		},
+	)
+	if err != nil || !applied || response.Outcome != "UPDATED" || string(output) != "applied" || operator != resolved {
+		t.Fatalf("post-apply operator resolution failed: response=%+v output=%q operator=%+v applied=%t err=%v", response, output, operator, applied, err)
+	}
+	if got := strings.Join(events, ","); got != "apply,resolve" {
+		t.Fatalf("Hosting operator resolved outside the post-apply boundary: %s", got)
+	}
+}
+
+func TestHostingOperatorRefreshDistinguishesApplyFromPostApplyFailure(t *testing.T) {
+	placeholder := publicOperator{Name: "app", Home: "/home/app"}
+	resolveCalls := 0
+	_, _, _, applied, err := invokeLifecycleHostWithProvisionedOperator(
+		context.Background(), publicLifecycleRequest{Profile: model.ProfileHosting}, placeholder, bootstrapResult{}, nil, "app",
+		func(context.Context, publicLifecycleRequest, publicOperator, bootstrapResult, *hostsecurity.MutationLock) (protocol.Response, []byte, error) {
+			return protocol.Response{}, nil, errors.New("apply failed")
+		},
+		func(string, model.Profile) (publicOperator, error) {
+			resolveCalls++
+			return publicOperator{}, nil
+		},
+	)
+	if err == nil || applied || resolveCalls != 0 {
+		t.Fatalf("apply failure crossed the provisioned-operator boundary: applied=%t resolveCalls=%d err=%v", applied, resolveCalls, err)
+	}
+
+	_, _, _, applied, err = invokeLifecycleHostWithProvisionedOperator(
+		context.Background(), publicLifecycleRequest{Profile: model.ProfileHosting}, placeholder, bootstrapResult{}, nil, "app",
+		func(context.Context, publicLifecycleRequest, publicOperator, bootstrapResult, *hostsecurity.MutationLock) (protocol.Response, []byte, error) {
+			return protocol.Response{Outcome: "UPDATED"}, nil, nil
+		},
+		func(string, model.Profile) (publicOperator, error) {
+			return placeholder, nil
+		},
+	)
+	if err == nil || !applied {
+		t.Fatalf("post-apply identity failure lost the committed-generation boundary: applied=%t err=%v", applied, err)
 	}
 }
 

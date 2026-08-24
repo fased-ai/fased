@@ -945,6 +945,31 @@ func TestHostingSecurityCrossReleaseRecoveryRejectsBoundaryMismatchWithoutMutati
 	}
 }
 
+func TestHostingSecurityRebindsPrivateNetworkReadyFailureToCorrectedRelease(t *testing.T) {
+	participant, host, failed := fixture(t)
+	failed.Release = "0.1.76-rc.129"
+	prepared, err := participant.Prepare(context.Background(), failed)
+	if err != nil || prepared.Phase != PhasePrivateNetworkReady {
+		t.Fatalf("prepare failed release: state=%+v err=%v", prepared, err)
+	}
+
+	host.calls = nil
+	corrected := failed
+	corrected.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	corrected.Release = "0.1.76-rc.130"
+	rebound, err := participant.Prepare(context.Background(), corrected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebound.Phase != PhasePrivateNetworkReady || rebound.Release != corrected.Release || rebound.TransactionID != corrected.TransactionID ||
+		rebound.TailscaleDNS != prepared.TailscaleDNS || rebound.TailscaleIPv4 != prepared.TailscaleIPv4 || rebound.TailscaleVersion != prepared.TailscaleVersion {
+		t.Fatalf("prepared Hosting boundary was not rebound exactly: %+v", rebound)
+	}
+	if got := strings.Join(host.calls, ","); got != "inspect" {
+		t.Fatalf("cross-release retry mutated the prepared host: %s", got)
+	}
+}
+
 func TestHostingSecurityRuntimeReadyRecoveryRepairsMissingReceipt(t *testing.T) {
 	participant, host, request := fixture(t)
 	state, err := participant.Prepare(context.Background(), request)

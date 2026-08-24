@@ -86,7 +86,11 @@ func (server *Server) HandlePeer(ctx context.Context, connection net.Conn, peer 
 		return err
 	}
 	if receivedLease != nil {
-		defer receivedLease.Close()
+		defer func() {
+			if receivedLease != nil {
+				_ = receivedLease.Close()
+			}
+		}()
 	}
 	request, err := protocol.DecodeRequest(bytes.NewReader(frame))
 	if err != nil {
@@ -101,6 +105,12 @@ func (server *Server) HandlePeer(ctx context.Context, connection net.Conn, peer 
 		release, leaseErr := server.OperationLease(operationCtx, peer, receivedLease)
 		if leaseErr != nil {
 			return leaseErr
+		}
+		if receivedLease != nil {
+			if closeErr := receivedLease.Close(); closeErr != nil {
+				return errors.Join(closeErr, release())
+			}
+			receivedLease = nil
 		}
 		defer func() { _ = release() }()
 	}
