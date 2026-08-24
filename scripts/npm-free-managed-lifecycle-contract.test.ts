@@ -283,6 +283,10 @@ describe("npm-free managed lifecycle", () => {
     );
 
     expect(skill).toContain("Treat “fix and release” as one conditional authorization:");
+    expect(skill).toContain("the fix, and its nearest focused regression in the same protected PR");
+    expect(skill).toContain("Do not add a full-package rerun after the focused predicate passes.");
+    expect(skill).toMatch(/under ten minutes when GitHub infrastructure is\s+responsive/u);
+    expect(skill).toContain("must not add a second environment-review pause");
     expect(skill).toContain(
       "Exercise adjacent durable transitions once; never publish first-error patches.",
     );
@@ -298,6 +302,8 @@ describe("npm-free managed lifecycle", () => {
     );
     expect(release).toMatch(/builds one Linux-x64 core\s+artifact/u);
     expect(release).toContain("one tag-bound release workflow");
+    expect(release).toContain("Do not merge a release-authorized product fix");
+    expect(release).toContain("parallel signer/lifecycle compilation remain");
     expect(release).toMatch(/actual `GITHUB_REF` equal to\s+`refs\/tags\/v<version>`/u);
     expect(release).toMatch(/fix the reported predicate\s+in one new protected PR/u);
     expect(redesign).toContain("release workflow starts");

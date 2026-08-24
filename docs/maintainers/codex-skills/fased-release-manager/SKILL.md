@@ -38,13 +38,22 @@ Use `FIX` or `LIFECYCLE` to close the reported failure before entering
 
 Treat “fix and release” as one conditional authorization:
 
-1. Close the reported predicate with the nearest focused regression.
-2. Put the fix and next unused version in one protected PR.
+1. Reserve the next unused version before opening delivery and put that version,
+   the fix, and its nearest focused regression in the same protected PR.
+2. Run only that regression, directly coupled contracts, and changed-file
+   formatting. Do not add a full-package rerun after the focused predicate passes.
 3. Run changed-surface CI once and squash-merge the exact passing head.
 4. Create the annotated tag at that merged commit.
 5. Dispatch one tag-bound workflow that builds once, attests, publishes and
    advances the selected channel.
 6. Read back the public tag and release result.
+
+The ordinary bounded target is under ten minutes when GitHub infrastructure is
+responsive: about two minutes for focused PR CI and six minutes for the one
+cached, parallel tag-bound build and publication. Never merge the product fix
+and then open a standalone version PR when release authority was already present.
+The protected owner-created annotated tag is the publication approval; the
+initial tag-bound workflow must not add a second environment-review pause.
 
 Continue through those steps without requesting the same authority again. Stop
 only for an actual failed predicate, changed identity, owner stop, or authority

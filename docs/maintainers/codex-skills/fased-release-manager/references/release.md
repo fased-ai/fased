@@ -25,6 +25,15 @@ from that tag, installs frozen dependencies once, builds one Linux-x64 core
 artifact, and performs publication in the same run. Optional component packs use
 their signed component transaction.
 
+Reserve the unused version before delivery and change it in the product-fix PR.
+Do not merge a release-authorized product fix and then create a standalone
+version PR. After the nearest regression passes, do not add a full-package rerun.
+The protected owner-created annotated tag is the approval for the initial
+tag-bound publication workflow, so that workflow has no second environment-review
+pause. pnpm and Go caches plus parallel signer/lifecycle compilation remain
+enabled; cache hits may accelerate compilation but never replace tag-bound
+assembly, verification, attestation, or publication.
+
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names, sizes and digests, provenance, SBOM/VEX, signer/controller identity,
 and the acceptance-contract identity. The release workflow executes with its
@@ -79,8 +88,10 @@ GitHub release/channel metadata.
 ## Authority
 
 Do not create, move, delete, publish, or promote versions, tags, or releases
-without current explicit authority. Never bypass protected checks or environment
-review. One approval may authorize a named conditional chain; do not ask for the
-same approval again while its exact identities and predicates remain unchanged.
+without current explicit authority. Never bypass protected checks. The initial
+publication uses the protected owner-created annotated tag as its approval;
+metadata-only promotion retains its configured environment review. One approval
+may authorize a named conditional chain; do not ask for the same approval again
+while its exact identities and predicates remain unchanged.
 
 Never publish npm packages or make npm registry state a release predicate.
