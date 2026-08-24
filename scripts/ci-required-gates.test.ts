@@ -16,16 +16,6 @@ describe("required CI gate aggregation", () => {
     ).not.toThrow();
   });
 
-  it("accepts exact version-only changes without docs or product jobs", () => {
-    expect(() =>
-      assertApplicableGates({
-        docsChanged: true,
-        versionOnly: true,
-        results: { ...alwaysGreen, "version identity": "success" },
-      }),
-    ).not.toThrow();
-  });
-
   it("requires the dedicated dependency-integrity result when selected", () => {
     expect(() =>
       assertApplicableGates({

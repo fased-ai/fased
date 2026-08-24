@@ -21,7 +21,6 @@ jobs:
       test_only: ${{ steps.scope.outputs.test_only }}
       manual_review_required: ${{ steps.scope.outputs.manual_review_required }}
       docs_changed: ${{ steps.scope.outputs.docs_changed }}
-      version_only: ${{ steps.scope.outputs.version_only }}
       dependency_remediation: ${{ steps.scope.outputs.dependency_remediation }}
       dependency_names_json: ${{ steps.scope.outputs.dependency_names_json }}
       run_dependency_integrity: ${{ steps.scope.outputs.run_dependency_integrity }}
@@ -82,16 +81,9 @@ jobs:
           submodules: false
 
       - name: Setup Node environment
-        if: needs.classify.outputs.version_only != 'true'
         uses: ./.github/actions/setup-node-env
         with:
           install-bun: "false"
-
-      - name: Setup Node.js for exact version-only validation
-        if: needs.classify.outputs.version_only == 'true'
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
 
       - name: Setup Go when selected
         if: needs.classify.outputs.run_native_signer == 'true'
@@ -172,14 +164,6 @@ jobs:
             pnpm --dir ui exec node --input-type=module -e \
               "import createDOMPurify from 'dompurify'; if (typeof createDOMPurify !== 'function') process.exit(1)"
           fi
-
-      - name: Validate exact version-only diff
-        if: needs.classify.outputs.version_only == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: node scripts/ci-version-identity.mjs --allow-obsolete-tagged-candidate-restore
 
       - name: Check CI routing contracts
         if: needs.classify.outputs.run_ci_contracts == 'true'
@@ -282,11 +266,10 @@ jobs:
           python -m pytest -q skills
 
       - name: Check documentation
-        if: needs.classify.outputs.docs_changed == 'true' && needs.classify.outputs.version_only != 'true'
+        if: needs.classify.outputs.docs_changed == 'true'
         run: pnpm check:docs
 
       - name: Check changed source formatting and lint
-        if: needs.classify.outputs.version_only != 'true'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |

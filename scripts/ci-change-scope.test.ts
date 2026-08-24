@@ -100,8 +100,8 @@ describe("lean CI changed-surface classification", () => {
     );
   });
 
-  it("recognizes the exact version-only set", () => {
-    expect(
+  it("requires release identity changes to include a focused changed surface", () => {
+    expect(() =>
       classifyChangedPaths([
         "package.json",
         "src/brand.ts",
@@ -109,7 +109,7 @@ describe("lean CI changed-surface classification", () => {
         "extensions/telegram/package.json",
         "extensions/telegram/CHANGELOG.md",
       ]),
-    ).toMatchObject({ versionOnly: true, runNode: false });
+    ).toThrow(/no directly changed focused test/u);
   });
 
   it("keeps dependency remediation bounded", () => {

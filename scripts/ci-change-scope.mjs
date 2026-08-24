@@ -146,22 +146,8 @@ export function classifyPaths(paths, value = laneManifest) {
   return Object.freeze(result);
 }
 
-const VERSION_ROOTS = new Set(["CHANGELOG.md", "package.json", "src/brand.ts"]);
-
 function bool(value) {
   return value ? "true" : "false";
-}
-
-function isVersionPath(path) {
-  if (VERSION_ROOTS.has(path)) {
-    return true;
-  }
-  const parts = path.split("/");
-  return (
-    parts.length === 3 &&
-    parts[0] === "extensions" &&
-    (parts[2] === "CHANGELOG.md" || parts[2] === "package.json")
-  );
 }
 
 function isRoutableTest(path) {
@@ -185,7 +171,6 @@ function fullMatrixPlan() {
   const enabled = {
     docsOnly: false,
     docsChanged: true,
-    versionOnly: false,
     ciInfrastructureOnly: false,
     testOnly: false,
     fixtureOnly: false,
@@ -245,8 +230,6 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     .filter((path) => isRoutableTest(path) && !deletedPaths.has(path))
     .toSorted((left, right) => left.localeCompare(right));
   const docsOnly = lanes.every((name) => name === "documentation");
-  const versionOnly =
-    paths.includes("package.json") && paths.includes("src/brand.ts") && paths.every(isVersionPath);
   const testOnly = lanes.every((name) => name === "tests");
   const fixtureOnly = paths.every(
     (path) =>
@@ -299,7 +282,6 @@ export function classifyChangedPaths(inputPaths, options = {}) {
 
   if (
     productionChanged &&
-    !versionOnly &&
     !lifecycle &&
     !signer &&
     !dockerOwned &&
@@ -325,31 +307,28 @@ export function classifyChangedPaths(inputPaths, options = {}) {
   const plan = {
     authorityVersion: 7,
     phase: "T1",
-    changeKind: versionOnly
-      ? "version-only"
-      : docsOnly
-        ? "documentation-only"
-        : ciInfrastructureOnly
-          ? "ci-infrastructure-only"
-          : testOnly
-            ? "test-only"
-            : productionChanged
-              ? "production"
-              : "repository",
+    changeKind: docsOnly
+      ? "documentation-only"
+      : ciInfrastructureOnly
+        ? "ci-infrastructure-only"
+        : testOnly
+          ? "test-only"
+          : productionChanged
+            ? "production"
+            : "repository",
     paths,
     lanes,
     selectedTestPaths,
     manualReviewRequired: false,
     docsOnly,
     docsChanged: lane("documentation"),
-    versionOnly,
     ciInfrastructureOnly,
     testOnly,
     fixtureOnly,
     productionChanged,
     privilegeChanged: lifecycle || signer || installer,
     reusePrChecks: false,
-    runNode: !versionOnly && (lane("node") || lifecycle || selectedTestPaths.length > 0),
+    runNode: lane("node") || lifecycle || selectedTestPaths.length > 0,
     runNodeFocused: lifecycle && !installer,
     runInstallerReleaseVerification: installer,
     runNodeBuild: false,
@@ -434,7 +413,6 @@ export function outputEntries(plan, options = {}) {
   const mappings = {
     docs_only: "docsOnly",
     docs_changed: "docsChanged",
-    version_only: "versionOnly",
     ci_infrastructure_only: "ciInfrastructureOnly",
     test_only: "testOnly",
     fixture_only: "fixtureOnly",
