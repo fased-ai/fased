@@ -66,6 +66,9 @@ export async function stampReleaseInstaller({
   if ((architecture === "arm64" || architecture === "all") && !arm64Digest) {
     throw new Error("required arm64 release bootstrap is missing");
   }
+  if (architecture === "all" && (!darwinX64Digest || !darwinArm64Digest)) {
+    throw new Error("required Darwin release bootstrap is missing");
+  }
   const stamped = body
     .replace(RELEASE_MARKER, `install_entry_release_identity="${version}"`)
     .replace(BOOTSTRAP_X64_MARKER, `bootstrap_sha256_x64="${x64Digest}"`)
