@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtraGatewayService } from "../daemon/inspect.js";
+import { withEnvAsync } from "../test-utils/env.js";
 
 const service = vi.hoisted(() => ({
   isLoaded: vi.fn(),
@@ -165,5 +166,33 @@ describe("maybeRepairGatewayDaemon", () => {
       expect.stringContaining("System-level Fased gateway service detected"),
       "Gateway",
     );
+  });
+
+  it("routes an unhealthy managed gateway to lifecycle repair without service mutation", async () => {
+    const prompter = {
+      confirm: vi.fn(),
+      confirmRepair: vi.fn(),
+      confirmAggressive: vi.fn(),
+      confirmSkipInNonInteractive: vi.fn(),
+      select: vi.fn(),
+      shouldRepair: false,
+      shouldForce: false,
+    };
+
+    await withEnvAsync({ FASED_RUNTIME_SOURCE: "go-lifecycle" }, async () => {
+      await maybeRepairGatewayDaemon({
+        cfg: { gateway: {} },
+        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+        prompter,
+        options: { deep: false },
+        gatewayDetailsMessage: "details",
+        healthOk: false,
+      });
+    });
+
+    expect(service.isLoaded).not.toHaveBeenCalled();
+    expect(service.restart).not.toHaveBeenCalled();
+    expect(service.install).not.toHaveBeenCalled();
+    expect(note).toHaveBeenCalledWith(expect.stringContaining("Run `fased repair`"), "Gateway");
   });
 });

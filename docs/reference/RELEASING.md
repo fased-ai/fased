@@ -53,6 +53,10 @@ Normal releases should be sparse. Do not create a release for every small README
 or docs cleanup. Use a new patch release only when `main` contains a user-facing
 installer/runtime/docs fix that should become the current public snapshot.
 
+Ordinary compatible fixes should be batched. Cut an RC when changed installation
+or runtime bytes need literal user testing, or when the owner deliberately selects
+a public snapshot. A protected PR by itself never requires an artifact or RC.
+
 The early `v0.1.1`, `v0.1.2`, and `v0.1.3` releases happened during initial
 public-repo setup and installer hotfixing. Going forward, cut one release per
 deliberate public snapshot.
@@ -168,6 +172,23 @@ The tag-bound workflow creates the GitHub prerelease and attaches only the
 artifacts produced and attested by that run. Do not create a parallel manual
 release or upload locally built artifacts.
 
+Its publication receipt records `nodeBuild`, `goBuild`, `packaging`,
+`attestation`, `upload`, and `channelAdvancement` durations. Use those measured
+phases to optimize a bottleneck; do not infer it from the total job duration.
+
+The JavaScript output is not currently reusable across versions: the product
+version, source commit, and UI `version.json` are compiled into `dist`. A future
+version-neutral cache requires a separate immutable bundle layer plus a small
+tag-bound identity layer and an exact packaged-runtime regression. Until that
+refactor lands, reuse the pnpm and Go compilation caches but never reuse an
+assembled `dist` or release artifact.
+
+The release descriptor already binds the complete artifact set. Individual
+signer, lifecycle, release-index, and root-head attestations remain compatibility
+inputs for installed bootstraps. Consolidating other attestations is allowed only
+through a versioned trust migration that proves predecessor updates; deleting
+those bundles from the current workflow would strand existing installations.
+
 It advances two predecessor-compatible channel documents with the same release
 identity:
 
@@ -197,6 +218,21 @@ gh release view vX.Y.Z --repo fased-ai/fased --web
   the latest release and wait for the next real release.
 - Never force-push `main` or retag a published release unless the repository is
   still private, nobody has pulled it, and maintainers explicitly agree.
+
+## Stable update acceptance
+
+Before the first stable release, perform these two owner-authorized proofs once,
+not for every RC:
+
+1. update an installed candidate, roll back to its retained previous generation,
+   and update forward again while preserving configuration, Wallet/signer state,
+   and task history;
+2. update one literal stable installation to the next stable release and require
+   a second identical `fased update` to return `Already current`.
+
+Record the exact source/target versions, committed generation identities, and
+terminal output. These are real-environment acceptance gates and cannot be
+replaced by CI or a container.
 
 Example: if `v0.1.2` is public and the installer still has a prelaunch blocker,
 fix it on `main`, bump to `v0.1.3`, tag `v0.1.3`, and create the `v0.1.3`

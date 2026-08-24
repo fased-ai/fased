@@ -61,6 +61,15 @@ When the installed version already matches the selected release, the command
 prints `Already current: <version>` and exits without downloading, swapping the
 runtime, updating plugins, or restarting the service.
 
+After a successful interactive update, Fased reports the previous and current
+versions, managed service health, preserved configuration/state, the retained
+rollback generation, and total duration. Automation keeps the stable one-line
+`Updated successfully: <version>` output.
+
+On failure, normal output contains only the failed phase, a bounded safe reason,
+and the exact `fased update` retry command. Rerun with `--verbose` only when
+detailed maintainer diagnostics are needed.
+
 After hosted onboarding, SSH as `app` should open directly in `/home/app/fased`.
 If it does not, fix the hosted login/shell setup before updating.
 

@@ -105,9 +105,35 @@ func verifyAttestedReleaseIndex(root trust.VerifiedRoot, indexJSON, bundleJSON [
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "fased-bootstrap:", err)
+		fmt.Fprintln(os.Stderr, formatBootstrapFailure(os.Args[1:], err))
 		os.Exit(1)
 	}
+}
+
+func formatBootstrapFailure(args []string, err error) string {
+	var failure *publicLifecycleFailure
+	if !errors.As(err, &failure) {
+		return "fased-bootstrap: " + err.Error()
+	}
+	verbose := false
+	for _, arg := range args {
+		verbose = verbose || arg == "--verbose"
+	}
+	reason := strings.Join(strings.Fields(strings.SplitN(failure.Cause.Error(), "\n", 2)[0]), " ")
+	if len(reason) > 180 {
+		reason = reason[:177] + "..."
+	}
+	retry := "Retry the same installer command."
+	if failure.Operation == "update" || failure.Operation == "repair" {
+		retry = "fased " + failure.Operation
+	}
+	message := fmt.Sprintf("FASED %s FAILED\nPhase: %s\nReason: %s\nRetry: %s", strings.ToUpper(failure.Operation), failure.Phase, reason, retry)
+	if verbose {
+		message += "\nDetails: " + failure.Cause.Error()
+	} else {
+		message += "\nDetails: rerun with --verbose"
+	}
+	return message
 }
 
 func run(args []string, output io.Writer) error {

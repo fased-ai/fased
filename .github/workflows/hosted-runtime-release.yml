@@ -25,6 +25,8 @@ env:
 jobs:
   release:
     name: Build, attest, publish, and promote exact tag once
+    env:
+      FASED_RELEASE_TIMINGS_FILE: ${{ runner.temp }}/fased-release-phase-timings.json
     permissions:
       actions: read
       attestations: write
@@ -153,6 +155,9 @@ jobs:
               '.schemaVersion == $schema and .version == $version and .commit == $commit' \
               ".artifacts/hosted-runtime/fased-release-index-v${schema}.json" >/dev/null
           done
+
+      - name: Start attestation timing
+        run: node scripts/release-phase-timings.mjs start "$FASED_RELEASE_TIMINGS_FILE" attestation
 
       - name: Attest signer
         id: signer
@@ -336,6 +341,9 @@ jobs:
           [[ "$tag_object" =~ ^[a-f0-9]{40}$ && "$tag_object" != "$commit" ]]
           test "$commit" = "$SOURCE_COMMIT"
 
+      - name: Finish attestation timing
+        run: node scripts/release-phase-timings.mjs finish "$FASED_RELEASE_TIMINGS_FILE" attestation
+
       - name: Publish exact release once
         env:
           GH_TOKEN: ${{ github.token }}
@@ -343,6 +351,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/release-phase-timings.mjs start "$FASED_RELEASE_TIMINGS_FILE" upload
           tag="v$RELEASE_VERSION"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Fased Agent $tag" --generate-notes)
@@ -355,6 +364,7 @@ jobs:
           jq '[.assets[] | {name,size,digest}]' "$release_json" > "$RUNNER_TEMP/assets.json"
           node scripts/release-artifact-set.mjs verify-assets \
             --directory .artifacts/hosted-runtime --assets-json "$RUNNER_TEMP/assets.json"
+          node scripts/release-phase-timings.mjs finish "$FASED_RELEASE_TIMINGS_FILE" upload
 
       - name: Advance signed channel
         env:
@@ -363,6 +373,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/release-phase-timings.mjs start "$FASED_RELEASE_TIMINGS_FILE" channelAdvancement
           for index_schema in v1 v2; do
             attestation=".artifacts/hosted-runtime/fased-release-index-${index_schema}.json.attestation.json"
             identity="$(node scripts/release-attestation-identity.mjs resolve \
@@ -371,6 +382,7 @@ jobs:
               "$(jq -er .sourceRef <<<"$identity")" \
               "$(jq -er .sourceDigest <<<"$identity")" "$index_schema"
           done
+          node scripts/release-phase-timings.mjs finish "$FASED_RELEASE_TIMINGS_FILE" channelAdvancement
 
       - name: Record minimal release receipt
         env:
@@ -379,11 +391,12 @@ jobs:
         shell: bash
         run: |
           mkdir -p .artifacts/release-receipt
-          jq -n --arg version "$RELEASE_VERSION" --arg commit "$SOURCE_COMMIT" \
+          jq -n --slurpfile timings "$FASED_RELEASE_TIMINGS_FILE" \
+            --arg version "$RELEASE_VERSION" --arg commit "$SOURCE_COMMIT" \
             --arg runId "$GITHUB_RUN_ID" \
             --arg artifactSetDigest "$(jq -er .artifactSetDigest .artifacts/hosted-runtime/fased-hosting-candidate.json)" \
-            '{schemaVersion:1,role:"fased-candidate-publication",version:$version,commit:$commit,
-              workflowRunId:$runId,artifactSetDigest:$artifactSetDigest}' \
+            '{schemaVersion:2,role:"fased-candidate-publication",version:$version,commit:$commit,
+              workflowRunId:$runId,artifactSetDigest:$artifactSetDigest,phaseTimings:$timings[0].phases}' \
             > .artifacts/release-receipt/evidence.json
       - name: Upload release receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
