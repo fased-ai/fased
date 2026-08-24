@@ -161,12 +161,93 @@ describe("configureGatewayForOnboarding", () => {
     expect(authConfig?.password).not.toBe("undefined");
   });
 
+  it("removes a stale token when switching to password auth", async () => {
+    const prompter = createPrompter({
+      selectQueue: ["loopback", "password", "off"],
+      textQueue: ["new-password"],
+    });
+
+    const result = await configureGatewayForOnboarding({
+      flow: "advanced",
+      hostProfile: "local",
+      baseConfig: {},
+      nextConfig: {
+        gateway: { auth: { mode: "token", token: "stale-token", allowTailscale: true } },
+      },
+      localPort: 18789,
+      quickstartGateway: {
+        hasExisting: true,
+        port: 18789,
+        bind: "loopback",
+        authMode: "token",
+        tailscaleMode: "off",
+        token: "stale-token",
+        password: undefined,
+        customBindHost: undefined,
+        tailscaleResetOnExit: false,
+        federationEnabled: false,
+      },
+      prompter,
+      runtime: createRuntime(),
+    });
+
+    expect(result.nextConfig.gateway?.auth).toEqual({
+      mode: "password",
+      password: "new-password", // pragma: allowlist secret
+      allowTailscale: true,
+    });
+  });
+
+  it("removes a stale password when switching to token auth", async () => {
+    mocks.randomToken.mockReturnValue("new-token");
+    const prompter = createPrompter({
+      selectQueue: ["loopback", "token", "off"],
+      textQueue: [""],
+    });
+
+    const result = await configureGatewayForOnboarding({
+      flow: "advanced",
+      hostProfile: "local",
+      baseConfig: {},
+      nextConfig: {
+        gateway: {
+          auth: {
+            mode: "password",
+            password: "stale-password", // pragma: allowlist secret
+            allowTailscale: true,
+          },
+        },
+      },
+      localPort: 18789,
+      quickstartGateway: {
+        hasExisting: true,
+        port: 18789,
+        bind: "loopback",
+        authMode: "password",
+        tailscaleMode: "off",
+        token: undefined,
+        password: "stale-password", // pragma: allowlist secret
+        customBindHost: undefined,
+        tailscaleResetOnExit: false,
+        federationEnabled: false,
+      },
+      prompter,
+      runtime: createRuntime(),
+    });
+
+    expect(result.nextConfig.gateway?.auth).toEqual({
+      mode: "token",
+      token: "new-token",
+      allowTailscale: true,
+    });
+  });
+
   it("keeps hosting Tailscale setup in the later host-security stage", async () => {
     mocks.randomToken.mockReturnValue("strict-token");
 
     const prompter = createPrompter({
-      selectQueue: [],
-      textQueue: [],
+      selectQueue: ["token"],
+      textQueue: [""],
     });
     const runtime = createRuntime();
 
@@ -195,6 +276,19 @@ describe("configureGatewayForOnboarding", () => {
     expect(result.settings.bind).toBe("loopback");
     expect(result.settings.tailscaleMode).toBe("serve");
     expect(result.settings.gatewayToken).toBe("strict-token");
+    expect(prompter.select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Gateway auth",
+        initialValue: "token",
+        options: [
+          { value: "token", label: "Token", hint: "Recommended" },
+          { value: "password", label: "Password" },
+        ],
+      }),
+    );
+    expect(prompter.text).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Gateway token (blank to generate)" }),
+    );
     expect(result.nextConfig.gateway?.trustedProxies).toEqual(["127.0.0.1/32", "::1/128"]);
     expect(result.nextConfig.gateway?.controlUi?.allowInsecureAuth).toBe(false);
     expect(prompter.note).not.toHaveBeenCalledWith(
@@ -205,6 +299,45 @@ describe("configureGatewayForOnboarding", () => {
       "Tailscale requires bind=loopback. Adjusting bind to loopback.",
       "Note",
     );
+  });
+
+  it("lets Hosting choose password auth without generating a token", async () => {
+    mocks.randomToken.mockClear();
+    mocks.randomToken.mockReturnValue("must-not-be-used");
+    const prompter = createPrompter({
+      selectQueue: ["password"],
+      textQueue: ["hosting-password"],
+    });
+
+    const result = await configureGatewayForOnboarding({
+      flow: "quickstart",
+      hostProfile: "hosting",
+      baseConfig: {},
+      nextConfig: {},
+      localPort: 18789,
+      quickstartGateway: {
+        hasExisting: false,
+        port: 18789,
+        bind: "loopback",
+        authMode: "token",
+        tailscaleMode: "serve",
+        token: undefined,
+        password: undefined,
+        customBindHost: undefined,
+        tailscaleResetOnExit: false,
+        federationEnabled: false,
+      },
+      prompter,
+      runtime: createRuntime(),
+    });
+
+    expect(result.settings.authMode).toBe("password");
+    expect(result.settings.gatewayToken).toBeUndefined();
+    expect(result.nextConfig.gateway?.auth).toEqual({
+      mode: "password",
+      password: "hosting-password", // pragma: allowlist secret
+    });
+    expect(mocks.randomToken).not.toHaveBeenCalled();
   });
 
   it("treats local profile as loopback without hosting tailscale requirements", async () => {

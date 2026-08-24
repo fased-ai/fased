@@ -2285,10 +2285,71 @@ describe("runOnboardingWizard", () => {
       ).rejects.toThrow("write-reached");
 
       expect(select).toHaveBeenCalledWith(
-        expect.objectContaining({ message: "Wallet setup action" }),
+        expect.objectContaining({
+          message: "Wallet setup action",
+          initialValue: "skip",
+        }),
       );
       expect(ensureSystemdUserLingerInteractive).not.toHaveBeenCalled();
       expect(configureWalletForOnboarding).toHaveBeenCalledTimes(1);
+      expect(walletSetupCommand).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults local quickstart wallet setup to finish later", async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "fased-local-wallet-skip-"));
+    vi.stubEnv("USER", "fc");
+    vi.stubEnv("HOME", tempHome);
+    configureWalletForOnboarding.mockImplementationOnce(async ({ nextConfig }) => ({
+      ...nextConfig,
+      wallet: {
+        ...nextConfig.wallet,
+        runtime: { ...nextConfig.wallet?.runtime, enabled: true },
+      },
+    }));
+    const select = vi.fn(async (opts: unknown) => {
+      const rawMessage = (opts as { message?: unknown })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "";
+      if (message === "Wallet setup action") {
+        return "skip";
+      }
+      if (message === "How do you want to hatch your bot?") {
+        return "skip";
+      }
+      return "quickstart";
+    }) as unknown as WizardPrompter["select"];
+    const prompter = createWizardPrompter({ select });
+    writeConfigFile.mockImplementationOnce(async () => {
+      throw new Error("write-reached");
+    });
+
+    try {
+      await expect(
+        runOnboardingWizard(
+          {
+            acceptRisk: true,
+            flow: "quickstart",
+            authChoice: "skip",
+            hostProfile: "local",
+            installDaemon: false,
+            skipProviders: true,
+            skipSkills: true,
+            skipHealth: true,
+            skipUi: true,
+          },
+          createRuntime({ throwsOnExit: true }),
+          prompter,
+        ),
+      ).rejects.toThrow("write-reached");
+
+      expect(select).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Wallet setup action",
+          initialValue: "skip",
+        }),
+      );
       expect(walletSetupCommand).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempHome, { recursive: true, force: true });

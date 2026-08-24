@@ -87,6 +87,26 @@ func linuxHostFixture(t *testing.T) (LinuxHost, *fixtureRunner, string) {
 	return host, runner, root
 }
 
+func TestTailscaleInteractiveAuthenticationOutputIsFramed(t *testing.T) {
+	host, runner, _ := linuxHostFixture(t)
+	runner.outputs["/usr/bin/tailscale up --ssh"] = []byte("To authenticate, visit:\n\nhttps://login.tailscale.com/a/example\n\nSuccess.\n")
+	var output strings.Builder
+	if err := host.Authenticate(context.Background(), "", true, &output); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	for _, expected := range []string{"TAILSCALE AUTHENTICATION", "To authenticate, visit:", "https://login.tailscale.com/a/example", "Success."} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("framed authentication output %q does not contain %q", got, expected)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "╭") && !strings.HasPrefix(strings.TrimSpace(line), "│") && !strings.HasPrefix(strings.TrimSpace(line), "╰") {
+			t.Fatalf("unframed authentication line: %q", line)
+		}
+	}
+}
+
 func TestLowMemoryHostingStagesManagedSwapAndRollsBackExactly(t *testing.T) {
 	host, runner, root := linuxHostFixture(t)
 	if err := os.WriteFile(filepath.Join(root, "proc/meminfo"), []byte("MemTotal:       1572864 kB\n"), 0o644); err != nil {

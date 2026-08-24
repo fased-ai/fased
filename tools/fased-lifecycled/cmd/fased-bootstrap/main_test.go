@@ -783,17 +783,71 @@ func TestTailnetAccessHandoffUsesOneFramedWebAndSSHSummary(t *testing.T) {
 	got := formatTailnetAccessFrame(hostsecurity.State{
 		TailscaleDNS: "fased-vps.tailnet.ts.net",
 		OperatorUser: "app",
-	})
+	}, strings.Repeat("a", 48))
 	for _, expected := range []string{
 		"PRIVATE HOSTING ACCESS",
 		"WEB UI",
-		"https://fased-vps.tailnet.ts.net",
+		"https://fased-vps.tailnet.ts.net/#token=" + strings.Repeat("a", 48),
+		"Token backup: " + strings.Repeat("a", 48),
 		"TAILSCALE SSH",
 		"tailscale ssh app@fased-vps.tailnet.ts.net",
 	} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("access frame %q does not contain %q", got, expected)
 		}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+		if !strings.HasSuffix(line, "╮") && !strings.HasSuffix(line, "│") && !strings.HasSuffix(line, "╯") {
+			t.Fatalf("access frame row escaped its border: %q", line)
+		}
+	}
+}
+
+func TestTailnetAccessHandoffDescribesPasswordWithoutLeakingIt(t *testing.T) {
+	got := formatTailnetAccessFrame(hostsecurity.State{
+		TailscaleDNS: "fased-vps.tailnet.ts.net",
+		OperatorUser: "app",
+	}, "")
+	if !strings.Contains(got, "Password selected during setup") || strings.Contains(got, "#token=") || strings.Contains(got, "Token backup") {
+		t.Fatalf("password access frame is inconsistent: %q", got)
+	}
+}
+
+func TestHostingAccessReadsOnlyExactOperatorGatewaySecret(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(home, ".fased")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stateDir, os.ModeSetgid|0o770); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(stateDir, "gateway-secret")
+	if err := os.WriteFile(secret, []byte("exact-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operator := publicOperator{Name: "app", Home: home, UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	got, err := readHostingGatewayToken(operator)
+	if err != nil || got != "exact-token" {
+		t.Fatalf("gateway token = %q, err = %v", got, err)
+	}
+	if err := os.Chmod(stateDir, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readHostingGatewayToken(operator); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("group-writable state without setgid was accepted: %v", err)
+	}
+	if err := os.Chmod(stateDir, os.ModeSetgid|0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(secret, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readHostingGatewayToken(operator); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("unsafe Gateway token mode was accepted: %v", err)
 	}
 }
 

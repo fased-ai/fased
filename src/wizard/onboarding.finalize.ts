@@ -156,6 +156,7 @@ export function formatStrictRemoteAccessDetails(params: {
   dashboardUrl: string;
   tunnelUrl: string;
   port: number;
+  authMode: "token" | "password";
   gatewayToken?: string;
   pendingInstallerActivation?: boolean;
 }): string {
@@ -214,9 +215,13 @@ export function formatStrictRemoteAccessDetails(params: {
       ? "Another VPN can break MagicDNS while `100.x` IP access still works."
       : undefined,
     "",
-    noteHeading("Token backup"),
-    "Only paste this if the browser asks for a token:",
-    ...noteCommands([params.gatewayToken || "(token not available)"]),
+    params.authMode === "token" ? noteHeading("Token backup") : noteHeading("Gateway password"),
+    params.authMode === "token"
+      ? "Only paste this if the browser asks for a token:"
+      : "Password authentication is enabled. The browser will prompt for the password selected during setup.",
+    ...(params.authMode === "token"
+      ? noteCommands([params.gatewayToken || "(token not available)"])
+      : []),
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
@@ -870,6 +875,34 @@ export async function ensureGatewaySecretMatchesToken(token: string): Promise<bo
   await fs.mkdir(path.dirname(tokenPath), { recursive: true });
   await fs.writeFile(tokenPath, `${normalizedToken}\n`, { mode: 0o600 });
   await fs.chmod(tokenPath, 0o600).catch(() => {});
+  return true;
+}
+
+export async function removeGatewaySecretForPasswordAuth(): Promise<boolean> {
+  const tokenPath = resolveGatewaySecretPathForEnv(process.env);
+  const expectedUid = process.getuid?.();
+  const stat = await fs.lstat(tokenPath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
+  if (!stat) {
+    return false;
+  }
+  const mode = stat.mode & 0o777;
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.nlink !== 1 ||
+    mode !== 0o600 ||
+    (expectedUid !== undefined && stat.uid !== expectedUid)
+  ) {
+    throw new Error(
+      `Gateway secret is unsafe to remove for password authentication: expected regular non-symlink uid=${expectedUid ?? "current"} mode=0600 links=1`,
+    );
+  }
+  await fs.unlink(tokenPath);
   return true;
 }
 
@@ -1537,6 +1570,13 @@ export function shouldDeferInstallerAccessHandoff(params: {
   return params.installerOnboard && (params.protectedLocalInstaller || params.rootPreparedHosting);
 }
 
+export function shouldRenderStrictRemoteAccessDetails(params: {
+  isStrict: boolean;
+  deferInstallerAccessHandoff: boolean;
+}): boolean {
+  return params.isStrict && !params.deferInstallerAccessHandoff;
+}
+
 export function shouldDeferInstallerGatewayActivation(params: {
   installerOnboard: boolean;
   deferProtectedLocalGatewayActivation: boolean;
@@ -1643,6 +1683,8 @@ export async function finalizeOnboardingWizard(
       : "";
   if (settings.authMode === "token" && preferredGatewayToken) {
     await ensureGatewaySecretMatchesToken(preferredGatewayToken);
+  } else if (settings.authMode === "password") {
+    await removeGatewaySecretForPasswordAuth();
   }
 
   const withWizardProgress = async <T>(
@@ -2940,7 +2982,7 @@ export async function finalizeOnboardingWizard(
     }
   }
   const isStrict = strictVps || (opts.hostProfile === "local" && settings.tailscaleMode !== "off");
-  if (isStrict && (!deferInstallerAccessHandoff || rootPreparedHosting)) {
+  if (shouldRenderStrictRemoteAccessDetails({ isStrict, deferInstallerAccessHandoff })) {
     const strictDashboardUrl = tailscaleAdminUrl
       ? buildOnboardingDashboardUrl({
           baseUrl: tailscaleAdminUrl,
@@ -2963,6 +3005,7 @@ export async function finalizeOnboardingWizard(
         dashboardUrl: strictDashboardUrl,
         tunnelUrl: tunnelDashboardUrl,
         port: settings.port,
+        authMode: settings.authMode,
         gatewayToken: gatewayTokenForUi || undefined,
         pendingInstallerActivation: deferInstallerGatewayActivation,
       }),

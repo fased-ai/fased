@@ -94,7 +94,7 @@ const OPERATOR_ECONOMY_FEE_LANES = [
 const DEFAULT_OPERATOR_ECONOMY_DISABLED_REASON =
   "fee collection is disabled until the multi-day measurement history threshold is met";
 const FEDERATION_PEER_RESPONSE_MAX_BYTES = 512 * 1024;
-const FEDERATION_DIRECTORY_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+const FEDERATION_DIRECTORY_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
 const FEDERATION_PEER_REQUEST_TIMEOUT_MS = 10_000;
 
 function pathLooksSimulated(candidate: string | undefined): boolean {

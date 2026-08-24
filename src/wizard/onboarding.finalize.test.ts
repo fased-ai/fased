@@ -16,8 +16,10 @@ import {
   formatStrictRemoteAccessDetails,
   gatewayServiceMatchesCurrentInstall,
   isRootPreparedHostingFinalization,
+  removeGatewaySecretForPasswordAuth,
   shouldDeferInstallerAccessHandoff,
   shouldDeferInstallerGatewayActivation,
+  shouldRenderStrictRemoteAccessDetails,
   shouldVerifyStrictHostedDashboardFinal,
   shouldVerifyLocalDashboardReadiness,
   shouldWaitForGatewayServiceActivation,
@@ -244,6 +246,21 @@ describe("buildOnboardingDashboardUrl", () => {
 });
 
 describe("formatStrictRemoteAccessDetails", () => {
+  it("suppresses the premature Hosting panel while the root installer owns final access", () => {
+    expect(
+      shouldRenderStrictRemoteAccessDetails({
+        isStrict: true,
+        deferInstallerAccessHandoff: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderStrictRemoteAccessDetails({
+        isStrict: true,
+        deferInstallerAccessHandoff: false,
+      }),
+    ).toBe(true);
+  });
+
   it("prints tokenized direct and tunnel dashboard URLs", () => {
     const text = formatStrictRemoteAccessDetails({
       tailscaleSshUser: "app",
@@ -252,6 +269,7 @@ describe("formatStrictRemoteAccessDetails", () => {
       dashboardUrl: "https://fased-vps.tailnet.ts.net/#token=abc123",
       tunnelUrl: "http://localhost:18789/#token=abc123",
       port: 18789,
+      authMode: "token",
       gatewayToken: "abc123",
     });
 
@@ -285,6 +303,7 @@ describe("formatStrictRemoteAccessDetails", () => {
       dashboardUrl: "https://fased-vps.tailnet.ts.net/#token=abc123",
       tunnelUrl: "http://localhost:18789/#token=abc123",
       port: 18789,
+      authMode: "token",
       gatewayToken: "abc123",
       pendingInstallerActivation: true,
     });
@@ -293,6 +312,23 @@ describe("formatStrictRemoteAccessDetails", () => {
     expect(text).toContain("https://fased-vps.tailnet.ts.net/#token=abc123");
     expect(text).toContain("ssh app@fased-vps.tailnet.ts.net");
     expect(text).toContain("abc123");
+  });
+
+  it("prints password instructions without a token backup", () => {
+    const text = formatStrictRemoteAccessDetails({
+      tailscaleSshUser: "app",
+      tailscaleNodeName: "fased-vps.tailnet.ts.net",
+      dashboardUrl: "https://fased-vps.tailnet.ts.net/",
+      tunnelUrl: "http://localhost:18789/",
+      port: 18789,
+      authMode: "password",
+    });
+
+    expect(text).toContain("GATEWAY PASSWORD");
+    expect(text).toContain("browser will prompt for the password selected during setup");
+    expect(text).not.toContain("TOKEN BACKUP");
+    expect(text).not.toContain("#token=");
+    expect(text).not.toContain("(token not available)");
   });
 });
 
@@ -593,6 +629,51 @@ describe("ensureGatewaySecretMatchesToken", () => {
 
       const unchanged = await ensureGatewaySecretMatchesToken("config-token");
       expect(unchanged).toBe(false);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.FASED_HOME;
+      } else {
+        process.env.FASED_HOME = previousHome;
+      }
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a stale token before password-auth handoff", async () => {
+    const previousHome = process.env.FASED_HOME;
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-gateway-password-"));
+    const secretPath = path.join(dir, ".fased", "gateway-secret");
+    process.env.FASED_HOME = dir;
+    try {
+      await fs.mkdir(path.dirname(secretPath), { recursive: true });
+      await fs.writeFile(secretPath, "stale-token\n", { mode: 0o600 });
+
+      await expect(removeGatewaySecretForPasswordAuth()).resolves.toBe(true);
+      await expect(fs.lstat(secretPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(removeGatewaySecretForPasswordAuth()).resolves.toBe(false);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.FASED_HOME;
+      } else {
+        process.env.FASED_HOME = previousHome;
+      }
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed instead of unlinking an unsafe secret", async () => {
+    const previousHome = process.env.FASED_HOME;
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-gateway-password-unsafe-"));
+    const secretPath = path.join(dir, ".fased", "gateway-secret");
+    process.env.FASED_HOME = dir;
+    try {
+      await fs.mkdir(path.dirname(secretPath), { recursive: true });
+      await fs.writeFile(secretPath, "stale-token\n", { mode: 0o644 });
+
+      await expect(removeGatewaySecretForPasswordAuth()).rejects.toThrow(
+        "Gateway secret is unsafe to remove",
+      );
+      await expect(fs.readFile(secretPath, "utf8")).resolves.toBe("stale-token\n");
     } finally {
       if (previousHome === undefined) {
         delete process.env.FASED_HOME;

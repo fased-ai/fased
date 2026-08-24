@@ -1191,7 +1191,7 @@ export async function runOnboardingWizard(
               hint: "Keeps existing wallets and lets hosting finish.",
             },
           ],
-          initialValue: flow === "quickstart" ? "self-hosted" : "skip",
+          initialValue: "skip",
         });
         if (setupMode === "skip") {
           break;

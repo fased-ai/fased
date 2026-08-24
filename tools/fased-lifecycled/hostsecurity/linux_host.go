@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -321,7 +322,94 @@ func (host LinuxHost) Authenticate(ctx context.Context, authKeyFile string, inte
 	} else if !interactive {
 		return errors.New("non-interactive Hosting authentication requires a root-owned auth-key file")
 	}
-	return host.Runner.Run(ctx, tailscale, args, nil, output, output, nil)
+	if !interactive {
+		return host.Runner.Run(ctx, tailscale, args, nil, output, output, nil)
+	}
+	framed, err := newHostingOutputFrame(output, "TAILSCALE AUTHENTICATION")
+	if err != nil {
+		return err
+	}
+	runErr := host.Runner.Run(ctx, tailscale, args, nil, framed, framed, nil)
+	return errors.Join(runErr, framed.Close())
+}
+
+const hostingOutputFrameRowWidth = 78
+
+type hostingOutputFrame struct {
+	mu      sync.Mutex
+	output  io.Writer
+	pending string
+	err     error
+	closed  bool
+}
+
+func newHostingOutputFrame(output io.Writer, title string) (*hostingOutputFrame, error) {
+	if output == nil || title == "" || len(title)+3 > hostingOutputFrameRowWidth+2 {
+		return nil, errors.New("Hosting output frame is invalid")
+	}
+	prefix := "─ " + title + " "
+	_, err := fmt.Fprintf(output, "\n  ╭%s%s╮\n", prefix, strings.Repeat("─", hostingOutputFrameRowWidth+2-len(prefix)))
+	if err != nil {
+		return nil, err
+	}
+	return &hostingOutputFrame{output: output}, nil
+}
+
+func (frame *hostingOutputFrame) Write(data []byte) (int, error) {
+	frame.mu.Lock()
+	defer frame.mu.Unlock()
+	if frame.closed {
+		return 0, errors.New("Hosting output frame is closed")
+	}
+	if frame.err != nil {
+		return 0, frame.err
+	}
+	frame.pending += string(data)
+	for {
+		newline := strings.IndexByte(frame.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		line := strings.TrimSuffix(frame.pending[:newline], "\r")
+		frame.pending = frame.pending[newline+1:]
+		if err := frame.writeLine(line); err != nil {
+			frame.err = err
+			return 0, err
+		}
+	}
+	return len(data), nil
+}
+
+func (frame *hostingOutputFrame) writeLine(line string) error {
+	runes := []rune(line)
+	if len(runes) == 0 {
+		_, err := fmt.Fprintf(frame.output, "  │ %-*s │\n", hostingOutputFrameRowWidth, "")
+		return err
+	}
+	for len(runes) > 0 {
+		width := min(len(runes), hostingOutputFrameRowWidth)
+		if _, err := fmt.Fprintf(frame.output, "  │ %-*s │\n", hostingOutputFrameRowWidth, string(runes[:width])); err != nil {
+			return err
+		}
+		runes = runes[width:]
+	}
+	return nil
+}
+
+func (frame *hostingOutputFrame) Close() error {
+	frame.mu.Lock()
+	defer frame.mu.Unlock()
+	if frame.closed {
+		return frame.err
+	}
+	frame.closed = true
+	if frame.err == nil && frame.pending != "" {
+		frame.err = frame.writeLine(strings.TrimSuffix(frame.pending, "\r"))
+	}
+	if frame.err == nil {
+		_, frame.err = fmt.Fprintf(frame.output, "  ╰%s╯\n", strings.Repeat("─", hostingOutputFrameRowWidth+2))
+	}
+	return frame.err
 }
 
 func (host LinuxHost) SnapshotPrivateServe(ctx context.Context) (string, error) {
