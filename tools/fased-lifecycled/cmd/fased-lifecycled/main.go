@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,11 +13,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,6 +35,7 @@ import (
 	"fased-lifecycled/planner"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
+	"fased-lifecycled/publicupdate"
 	"fased-lifecycled/signer"
 	"fased-lifecycled/statebind"
 	"fased-lifecycled/store"
@@ -77,6 +83,11 @@ func run(args []string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("lifecycle supervisor and target modes require root")
 	}
+	if args[0] == "hosting-update-v1" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		return runHostingUpdateV1(ctx, args[1:], os.Stdin, os.Stdout, os.Stderr)
+	}
 	if args[0] == "hosting-security" {
 		return runHostingSecurity(args[1:], os.Stdin, os.Stdout, os.Stderr)
 	}
@@ -106,6 +117,184 @@ func run(args []string) error {
 	default:
 		return errors.New("unsupported lifecycle daemon mode")
 	}
+}
+
+type boundedCommandBuffer struct {
+	buffer    bytes.Buffer
+	remaining int
+	exceeded  bool
+}
+
+func (buffer *boundedCommandBuffer) Write(data []byte) (int, error) {
+	if len(data) > buffer.remaining {
+		buffer.exceeded = true
+		return 0, errors.New("lifecycle command output exceeded its bound")
+	}
+	written, err := buffer.buffer.Write(data)
+	buffer.remaining -= written
+	return written, err
+}
+
+func runHostingUpdateV1(parent context.Context, args []string, input io.Reader, output, userOutput io.Writer) error {
+	if len(args) != 0 || runtime.GOOS != "linux" {
+		return errors.New("invalid public Hosting update command")
+	}
+	request, err := publicupdate.DecodeRequest(input)
+	if err != nil {
+		return err
+	}
+	previous, err := publicupdate.ReadHostingReceipt()
+	if err != nil {
+		return err
+	}
+	if err := publicupdate.ValidatePreviousReceipt(previous, request); err != nil {
+		return err
+	}
+	if err := verifyRunningHostDigest(request.HostDigest); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(request.TimeoutSeconds)*time.Second)
+	defer cancel()
+	lease, err := hostsecurity.AdoptMutationLock(3, "/run/lock/fased-bootstrap-hosting.lock", 0)
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
+	log, err := hostsecurity.OpenSystemLog()
+	if err != nil {
+		return err
+	}
+	defer log.Close()
+	participant := hostsecurity.Participant{
+		Store: hostsecurity.Store{StatePath: "/var/lib/fased-host-security/active.json", ReceiptPath: "/etc/fased/hosting-prerequisites", ExpectedUID: 0},
+		Host:  hostsecurity.NewLinuxHost(), Log: log, User: userOutput,
+	}
+	transactionID, err := randomRequestID()
+	if err != nil {
+		return err
+	}
+	state, err := participant.Prepare(ctx, hostsecurity.Request{
+		TransactionID: transactionID, Release: request.Version, Channel: request.Channel,
+		GatewayPort: request.GatewayPort, OperatorUser: request.OperatorUser,
+		PlatformIdentity: request.PlatformIdentity, TrustRootSHA256: request.TrustRootSHA256,
+		RequireExistingHardening: true,
+	})
+	if err != nil {
+		return err
+	}
+	if state.Phase == hostsecurity.PhaseCommitted && state.Release == request.Version {
+		response := protocol.Response{SchemaVersion: protocol.CurrentSchemaVersion, Outcome: "ALREADY_CURRENT",
+			ActiveGenerationID: state.LifecycleGenerationID, ConvergenceReceiptDigest: state.ConvergenceReceiptDigest}
+		if err := writePublicHostingReceipt(request, response); err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(response)
+	}
+	response, err := invokeSelfInitializeForHostingUpdate(ctx, request, lease)
+	if err != nil {
+		return errors.Join(err, participant.Abort(ctx, state.TransactionID))
+	}
+	state, err = participant.BindRuntimeReady(ctx, state.TransactionID, response.ActiveGenerationID, response.ConvergenceReceiptDigest, false)
+	if err != nil {
+		return fmt.Errorf("Hosting runtime updated but security binding remains pending: %w", err)
+	}
+	if _, err := participant.Commit(ctx, state.TransactionID, false); err != nil {
+		return fmt.Errorf("Hosting runtime updated but security commit remains pending: %w", err)
+	}
+	if err := writePublicHostingReceipt(request, response); err != nil {
+		return fmt.Errorf("Hosting update committed but Stage-0 authority receipt is pending: %w", err)
+	}
+	return json.NewEncoder(output).Encode(response)
+}
+
+func verifyRunningHostDigest(expected string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	file, err := os.Open(executable)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return err
+	}
+	if hex.EncodeToString(digest.Sum(nil)) != expected {
+		return errors.New("public Hosting update envelope differs from the running lifecycle host")
+	}
+	return nil
+}
+
+func invokeSelfInitializeForHostingUpdate(ctx context.Context, request publicupdate.Request, lease *hostsecurity.MutationLock) (protocol.Response, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	leaseFile, err := lease.DupForChild()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer leaseFile.Close()
+	arguments := []string{"initialize", "--profile", string(request.Profile), "--operator-user", request.OperatorUser,
+		"--owner-state", filepath.Join("/home", request.OperatorUser, ".fased"), "--gateway-port", strconv.Itoa(int(request.GatewayPort)),
+		"--update-channel", request.Channel, "--generation-archive", request.ApplicationPath,
+		"--release-sequence", strconv.FormatUint(request.ReleaseSequence, 10), "--security-epoch", strconv.FormatUint(request.SecurityEpoch, 10),
+		"--manifest-protocol-min", strconv.FormatUint(uint64(request.ManifestProtocolMin), 10),
+		"--manifest-protocol-max", strconv.FormatUint(uint64(request.ManifestProtocolMax), 10),
+		"--release-index-digest", request.ReleaseIndexDigest, "--release-authority-digest", request.ReleaseAuthorityDigest,
+		"--plugin-lock-digest", request.PluginLockDigest, "--lifecycle-lease-fd", "3"}
+	if request.DependencyPath != "" {
+		arguments = append(arguments, "--dependency-archive", request.DependencyPath)
+	}
+	if request.Operation == "repair" {
+		arguments = append(arguments, "--repair-current")
+	}
+	stdout := &boundedCommandBuffer{remaining: 64 << 10}
+	stderr := &boundedCommandBuffer{remaining: 64 << 10}
+	command := exec.CommandContext(ctx, executable, arguments...)
+	command.ExtraFiles = []*os.File{leaseFile}
+	command.Stdout, command.Stderr = stdout, stderr
+	command.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
+	runErr := command.Run()
+	if stdout.exceeded || stderr.exceeded {
+		return protocol.Response{}, errors.New("lifecycle initialization output exceeded its bound")
+	}
+	if runErr != nil {
+		return protocol.Response{}, fmt.Errorf("target-host lifecycle initialization failed: %s", strings.TrimSpace(stderr.buffer.String()))
+	}
+	var response protocol.Response
+	if err := json.Unmarshal(stdout.buffer.Bytes(), &response); err != nil {
+		return protocol.Response{}, fmt.Errorf("decode target-host lifecycle response: %w", err)
+	}
+	if response.SchemaVersion != protocol.CurrentSchemaVersion ||
+		(response.Outcome != "UPDATED" && response.Outcome != "ALREADY_CURRENT") ||
+		!validDigestID(response.ActiveGenerationID) || !validDigestID(response.ConvergenceReceiptDigest) {
+		return protocol.Response{}, errors.New("target-host lifecycle response is invalid")
+	}
+	return response, nil
+}
+
+func writePublicHostingReceipt(request publicupdate.Request, response protocol.Response) error {
+	return publicupdate.WriteHostingReceipt(publicupdate.Receipt{
+		SchemaVersion: publicupdate.SchemaVersion, Profile: request.Profile, Channel: request.Channel,
+		Version: request.Version, OperatorUser: request.OperatorUser, GatewayPort: request.GatewayPort,
+		PlatformIdentity: request.PlatformIdentity, ReleaseSequence: request.ReleaseSequence, SecurityEpoch: request.SecurityEpoch,
+		ActiveGenerationID: response.ActiveGenerationID, ConvergenceReceiptDigest: response.ConvergenceReceiptDigest,
+	})
+}
+
+func validDigestID(value string) bool {
+	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, character := range strings.TrimPrefix(value, "sha256:") {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			return false
+		}
+	}
+	return true
 }
 
 func runHostingSecurity(args []string, input io.Reader, output, userOutput io.Writer) error {

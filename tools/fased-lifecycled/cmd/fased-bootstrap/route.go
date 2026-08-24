@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -34,6 +35,7 @@ import (
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
+	"fased-lifecycled/publicupdate"
 	"fased-lifecycled/store"
 	"fased-lifecycled/trust"
 )
@@ -109,7 +111,28 @@ var (
 	executePublicLifecycleBootstrap    = execute
 	publicLifecycleRootAuthorized      = func() bool { return os.Geteuid() == 0 }
 	invokePublicHostSecurity           = invokeLifecycleHostSecurity
+	readPublicHostingReceipt           = publicupdate.ReadHostingReceipt
+	writePublicHostingReceipt          = publicupdate.WriteHostingReceipt
+	invokeTargetOwnedHostingUpdate     = invokeTargetOwnedHostingHost
+	prunePublicAcquisitionInbox        = pruneAcquisitionInbox
+	resolvePublicStatusOperator        = resolveOperator
 )
+
+type boundedLifecycleOutput struct {
+	buffer    bytes.Buffer
+	remaining int
+	exceeded  bool
+}
+
+func (output *boundedLifecycleOutput) Write(data []byte) (int, error) {
+	if len(data) > output.remaining {
+		output.exceeded = true
+		return 0, errors.New("target lifecycle output exceeded its bound")
+	}
+	written, err := output.buffer.Write(data)
+	output.remaining -= written
+	return written, err
+}
 
 type lifecyclePhaseProgress struct {
 	output   io.Writer
@@ -227,7 +250,7 @@ func runPublicLifecycleStatus(args []string, output io.Writer) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || timeoutSeconds < 1 || timeoutSeconds > 30 {
 		return errors.New("invalid public lifecycle status arguments")
 	}
-	if os.Geteuid() != 0 {
+	if !publicLifecycleRootAuthorized() {
 		return errors.New("public lifecycle status requires root authorization")
 	}
 	if profile == "" {
@@ -240,9 +263,26 @@ func runPublicLifecycleStatus(args []string, output io.Writer) error {
 	if operatorUser == "" {
 		operatorUser = operatorFromEnvironment(selectedProfile)
 	}
-	operator, err := resolveOperator(operatorUser, selectedProfile)
+	operator, err := resolvePublicStatusOperator(operatorUser, selectedProfile)
 	if err != nil {
 		return err
+	}
+	if selectedProfile == model.ProfileHosting {
+		receipt, receiptErr := readPublicHostingReceipt()
+		if receiptErr == nil {
+			if receipt.OperatorUser != operator.Name {
+				return errors.New("installed Hosting authority differs from the status operator")
+			}
+			if jsonOutput {
+				_, err = fmt.Fprintf(output, "{\"status\":\"installed\",\"profile\":%q,\"channel\":%q,\"version\":%q,\"releaseSequence\":%d,\"securityEpoch\":%d,\"activeGenerationId\":%q}\n", receipt.Profile, receipt.Channel, receipt.Version, receipt.ReleaseSequence, receipt.SecurityEpoch, receipt.ActiveGenerationID)
+				return err
+			}
+			_, err = fmt.Fprintf(output, "Installed: %s profile=%s channel=%s sequence=%d epoch=%d\n", receipt.Version, receipt.Profile, receipt.Channel, receipt.ReleaseSequence, receipt.SecurityEpoch)
+			return err
+		}
+		if !errors.Is(receiptErr, os.ErrNotExist) {
+			return receiptErr
+		}
 	}
 	configPath, err := installedConfigPath(selectedProfile, operator)
 	if err != nil {
@@ -696,6 +736,15 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	defer lock.Release()
 	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
 	defer cancel()
+	if request.Profile == model.ProfileHosting && (request.Operation == "update" || request.Operation == "repair") {
+		receipt, receiptErr := readPublicHostingReceipt()
+		if receiptErr == nil {
+			return runTargetOwnedHostingLifecycle(ctx, request, operator, receipt, lock, output)
+		}
+		if !errors.Is(receiptErr, os.ErrNotExist) {
+			return receiptErr
+		}
+	}
 	ownerConfigExisted, err := pathExists(filepath.Join(operator.Home, ".fased", "fased.json"))
 	if err != nil {
 		return fmt.Errorf("inspect owner configuration: %w", err)
@@ -933,6 +982,17 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			return fmt.Errorf("Fased is installed and provider SSH remains open; Hosting hardening is pending: %w", err)
 		}
 	}
+	if request.Profile == model.ProfileHosting {
+		if err := writePublicHostingReceipt(publicupdate.Receipt{
+			SchemaVersion: publicupdate.SchemaVersion, Profile: request.Profile, Channel: request.Channel,
+			Version: result.Version, OperatorUser: operator.Name, GatewayPort: request.GatewayPort,
+			PlatformIdentity: runtime.GOOS + "/" + architecture(), ReleaseSequence: result.ReleaseSequence,
+			SecurityEpoch: result.SecurityEpoch, ActiveGenerationID: convergence.ActiveGenerationID,
+			ConvergenceReceiptDigest: convergence.ConvergenceReceiptDigest,
+		}); err != nil {
+			return fmt.Errorf("Hosting committed but Stage-0 authority receipt is pending: %w", err)
+		}
+	}
 	if err := pruneAcquisitionInbox(platform.BootstrapCacheRootForOS(runtime.GOOS)); err != nil {
 		return fmt.Errorf("lifecycle committed but verified acquisition cleanup is pending: %w", err)
 	}
@@ -962,6 +1022,161 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		_, err = fmt.Fprintln(output, formatLifecyclePerformance(performance))
 	}
 	return err
+}
+
+// runTargetOwnedHostingLifecycle is the permanent Hosting update handoff.
+// Stage-0 interprets only its fixed authority receipt, verifies/acquires the
+// selected release, and invokes that release's host once. Every evolving
+// installation, plugin, security, and generation schema remains target-owned.
+func runTargetOwnedHostingLifecycle(ctx context.Context, request publicLifecycleRequest, operator publicOperator, previous publicupdate.Receipt, lock *hostsecurity.MutationLock, output io.Writer) error {
+	if runtime.GOOS != "linux" || architecture() != "x64" || previous.Profile != model.ProfileHosting ||
+		previous.OperatorUser != operator.Name || previous.PlatformIdentity != runtime.GOOS+"/"+architecture() {
+		return errors.New("installed Hosting authority differs from this host or operator")
+	}
+	request.GatewayPort = previous.GatewayPort
+	if request.Operation == "repair" {
+		request.Version, request.Channel = previous.Version, previous.Channel
+	} else if !request.ChannelExplicit && request.Version == "" {
+		request.Channel = previous.Channel
+	}
+	if err := verifyPublicLifecycleHost(ctx); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	var selection *signedChannelSelection
+	if request.Version == "" {
+		progress := beginLifecyclePhase(output, request.JSON, "resolving the trusted release")
+		resolved, err := discoverSignedChannelRelease(ctx, request.Channel, &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect},
+			productionChannelReleasePrefix+request.Channel+"-v2", productionPinnedRootSHA256,
+			platform.BootstrapCacheRootForOS(runtime.GOOS), 0, previous.ReleaseSequence, previous.SecurityEpoch, now, nil, nil)
+		progress.Stop()
+		if err != nil {
+			return err
+		}
+		request.Version = resolved.Version
+		selection = &resolved
+	}
+	releaseRoute, err := publicTrustRoute(request.Version)
+	if err != nil {
+		return err
+	}
+	releaseRoute.RootRotationBaseURL = productionChannelReleasePrefix + request.Channel + "-v2"
+	if releaseRoute.VerifyIndex != nil {
+		releaseRoute.RootRotationBaseURL = releaseRoute.ReleaseBaseURL
+	}
+	expectedRootVersion, expectedRootSHA256 := uint64(0), ""
+	if selection != nil {
+		expectedRootVersion, expectedRootSHA256 = selection.RootVersion, selection.RootSHA256
+	}
+	progress := beginLifecyclePhase(output, request.JSON, "acquiring the verified lifecycle release")
+	result, err := executePublicLifecycleBootstrap(ctx, bootstrapRequest{
+		StateRoot: platform.BootstrapCacheRootForOS(runtime.GOOS), HostRoot: platform.LifecycleHostRootForOS(runtime.GOOS),
+		RootURL: releaseRoute.RootURL, RootRotationBaseURL: releaseRoute.RootRotationBaseURL, IndexURL: releaseRoute.IndexURL,
+		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
+		Channel: request.Channel, Version: request.Version, OperatingSystem: runtime.GOOS, Architecture: architecture(),
+		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: now, Inspect: inspectLifecycleHost,
+		VerifyIndex: releaseRoute.VerifyIndex, ExpectedRootVersion: expectedRootVersion, ExpectedRootSHA256: expectedRootSHA256,
+	})
+	progress.Stop()
+	if err != nil {
+		return err
+	}
+	if selection != nil {
+		if err := validateSignedChannelResult(*selection, result); err != nil {
+			return err
+		}
+	}
+	if result.ReleaseSequence < previous.ReleaseSequence || result.SecurityEpoch < previous.SecurityEpoch {
+		return errors.New("acquired Hosting release would roll back installed authority")
+	}
+	publicRequest := publicupdate.Request{
+		SchemaVersion: publicupdate.SchemaVersion, Operation: request.Operation, Profile: model.ProfileHosting,
+		Channel: request.Channel, Version: result.Version, OperatorUser: operator.Name, GatewayPort: previous.GatewayPort,
+		PlatformIdentity: runtime.GOOS + "/" + architecture(), TimeoutSeconds: uint32(request.Timeout / time.Second),
+		TrustRootSHA256: releaseRoute.PinnedRootSHA256, HostDigest: result.HostDigest,
+		ApplicationPath: result.ApplicationPath, DependencyPath: result.DependencyPath,
+		ReleaseSequence: result.ReleaseSequence, SecurityEpoch: result.SecurityEpoch,
+		ManifestProtocolMin: result.ManifestProtocolMin, ManifestProtocolMax: result.ManifestProtocolMax,
+		ReleaseIndexDigest: result.ReleaseIndexDigest, ReleaseAuthorityDigest: result.ReleaseAuthorityDigest,
+		PluginLockDigest: result.PluginLockDigest, ExpectedPreviousSequence: previous.ReleaseSequence,
+		ExpectedPreviousEpoch: previous.SecurityEpoch,
+	}
+	if err := publicRequest.Validate(); err != nil {
+		return err
+	}
+	response, err := invokeTargetOwnedHostingUpdate(ctx, result.HostPath, publicRequest, lock)
+	if err != nil {
+		return err
+	}
+	committed, err := readPublicHostingReceipt()
+	if err != nil {
+		return fmt.Errorf("target lifecycle host did not commit its Stage-0 authority receipt: %w", err)
+	}
+	if err := publicupdate.ExactReceipt(committed, publicRequest); err != nil {
+		return err
+	}
+	if committed.ActiveGenerationID != response.ActiveGenerationID || committed.ConvergenceReceiptDigest != response.ConvergenceReceiptDigest {
+		return errors.New("target lifecycle response differs from its committed authority receipt")
+	}
+	if err := prunePublicAcquisitionInbox(platform.BootstrapCacheRootForOS(runtime.GOOS)); err != nil {
+		return fmt.Errorf("lifecycle committed but verified acquisition cleanup is pending: %w", err)
+	}
+	if request.JSON {
+		return json.NewEncoder(output).Encode(struct {
+			Status                   string `json:"status"`
+			Version                  string `json:"version"`
+			ReleaseSequence          uint64 `json:"releaseSequence"`
+			SecurityEpoch            uint64 `json:"securityEpoch"`
+			ActiveGenerationID       string `json:"activeGenerationId"`
+			ConvergenceReceiptDigest string `json:"convergenceReceiptDigest"`
+		}{response.Outcome, result.Version, result.ReleaseSequence, result.SecurityEpoch, response.ActiveGenerationID, response.ConvergenceReceiptDigest})
+	}
+	message := "Updated successfully: " + result.Version
+	if response.Outcome == "ALREADY_CURRENT" {
+		message = "Already current: " + result.Version
+	} else if request.Operation == "repair" {
+		message = "Repaired successfully: " + result.Version
+	}
+	return writeLifecycleOutcome(output, message)
+}
+
+func invokeTargetOwnedHostingHost(ctx context.Context, hostPath string, request publicupdate.Request, lock *hostsecurity.MutationLock) (protocol.Response, error) {
+	if lock == nil {
+		return protocol.Response{}, errors.New("lifecycle mutation lease is unavailable")
+	}
+	requestData, err := json.Marshal(request)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	leaseFile, err := lock.DupForChild()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer leaseFile.Close()
+	stdout := &boundedLifecycleOutput{remaining: 64 << 10}
+	stderr := &boundedLifecycleOutput{remaining: 64 << 10}
+	command := exec.CommandContext(ctx, hostPath, "hosting-update-v1")
+	command.ExtraFiles = []*os.File{leaseFile}
+	command.Stdin = bytes.NewReader(requestData)
+	command.Stdout, command.Stderr = stdout, stderr
+	command.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
+	if err := command.Run(); err != nil {
+		if stdout.exceeded || stderr.exceeded {
+			return protocol.Response{}, errors.New("target lifecycle host output exceeded its bound")
+		}
+		return protocol.Response{}, fmt.Errorf("target lifecycle host update failed: %s", tail(stderr.buffer.Bytes(), 4096))
+	}
+	if stdout.exceeded || stderr.exceeded {
+		return protocol.Response{}, errors.New("target lifecycle host output exceeded its bound")
+	}
+	response, err := decodeTerminalLifecycleResponse(stdout.buffer.Bytes())
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if response.Outcome != "UPDATED" && response.Outcome != "ALREADY_CURRENT" {
+		return protocol.Response{}, errors.New("target lifecycle host returned an unsupported outcome")
+	}
+	return response, nil
 }
 
 func writeLifecycleOutcome(output io.Writer, message string) error {

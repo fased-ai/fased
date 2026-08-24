@@ -9,12 +9,14 @@ const source = (path: string) => readFile(resolve(root, path), "utf8");
 describe("D7 public lifecycle routing", () => {
   it("keeps the public installer a bounded static-bootstrap shim", async () => {
     const installer = await source("install.sh");
-    expect(installer.split("\n").length).toBeLessThanOrEqual(300);
-    expect(installer).toContain("fased-bootstrap-linux-");
+    expect(installer.split("\n").length).toBeLessThanOrEqual(340);
+    expect(installer).toContain('bootstrap_asset="fased-bootstrap-${operating_system}-${arch}"');
     expect(installer).toContain("bootstrap_args=(\n  install");
     expect(installer).toContain('"$bootstrap" "${bootstrap_args[@]}"');
     expect(installer).toContain("__FASED_BOOTSTRAP_SHA256_X64__");
-    expect(installer).not.toContain("__FASED_BOOTSTRAP_SHA256_ARM64__");
+    expect(installer).toContain("__FASED_BOOTSTRAP_SHA256_ARM64__");
+    expect(installer).toContain("__FASED_BOOTSTRAP_SHA256_DARWIN_X64__");
+    expect(installer).toContain("__FASED_BOOTSTRAP_SHA256_DARWIN_ARM64__");
     expect(installer).toContain("scripts/install-development.sh");
     expect(installer).not.toMatch(/\b(?:node|nodejs|npm|pnpm|gh|jq)\b/u);
     expect(installer).not.toContain("generation-updater.mjs");
@@ -36,6 +38,8 @@ describe("D7 public lifecycle routing", () => {
     );
     expect(route).toContain("discoverSignedChannelRelease");
     expect(route).toContain("productionChannelReleasePrefix");
+    expect(route).toContain("runTargetOwnedHostingLifecycle");
+    expect(route).toContain("publicupdate.ReadHostingReceipt");
     expect(route).not.toContain("discoverPublicReleaseVersion");
     expect(route).not.toContain("api.github.com/repos/fased-ai/fased/releases");
     expect(route).not.toContain("registry.npmjs.org");
