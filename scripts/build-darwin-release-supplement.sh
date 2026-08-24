@@ -29,7 +29,7 @@ mkdir -p "$OUTPUT_DIR"
 if [[ ! -f "$ROOT_DIR/dist/build-info.json" ]] ||
   [[ "$(jq -r .version "$ROOT_DIR/dist/build-info.json")" != "$VERSION" ]] ||
   [[ "$(jq -r .commit "$ROOT_DIR/dist/build-info.json")" != "$COMMIT" ]]; then
-  pnpm --dir "$ROOT_DIR" build
+  pnpm --dir "$ROOT_DIR" build:app
 fi
 
 release_dir="$ROOT_DIR/dist-native/release"
