@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.132
+
+- Measure packaged Gateway idle RSS with the native Linux or Darwin process
+  interface so both macOS release architectures can complete artifact proof.
+
 ## 0.1.76-rc.131
 
 - Add managed Local release assets for Linux arm64, Ubuntu WSL2 x86_64, and

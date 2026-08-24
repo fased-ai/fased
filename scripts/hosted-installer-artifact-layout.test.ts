@@ -66,6 +66,14 @@ describe("lean attested Linux managed artifact layout", () => {
     expect(hostedArtifactBuilder).not.toContain("fased-hosted-linux-${arch}");
   });
 
+  it("measures packaged Gateway RSS through the native host interface", () => {
+    expect(hostedArtifactBuilder).toContain('process.platform === "linux"');
+    expect(hostedArtifactBuilder).toContain('process.platform === "darwin"');
+    expect(hostedArtifactBuilder).toContain('execFileAsync("/bin/ps", ["-o", "rss="');
+    expect(hostedArtifactBuilder).toContain("readProcessRssKiB(child.pid)");
+    expect(hostedArtifactBuilder).not.toContain('fs.readFile(`/proc/${child.pid}/status`, "utf8")');
+  });
+
   it("finalizes product bytes without rebuilding", () => {
     expect(finalizer).toContain("fased-lifecycled-linux-amd64");
     expect(finalizer).toContain("fased-signerd-linux-amd64");

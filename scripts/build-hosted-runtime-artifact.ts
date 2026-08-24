@@ -71,6 +71,26 @@ async function resolveHostedRuntimeTempParent(): Promise<string> {
   return configured;
 }
 
+async function readProcessRssKiB(pid: number): Promise<number> {
+  let rssKiB = 0;
+  if (process.platform === "linux") {
+    const status = await fs.readFile(`/proc/${pid}/status`, "utf8");
+    rssKiB = Number.parseInt(status.match(/^VmRSS:\s+(\d+)\s+kB$/mu)?.[1] ?? "0", 10);
+  } else if (process.platform === "darwin") {
+    const { stdout } = await execFileAsync("/bin/ps", ["-o", "rss=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    rssKiB = Number.parseInt(stdout.trim(), 10);
+  } else {
+    throw new Error(`Hosted Gateway RSS is unsupported on ${process.platform}`);
+  }
+  if (!Number.isSafeInteger(rssKiB) || rssKiB <= 0) {
+    throw new Error("Hosted Gateway RSS is unavailable");
+  }
+  return rssKiB;
+}
+
 function parseOutputDir(): string {
   const outputFlag = process.argv.indexOf("--output");
   const value = outputFlag >= 0 ? process.argv[outputFlag + 1] : undefined;
@@ -300,11 +320,7 @@ async function smokeGateway(
       const combinedOutput = output.join("");
       const timingMatch = combinedOutput.match(/plugins\.load(?:\.deferred)?=(\d+)ms/);
       if (listening && timingMatch?.[1]) {
-        const status = await fs.readFile(`/proc/${child.pid}/status`, "utf8");
-        const rssKiB = Number.parseInt(status.match(/^VmRSS:\s+(\d+)\s+kB$/mu)?.[1] ?? "0", 10);
-        if (!Number.isSafeInteger(rssKiB) || rssKiB <= 0) {
-          throw new Error("Hosted Gateway RSS is unavailable");
-        }
+        const rssKiB = await readProcessRssKiB(child.pid);
         const traced = new Set(
           (await fs.readFile(tracePath, "utf8"))
             .split("\n")
