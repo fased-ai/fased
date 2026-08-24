@@ -226,7 +226,7 @@ describe("configureGatewayForOnboarding", () => {
         authMode: "password",
         tailscaleMode: "off",
         token: undefined,
-        password: "stale-password",
+        password: "stale-password", // pragma: allowlist secret
         customBindHost: undefined,
         tailscaleResetOnExit: false,
         federationEnabled: false,
