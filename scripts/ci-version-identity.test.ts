@@ -38,6 +38,19 @@ describe("release version inventory", () => {
     expect(() => validateCurrentVersionInventory(root)).toThrow(/does not match core/u);
   });
 
+  it("rejects a stale core peer range even when the extension version is current", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, "extensions", "example", "package.json"),
+      `${JSON.stringify({
+        name: "@fased/example",
+        peerDependencies: { "@fased/fased": "^1.2.2" },
+        version: "1.2.3",
+      })}\n`,
+    );
+    expect(() => validateCurrentVersionInventory(root)).toThrow(/core peer/u);
+  });
+
   it("rejects mismatched brand identity", () => {
     const root = fixture();
     writeFileSync(join(root, "src", "brand.ts"), 'FASED_PRODUCT_VERSION = "1.2.4";\n');
