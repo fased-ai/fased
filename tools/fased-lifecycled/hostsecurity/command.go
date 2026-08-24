@@ -114,8 +114,12 @@ type CommandRequest struct {
 // from a newer lifecycle host. New hosts may add response fields without
 // requiring the bootstrap to decode their internal durable state.
 type CommandState struct {
-	SchemaVersion            uint32 `json:"schemaVersion"`
+	SchemaVersion uint32 `json:"schemaVersion"`
+	// TransactionID correlates this response to the invoking command. The
+	// lifecycle host may resume an older durable transaction during PREPARE;
+	// DurableTransactionID identifies that transaction for later transitions.
 	TransactionID            string `json:"transactionId"`
+	DurableTransactionID     string `json:"durableTransactionId,omitempty"`
 	Release                  string `json:"release"`
 	OperatorUser             string `json:"operatorUser"`
 	TailscaleDNS             string `json:"tailscaleDns,omitempty"`
@@ -219,16 +223,43 @@ func ExecuteCommand(ctx context.Context, participant Participant, request Comman
 	if err != nil {
 		return CommandState{}, err
 	}
-	return projectCommandState(state), nil
+	return projectCommandState(request.TransactionID, state), nil
 }
 
-func projectCommandState(state State) CommandState {
+func projectCommandState(requestTransactionID string, state State) CommandState {
 	return CommandState{
-		SchemaVersion: CommandSchemaVersion, TransactionID: state.TransactionID, Release: state.Release,
+		SchemaVersion: CommandSchemaVersion, TransactionID: requestTransactionID, DurableTransactionID: state.TransactionID, Release: state.Release,
 		OperatorUser: state.OperatorUser, TailscaleDNS: state.TailscaleDNS,
 		LifecycleGenerationID: state.LifecycleGenerationID, ConvergenceReceiptDigest: state.ConvergenceReceiptDigest,
 		RuntimeReady: state.RuntimeReady, OnboardingRequired: state.OnboardingRequired,
 		OnboardingComplete: state.OnboardingComplete, OnboardingPending: state.Phase == PhaseOnboardingPending,
 		NeedsFinalization: state.Phase != PhaseCommitted, Committed: state.Phase == PhaseCommitted,
 	}
+}
+
+// DurableTransactionIDFor validates the command-response correlation and
+// returns the lifecycle-host-owned identity used for later transitions. A
+// response without durableTransactionId is the compatibility projection from
+// an older lifecycle host: only PREPARE may return a different, already-durable
+// transaction, and it must still bind the exact release and operator.
+func (state CommandState) DurableTransactionIDFor(request CommandRequest) (string, error) {
+	if state.SchemaVersion != CommandSchemaVersion || state.OperatorUser == "" {
+		return "", errors.New("Hosting security response identity is invalid")
+	}
+	if request.Operation == CommandPrepare && (state.Release != request.Release || state.OperatorUser != request.OperatorUser) {
+		return "", errors.New("Hosting security prepare response identity is invalid")
+	}
+	durable := state.DurableTransactionID
+	if durable == "" {
+		durable = state.TransactionID
+		if request.Operation != CommandPrepare && state.TransactionID != request.TransactionID {
+			return "", errors.New("Hosting security legacy response correlation is invalid")
+		}
+	} else if state.TransactionID != request.TransactionID {
+		return "", errors.New("Hosting security response correlation is invalid")
+	}
+	if !uuidV4Pattern.MatchString(durable) {
+		return "", errors.New("Hosting security durable transaction identity is invalid")
+	}
+	return durable, nil
 }

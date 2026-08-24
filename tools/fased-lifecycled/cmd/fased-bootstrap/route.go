@@ -883,7 +883,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		if prepareErr != nil {
 			return prepareErr
 		}
-		hostingTransactionID = prepared.TransactionID
+		hostingTransactionID = prepared.DurableTransactionID
 		hostingState = prepared
 		preparedOperatorUser = prepared.OperatorUser
 		hostingSecurityReused = !prepared.NeedsFinalization
@@ -1915,9 +1915,11 @@ func invokeLifecycleHostSecurity(ctx context.Context, hostPath string, request h
 	if err := json.Unmarshal([]byte(stdout.String()), &state); err != nil {
 		return hostsecurity.CommandState{}, fmt.Errorf("decode lifecycle host Hosting security response: %w", err)
 	}
-	if state.SchemaVersion != hostsecurity.CommandSchemaVersion || state.TransactionID != request.TransactionID || state.OperatorUser == "" {
+	durableTransactionID, identityErr := state.DurableTransactionIDFor(request)
+	if identityErr != nil {
 		return hostsecurity.CommandState{}, errors.New("lifecycle host Hosting security response identity is invalid")
 	}
+	state.DurableTransactionID = durableTransactionID
 	return state, nil
 }
 

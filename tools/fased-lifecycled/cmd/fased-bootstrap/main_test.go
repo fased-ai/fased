@@ -794,6 +794,32 @@ func TestHostingSecurityUsesExactAcquiredLifecycleHostProtocol(t *testing.T) {
 	}
 }
 
+func TestHostingSecurityPrepareAcceptsCorrelatedResumeOfDurableTransaction(t *testing.T) {
+	hostPath := filepath.Join(t.TempDir(), "fased-lifecycled")
+	requestTransactionID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	durableTransactionID := "01234567-89ab-4cde-8fab-0123456789ab"
+	script := "#!/bin/sh\n" +
+		"test \"$1\" = hosting-security || exit 8\n" +
+		"cat >/dev/null\n" +
+		"printf '%s\\n' '{\"schemaVersion\":1,\"transactionId\":\"" + requestTransactionID + "\",\"durableTransactionId\":\"" + durableTransactionID + "\",\"release\":\"1.2.3-rc.4\",\"operatorUser\":\"app\"}'\n"
+	if err := os.WriteFile(hostPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	request := hostsecurity.CommandRequest{
+		SchemaVersion: hostsecurity.CommandSchemaVersion, Operation: hostsecurity.CommandPrepare,
+		TransactionID: requestTransactionID, Release: "1.2.3-rc.4", Channel: "beta",
+		GatewayPort: 18789, OperatorUser: "app", PlatformIdentity: "linux/x64",
+		TrustRootSHA256: strings.Repeat("a", 64), Interactive: true,
+	}
+	state, err := invokeLifecycleHostSecurity(context.Background(), hostPath, request, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.TransactionID != requestTransactionID || state.DurableTransactionID != durableTransactionID {
+		t.Fatalf("prepare response identities were conflated: %+v", state)
+	}
+}
+
 func TestHostingOperatorRefreshDistinguishesApplyFromPostApplyFailure(t *testing.T) {
 	placeholder := publicOperator{Name: "app", Home: "/home/app"}
 	resolveCalls := 0

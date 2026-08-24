@@ -89,7 +89,7 @@ func linuxHostFixture(t *testing.T) (LinuxHost, *fixtureRunner, string) {
 
 func TestTailscaleInteractiveAuthenticationOutputIsFramed(t *testing.T) {
 	host, runner, _ := linuxHostFixture(t)
-	runner.outputs["/usr/bin/tailscale up --ssh"] = []byte("To authenticate, visit:\n\nhttps://login.tailscale.com/a/example\n\nSuccess.\n")
+	runner.outputs["/usr/bin/tailscale up --ssh --timeout=5m"] = []byte("To authenticate, visit:\n\nhttps://login.tailscale.com/a/example\n\nSuccess.\n")
 	var output strings.Builder
 	if err := host.Authenticate(context.Background(), "", true, &output); err != nil {
 		t.Fatal(err)
@@ -104,6 +104,19 @@ func TestTailscaleInteractiveAuthenticationOutputIsFramed(t *testing.T) {
 		if !strings.HasPrefix(strings.TrimSpace(line), "╭") && !strings.HasPrefix(strings.TrimSpace(line), "│") && !strings.HasPrefix(strings.TrimSpace(line), "╰") {
 			t.Fatalf("unframed authentication line: %q", line)
 		}
+	}
+}
+
+func TestTailscaleInteractiveAuthenticationFailureIsBoundedAndActionable(t *testing.T) {
+	host, runner, _ := linuxHostFixture(t)
+	runner.errors["/usr/bin/tailscale up --ssh --timeout=5m"] = errors.New("authentication timed out")
+	var output strings.Builder
+	err := host.Authenticate(context.Background(), "", true, &output)
+	if err == nil || !strings.Contains(err.Error(), "retry the same installer command") {
+		t.Fatalf("interactive authentication failure was not actionable: %v", err)
+	}
+	if len(runner.calls) != 1 || runner.calls[0] != "/usr/bin/tailscale up --ssh --timeout=5m" {
+		t.Fatalf("interactive authentication was not bounded: %v", runner.calls)
 	}
 }
 
