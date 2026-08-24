@@ -1,6 +1,6 @@
 {
   "name": "@fased/acpx",
-  "version": "0.1.76-rc.140",
+  "version": "0.1.76-rc.141",
   "description": "FasedAgent ACP runtime backend via acpx",
   "type": "module",
   "dependencies": {
