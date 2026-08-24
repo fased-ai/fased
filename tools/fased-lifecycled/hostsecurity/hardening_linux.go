@@ -196,15 +196,19 @@ func (host LinuxHost) waitForHardening(ctx context.Context) error {
 	defer deadline.Stop()
 	ticker := time.NewTicker(hardeningConvergencePoll)
 	defer ticker.Stop()
+	var lastIssues []HardeningIssue
+	var lastErr error
 	for {
-		if host.hardeningReady(ctx) {
+		issues, err := host.inspectHardening(ctx)
+		if err == nil && len(issues) == 0 {
 			return nil
 		}
+		lastIssues, lastErr = issues, err
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return errors.New("Hosting hardening services did not become ready before the bounded deadline")
+			return errors.Join(lastErr, fmt.Errorf("Hosting hardening did not become ready before the bounded deadline: %s", hardeningIssueSummary(lastIssues)))
 		case <-ticker.C:
 		}
 	}
@@ -248,53 +252,97 @@ func (host LinuxHost) RestoreHardening(ctx context.Context, encoded string) erro
 }
 
 func (host LinuxHost) hardeningReady(ctx context.Context) bool {
+	issues, err := host.inspectHardening(ctx)
+	return err == nil && len(issues) == 0
+}
+
+func (host LinuxHost) inspectHardening(ctx context.Context) ([]HardeningIssue, error) {
+	issues := make([]HardeningIssue, 0, 11)
 	prerequisitesReady, err := host.lifecyclePrerequisitesReady()
-	if err != nil || !prerequisitesReady {
-		return false
+	if err != nil {
+		return nil, err
+	}
+	if !prerequisitesReady {
+		return append(issues, HardeningIssueLifecyclePrerequisites), nil
 	}
 	nftBinary, err := fixedExecutable("/usr/sbin/nft", "/usr/bin/nft", "/sbin/nft")
 	if host.RootPrefix != "" {
 		nftBinary, err = "/usr/sbin/nft", nil
 	}
 	if err != nil {
-		return false
+		issues = append(issues, HardeningIssueNFTExecutable)
+		nftBinary = "/usr/sbin/nft"
 	}
-	table, err := host.Runner.Output(ctx, nftBinary, "list", "table", "inet", "fased_hosting")
-	if err != nil || !bytes.Contains(table, []byte("policy drop")) ||
-		!bytes.Contains(table, []byte("ct state established,related accept")) ||
-		!bytes.Contains(table, []byte(`iifname "lo" accept`)) ||
-		!bytes.Contains(table, []byte(`iifname "tailscale0" tcp dport { 22, 443 } accept`)) {
-		return false
+	if nftBinary != "" {
+		table, tableErr := host.Runner.Output(ctx, nftBinary, "list", "table", "inet", "fased_hosting")
+		if tableErr != nil || !bytes.Contains(table, []byte("policy drop")) ||
+			!bytes.Contains(table, []byte("ct state established,related accept")) ||
+			!bytes.Contains(table, []byte(`iifname "lo" accept`)) ||
+			!bytes.Contains(table, []byte(`iifname "tailscale0" tcp dport { 22, 443 } accept`)) {
+			issues = append(issues, HardeningIssueFirewallRules)
+		}
 	}
 	if !host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-active", "--quiet", firewallUnitName) ||
-		!host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-enabled", "--quiet", firewallUnitName) || !host.fail2banReady(ctx) {
-		return false
+		!host.commandSucceeds(ctx, "/usr/bin/systemctl", "is-enabled", "--quiet", firewallUnitName) {
+		issues = append(issues, HardeningIssueFirewallService)
 	}
-	if !host.automaticUpdatesReady(ctx) || !host.sshEffectiveReady(ctx) {
-		return false
+	if !host.fail2banReady(ctx) {
+		issues = append(issues, HardeningIssueFail2ban)
 	}
-	exactFiles := map[string]string{
-		"/etc/ssh/sshd_config.d/01-fased-hardening.conf": sshHardeningConfig,
-		"/etc/fased/hosting-firewall.nft":                renderFirewallConfig(),
-		"/etc/systemd/system/" + firewallUnitName:        renderFirewallUnit(nftBinary),
-		"/etc/fail2ban/jail.d/fased-sshd.local":          fail2banConfig,
+	if !host.automaticUpdatesReady(ctx) {
+		issues = append(issues, HardeningIssueAutomaticUpdates)
 	}
-	for path, expected := range exactFiles {
-		data, err := readSecureRootFile(host.path(path), 0o644, uint32(os.Getuid()), 1<<20)
-		if err != nil || !bytes.Equal(data, []byte(expected)) {
-			return false
+	if !host.sshEffectiveReady(ctx) {
+		issues = append(issues, HardeningIssueSSHEffectivePolicy)
+	}
+	exactFiles := []struct {
+		path     string
+		expected string
+		issue    HardeningIssue
+	}{
+		{"/etc/ssh/sshd_config.d/01-fased-hardening.conf", sshHardeningConfig, HardeningIssueSSHConfig},
+		{"/etc/fased/hosting-firewall.nft", renderFirewallConfig(), HardeningIssueFirewallConfig},
+		{"/etc/systemd/system/" + firewallUnitName, renderFirewallUnit(nftBinary), HardeningIssueFirewallUnit},
+		{"/etc/fail2ban/jail.d/fased-sshd.local", fail2banConfig, HardeningIssueFail2banConfig},
+	}
+	for _, file := range exactFiles {
+		data, readErr := readSecureRootFile(host.path(file.path), 0o644, uint32(os.Getuid()), 1<<20)
+		if errors.Is(readErr, os.ErrNotExist) {
+			issues = append(issues, file.issue)
+			continue
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		if !bytes.Equal(data, []byte(file.expected)) {
+			issues = append(issues, file.issue)
 		}
 	}
 	release, err := parseOSRelease(host.path("/etc/os-release"))
 	if err != nil {
-		return false
+		return nil, err
 	}
 	if release["ID"] == "ubuntu" || release["ID"] == "debian" {
-		data, err := readSecureRootFile(host.path("/etc/apt/apt.conf.d/52fased-security-updates"), 0o644, uint32(os.Getuid()), 1<<20)
-		return err == nil && bytes.Equal(data, []byte(aptAutomaticConfig))
+		data, readErr := readSecureRootFile(host.path("/etc/apt/apt.conf.d/52fased-security-updates"), 0o644, uint32(os.Getuid()), 1<<20)
+		if errors.Is(readErr, os.ErrNotExist) {
+			return append(issues, HardeningIssueAutomaticUpdatesConfig), nil
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		if !bytes.Equal(data, []byte(aptAutomaticConfig)) {
+			issues = append(issues, HardeningIssueAutomaticUpdatesConfig)
+		}
+		return issues, nil
 	}
 	data, err := readSecureRootFile(host.path("/etc/dnf/automatic.conf"), 0o644, uint32(os.Getuid()), 1<<20)
-	return err == nil && dnfAutomaticEnabled(data)
+	if err != nil {
+		return nil, err
+	}
+	if !dnfAutomaticEnabled(data) {
+		issues = append(issues, HardeningIssueAutomaticUpdatesConfig)
+	}
+	return issues, nil
 }
 
 func (host LinuxHost) aclToolsReady() bool {

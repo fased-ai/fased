@@ -4,6 +4,12 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.137
+
+- Make Hosting updates hand off from a permanent root-owned authority receipt
+  directly to the exact acquired lifecycle host, which owns evolving runtime,
+  plugin, security, and generation schemas.
+
 ## 0.1.76-rc.136
 
 - Bind both predecessor-compatible schema-v1 and platform-qualified schema-v2

@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+var errHardeningReconciliationRequired = errors.New("Hosting hardening reconciliation is required")
+
 type Host interface {
 	Inspect(context.Context, uint16, string) (Inspection, error)
 	SnapshotTailscaleInstall(context.Context) (string, error)
@@ -130,18 +132,20 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 			return previous, nil
 		case PhaseCommitted:
 			if previous.matches(request) {
-				if err := participant.validateCommittedBoundary(ctx, previous); err != nil {
+				if err := participant.validateCommittedBoundary(ctx, previous); err == nil {
+					return previous, nil
+				} else if !errors.Is(err, errHardeningReconciliationRequired) {
 					return State{}, err
 				}
-				return previous, nil
-			}
-			// Acquisition has already authenticated request.TrustRootSHA256 before
-			// the host-security participant runs. A committed host boundary must
-			// therefore survive an authorized lifecycle trust-root rotation while
-			// still rejecting changes to the host, channel, or platform identity.
-			// Incomplete transactions remain pinned to their original trust root.
-			if !previous.matchesCommittedHostBoundary(request) {
-				return State{}, errors.New("committed Hosting security transaction has a different update channel or platform identity")
+			} else {
+				// Acquisition has already authenticated request.TrustRootSHA256 before
+				// the host-security participant runs. A committed host boundary must
+				// therefore survive an authorized lifecycle trust-root rotation while
+				// still rejecting changes to the host, channel, or platform identity.
+				// Incomplete transactions remain pinned to their original trust root.
+				if !previous.matchesCommittedHostBoundary(request) {
+					return State{}, errors.New("committed Hosting security transaction has a different update channel or platform identity")
+				}
 			}
 			if _, err := participant.Store.EnsureOwnership(previous); err != nil {
 				return State{}, fmt.Errorf("preserve Hosting uninstall baseline: %w", err)
@@ -199,8 +203,17 @@ func (participant Participant) Prepare(ctx context.Context, request Request) (St
 			return State{}, participant.abort(ctx, state, err)
 		}
 	}
-	if request.RequireExistingHardening && (!inspection.HardeningReady && !inspection.LegacyHardeningReady || inspection.AppCanElevate) {
-		return State{}, participant.abort(ctx, state, errors.New("Hosting update refused because the installed host-security boundary is not intact"))
+	if request.RequireExistingHardening && inspection.AppCanElevate {
+		return State{}, participant.abort(ctx, state, errors.New("Hosting update refused: operator_can_elevate"))
+	}
+	if request.RequireExistingHardening && !inspection.HardeningReady && !inspection.LegacyHardeningReady {
+		if len(inspection.HardeningIssues) == 0 {
+			return State{}, participant.abort(ctx, state, errors.New("Hosting update refused: hardening_issue_unclassified"))
+		}
+		state, inspection, err = participant.reconcileExistingHardening(ctx, state, inspection)
+		if err != nil {
+			return State{}, err
+		}
 	}
 	if !inspection.TailscaleInstalled {
 		participant.progress("Fased: installing Tailscale...")
@@ -451,6 +464,55 @@ func (participant Participant) progress(message string) {
 	}
 }
 
+func (participant Participant) reconcileExistingHardening(ctx context.Context, state State, inspection Inspection) (State, Inspection, error) {
+	participant.progress("Fased: reconciling Hosting security boundary (" + hardeningIssueSummary(inspection.HardeningIssues) + ")...")
+	if !state.HardeningStarted {
+		snapshot, err := participant.Host.SnapshotHardening(ctx, state.OperatorUser, participant.log())
+		if err != nil {
+			return State{}, Inspection{}, participant.abort(ctx, state, err)
+		}
+		state.HardeningStarted = true
+		state.HardeningSnapshot = snapshot
+		if err := participant.Store.WriteState(state); err != nil {
+			return State{}, Inspection{}, err
+		}
+	}
+	if !state.HardeningStaged {
+		if err := participant.Host.StageHardening(ctx, state.HardeningSnapshot, participant.log()); err != nil {
+			return State{}, Inspection{}, participant.abort(ctx, state, err)
+		}
+		state.HardeningStaged = true
+		if err := participant.Store.WriteState(state); err != nil {
+			return State{}, Inspection{}, participant.abort(ctx, state, err)
+		}
+	}
+	if err := participant.Host.CommitHardening(ctx, state.HardeningSnapshot); err != nil {
+		return State{}, Inspection{}, participant.abort(ctx, state, err)
+	}
+	converged, err := participant.Host.Inspect(ctx, state.GatewayPort, state.OperatorUser)
+	if err != nil || !converged.HardeningReady || converged.AppCanElevate {
+		cause := errors.Join(err, fmt.Errorf("Hosting hardening reconciliation did not converge: %s", hardeningIssueSummary(converged.HardeningIssues)))
+		return State{}, Inspection{}, participant.abort(ctx, state, cause)
+	}
+	state.HardeningReconciled = true
+	state.SchemaVersion = CurrentSchemaVersion
+	if err := participant.Store.WriteState(state); err != nil {
+		return State{}, Inspection{}, err
+	}
+	return state, converged, nil
+}
+
+func hardeningIssueSummary(issues []HardeningIssue) string {
+	if len(issues) == 0 {
+		return "none"
+	}
+	values := make([]string, len(issues))
+	for index, issue := range issues {
+		values[index] = string(issue)
+	}
+	return strings.Join(values, ",")
+}
+
 func formatHostingProgressFrame(message string) string {
 	message = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(message, "Fased:"), "..."))
 	return fmt.Sprintf("\n  ╭─ HOSTING SETUP ───────────────────────────────────────────────────────────────╮\n  │ %-78s │\n  ╰───────────────────────────────────────────────────────────────────────────────╯", message)
@@ -476,7 +538,7 @@ func (participant Participant) abort(ctx context.Context, state State, cause err
 	if err := participant.Store.WriteState(state); err != nil {
 		failures = append(failures, err)
 	}
-	if state.HardeningStarted {
+	if state.HardeningStarted && !state.HardeningReconciled {
 		failures = append(failures, participant.Host.RestoreHardening(ctx, state.HardeningSnapshot))
 	}
 	if state.ServeMutationStarted {
@@ -574,8 +636,17 @@ func (participant Participant) validateCommittedBoundary(ctx context.Context, st
 	if err != nil || !inspection.TailscaleInstalled || !inspection.TailscaleRunning || !inspection.Authenticated ||
 		!validDNS(inspection.TailscaleDNS) || !ipv4Pattern.MatchString(inspection.TailscaleIPv4) || !versionPattern.MatchString(inspection.TailscaleVersion) ||
 		inspection.TailscaleDNS != state.TailscaleDNS || inspection.TailscaleIPv4 != state.TailscaleIPv4 || inspection.TailscaleVersion != state.TailscaleVersion ||
-		!inspection.PrivateServeReady || !inspection.SignerWebAuthnReady || !inspection.HardeningReady || !inspection.SignerReady || inspection.AppCanElevate {
+		!inspection.PrivateServeReady || !inspection.SignerWebAuthnReady || !inspection.SignerReady {
 		return errors.Join(err, errors.New("committed Hosting security boundary is not intact"))
+	}
+	if inspection.AppCanElevate {
+		return errors.New("committed Hosting security boundary is unsafe: operator_can_elevate")
+	}
+	if !inspection.HardeningReady {
+		if len(inspection.HardeningIssues) == 0 {
+			return errors.New("committed Hosting security boundary is not intact: hardening_issue_unclassified")
+		}
+		return fmt.Errorf("%w: %s", errHardeningReconciliationRequired, hardeningIssueSummary(inspection.HardeningIssues))
 	}
 	return nil
 }

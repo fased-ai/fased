@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -34,6 +35,7 @@ import (
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
+	"fased-lifecycled/publicupdate"
 	"fased-lifecycled/store"
 	"fased-lifecycled/trust"
 )
@@ -108,7 +110,29 @@ var (
 	verifyPublicLifecycleHost          = func(ctx context.Context) error { return platform.NewHostPreflight().Verify(ctx) }
 	executePublicLifecycleBootstrap    = execute
 	publicLifecycleRootAuthorized      = func() bool { return os.Geteuid() == 0 }
+	invokePublicHostSecurity           = invokeLifecycleHostSecurity
+	readPublicHostingReceipt           = publicupdate.ReadHostingReceipt
+	writePublicHostingReceipt          = publicupdate.WriteHostingReceipt
+	invokeTargetOwnedHostingUpdate     = invokeTargetOwnedHostingHost
+	prunePublicAcquisitionInbox        = pruneAcquisitionInbox
+	resolvePublicStatusOperator        = resolveOperator
 )
+
+type boundedLifecycleOutput struct {
+	buffer    bytes.Buffer
+	remaining int
+	exceeded  bool
+}
+
+func (output *boundedLifecycleOutput) Write(data []byte) (int, error) {
+	if len(data) > output.remaining {
+		output.exceeded = true
+		return 0, errors.New("target lifecycle output exceeded its bound")
+	}
+	written, err := output.buffer.Write(data)
+	output.remaining -= written
+	return written, err
+}
 
 type lifecyclePhaseProgress struct {
 	output   io.Writer
@@ -226,7 +250,7 @@ func runPublicLifecycleStatus(args []string, output io.Writer) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || timeoutSeconds < 1 || timeoutSeconds > 30 {
 		return errors.New("invalid public lifecycle status arguments")
 	}
-	if os.Geteuid() != 0 {
+	if !publicLifecycleRootAuthorized() {
 		return errors.New("public lifecycle status requires root authorization")
 	}
 	if profile == "" {
@@ -239,9 +263,26 @@ func runPublicLifecycleStatus(args []string, output io.Writer) error {
 	if operatorUser == "" {
 		operatorUser = operatorFromEnvironment(selectedProfile)
 	}
-	operator, err := resolveOperator(operatorUser, selectedProfile)
+	operator, err := resolvePublicStatusOperator(operatorUser, selectedProfile)
 	if err != nil {
 		return err
+	}
+	if selectedProfile == model.ProfileHosting {
+		receipt, receiptErr := readPublicHostingReceipt()
+		if receiptErr == nil {
+			if receipt.OperatorUser != operator.Name {
+				return errors.New("installed Hosting authority differs from the status operator")
+			}
+			if jsonOutput {
+				_, err = fmt.Fprintf(output, "{\"status\":\"installed\",\"profile\":%q,\"channel\":%q,\"version\":%q,\"releaseSequence\":%d,\"securityEpoch\":%d,\"activeGenerationId\":%q}\n", receipt.Profile, receipt.Channel, receipt.Version, receipt.ReleaseSequence, receipt.SecurityEpoch, receipt.ActiveGenerationID)
+				return err
+			}
+			_, err = fmt.Fprintf(output, "Installed: %s profile=%s channel=%s sequence=%d epoch=%d\n", receipt.Version, receipt.Profile, receipt.Channel, receipt.ReleaseSequence, receipt.SecurityEpoch)
+			return err
+		}
+		if !errors.Is(receiptErr, os.ErrNotExist) {
+			return receiptErr
+		}
 	}
 	configPath, err := installedConfigPath(selectedProfile, operator)
 	if err != nil {
@@ -695,6 +736,15 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	defer lock.Release()
 	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
 	defer cancel()
+	if request.Profile == model.ProfileHosting && (request.Operation == "update" || request.Operation == "repair") {
+		receipt, receiptErr := readPublicHostingReceipt()
+		if receiptErr == nil {
+			return runTargetOwnedHostingLifecycle(ctx, request, operator, receipt, lock, output)
+		}
+		if !errors.Is(receiptErr, os.ErrNotExist) {
+			return receiptErr
+		}
+	}
 	ownerConfigExisted, err := pathExists(filepath.Join(operator.Home, ".fased", "fased.json"))
 	if err != nil {
 		return fmt.Errorf("inspect owner configuration: %w", err)
@@ -808,56 +858,37 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		}
 	}
 	performance.Acquisition = result.Performance
-	var hostingParticipant *hostsecurity.Participant
-	var hostingState hostsecurity.State
+	var hostingState hostsecurity.CommandState
 	preparedOperatorUser := ""
 	hostingTransactionID := ""
 	hostingSecurityReused := false
 	if request.Profile == model.ProfileHosting {
-		securityLock, lockErr := hostsecurity.AcquireMutationLock("/run/lock/fased-host-security.lock", 0)
-		if lockErr != nil {
-			return lockErr
-		}
-		defer securityLock.Release()
 		hostingTransactionID, err = publicRequestID()
 		if err != nil {
 			return err
 		}
-		log, logErr := openHostingSecurityLog()
-		if logErr != nil {
-			return logErr
-		}
-		defer log.Close()
 		userOutput := output
 		if request.JSON {
 			userOutput = io.Discard
 		}
-		participant := hostsecurity.Participant{
-			Store: hostsecurity.Store{StatePath: "/var/lib/fased-host-security/active.json", ReceiptPath: "/etc/fased/hosting-prerequisites", ExpectedUID: 0},
-			Host:  hostsecurity.NewLinuxHost(), Log: log, User: userOutput,
-		}
-		hostingParticipant = &participant
 		onboardingRequired := request.Operation == "install" && request.Onboard && !ownerConfigExisted
-		if prior, priorErr := participant.Store.ReadState(); priorErr == nil && prior.Phase != hostsecurity.PhaseCommitted && prior.Phase != hostsecurity.PhaseAborted {
-			onboardingRequired = onboardingRequired || prior.OnboardingRequired ||
-				(prior.SchemaVersion == 1 && prior.RuntimeReady && request.Operation == "install" && request.Onboard)
-		}
-		prepared, prepareErr := participant.Prepare(ctx, hostsecurity.Request{
+		prepared, prepareErr := invokePublicHostSecurity(ctx, result.HostPath, hostsecurity.CommandRequest{
+			SchemaVersion: hostsecurity.CommandSchemaVersion, Operation: hostsecurity.CommandPrepare,
 			TransactionID: hostingTransactionID, Release: result.Version, Channel: request.Channel,
 			GatewayPort: request.GatewayPort, OperatorUser: operator.Name,
 			PlatformIdentity: runtime.GOOS + "/" + architecture(), TrustRootSHA256: releaseRoute.PinnedRootSHA256,
 			AuthKeyFile: request.TailscaleAuthKeyFile, Interactive: publicRequestAllowsBrowserAuthentication(request), RequireExistingHardening: request.Operation != "install",
 			OnboardingRequired: onboardingRequired,
-		})
+		}, userOutput)
 		if prepareErr != nil {
 			return prepareErr
 		}
 		hostingTransactionID = prepared.TransactionID
 		hostingState = prepared
 		preparedOperatorUser = prepared.OperatorUser
-		hostingSecurityReused = !hostingSecurityTransactionNeedsFinalization(prepared)
+		hostingSecurityReused = !prepared.NeedsFinalization
 	}
-	resumePendingOnboarding := hostingState.Phase == hostsecurity.PhaseOnboardingPending
+	resumePendingOnboarding := hostingState.OnboardingPending
 	applyStarted := time.Now()
 	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
 	var convergence protocol.Response
@@ -880,21 +911,27 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	performance.Transaction = convergence.Performance
 	emitLifecycleHostVerbose(lifecycleHostVerboseOutputWriter(request, output, os.Stderr), verboseOutput)
 	if err != nil {
-		if hostingParticipant != nil && !hostingSecurityReused && !resumePendingOnboarding && !lifecycleApplied {
-			err = errors.Join(err, hostingParticipant.Abort(ctx, hostingTransactionID))
+		if request.Profile == model.ProfileHosting && !hostingSecurityReused && !resumePendingOnboarding && !lifecycleApplied {
+			_, abortErr := invokePublicHostSecurity(ctx, result.HostPath, hostsecurity.CommandRequest{
+				SchemaVersion: hostsecurity.CommandSchemaVersion, Operation: hostsecurity.CommandAbort, TransactionID: hostingTransactionID,
+			}, io.Discard)
+			err = errors.Join(err, abortErr)
 		}
 		return err
 	}
-	if hostingParticipant != nil && !hostingSecurityReused {
-		bound, bindErr := hostingParticipant.BindRuntimeReady(ctx, hostingTransactionID,
-			convergence.ActiveGenerationID, convergence.ConvergenceReceiptDigest, hostingState.OnboardingRequired)
+	if request.Profile == model.ProfileHosting && !hostingSecurityReused {
+		bound, bindErr := invokePublicHostSecurity(ctx, result.HostPath, hostsecurity.CommandRequest{
+			SchemaVersion: hostsecurity.CommandSchemaVersion, Operation: hostsecurity.CommandBindRuntimeReady,
+			TransactionID: hostingTransactionID, GenerationID: convergence.ActiveGenerationID,
+			ConvergenceReceiptDigest: convergence.ConvergenceReceiptDigest, OnboardingRequired: hostingState.OnboardingRequired,
+		}, io.Discard)
 		if bindErr != nil {
 			return fmt.Errorf("Hosting runtime installed but host-security handoff remains pending: %w", bindErr)
 		}
 		hostingState = bound
 	}
 	outcome := convergence.Outcome
-	if shouldRunOnboarding(request, outcome, ownerConfigExisted) || hostingState.Phase == hostsecurity.PhaseOnboardingPending {
+	if shouldRunOnboarding(request, outcome, ownerConfigExisted) || hostingState.OnboardingPending {
 		onboardingStarted := time.Now()
 		onboardingCtx, detached := onboardingPhaseContext(ctx, request)
 		convergence, err = runOnboarding(onboardingCtx, request, operator, result, lock, output, os.Stderr)
@@ -902,8 +939,11 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		if err != nil {
 			return err
 		}
-		if hostingParticipant != nil && !hostingSecurityReused {
-			completed, completeErr := hostingParticipant.MarkOnboardingComplete(hostingTransactionID)
+		if request.Profile == model.ProfileHosting && !hostingSecurityReused {
+			completed, completeErr := invokePublicHostSecurity(ctx, result.HostPath, hostsecurity.CommandRequest{
+				SchemaVersion: hostsecurity.CommandSchemaVersion, Operation: hostsecurity.CommandCompleteOnboarding,
+				TransactionID: hostingTransactionID,
+			}, io.Discard)
 			if completeErr != nil {
 				return fmt.Errorf("onboarding completed but Hosting coordinator remains pending: %w", completeErr)
 			}
@@ -916,27 +956,41 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		}
 		outcome = convergence.Outcome
 	}
-	if hostingParticipant != nil && !hostingSecurityReused {
+	if request.Profile == model.ProfileHosting && !hostingSecurityReused {
 		accessConfirmed := request.TailnetAccessConfirmed
 		if !accessConfirmed {
-			if _, commitErr := hostingParticipant.Commit(ctx, hostingTransactionID, false); commitErr == nil {
+			if committed, commitErr := invokePublicHostSecurity(ctx, result.HostPath, hostsecurity.CommandRequest{
+				SchemaVersion: hostsecurity.CommandSchemaVersion, Operation: hostsecurity.CommandCommit,
+				TransactionID: hostingTransactionID,
+			}, io.Discard); commitErr == nil {
 				accessConfirmed = true
+				hostingState = committed
 			} else if !strings.Contains(commitErr.Error(), "independent tailnet access") {
 				return fmt.Errorf("Fased is installed and provider SSH remains open; Hosting hardening is pending: %w", commitErr)
 			}
 		}
 		if !accessConfirmed {
-			state, stateErr := hostingParticipant.Store.ReadState()
-			if stateErr != nil {
-				return stateErr
-			}
-			accessConfirmed, err = confirmTailnetAccess(state, operator, output)
+			accessConfirmed, err = confirmTailnetAccess(hostingState, operator, output)
 			if err != nil {
 				return err
 			}
 		}
-		if _, err := hostingParticipant.Commit(ctx, hostingTransactionID, accessConfirmed); err != nil {
+		if _, err := invokePublicHostSecurity(ctx, result.HostPath, hostsecurity.CommandRequest{
+			SchemaVersion: hostsecurity.CommandSchemaVersion, Operation: hostsecurity.CommandCommit,
+			TransactionID: hostingTransactionID, AccessConfirmed: accessConfirmed,
+		}, io.Discard); err != nil {
 			return fmt.Errorf("Fased is installed and provider SSH remains open; Hosting hardening is pending: %w", err)
+		}
+	}
+	if request.Profile == model.ProfileHosting {
+		if err := writePublicHostingReceipt(publicupdate.Receipt{
+			SchemaVersion: publicupdate.SchemaVersion, Profile: request.Profile, Channel: request.Channel,
+			Version: result.Version, OperatorUser: operator.Name, GatewayPort: request.GatewayPort,
+			PlatformIdentity: runtime.GOOS + "/" + architecture(), ReleaseSequence: result.ReleaseSequence,
+			SecurityEpoch: result.SecurityEpoch, ActiveGenerationID: convergence.ActiveGenerationID,
+			ConvergenceReceiptDigest: convergence.ConvergenceReceiptDigest,
+		}); err != nil {
+			return fmt.Errorf("Hosting committed but Stage-0 authority receipt is pending: %w", err)
 		}
 	}
 	if err := pruneAcquisitionInbox(platform.BootstrapCacheRootForOS(runtime.GOOS)); err != nil {
@@ -968,6 +1022,161 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		_, err = fmt.Fprintln(output, formatLifecyclePerformance(performance))
 	}
 	return err
+}
+
+// runTargetOwnedHostingLifecycle is the permanent Hosting update handoff.
+// Stage-0 interprets only its fixed authority receipt, verifies/acquires the
+// selected release, and invokes that release's host once. Every evolving
+// installation, plugin, security, and generation schema remains target-owned.
+func runTargetOwnedHostingLifecycle(ctx context.Context, request publicLifecycleRequest, operator publicOperator, previous publicupdate.Receipt, lock *hostsecurity.MutationLock, output io.Writer) error {
+	if runtime.GOOS != "linux" || architecture() != "x64" || previous.Profile != model.ProfileHosting ||
+		previous.OperatorUser != operator.Name || previous.PlatformIdentity != runtime.GOOS+"/"+architecture() {
+		return errors.New("installed Hosting authority differs from this host or operator")
+	}
+	request.GatewayPort = previous.GatewayPort
+	if request.Operation == "repair" {
+		request.Version, request.Channel = previous.Version, previous.Channel
+	} else if !request.ChannelExplicit && request.Version == "" {
+		request.Channel = previous.Channel
+	}
+	if err := verifyPublicLifecycleHost(ctx); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	var selection *signedChannelSelection
+	if request.Version == "" {
+		progress := beginLifecyclePhase(output, request.JSON, "resolving the trusted release")
+		resolved, err := discoverSignedChannelRelease(ctx, request.Channel, &http.Client{Timeout: 15 * time.Second, CheckRedirect: secureMetadataRedirect},
+			productionChannelReleasePrefix+request.Channel+"-v2", productionPinnedRootSHA256,
+			platform.BootstrapCacheRootForOS(runtime.GOOS), 0, previous.ReleaseSequence, previous.SecurityEpoch, now, nil, nil)
+		progress.Stop()
+		if err != nil {
+			return err
+		}
+		request.Version = resolved.Version
+		selection = &resolved
+	}
+	releaseRoute, err := publicTrustRoute(request.Version)
+	if err != nil {
+		return err
+	}
+	releaseRoute.RootRotationBaseURL = productionChannelReleasePrefix + request.Channel + "-v2"
+	if releaseRoute.VerifyIndex != nil {
+		releaseRoute.RootRotationBaseURL = releaseRoute.ReleaseBaseURL
+	}
+	expectedRootVersion, expectedRootSHA256 := uint64(0), ""
+	if selection != nil {
+		expectedRootVersion, expectedRootSHA256 = selection.RootVersion, selection.RootSHA256
+	}
+	progress := beginLifecyclePhase(output, request.JSON, "acquiring the verified lifecycle release")
+	result, err := executePublicLifecycleBootstrap(ctx, bootstrapRequest{
+		StateRoot: platform.BootstrapCacheRootForOS(runtime.GOOS), HostRoot: platform.LifecycleHostRootForOS(runtime.GOOS),
+		RootURL: releaseRoute.RootURL, RootRotationBaseURL: releaseRoute.RootRotationBaseURL, IndexURL: releaseRoute.IndexURL,
+		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
+		Channel: request.Channel, Version: request.Version, OperatingSystem: runtime.GOOS, Architecture: architecture(),
+		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: now, Inspect: inspectLifecycleHost,
+		VerifyIndex: releaseRoute.VerifyIndex, ExpectedRootVersion: expectedRootVersion, ExpectedRootSHA256: expectedRootSHA256,
+	})
+	progress.Stop()
+	if err != nil {
+		return err
+	}
+	if selection != nil {
+		if err := validateSignedChannelResult(*selection, result); err != nil {
+			return err
+		}
+	}
+	if result.ReleaseSequence < previous.ReleaseSequence || result.SecurityEpoch < previous.SecurityEpoch {
+		return errors.New("acquired Hosting release would roll back installed authority")
+	}
+	publicRequest := publicupdate.Request{
+		SchemaVersion: publicupdate.SchemaVersion, Operation: request.Operation, Profile: model.ProfileHosting,
+		Channel: request.Channel, Version: result.Version, OperatorUser: operator.Name, GatewayPort: previous.GatewayPort,
+		PlatformIdentity: runtime.GOOS + "/" + architecture(), TimeoutSeconds: uint32(request.Timeout / time.Second),
+		TrustRootSHA256: releaseRoute.PinnedRootSHA256, HostDigest: result.HostDigest,
+		ApplicationPath: result.ApplicationPath, DependencyPath: result.DependencyPath,
+		ReleaseSequence: result.ReleaseSequence, SecurityEpoch: result.SecurityEpoch,
+		ManifestProtocolMin: result.ManifestProtocolMin, ManifestProtocolMax: result.ManifestProtocolMax,
+		ReleaseIndexDigest: result.ReleaseIndexDigest, ReleaseAuthorityDigest: result.ReleaseAuthorityDigest,
+		PluginLockDigest: result.PluginLockDigest, ExpectedPreviousSequence: previous.ReleaseSequence,
+		ExpectedPreviousEpoch: previous.SecurityEpoch,
+	}
+	if err := publicRequest.Validate(); err != nil {
+		return err
+	}
+	response, err := invokeTargetOwnedHostingUpdate(ctx, result.HostPath, publicRequest, lock)
+	if err != nil {
+		return err
+	}
+	committed, err := readPublicHostingReceipt()
+	if err != nil {
+		return fmt.Errorf("target lifecycle host did not commit its Stage-0 authority receipt: %w", err)
+	}
+	if err := publicupdate.ExactReceipt(committed, publicRequest); err != nil {
+		return err
+	}
+	if committed.ActiveGenerationID != response.ActiveGenerationID || committed.ConvergenceReceiptDigest != response.ConvergenceReceiptDigest {
+		return errors.New("target lifecycle response differs from its committed authority receipt")
+	}
+	if err := prunePublicAcquisitionInbox(platform.BootstrapCacheRootForOS(runtime.GOOS)); err != nil {
+		return fmt.Errorf("lifecycle committed but verified acquisition cleanup is pending: %w", err)
+	}
+	if request.JSON {
+		return json.NewEncoder(output).Encode(struct {
+			Status                   string `json:"status"`
+			Version                  string `json:"version"`
+			ReleaseSequence          uint64 `json:"releaseSequence"`
+			SecurityEpoch            uint64 `json:"securityEpoch"`
+			ActiveGenerationID       string `json:"activeGenerationId"`
+			ConvergenceReceiptDigest string `json:"convergenceReceiptDigest"`
+		}{response.Outcome, result.Version, result.ReleaseSequence, result.SecurityEpoch, response.ActiveGenerationID, response.ConvergenceReceiptDigest})
+	}
+	message := "Updated successfully: " + result.Version
+	if response.Outcome == "ALREADY_CURRENT" {
+		message = "Already current: " + result.Version
+	} else if request.Operation == "repair" {
+		message = "Repaired successfully: " + result.Version
+	}
+	return writeLifecycleOutcome(output, message)
+}
+
+func invokeTargetOwnedHostingHost(ctx context.Context, hostPath string, request publicupdate.Request, lock *hostsecurity.MutationLock) (protocol.Response, error) {
+	if lock == nil {
+		return protocol.Response{}, errors.New("lifecycle mutation lease is unavailable")
+	}
+	requestData, err := json.Marshal(request)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	leaseFile, err := lock.DupForChild()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	defer leaseFile.Close()
+	stdout := &boundedLifecycleOutput{remaining: 64 << 10}
+	stderr := &boundedLifecycleOutput{remaining: 64 << 10}
+	command := exec.CommandContext(ctx, hostPath, "hosting-update-v1")
+	command.ExtraFiles = []*os.File{leaseFile}
+	command.Stdin = bytes.NewReader(requestData)
+	command.Stdout, command.Stderr = stdout, stderr
+	command.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
+	if err := command.Run(); err != nil {
+		if stdout.exceeded || stderr.exceeded {
+			return protocol.Response{}, errors.New("target lifecycle host output exceeded its bound")
+		}
+		return protocol.Response{}, fmt.Errorf("target lifecycle host update failed: %s", tail(stderr.buffer.Bytes(), 4096))
+	}
+	if stdout.exceeded || stderr.exceeded {
+		return protocol.Response{}, errors.New("target lifecycle host output exceeded its bound")
+	}
+	response, err := decodeTerminalLifecycleResponse(stdout.buffer.Bytes())
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if response.Outcome != "UPDATED" && response.Outcome != "ALREADY_CURRENT" {
+		return protocol.Response{}, errors.New("target lifecycle host returned an unsupported outcome")
+	}
+	return response, nil
 }
 
 func writeLifecycleOutcome(output io.Writer, message string) error {
@@ -1047,10 +1256,6 @@ func transactionMillis(evidence *protocol.PerformanceEvidence, selectValue func(
 	return fmt.Sprintf("%dms", selectValue(evidence))
 }
 
-func hostingSecurityTransactionNeedsFinalization(state hostsecurity.State) bool {
-	return state.Phase != hostsecurity.PhaseCommitted
-}
-
 // recoverPendingHostingOnboarding resumes the only deliberate state in which
 // the generation is durably committed but live application convergence is not
 // yet expected. The actual onboarding child may have been terminated before it
@@ -1059,7 +1264,7 @@ func hostingSecurityTransactionNeedsFinalization(state hostsecurity.State) bool 
 // that not-yet-created configuration. Bind the resume only to the exact
 // installed manifest and coordinator receipt; onboarding completion performs
 // the live convergence proof before the Hosting transaction can commit.
-func recoverPendingHostingOnboarding(operator publicOperator, state hostsecurity.State, result bootstrapResult) (protocol.Response, bool, error) {
+func recoverPendingHostingOnboarding(operator publicOperator, state hostsecurity.CommandState, result bootstrapResult) (protocol.Response, bool, error) {
 	configPath, err := installedConfigPath(model.ProfileHosting, operator)
 	if err != nil {
 		return protocol.Response{}, false, err
@@ -1083,8 +1288,8 @@ func recoverPendingHostingOnboarding(operator publicOperator, state hostsecurity
 	return validatePendingHostingOnboardingBinding(state, status, result)
 }
 
-func validatePendingHostingOnboardingBinding(state hostsecurity.State, status installedLifecycleStatus, result bootstrapResult) (protocol.Response, bool, error) {
-	if state.Phase != hostsecurity.PhaseOnboardingPending || !state.RuntimeReady ||
+func validatePendingHostingOnboardingBinding(state hostsecurity.CommandState, status installedLifecycleStatus, result bootstrapResult) (protocol.Response, bool, error) {
+	if !state.OnboardingPending || !state.RuntimeReady ||
 		!state.OnboardingRequired || state.OnboardingComplete || state.Release != result.Version ||
 		status.Profile != model.ProfileHosting ||
 		status.ActiveGenerationID != state.LifecycleGenerationID ||
@@ -1237,93 +1442,9 @@ func publicRequestAllowsBrowserAuthentication(request publicLifecycleRequest) bo
 	return !request.JSON
 }
 
-const maxHostingSecurityLogBytes = 8 << 20
-
-type boundedHostingLog struct {
-	file      *os.File
-	remaining int64
-}
-
-func (log *boundedHostingLog) Write(data []byte) (int, error) {
-	if log == nil || log.file == nil || log.remaining <= 0 {
-		return 0, errors.New("Hosting security log exceeded its bound")
-	}
-	if int64(len(data)) > log.remaining {
-		written, err := log.file.Write(data[:log.remaining])
-		log.remaining -= int64(written)
-		return written, errors.Join(err, errors.New("Hosting security log exceeded its bound"))
-	}
-	written, err := log.file.Write(data)
-	log.remaining -= int64(written)
-	return written, err
-}
-
-func (log *boundedHostingLog) Close() error {
-	if log == nil || log.file == nil {
-		return nil
-	}
-	file := log.file
-	log.file = nil
-	return errors.Join(file.Sync(), file.Close())
-}
-
-func openHostingSecurityLog() (io.WriteCloser, error) {
-	const directory = "/var/log/fased"
-	const path = directory + "/hosting-security.log"
-	return openBoundedHostingSecurityLog(directory, path, 0, maxHostingSecurityLogBytes)
-}
-
-func openBoundedHostingSecurityLog(directory, path string, expectedUID uint32, limit int64) (io.WriteCloser, error) {
-	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || filepath.Dir(path) != directory || limit <= 0 {
-		return nil, errors.New("Hosting security log path is unsafe")
-	}
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return nil, err
-	}
-	directoryInfo, err := os.Lstat(directory)
-	if err != nil {
-		return nil, err
-	}
-	directoryStat, statOK := directoryInfo.Sys().(*syscall.Stat_t)
-	if !statOK || !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 || directoryInfo.Mode().Perm() != 0o700 || directoryStat.Uid != expectedUID {
-		return nil, errors.New("Hosting security log directory is unsafe")
-	}
-	if info, err := os.Lstat(path); err == nil {
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || stat.Uid != expectedUID || stat.Nlink != 1 {
-			return nil, errors.New("Hosting security log is unsafe")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	descriptor, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	file := os.NewFile(uintptr(descriptor), path)
-	var opened syscall.Stat_t
-	if err := syscall.Fstat(descriptor, &opened); err != nil || opened.Mode&syscall.S_IFMT != syscall.S_IFREG || opened.Uid != expectedUID || opened.Nlink != 1 {
-		file.Close()
-		return nil, errors.Join(err, errors.New("opened Hosting security log is unsafe"))
-	}
-	if err := file.Chmod(0o600); err != nil {
-		file.Close()
-		return nil, err
-	}
-	if err := file.Truncate(0); err != nil {
-		file.Close()
-		return nil, err
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		file.Close()
-		return nil, err
-	}
-	return &boundedHostingLog{file: file, remaining: limit}, nil
-}
-
-func confirmTailnetAccess(state hostsecurity.State, operator publicOperator, output io.Writer) (bool, error) {
-	if err := state.Validate(); err != nil || state.TailscaleDNS == "" || state.OperatorUser == "" {
-		return false, errors.Join(err, errors.New("Hosting tailnet confirmation state is invalid"))
+func confirmTailnetAccess(state hostsecurity.CommandState, operator publicOperator, output io.Writer) (bool, error) {
+	if state.SchemaVersion != hostsecurity.CommandSchemaVersion || state.TransactionID == "" || state.TailscaleDNS == "" || state.OperatorUser == "" {
+		return false, errors.New("Hosting tailnet confirmation state is invalid")
 	}
 	gatewayToken, err := readHostingGatewayToken(operator)
 	if err != nil {
@@ -1405,7 +1526,7 @@ func bootstrapFileInfoStat(info os.FileInfo) (*syscall.Stat_t, bool) {
 	return stat, ok
 }
 
-func formatTailnetAccessFrame(state hostsecurity.State, gatewayToken string) string {
+func formatTailnetAccessFrame(state hostsecurity.CommandState, gatewayToken string) string {
 	dashboardURL := "https://" + state.TailscaleDNS
 	if gatewayToken != "" {
 		dashboardURL += "/#token=" + url.QueryEscape(gatewayToken)
@@ -1765,6 +1886,39 @@ func resolveOperator(name string, profile model.Profile) (publicOperator, error)
 		return publicOperator{}, errors.New("public lifecycle operator identity is unsafe")
 	}
 	return publicOperator{Name: name, Home: record.HomeDir, UID: uint32(uid), GID: uint32(gid)}, nil
+}
+
+func invokeLifecycleHostSecurity(ctx context.Context, hostPath string, request hostsecurity.CommandRequest, userOutput io.Writer) (hostsecurity.CommandState, error) {
+	if !filepath.IsAbs(hostPath) || filepath.Clean(hostPath) != hostPath {
+		return hostsecurity.CommandState{}, errors.New("lifecycle host path is unsafe")
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		return hostsecurity.CommandState{}, err
+	}
+	var stdout strings.Builder
+	var diagnostics strings.Builder
+	if userOutput == nil {
+		userOutput = io.Discard
+	}
+	command := exec.CommandContext(ctx, hostPath, "hosting-security")
+	command.Stdin = strings.NewReader(string(data))
+	command.Stdout = &stdout
+	command.Stderr = io.MultiWriter(userOutput, &diagnostics)
+	if err := command.Run(); err != nil {
+		return hostsecurity.CommandState{}, fmt.Errorf("lifecycle host Hosting security command failed: %s", tail([]byte(diagnostics.String()), 4096))
+	}
+	if stdout.Len() > 64<<10 {
+		return hostsecurity.CommandState{}, errors.New("lifecycle host Hosting security response exceeded its bound")
+	}
+	var state hostsecurity.CommandState
+	if err := json.Unmarshal([]byte(stdout.String()), &state); err != nil {
+		return hostsecurity.CommandState{}, fmt.Errorf("decode lifecycle host Hosting security response: %w", err)
+	}
+	if state.SchemaVersion != hostsecurity.CommandSchemaVersion || state.TransactionID != request.TransactionID || state.OperatorUser == "" {
+		return hostsecurity.CommandState{}, errors.New("lifecycle host Hosting security response identity is invalid")
+	}
+	return state, nil
 }
 
 func invokeLifecycleHost(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, lifecycleLease *hostsecurity.MutationLock) (protocol.Response, []byte, error) {

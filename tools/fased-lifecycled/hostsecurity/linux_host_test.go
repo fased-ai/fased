@@ -338,6 +338,55 @@ func TestLinuxHostInspectionBindsPrivateTailscaleAndHardening(t *testing.T) {
 	if err != nil || withoutACL.HardeningReady {
 		t.Fatalf("Hosting hardening accepted missing getfacl: inspection=%+v err=%v", withoutACL, err)
 	}
+	if len(withoutACL.HardeningIssues) != 1 || withoutACL.HardeningIssues[0] != HardeningIssueLifecyclePrerequisites {
+		t.Fatalf("missing lifecycle prerequisite was not named exactly: %+v", withoutACL.HardeningIssues)
+	}
+}
+
+func TestLinuxHostInspectionNamesRepairableHardeningDriftAndRejectsUnsafeMetadata(t *testing.T) {
+	host, runner, root := linuxHostFixture(t)
+	for path, data := range map[string]string{
+		"etc/fased/hosting-firewall.nft":                renderFirewallConfig(),
+		"etc/systemd/system/" + firewallUnitName:        renderFirewallUnit("/usr/sbin/nft"),
+		"etc/fail2ban/jail.d/fased-sshd.local":          fail2banConfig,
+		"etc/apt/apt.conf.d/52fased-security-updates":   aptAutomaticConfig,
+		"etc/ssh/sshd_config.d/01-fased-hardening.conf": sshHardeningConfig,
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, key := range []string{
+		"/usr/bin/systemctl is-active --quiet " + firewallUnitName,
+		"/usr/bin/systemctl is-enabled --quiet " + firewallUnitName,
+		"/usr/bin/systemctl is-active --quiet fail2ban.service",
+		"/usr/bin/systemctl is-enabled --quiet fail2ban.service",
+		"/usr/bin/systemctl is-active --quiet apt-daily-upgrade.timer",
+		"/usr/bin/systemctl is-enabled --quiet apt-daily-upgrade.timer",
+	} {
+		runner.outputs[key] = []byte("active\n")
+	}
+	runner.outputs["/usr/bin/fail2ban-client status sshd"] = []byte("Status for the jail: sshd\n")
+	runner.outputs["/usr/sbin/sshd -T"] = []byte("passwordauthentication no\npermitrootlogin no\npubkeyauthentication yes\n")
+	runner.errors["/usr/sbin/nft list table inet fased_hosting"] = errors.New("table missing")
+	inspection, err := host.Inspect(context.Background(), 18789, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inspection.HardeningIssues) != 1 || inspection.HardeningIssues[0] != HardeningIssueFirewallRules {
+		t.Fatalf("repairable live firewall drift was not named exactly: %+v", inspection.HardeningIssues)
+	}
+	sshConfig := filepath.Join(root, "etc/ssh/sshd_config.d/01-fased-hardening.conf")
+	if err := os.Chmod(sshConfig, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.Inspect(context.Background(), 18789, "app"); err == nil || !strings.Contains(err.Error(), sshConfig) || !strings.Contains(err.Error(), "mode=0666") {
+		t.Fatalf("unsafe hardening metadata was not rejected exactly: %v", err)
+	}
 }
 
 func TestLinuxHostRejectsFunnelAndNonLoopbackServe(t *testing.T) {

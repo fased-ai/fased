@@ -11,7 +11,7 @@ import (
 	"fased-lifecycled/model"
 )
 
-const CurrentSchemaVersion uint32 = 2
+const CurrentSchemaVersion uint32 = 3
 
 type Phase string
 
@@ -47,6 +47,23 @@ type Request struct {
 	RequireExistingHardening bool
 }
 
+type HardeningIssue string
+
+const (
+	HardeningIssueLifecyclePrerequisites HardeningIssue = "lifecycle_prerequisites_not_ready"
+	HardeningIssueNFTExecutable          HardeningIssue = "nft_executable_unavailable"
+	HardeningIssueFirewallRules          HardeningIssue = "firewall_rules_not_ready"
+	HardeningIssueFirewallService        HardeningIssue = "firewall_service_not_ready"
+	HardeningIssueFail2ban               HardeningIssue = "fail2ban_sshd_jail_not_ready"
+	HardeningIssueAutomaticUpdates       HardeningIssue = "automatic_updates_not_ready"
+	HardeningIssueSSHEffectivePolicy     HardeningIssue = "ssh_effective_policy_not_ready"
+	HardeningIssueSSHConfig              HardeningIssue = "ssh_hardening_config_drift"
+	HardeningIssueFirewallConfig         HardeningIssue = "firewall_config_drift"
+	HardeningIssueFirewallUnit           HardeningIssue = "firewall_unit_drift"
+	HardeningIssueFail2banConfig         HardeningIssue = "fail2ban_config_drift"
+	HardeningIssueAutomaticUpdatesConfig HardeningIssue = "automatic_updates_config_drift"
+)
+
 type Inspection struct {
 	TailscaleInstalled          bool
 	TailscaleRunning            bool
@@ -58,6 +75,7 @@ type Inspection struct {
 	SignerWebAuthnReady         bool
 	LifecyclePrerequisitesReady bool
 	HardeningReady              bool
+	HardeningIssues             []HardeningIssue
 	LegacyHardeningReady        bool
 	SignerReady                 bool
 	AppCanElevate               bool
@@ -101,6 +119,7 @@ type State struct {
 	HardeningAdopted                bool   `json:"hardeningAdopted,omitempty"`
 	HardeningSnapshot               string `json:"hardeningSnapshot,omitempty"`
 	HardeningCommitted              bool   `json:"hardeningCommitted,omitempty"`
+	HardeningReconciled             bool   `json:"hardeningReconciled,omitempty"`
 	LegacyHardeningAdopted          bool   `json:"legacyHardeningAdopted,omitempty"`
 }
 
@@ -129,10 +148,14 @@ func (request Request) Validate() error {
 
 func (state State) Validate() error {
 	legacy := state.SchemaVersion == 1
+	preReconciliation := state.SchemaVersion == 2
 	request := Request{TransactionID: state.TransactionID, Release: state.Release, Channel: state.Channel, GatewayPort: state.GatewayPort, OperatorUser: state.OperatorUser,
 		PlatformIdentity: state.PlatformIdentity, TrustRootSHA256: state.TrustRootSHA256}
-	if (state.SchemaVersion != CurrentSchemaVersion && !legacy) || (!legacy && request.Validate() != nil) || !validPhase(state.Phase) || len(state.PreviousServe) > maxOpaqueSnapshot || len(state.PreviousSignerWebAuthn) > 4096 || len(state.HardeningSnapshot) > maxOpaqueSnapshot || len(state.TailscaleInstallSnapshot) > maxOpaqueSnapshot {
+	if (state.SchemaVersion != CurrentSchemaVersion && !preReconciliation && !legacy) || (!legacy && request.Validate() != nil) || !validPhase(state.Phase) || len(state.PreviousServe) > maxOpaqueSnapshot || len(state.PreviousSignerWebAuthn) > 4096 || len(state.HardeningSnapshot) > maxOpaqueSnapshot || len(state.TailscaleInstallSnapshot) > maxOpaqueSnapshot {
 		return errors.New("Hosting security state is invalid")
+	}
+	if preReconciliation && state.HardeningReconciled {
+		return errors.New("Hosting security predecessor state contains a reconciliation marker")
 	}
 	if legacy && (state.PlatformIdentity != "" || state.TrustRootSHA256 != "" || state.LifecycleGenerationID != "" || state.ConvergenceReceiptDigest != "" || state.LegacyRuntimeBindingPending || state.OnboardingRequired || state.OnboardingComplete || state.Phase == PhasePreflight || state.Phase == PhasePrerequisitesReady || state.Phase == PhasePrivateNetworkReady || state.Phase == PhaseGenerationReady || state.Phase == PhaseOnboardingPending || state.Phase == PhaseOnboardingComplete) {
 		return errors.New("legacy Hosting security state contains newer coordinator fields")
@@ -173,6 +196,7 @@ func (state State) Validate() error {
 		state.TailscaleInstalledByTransaction && !state.TailscaleInstallStarted || state.TailscaleInstallStarted && state.TailscaleInstallSnapshot == "" || state.RuntimeReady && (state.Phase == PhasePreflight || state.Phase == PhasePreparing || state.Phase == PhasePrerequisitesReady || state.Phase == PhasePrivateNetworkReady || state.Phase == PhaseGenerationReady) ||
 		state.LifecyclePrerequisitesStaged && (!state.HardeningStarted || state.HardeningSnapshot == "") ||
 		state.HardeningStaged && (!state.HardeningStarted || state.HardeningSnapshot == "") ||
+		state.HardeningReconciled && (!state.HardeningStarted || !state.HardeningStaged || state.HardeningSnapshot == "") ||
 		state.HardeningStarted != (state.HardeningSnapshot != "") ||
 		state.HardeningCommitted && ((!state.HardeningStarted && !state.HardeningAdopted) || !state.RuntimeReady || !state.AccessConfirmed) ||
 		(state.Phase == PhaseHardeningReady || state.Phase == PhaseCommitted) && !state.HardeningCommitted || state.LegacyHardeningAdopted && !state.AccessConfirmed ||

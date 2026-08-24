@@ -771,6 +771,29 @@ func TestHostingOperatorRefreshRunsAfterLifecycleApply(t *testing.T) {
 	}
 }
 
+func TestHostingSecurityUsesExactAcquiredLifecycleHostProtocol(t *testing.T) {
+	hostPath := filepath.Join(t.TempDir(), "fased-lifecycled")
+	transactionID := "01234567-89ab-4cde-8fab-0123456789ab"
+	script := "#!/bin/sh\n" +
+		"test \"$1\" = hosting-security || exit 8\n" +
+		"cat >/dev/null\n" +
+		"printf 'target-host-progress\\n' >&2\n" +
+		"printf '%s\\n' '{\"schemaVersion\":1,\"transactionId\":\"" + transactionID + "\",\"release\":\"1.2.3\",\"operatorUser\":\"app\",\"futureField\":true}'\n"
+	if err := os.WriteFile(hostPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var userOutput bytes.Buffer
+	state, err := invokeLifecycleHostSecurity(context.Background(), hostPath, hostsecurity.CommandRequest{
+		SchemaVersion: hostsecurity.CommandSchemaVersion, Operation: hostsecurity.CommandAbort, TransactionID: transactionID,
+	}, &userOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.TransactionID != transactionID || state.OperatorUser != "app" || !strings.Contains(userOutput.String(), "target-host-progress") {
+		t.Fatalf("acquired lifecycle host handoff was not preserved: state=%+v output=%q", state, userOutput.String())
+	}
+}
+
 func TestHostingOperatorRefreshDistinguishesApplyFromPostApplyFailure(t *testing.T) {
 	placeholder := publicOperator{Name: "app", Home: "/home/app"}
 	resolveCalls := 0
@@ -921,7 +944,7 @@ func TestInteractiveOnboardingDoesNotInheritMachineDeadline(t *testing.T) {
 }
 
 func TestTailnetAccessHandoffUsesOneFramedWebAndSSHSummary(t *testing.T) {
-	got := formatTailnetAccessFrame(hostsecurity.State{
+	got := formatTailnetAccessFrame(hostsecurity.CommandState{
 		TailscaleDNS: "fased-vps.tailnet.ts.net",
 		OperatorUser: "app",
 	}, strings.Repeat("a", 48))
@@ -945,7 +968,7 @@ func TestTailnetAccessHandoffUsesOneFramedWebAndSSHSummary(t *testing.T) {
 }
 
 func TestTailnetAccessHandoffDescribesPasswordWithoutLeakingIt(t *testing.T) {
-	got := formatTailnetAccessFrame(hostsecurity.State{
+	got := formatTailnetAccessFrame(hostsecurity.CommandState{
 		TailscaleDNS: "fased-vps.tailnet.ts.net",
 		OperatorUser: "app",
 	}, "")
@@ -1125,31 +1148,11 @@ func TestHostingBrowserAuthenticationIsIndependentFromApplicationOnboarding(t *t
 	}
 }
 
-func TestCommittedHostingSecurityTransactionSkipsFinalization(t *testing.T) {
-	if hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: hostsecurity.PhaseCommitted}) {
-		t.Fatal("reused committed Hosting security transaction selected completion mutations")
-	}
-	for _, phase := range []hostsecurity.Phase{
-		hostsecurity.PhasePrerequisitesReady,
-		hostsecurity.PhasePrivateNetworkReady,
-		hostsecurity.PhaseGenerationReady,
-		hostsecurity.PhaseRuntimeReady,
-		hostsecurity.PhaseOnboardingPending,
-		hostsecurity.PhaseOnboardingComplete,
-		hostsecurity.PhaseHardening,
-		hostsecurity.PhaseHardeningReady,
-	} {
-		if !hostingSecurityTransactionNeedsFinalization(hostsecurity.State{Phase: phase}) {
-			t.Fatalf("pending Hosting security phase %s skipped required completion", phase)
-		}
-	}
-}
-
 func TestPendingHostingOnboardingResumesOnlyExactCommittedGeneration(t *testing.T) {
 	generationID := "sha256:" + strings.Repeat("a", 64)
 	receiptDigest := "sha256:" + strings.Repeat("b", 64)
-	state := hostsecurity.State{
-		SchemaVersion: hostsecurity.CurrentSchemaVersion, Phase: hostsecurity.PhaseOnboardingPending,
+	state := hostsecurity.CommandState{
+		SchemaVersion: hostsecurity.CommandSchemaVersion, OnboardingPending: true,
 		Release: "0.1.76-rc.116", RuntimeReady: true, OnboardingRequired: true,
 		LifecycleGenerationID: generationID, ConvergenceReceiptDigest: receiptDigest,
 	}
@@ -1164,17 +1167,17 @@ func TestPendingHostingOnboardingResumesOnlyExactCommittedGeneration(t *testing.
 		t.Fatalf("exact pending Hosting onboarding did not resume: response=%+v err=%v", response, err)
 	}
 
-	for name, mutate := range map[string]func(*hostsecurity.State, *installedLifecycleStatus, *bootstrapResult){
-		"newer release": func(_ *hostsecurity.State, _ *installedLifecycleStatus, candidate *bootstrapResult) {
+	for name, mutate := range map[string]func(*hostsecurity.CommandState, *installedLifecycleStatus, *bootstrapResult){
+		"newer release": func(_ *hostsecurity.CommandState, _ *installedLifecycleStatus, candidate *bootstrapResult) {
 			candidate.Version = "0.1.76-rc.117"
 		},
-		"different generation": func(_ *hostsecurity.State, installed *installedLifecycleStatus, _ *bootstrapResult) {
+		"different generation": func(_ *hostsecurity.CommandState, installed *installedLifecycleStatus, _ *bootstrapResult) {
 			installed.ActiveGenerationID = "sha256:" + strings.Repeat("c", 64)
 		},
-		"different release sequence": func(_ *hostsecurity.State, installed *installedLifecycleStatus, _ *bootstrapResult) {
+		"different release sequence": func(_ *hostsecurity.CommandState, installed *installedLifecycleStatus, _ *bootstrapResult) {
 			installed.ReleaseSequence++
 		},
-		"completed onboarding": func(coordinator *hostsecurity.State, _ *installedLifecycleStatus, _ *bootstrapResult) {
+		"completed onboarding": func(coordinator *hostsecurity.CommandState, _ *installedLifecycleStatus, _ *bootstrapResult) {
 			coordinator.OnboardingComplete = true
 		},
 	} {
@@ -1195,26 +1198,6 @@ func TestPendingHostingOnboardingResumesOnlyExactCommittedGeneration(t *testing.
 	response, alreadyCurrent, err = validatePendingHostingOnboardingBinding(newerState, status, newer)
 	if err != nil || alreadyCurrent || response.ActiveGenerationID != "" {
 		t.Fatalf("newer exact Hosting release did not select lifecycle convergence: response=%+v current=%v err=%v", response, alreadyCurrent, err)
-	}
-}
-
-func TestHostingSecurityLogIsBoundedAndSecure(t *testing.T) {
-	root := t.TempDir()
-	directory := filepath.Join(root, "log")
-	path := filepath.Join(directory, "hosting-security.log")
-	log, err := openBoundedHostingSecurityLog(directory, path, uint32(os.Getuid()), 8)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if written, err := log.Write([]byte("123456789")); err == nil || written != 8 {
-		t.Fatalf("oversized log write was not bounded: written=%d err=%v", written, err)
-	}
-	if err := log.Close(); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Lstat(path)
-	if err != nil || info.Size() != 8 || info.Mode().Perm() != 0o600 {
-		t.Fatalf("bounded log identity: info=%v err=%v", info, err)
 	}
 }
 
