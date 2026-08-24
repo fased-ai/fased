@@ -136,4 +136,18 @@ describe("unified hosted release manifest v2", () => {
     expect(Object.keys(manifest.application.linux)).toEqual(["x64"]);
     expect(Object.keys(manifest.signer.platforms)).toEqual(["linux-amd64"]);
   });
+
+  it("builds a publishable Linux-x64-only release manifest", async () => {
+    const assetsDir = fixture();
+    const manifest = await buildHostedReleaseManifest({
+      assetsDir,
+      version,
+      commit,
+      profile: "release-x64",
+    });
+    expect(manifest).not.toHaveProperty("fixture");
+    expect(Object.keys(manifest.application)).toEqual(["linux"]);
+    expect(Object.keys(manifest.application.linux)).toEqual(["x64"]);
+    expect(Object.keys(manifest.signer.platforms)).toEqual(["linux-amd64"]);
+  });
 });

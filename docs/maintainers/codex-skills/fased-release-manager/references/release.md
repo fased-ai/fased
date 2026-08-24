@@ -25,6 +25,12 @@ from that tag, installs frozen dependencies once, builds one Linux-x64 core
 artifact, and performs publication in the same run. Optional component packs use
 their signed component transaction.
 
+The default release topology is exactly one Linux-x64 publication job. It does
+not start, await, or download Linux ARM64 or macOS build jobs. Cross-platform
+support is not permission to expand this default. A portable or multi-platform
+release uses a separate owner-requested workflow and is never selected implicitly
+for an ordinary fix, RC, tag, or publication.
+
 Reserve the unused version before delivery and change it in the product-fix PR.
 Do not merge a release-authorized product fix and then create a standalone
 version PR. After the nearest regression passes, do not add a full-package rerun.
@@ -33,6 +39,13 @@ tag-bound publication workflow, so that workflow has no second environment-revie
 pause. pnpm and Go caches plus parallel signer/lifecycle compilation remain
 enabled; cache hits may accelerate compilation but never replace tag-bound
 assembly, verification, attestation, or publication.
+
+Build Linux-x64 once per new public version. The installer consumes compiled
+Gateway assets and native signer/lifecycle binaries whose manifest and
+attestations bind the exact version, commit, tree, and artifact digest, so a prior
+version's assembled artifact is not reusable. Cache the pnpm store and Go build
+outputs by their lockfiles and toolchain; do not add another platform build or a
+second Linux build to improve confidence.
 
 The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names, sizes and digests, provenance, SBOM/VEX, signer/controller identity,

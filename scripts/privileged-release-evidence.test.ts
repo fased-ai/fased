@@ -60,13 +60,8 @@ function componentSbom(name: string, purl: string) {
 
 async function fixture() {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "fased-release-evidence-"));
-  const applications = { linux: {}, darwin: {} };
-  for (const [operatingSystem, architecture] of [
-    ["linux", "x64"],
-    ["linux", "arm64"],
-    ["darwin", "x64"],
-    ["darwin", "arm64"],
-  ]) {
+  const applications = { linux: {} };
+  for (const [operatingSystem, architecture] of [["linux", "x64"]]) {
     const appAsset = `fased-hosted-app-v2-${operatingSystem}-${architecture}-v${version}.tar.gz`;
     const dependencyHash = digest(`lock-${operatingSystem}-${architecture}`);
     const dependencyAsset = `fased-hosted-deps-${operatingSystem}-${architecture}-${dependencyHash}.tar.gz`;
@@ -94,7 +89,7 @@ async function fixture() {
     );
   }
   const platforms = {};
-  for (const platform of ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"]) {
+  for (const platform of ["linux-amd64"]) {
     const asset = `fased-signerd-${platform}`;
     await fsp.writeFile(path.join(root, asset), `${platform}\n`);
     platforms[platform] = { asset, sha256: await fileDigest(path.join(root, asset)) };
@@ -126,9 +121,6 @@ async function fixture() {
   for (const [asset, contents] of [
     ["install.sh", "bootstrap\n"],
     ["fased-lifecycled-linux-amd64", "lifecycle x64\n"],
-    ["fased-lifecycled-linux-arm64", "lifecycle arm64\n"],
-    ["fased-lifecycled-darwin-amd64", "lifecycle mac x64\n"],
-    ["fased-lifecycled-darwin-arm64", "lifecycle mac arm64\n"],
     ["fased-privileged-release-evidence.mjs", "verifier\n"],
   ]) {
     await fsp.writeFile(path.join(root, asset), contents);

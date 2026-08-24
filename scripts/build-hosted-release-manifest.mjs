@@ -108,7 +108,7 @@ export async function buildHostedReleaseManifest({
   if (!VERSION_PATTERN.test(version || "") || !COMMIT_PATTERN.test(commit || "")) {
     throw new Error("release version or commit is not canonical");
   }
-  if (profile !== "release" && profile !== "branch-x64") {
+  if (!new Set(["release", "release-x64", "branch-x64"]).has(profile)) {
     throw new Error("hosted release manifest profile is unsupported");
   }
   const fixtureOnly = profile === "branch-x64";
@@ -190,7 +190,7 @@ function parseArgs(argv) {
     const value = argv[index + 1];
     if (!allowed.has(key) || !value || values.has(key)) {
       throw new Error(
-        "usage: build-hosted-release-manifest --assets DIR --version X.Y.Z --commit SHA --output FILE [--profile release|branch-x64]",
+        "usage: build-hosted-release-manifest --assets DIR --version X.Y.Z --commit SHA --output FILE [--profile release|release-x64|branch-x64]",
       );
     }
     values.set(key, value);

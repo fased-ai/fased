@@ -137,7 +137,7 @@ node "$ROOT_DIR/scripts/stamp-release-installer.mjs" "${stamp_args[@]}"
 x64_identity="$OUTPUT_DIR/fased-hosted-app-v2-linux-x64-v${VERSION}.tar.gz.release.json"
 x64_app="$(jq -er .app.asset "$x64_identity")"
 x64_dependency="$(jq -er .dependencies.asset "$x64_identity")"
-manifest_profile=branch-x64
+manifest_profile=release-x64
 [[ "$has_all_platforms" -eq 0 ]] || manifest_profile=release
 node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs" \
   --assets "$OUTPUT_DIR" \

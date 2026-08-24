@@ -127,12 +127,12 @@ describe("installer platform preflight", () => {
     expect(installer).not.toContain('print_installer_stage "Verifying public command..."');
   });
 
-  it("builds Linux arm64 and native macOS supplements", () => {
-    expect(releaseWorkflow).toContain("ubuntu-24.04-arm");
-    expect(releaseWorkflow).toContain("build-linux-arm64-release-supplement.sh");
-    expect(releaseWorkflow).toContain("build-darwin-release-supplement.sh");
-    expect(releaseWorkflow).toContain("macos-15-intel");
-    expect(releaseWorkflow).toContain("macos-15");
+  it("keeps portable platform support out of the ordinary Linux-x64 release", () => {
+    expect(releaseWorkflow).not.toContain("ubuntu-24.04-arm");
+    expect(releaseWorkflow).not.toContain("build-linux-arm64-release-supplement.sh");
+    expect(releaseWorkflow).not.toContain("build-darwin-release-supplement.sh");
+    expect(releaseWorkflow).not.toContain("macos-15-intel");
+    expect(releaseWorkflow).not.toContain("macos-15");
     expect(installer).toContain('bootstrap_asset="fased-bootstrap-${operating_system}-${arch}"');
     expect(installer).toContain("macOS supports the Local profile only");
     expect(signerRelease).toContain('TARGETS="${FASED_SIGNER_TARGETS:-linux/amd64}"');
