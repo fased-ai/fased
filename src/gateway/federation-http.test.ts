@@ -199,6 +199,39 @@ afterEach(() => {
 });
 
 describe("federation HTTP proxy", () => {
+  it("accepts the current bounded directory payload while rejecting larger responses", async () => {
+    const withinBound = JSON.stringify({ entries: [{ padding: "x".repeat(3 * 1024 * 1024) }] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(withinBound, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+
+    const accepted = await invoke({ method: "GET", url: "/api/federation/directory" });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.bodyText).toBe(withinBound);
+
+    const overflow = JSON.stringify({ entries: [{ padding: "x".repeat(4 * 1024 * 1024) }] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(overflow, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+    await expect(invoke({ method: "GET", url: "/api/federation/directory" })).rejects.toThrow(
+      "federation upstream response exceeded the size limit",
+    );
+  });
+
   it("forwards marketplace offer discovery requests", async () => {
     const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
       const url = new URL(

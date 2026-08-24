@@ -105,40 +105,31 @@ export async function configureGatewayForOnboarding(
     customBindHost = typeof input === "string" ? input.trim() : undefined;
   }
 
-  let authMode: GatewayAuthChoice;
-  if (strictHosting) {
-    authMode = "token";
-  } else {
-    authMode = (await prompter.select({
-      message: "Gateway auth",
-      options: [
-        {
-          value: "token",
-          label: "Token",
-        },
-        { value: "password", label: "Password" },
-      ],
-      initialValue: quickstartGateway.authMode,
-    })) as GatewayAuthChoice;
-  }
+  let authMode = (await prompter.select({
+    message: "Gateway auth",
+    options: [
+      {
+        value: "token",
+        label: "Token",
+      },
+      { value: "password", label: "Password" },
+    ],
+    initialValue: quickstartGateway.authMode,
+  })) as GatewayAuthChoice;
 
   let gatewayToken: string | undefined;
   if (authMode === "token") {
     const existingToken = normalizeGatewayTokenInput(quickstartGateway.token ?? "");
-    if (strictHosting) {
-      gatewayToken = existingToken || randomToken();
-    } else {
-      const tokenInput = await promptSecretOrText(prompter, {
-        message: existingToken
-          ? "Gateway token (blank to keep current)"
-          : "Gateway token (blank to generate)",
-        placeholder: existingToken
-          ? "Press Enter to keep the current token"
-          : "Needed for multi-machine or non-loopback access",
-        initialValue: quickstartGateway.token ?? "",
-      });
-      gatewayToken = normalizeGatewayTokenInput(tokenInput) || existingToken || randomToken();
-    }
+    const tokenInput = await promptSecretOrText(prompter, {
+      message: existingToken
+        ? "Gateway token (blank to keep current)"
+        : "Gateway token (blank to generate)",
+      placeholder: existingToken
+        ? "Press Enter to keep the current token"
+        : "Needed for multi-machine or non-loopback access",
+      initialValue: quickstartGateway.token ?? "",
+    });
+    gatewayToken = normalizeGatewayTokenInput(tokenInput) || existingToken || randomToken();
   }
 
   const tailscaleMode: GatewayWizardSettings["tailscaleMode"] = strictHosting
@@ -211,6 +202,10 @@ export async function configureGatewayForOnboarding(
     authMode = "password";
   }
 
+  const retainedAuth = { ...nextConfig.gateway?.auth };
+  delete retainedAuth.token;
+  delete retainedAuth.password;
+
   if (authMode === "password") {
     const password =
       (quickstartGateway.password ?? "").trim() ||
@@ -223,7 +218,7 @@ export async function configureGatewayForOnboarding(
       gateway: {
         ...nextConfig.gateway,
         auth: {
-          ...nextConfig.gateway?.auth,
+          ...retainedAuth,
           mode: "password",
           password: String(password ?? "").trim(),
         },
@@ -235,7 +230,7 @@ export async function configureGatewayForOnboarding(
       gateway: {
         ...nextConfig.gateway,
         auth: {
-          ...nextConfig.gateway?.auth,
+          ...retainedAuth,
           mode: "token",
           token: gatewayToken,
         },

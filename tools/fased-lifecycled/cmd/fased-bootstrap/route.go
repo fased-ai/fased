@@ -24,6 +24,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"golang.org/x/term"
 
@@ -923,7 +924,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 			if stateErr != nil {
 				return stateErr
 			}
-			accessConfirmed, err = confirmTailnetAccess(state, output)
+			accessConfirmed, err = confirmTailnetAccess(state, operator, output)
 			if err != nil {
 				return err
 			}
@@ -1314,11 +1315,15 @@ func openBoundedHostingSecurityLog(directory, path string, expectedUID uint32, l
 	return &boundedHostingLog{file: file, remaining: limit}, nil
 }
 
-func confirmTailnetAccess(state hostsecurity.State, output io.Writer) (bool, error) {
+func confirmTailnetAccess(state hostsecurity.State, operator publicOperator, output io.Writer) (bool, error) {
 	if err := state.Validate(); err != nil || state.TailscaleDNS == "" || state.OperatorUser == "" {
 		return false, errors.Join(err, errors.New("Hosting tailnet confirmation state is invalid"))
 	}
-	_, _ = fmt.Fprintln(output, formatTailnetAccessFrame(state))
+	gatewayToken, err := readHostingGatewayToken(operator)
+	if err != nil {
+		return false, err
+	}
+	_, _ = fmt.Fprintln(output, formatTailnetAccessFrame(state, gatewayToken))
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
 		return false, errors.New("non-interactive Hosting setup preserved provider SSH; rerun with --tailnet-access-confirmed only after the external Tailscale SSH test succeeds")
@@ -1338,23 +1343,107 @@ func confirmTailnetAccess(state hostsecurity.State, output io.Writer) (bool, err
 	return true, nil
 }
 
-func formatTailnetAccessFrame(state hostsecurity.State) string {
+func readHostingGatewayToken(operator publicOperator) (string, error) {
+	if operator.UID == 0 || !filepath.IsAbs(operator.Home) || filepath.Clean(operator.Home) != operator.Home {
+		return "", errors.New("Hosting access owner identity is unsafe")
+	}
+	stateDir := filepath.Join(operator.Home, ".fased")
+	for index, directory := range []string{operator.Home, stateDir} {
+		info, err := os.Lstat(directory)
+		stat, ok := bootstrapFileInfoStat(info)
+		unsafeMode := info != nil && info.Mode().Perm()&0o002 != 0
+		if index == 0 {
+			unsafeMode = unsafeMode || info != nil && info.Mode().Perm()&0o020 != 0
+		} else if info != nil && info.Mode().Perm()&0o020 != 0 {
+			unsafeMode = unsafeMode || info.Mode()&os.ModeSetgid == 0
+		}
+		if err != nil || !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != operator.UID || unsafeMode {
+			return "", errors.Join(err, errors.New("Hosting access state directory is unsafe"))
+		}
+	}
+	secretPath := filepath.Join(stateDir, "gateway-secret")
+	info, err := os.Lstat(secretPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	pathStat, ok := bootstrapFileInfoStat(info)
+	if err != nil || !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || pathStat.Uid != operator.UID || pathStat.Nlink != 1 || info.Size() < 1 || info.Size() > 4096 {
+		return "", errors.Join(err, errors.New("Hosting Gateway token file is unsafe"))
+	}
+	descriptor, err := syscall.Open(secretPath, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", err
+	}
+	file := os.NewFile(uintptr(descriptor), secretPath)
+	defer file.Close()
+	var opened syscall.Stat_t
+	if err := syscall.Fstat(descriptor, &opened); err != nil || opened.Mode&syscall.S_IFMT != syscall.S_IFREG || opened.Uid != operator.UID || opened.Nlink != 1 || opened.Dev != pathStat.Dev || opened.Ino != pathStat.Ino {
+		return "", errors.Join(err, errors.New("opened Hosting Gateway token file is unsafe"))
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 4097))
+	if err != nil || len(data) > 4096 {
+		return "", errors.Join(err, errors.New("Hosting Gateway token exceeds its bound"))
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" || strings.IndexFunc(token, unicode.IsSpace) >= 0 || strings.IndexFunc(token, unicode.IsControl) >= 0 {
+		return "", errors.New("Hosting Gateway token is malformed")
+	}
+	return token, nil
+}
+
+func bootstrapFileInfoStat(info os.FileInfo) (*syscall.Stat_t, bool) {
+	if info == nil {
+		return nil, false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return stat, ok
+}
+
+func formatTailnetAccessFrame(state hostsecurity.State, gatewayToken string) string {
+	dashboardURL := "https://" + state.TailscaleDNS
+	if gatewayToken != "" {
+		dashboardURL += "/#token=" + url.QueryEscape(gatewayToken)
+	}
 	rows := []string{
 		"WEB UI",
-		"https://" + state.TailscaleDNS,
+		dashboardURL,
+		"",
+		"AUTH",
+	}
+	if gatewayToken != "" {
+		rows = append(rows,
+			"Gateway token is included in the Web UI URL.",
+			"Token backup: "+gatewayToken,
+		)
+	} else {
+		rows = append(rows, "Password selected during setup; the browser will prompt for it.")
+	}
+	rows = append(rows,
 		"",
 		"TAILSCALE SSH",
-		"tailscale ssh " + state.OperatorUser + "@" + state.TailscaleDNS,
+		"tailscale ssh "+state.OperatorUser+"@"+state.TailscaleDNS,
 		"",
 		"Test SSH from your Tailscale computer before public SSH is disabled.",
 		"Keep this provider console open while testing.",
-	}
-	var frame strings.Builder
-	frame.WriteString("\n  ╭─ PRIVATE HOSTING ACCESS ──────────────────────────────────────────────────────╮\n")
+	)
+	rowWidth := 78
 	for _, row := range rows {
-		_, _ = fmt.Fprintf(&frame, "  │ %-78s │\n", row)
+		if len(row) > rowWidth && len(row) <= 120 {
+			rowWidth = len(row)
+		}
 	}
-	frame.WriteString("  ╰───────────────────────────────────────────────────────────────────────────────╯")
+	header := "─ PRIVATE HOSTING ACCESS "
+	var frame strings.Builder
+	_, _ = fmt.Fprintf(&frame, "\n  ╭%s%s╮\n", header, strings.Repeat("─", rowWidth+2-len(header)))
+	for _, row := range rows {
+		remaining := row
+		for len(remaining) > rowWidth {
+			_, _ = fmt.Fprintf(&frame, "  │ %-*s │\n", rowWidth, remaining[:rowWidth])
+			remaining = remaining[rowWidth:]
+		}
+		_, _ = fmt.Fprintf(&frame, "  │ %-*s │\n", rowWidth, remaining)
+	}
+	_, _ = fmt.Fprintf(&frame, "  ╰%s╯", strings.Repeat("─", rowWidth+2))
 	return frame.String()
 }
 
