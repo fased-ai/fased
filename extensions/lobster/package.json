@@ -1,6 +1,6 @@
 {
   "name": "@fased/lobster",
-  "version": "0.1.76-rc.134",
+  "version": "0.1.76-rc.135",
   "description": "Lobster workflow tool plugin (typed pipelines + resumable approvals)",
   "type": "module",
   "fased": {

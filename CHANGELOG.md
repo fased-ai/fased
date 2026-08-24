@@ -4,6 +4,11 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.135
+
+- Restore and verify executable modes for native platform supplements after
+  cross-job artifact transport before assembling signed lifecycle generations.
+
 ## 0.1.76-rc.134
 
 - Preserve native multi-platform supplements as four distinct release-builder

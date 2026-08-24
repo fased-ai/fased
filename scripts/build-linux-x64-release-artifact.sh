@@ -98,8 +98,18 @@ merge_supplement() {
   while IFS= read -r source; do
     name="$(basename "$source")"
     test ! -e "$OUTPUT_DIR/$name"
-    install -m "$(stat -c %a "$source")" "$source" "$OUTPUT_DIR/$name"
+    mode=0644
+    case "$name" in
+      fased-bootstrap-*|fased-lifecycled-*|fased-signerd-*|fased-node-*) mode=0755 ;;
+    esac
+    install -m "$mode" "$source" "$OUTPUT_DIR/$name"
   done < <(find "$directory" -mindepth 1 -maxdepth 1 -type f | sort)
+  for executable in "fased-bootstrap-${operating_system}-${architecture}" \
+    "fased-lifecycled-${operating_system}-${go_architecture}" \
+    "fased-signerd-${operating_system}-${go_architecture}" \
+    "fased-node-${operating_system}-${architecture}"; do
+    test -f "$OUTPUT_DIR/$executable" && test -x "$OUTPUT_DIR/$executable"
+  done
 }
 if [[ -n "$ARM64_SUPPLEMENT_DIR" || -n "$DARWIN_X64_SUPPLEMENT_DIR" || -n "$DARWIN_ARM64_SUPPLEMENT_DIR" ]]; then
   [[ -n "$ARM64_SUPPLEMENT_DIR" && -n "$DARWIN_X64_SUPPLEMENT_DIR" && -n "$DARWIN_ARM64_SUPPLEMENT_DIR" ]] || usage

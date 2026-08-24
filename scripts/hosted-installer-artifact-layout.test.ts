@@ -100,6 +100,15 @@ describe("lean attested Linux managed artifact layout", () => {
     );
   });
 
+  it("restores executable modes lost by cross-job artifact transport", () => {
+    expect(builder).toContain(
+      "fased-bootstrap-*|fased-lifecycled-*|fased-signerd-*|fased-node-*) mode=0755",
+    );
+    expect(builder).toContain('install -m "$mode" "$source" "$OUTPUT_DIR/$name"');
+    expect(builder).toContain('test -f "$OUTPUT_DIR/$executable" && test -x');
+    expect(builder).not.toContain('install -m "$(stat -c %a "$source")"');
+  });
+
   it("builds, finalizes, and publishes the same bytes once", () => {
     expect(releaseWorkflow).toContain("scripts/build-linux-x64-release-artifact.sh");
     expect(releaseWorkflow).toContain(`run: |
