@@ -270,7 +270,7 @@ describe("npm-free managed lifecycle", () => {
     expect(rootPackage.scripts?.["test:install:e2e:openai"]).toBeUndefined();
   });
 
-  it("requires tag-free local lifecycle proof before RC allocation", async () => {
+  it("executes one owner-authorized fix and release chain", async () => {
     const skill = await source("docs/maintainers/codex-skills/fased-release-manager/SKILL.md");
     const release = await source(
       "docs/maintainers/codex-skills/fased-release-manager/references/release.md",
@@ -282,41 +282,37 @@ describe("npm-free managed lifecycle", () => {
       "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle-redesign.md",
     );
 
-    expect(skill).toMatch(/Candidate work starts only after literal environment proof passes\./u);
+    expect(skill).toContain("Treat “fix and release” as one conditional authorization:");
     expect(skill).toContain(
       "Exercise adjacent durable transitions once; never publish first-error patches.",
     );
-    expect(skill).toMatch(/a root container is H0 `SUPPORTING` evidence\s+only/u);
-    expect(skill).toMatch(/real-init\s+staging VM\/VPS run using the exact unpublished artifact/u);
-    expect(skill).toMatch(/identical-command\s+`Already current`/u);
+    expect(skill).toMatch(/Fresh Local and Hosting checks are owner-initiated after publication/u);
     expect(lifecycle).toContain("`hosting-container`");
     expect(lifecycle).toContain("`hosting-staging-vps`");
     expect(lifecycle).toContain("`hosting-public-vps`");
     expect(lifecycle).toMatch(
       /Do not synthesize an interrupted phase by editing\s+a successfully\s+committed receipt/u,
     );
-    expect(skill).toContain("Metadata-only retries never reattest; broad matrices remain manual.");
-    expect(release).toMatch(/builds\s+one Linux-x64 core artifact/u);
-    expect(release).toContain("finalize from the actual immutable tag ref");
-    expect(release).toMatch(/actual `GITHUB_REF` equal to\s+`refs\/tags\/v<version>`/u);
-    expect(release).toMatch(
-      /Any product\s+change after that proof returns to the normal fix path/u,
+    expect(skill).toContain(
+      "Metadata-only promotion resumes an already published release without rebuilding.",
     );
+    expect(release).toMatch(/builds one Linux-x64 core\s+artifact/u);
+    expect(release).toContain("one tag-bound release workflow");
+    expect(release).toMatch(/actual `GITHUB_REF` equal to\s+`refs\/tags\/v<version>`/u);
+    expect(release).toMatch(/fix the reported predicate\s+in one new protected PR/u);
     expect(redesign).toContain("release workflow starts");
   });
 
-  it("keeps release authority subordinate to the controlling plan", async () => {
+  it("continues the exact authorized chain without repeated approval", async () => {
     const skill = await source("docs/maintainers/codex-skills/fased-release-manager/SKILL.md");
 
     expect(skill).toContain("The newest owner plan controls;");
     expect(skill).toContain("superseded plans are evidence only.");
     expect(skill).toContain(
-      "Release authority permits an irreversible action; it never proves readiness or",
+      "Continue through those steps without requesting the same authority again.",
     );
-    expect(skill).toContain(
-      "Proceed only when that predicate and every earlier required predicate are",
-    );
-    expect(skill).toContain("Never use a release to discover whether a correction works.");
+    expect(skill).toContain("A request for a fix without release");
+    expect(skill).toContain("authority ends after the protected merge.");
     expect(skill).toContain("superseded plans are evidence only.");
   });
 });

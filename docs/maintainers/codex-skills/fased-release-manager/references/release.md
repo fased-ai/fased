@@ -2,46 +2,36 @@
 
 Read this file only after explicit candidate, publication, or stable authority.
 
-## Candidate
+## Fix and release
 
-Start from one clean exact protected-main commit. Finish the normal fix path and
-focused source proof before release work begins.
+When the owner says “fix and release,” treat it as one conditional chain:
 
 ```text
 focused changed-surface checks
--> protected source PR and exact merged tree
--> version-only protected PR
--> prepare on protected main
+-> one protected PR containing the fix and next unused version
+-> squash merge the exact passing head
+-> owner-authorized annotated tag at that merged commit
+-> one tag-bound release workflow
    -> derive the next signed channel sequence
-   -> build one unpublished Linux-x64 artifact and record its exact identity
--> owner creates the annotated tag at that prepared commit
--> finalize from the actual immutable tag ref
-   -> download and verify the prepared artifact without rebuilding
-   -> generate official attestations whose certificate SAN names the tag
-   -> run the production bootstrap/trust verifier on the complete staged set
-   -> publish those exact bytes and advance the signed channel
+   -> build Linux-x64 once
+   -> attest and verify those exact bytes
+   -> publish and advance the signed channel
+-> public release readback
 ```
 
-Do not write the next RC version or start preparation until focused source
-checks pass. Never use successive RC names to diagnose source behavior: one
-version-only PR creates the exact identity needed to prepare unpublished bytes.
-Any product change after preparation invalidates the artifact and returns to the
-normal fix path.
+The fix and version share one review and one changed-surface CI run. After merge,
+the owner-authorized annotated tag selects the exact commit. The workflow runs
+from that tag, installs frozen dependencies once, builds one Linux-x64 core
+artifact, and performs publication in the same run. Optional component packs use
+their signed component transaction.
 
-Preparation derives the next release sequence from the current signed channel index
-instead of accepting an operator-supplied sequence. It installs dependencies once,
-builds one Linux-x64 core artifact, and never runs simulated Local or Hosting
-acceptance. Build optional packs separately through their signed component
-transaction.
-
-The candidate descriptor binds version, commit, tree, lockfile, prepare run,
+The candidate descriptor binds version, commit, tree, lockfile, workflow run,
 artifact names, sizes and digests, provenance, SBOM/VEX, signer/controller identity,
-and the acceptance-contract identity. The owner creates the annotated tag only
-after preparation passes. Finalization must verify the prepared descriptor and
-execute with its actual `GITHUB_REF` equal to
+and the acceptance-contract identity. The release workflow executes with its
+actual `GITHUB_REF` equal to
 `refs/tags/v<version>`; checking out the tag inside a branch-triggered run does not
-change the certificate identity. It downloads and verifies the prepared artifact,
-requires every official attestation's `SourceRepositoryRef` to equal that tag and
+change the certificate identity. It builds and verifies the exact artifact in that
+same run, requires every official attestation's `SourceRepositoryRef` to equal the tag and
 `SourceRepositoryDigest` to equal the peeled tag commit, and never rebuilds.
 
 Before public mutation, run the same production bootstrap/trust verification used by
@@ -50,9 +40,9 @@ unit-only bundle parsing, signed-channel promotion, and same-commit branch attes
 cannot substitute for this check. Any official release bundle carrying
 `refs/heads/main` fails closed even when its commit is identical.
 
-If source changes after an immutable tag, that candidate is obsolete. Its tag
-and bytes remain immutable. Fix and merge normally, prove the affected real
-environment, and choose the next unused version.
+If the tag-bound workflow fails before publication, fix the reported predicate
+in one new protected PR and use the next unused immutable version. A publication
+retry for an already existing release uses the metadata-only promotion workflow.
 
 ## Fast publication retry
 
@@ -62,8 +52,7 @@ the existing tag, descriptor, attestations, inventory, and signed index, then
 advances or confirms the channel. It does not install dependencies, build,
 reattest, create a candidate, or rerun acceptance.
 
-Do not rerun the full release workflow after the immutable public release exists.
-An identical promotion retry must return `ALREADY_CURRENT`.
+An identical promotion retry returns `ALREADY_CURRENT`.
 
 ## Publication and owner-controlled acceptance
 
@@ -78,17 +67,11 @@ PUBLIC0 is readback-only. It verifies the exact GitHub tag, release metadata,
 asset inventory, sizes, digests, attestations, root-head freshness, and signed
 channel binding. It does not provide Local or Hosting acceptance.
 
-Fresh Local and Hosting evidence is owner-supplied only. Never create or
-simulate a fresh machine. Codex may update the existing owner-Local installation
-only with explicit authority. A fresh Local command is run by the owner; Hosting
-is tested only when the owner provides or authorizes a reachable VPS.
-
-These checks never block ordinary fixes or RC publication by default. When the
-owner explicitly selects acceptance or stable promotion requires it, the
-receipt binds `version`, exact `commit`, exact `tree`, `prepareRunId`, and the
-complete `artifactSetSha256`, plus the environment, exact public commands and
-outcomes. Containers, generated VMs, and substituted fixtures are `SUPPORTING`,
-never `PASS`.
+The owner initiates fresh Local and Hosting checks after publication. Codex may
+update the existing owner-Local installation with explicit authority, accept
+literal output from the owner's fresh Local machine, or connect to a VPS the
+owner provides. An acceptance receipt, when requested, binds the public version,
+commit, tree and artifact-set digest.
 
 Stable promotion reuses accepted candidate bytes and changes only authorized
 GitHub release/channel metadata.

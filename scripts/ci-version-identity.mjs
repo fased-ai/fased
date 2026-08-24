@@ -253,6 +253,7 @@ export function validateVersionOnlyDiff(
 
 function main() {
   const args = process.argv.slice(2);
+  const inventoryOnly = args.length === 1 && args[0] === "--inventory-only";
   const allowExactTag = args.length === 1 && args[0] === "--allow-exact-tag";
   const allowPublishedBaseRestore =
     args.length === 1 && args[0] === "--allow-published-base-restore";
@@ -260,11 +261,17 @@ function main() {
     args.length === 1 && args[0] === "--allow-obsolete-tagged-candidate-restore";
   if (
     args.length > 0 &&
+    !inventoryOnly &&
     !allowExactTag &&
     !allowPublishedBaseRestore &&
     !allowObsoleteTaggedCandidateRestore
   ) {
     throw new Error(`unsupported arguments: ${args.join(" ")}`);
+  }
+  if (inventoryOnly) {
+    const version = validateCurrentVersionInventory(resolve("."));
+    console.log(`ci-version-identity: ${version} has one synchronized release identity`);
+    return;
   }
   const base = diffBase();
   const paths = changedPathsFromGit();

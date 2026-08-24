@@ -22,10 +22,11 @@ The newest owner plan controls; superseded plans are evidence only.
 - `REPORT`: inspect and answer without mutation.
 - `FIX`: one failure, one correction, focused proof. Default mode.
 - `LIFECYCLE`: installer, updater, privilege, service, or migration behavior.
-- `RELEASE`: only after explicit candidate, publication, or stable authority.
+- `RELEASE`: when the owner explicitly says to release, publish, or create the
+  next tag.
 
-Never allocate a version, build a candidate, or enter release mode to diagnose
-a source, fixture, or user-visible failure.
+Use `FIX` or `LIFECYCLE` to close the reported failure before entering
+`RELEASE`.
 
 ## Soft budgets
 
@@ -33,29 +34,23 @@ a source, fixture, or user-visible failure.
 - Every tool call must discover, edit, or verify; after discovery use at most twelve additional tool calls.
 - Never repeat unchanged state. Explain commands over one minute and report every 60 seconds.
 
-## Follow the plan before release
+## Execute one owner-authorized chain
 
-Release authority permits an irreversible action; it never proves readiness or
-overrides the controlling plan. Before a release workflow, tag, publication,
-promotion, or version-only change:
+Treat “fix and release” as one conditional authorization:
 
-1. Read the controlling plan's ordered checkpoints.
-2. Reconcile them with failures and unfinished branches/worktrees.
-3. Identify the requested action's immediately preceding predicate.
-4. Proceed only when that predicate and every earlier required predicate are
-   `PASS` for the required commit, tree, artifact, receipt, and environment class.
+1. Close the reported predicate with the nearest focused regression.
+2. Put the fix and next unused version in one protected PR.
+3. Run changed-surface CI once and squash-merge the exact passing head.
+4. Create the annotated tag at that merged commit.
+5. Dispatch one tag-bound workflow that builds once, attests, publishes and
+   advances the selected channel.
+6. Read back the public tag and release result.
 
-Any `FAIL`, `BLOCKED`, `SUPPORTING`, stale receipt, or unclassified work keeps
-the task in `FIX` or `LIFECYCLE`; only an explicit named `WAIVED` decision can
-waive it. Never use a release to discover whether a correction works.
-
-Continue until owner stop, identity/plan change, unavailable authority, or an
-unnamed boundary. If same predicate failing twice, report it and block release.
-
-If the owner defines `fix`, `continue`, or `finish` as a named chain, record it
-once and run its push, PR, CI, merge, release, and publication as `PASS` gates
-without asking again; this survives compaction until done or revoked. Unlisted
-owner/Hosting mutation, promotion, npm, cleanup, and deployment stay out.
+Continue through those steps without requesting the same authority again. Stop
+only for an actual failed predicate, changed identity, owner stop, or authority
+that was not included in the request. A request for a fix without release
+authority ends after the protected merge. If the same predicate fails twice,
+report it and reassess its owner instead of repeating the command.
 
 ## Fix the literal predicate first
 
@@ -70,11 +65,9 @@ For every Fased issue, default to:
 
 `reproduce -> focused regression -> fix -> focused test -> one literal runtime proof when required -> one PR/CI -> merge`
 
-Until the predicate passes, do not divert into full suites, broad scans, CI,
-candidates, publication, or release planning. Never run GitHub CI while
-diagnosing. `fix and ship` means one locally proven final diff, one push, one
-protected PR, one changed-surface CI result, and an authorized exact-head squash
-merge.
+Keep diagnosis on the focused predicate. `fix and ship` means one locally
+proven final diff, one push, one protected PR, one changed-surface CI result,
+and an authorized exact-head squash merge.
 
 Never create a container, VM, disposable user/home, or simulated fresh install
 for an ordinary correction. Use focused checks, then the affected existing owner
@@ -108,27 +101,17 @@ Lead lifecycle reports with literal user commands and distinguish `documented`,
 `implemented`, and `proven`. Managed users never maintain build tools, internal
 paths, services, or journals.
 
-Never rebuild Linux images for ordinary fixes. Reuse pinned fixture images and
-cached artifacts. When distributable bytes change, build one cached unpublished
-Linux-x64 artifact after focused tests, exercise only the affected topology, and
-reuse those exact bytes. Fixture-only changes reuse prior verified product bytes.
+Ordinary fixes use focused checks and produce no release artifact. An authorized
+release uses one tag-bound workflow to build Linux-x64 once, attest those exact
+bytes, run the production bootstrap/trust verifier, publish, and advance the
+channel. The tag ref and peeled commit bind every official attestation.
+Metadata-only promotion resumes an already published release without rebuilding.
 
-Candidate work starts only after literal environment proof passes. Prepare bytes on
-main; owner tags the tested commit. Attestations must come from a finalizer whose
-actual GitHub ref is that tag; checkout
-cannot change a branch-run certificate SAN. Reuse those bytes, bind source ref to the
-tag and source digest to peeled commit; run the production bootstrap/trust
-verifier on the staged public set before upload. Branch attestations, static tests and
-promotion are not proof. The publication must verify receipts and must not rebuild.
-Metadata-only retries never reattest; broad matrices remain manual.
-
-When Hosting product bytes change, a root container is H0 `SUPPORTING` evidence
-only. Before candidate allocation, require one owner-authorized real-init
-staging VM/VPS run using the exact unpublished artifact, real package manager,
-systemd and the intended resource floor. After publication, only the literal
-immutable public installer on an authorized VPS plus an identical-command
-`Already current` result can mark real Hosting `PASS`. A waiver never changes
-either rule.
+Fresh Local and Hosting checks are owner-initiated after publication. Update the
+existing owner-Local installation only when the owner authorizes it. Use literal
+output supplied by the owner for an unreachable fresh Local machine, and connect
+to a VPS only when the owner provides access. These checks report product
+acceptance; they do not enter the default fix-and-release chain.
 
 ## Evidence and authority
 
