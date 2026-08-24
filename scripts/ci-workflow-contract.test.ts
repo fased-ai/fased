@@ -184,6 +184,13 @@ describe("lean CI and release workflow contracts", () => {
     expect(channelScript).toContain('if cmp -s "$index" "$current_index"; then');
   });
 
+  it("reuses the setup-go build cache during exact Linux assembly", async () => {
+    const builder = await text("scripts/build-linux-x64-release-artifact.sh");
+    expect(builder).toContain('go_cache="${GOCACHE:-}"');
+    expect(builder).toContain('go_cache="$("$GO_BIN" env GOCACHE)"');
+    expect(builder).not.toContain("fased-release-go-cache");
+  });
+
   it("removes replay workflows and simulated Local acceptance", async () => {
     for (const removed of [
       ".github/workflows/candidate-p1-replay.yml",

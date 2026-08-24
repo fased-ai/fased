@@ -66,7 +66,14 @@ find "$release_dir" -maxdepth 1 \( -type f -o -type l \) \
   -delete
 
 go_tmp="${GOTMPDIR:-${TMPDIR:-/tmp}/fased-release-go-tmp}"
-go_cache="${GOCACHE:-${TMPDIR:-/tmp}/fased-release-go-cache}"
+go_cache="${GOCACHE:-}"
+if [[ -z "$go_cache" ]]; then
+  go_cache="$("$GO_BIN" env GOCACHE)"
+fi
+[[ "$go_cache" == /* ]] || {
+  echo "The Go build cache path must be absolute." >&2
+  exit 1
+}
 mkdir -p "$go_tmp" "$go_cache"
 GOTMPDIR="$go_tmp" \
 GOCACHE="$go_cache" \
