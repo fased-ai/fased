@@ -123,21 +123,19 @@ describe("compact CI topology", () => {
     expect(step?.run).toContain("scripts/hosted-security-boundary.test.ts");
   });
 
-  it("does not install the workspace for an exact version-only PR", async () => {
+  it("uses one Node setup and no release-identity bypass", async () => {
     const { document } = await workflow("pr.yml");
     const selected = document.jobs?.["selected-tests"] as {
       steps?: Array<{ if?: string; name?: string; uses?: string }>;
     };
     const steps = selected.steps ?? [];
 
-    expect(steps.find((step) => step.name === "Setup Node environment")?.if).toBe(
-      "needs.classify.outputs.version_only != 'true'",
-    );
+    expect(steps.find((step) => step.name === "Setup Node environment")?.if).toBeUndefined();
     expect(
-      steps.find((step) => step.name === "Setup Node.js for exact version-only validation")?.if,
-    ).toBe("needs.classify.outputs.version_only == 'true'");
-    expect(steps.find((step) => step.name === "Check documentation")?.if).toContain(
-      "version_only != 'true'",
+      steps.find((step) => step.name === "Setup Node.js for exact release-identity validation"),
+    ).toBeUndefined();
+    expect(steps.find((step) => step.name === "Check documentation")?.if).toBe(
+      "needs.classify.outputs.docs_changed == 'true'",
     );
   });
 });
