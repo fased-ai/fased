@@ -8,6 +8,7 @@ const manifest = JSON.parse(read("package.json")) as { files?: string[] };
 const files = new Set(manifest.files ?? []);
 const installer = read("install.sh");
 const builder = read("scripts/build-linux-x64-release-artifact.sh");
+const darwinBuilder = read("scripts/build-darwin-release-supplement.sh");
 const finalizer = read("scripts/finalize-pretag-candidate.sh");
 const releaseWorkflow = read(".github/workflows/hosted-runtime-release.yml");
 const hostedArtifactBuilder = read("scripts/build-hosted-runtime-artifact.ts");
@@ -57,6 +58,12 @@ describe("lean attested Linux managed artifact layout", () => {
     expect(builder).toContain("MAX_CORE_ARTIFACT_BYTES=1610612736");
     expect(builder).toContain("artifact_file_count <= MAX_CORE_ARTIFACT_FILES");
     expect(builder).toContain("artifact_total_bytes <= MAX_CORE_ARTIFACT_BYTES");
+  });
+
+  it("builds Darwin runtime bytes without repeating platform-neutral declarations", () => {
+    expect(darwinBuilder).toContain('pnpm --dir "$ROOT_DIR" build:app');
+    expect(darwinBuilder).not.toContain('pnpm --dir "$ROOT_DIR" build\n');
+    expect(darwinBuilder).not.toContain("build:plugin-sdk:dts");
   });
 
   it("keeps optional implementations outside the core artifact", () => {
