@@ -25,7 +25,6 @@ env:
 jobs:
   release:
     name: Build, attest, publish, and promote exact tag once
-    environment: candidate-release
     permissions:
       actions: read
       attestations: write
@@ -307,7 +306,7 @@ jobs:
           tag="v$RELEASE_VERSION"
           if ! lines="$(git ls-remote --exit-code --tags origin \
             "refs/tags/$tag" "refs/tags/$tag^{}")"; then
-            echo "Owner-created annotated tag $tag is required before candidate-release approval." >&2
+            echo "Owner-created annotated tag $tag is required before release publication." >&2
             exit 1
           fi
           tag_object="$(awk -v ref="refs/tags/$tag" '$2 == ref {print $1}' <<<"$lines")"

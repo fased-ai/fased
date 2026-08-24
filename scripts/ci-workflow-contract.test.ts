@@ -145,6 +145,7 @@ describe("lean CI and release workflow contracts", () => {
     const channelScript = await text("scripts/publish-lifecycle-channel.sh");
     expect(Object.keys(value.jobs ?? {})).toEqual(["release"]);
     expect(value.jobs?.release?.["timeout-minutes"]).toBe(25);
+    expect(value.jobs?.release?.environment).toBeUndefined();
     expect(source).toContain("attestations: write");
     const releaseText = jobText(value.jobs?.release);
     expect(source).toContain("Resolve exact next signed channel identity");
@@ -161,7 +162,7 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).not.toContain("actions/download-artifact");
     expect(source).toContain("Verify candidate and owner-created immutable tag");
     expect(source).toContain(
-      "Owner-created annotated tag $tag is required before candidate-release approval.",
+      "Owner-created annotated tag $tag is required before release publication.",
     );
     expect(source).toContain('"refs/tags/$tag^{}"');
     expect(source).not.toContain('git tag -a "$tag"');
