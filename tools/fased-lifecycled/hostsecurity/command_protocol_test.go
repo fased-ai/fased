@@ -43,7 +43,7 @@ func TestHostingSecurityCommandRunsPolicyInsideLifecycleHostBoundary(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.SchemaVersion != CommandSchemaVersion || state.TransactionID != prepare.TransactionID ||
+	if state.SchemaVersion != CommandSchemaVersion || state.TransactionID != prepare.TransactionID || state.DurableTransactionID != prepare.TransactionID ||
 		state.OperatorUser != prepare.OperatorUser || state.TailscaleDNS == "" || !state.OnboardingRequired ||
 		!state.NeedsFinalization || state.Committed {
 		t.Fatalf("stable Hosting command projection is incomplete: %+v", state)
@@ -52,8 +52,74 @@ func TestHostingSecurityCommandRunsPolicyInsideLifecycleHostBoundary(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if durable.SchemaVersion != CurrentSchemaVersion || durable.TransactionID != state.TransactionID {
+	if durable.SchemaVersion != CurrentSchemaVersion || durable.TransactionID != state.DurableTransactionID {
 		t.Fatalf("command did not persist the lifecycle-host-owned state: %+v", durable)
+	}
+}
+
+func TestHostingSecurityCommandSeparatesRetryCorrelationFromDurableTransaction(t *testing.T) {
+	participant, _, prepare := fixture(t)
+	firstRequest := CommandRequest{
+		SchemaVersion: CommandSchemaVersion, Operation: CommandPrepare,
+		TransactionID: prepare.TransactionID, Release: prepare.Release, Channel: prepare.Channel,
+		GatewayPort: prepare.GatewayPort, OperatorUser: prepare.OperatorUser,
+		PlatformIdentity: prepare.PlatformIdentity, TrustRootSHA256: prepare.TrustRootSHA256,
+		Interactive: true, OnboardingRequired: true,
+	}
+	first, err := ExecuteCommand(context.Background(), participant, firstRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := firstRequest
+	retry.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	resumed, err := ExecuteCommand(context.Background(), participant, retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.TransactionID != retry.TransactionID || resumed.DurableTransactionID != first.DurableTransactionID {
+		t.Fatalf("retry identities were conflated: first=%+v resumed=%+v", first, resumed)
+	}
+	resolved, err := resumed.DurableTransactionIDFor(retry)
+	if err != nil || resolved != first.DurableTransactionID {
+		t.Fatalf("durable retry identity was not recoverable: resolved=%q err=%v", resolved, err)
+	}
+	durable, err := participant.Store.ReadState()
+	if err != nil || durable.TransactionID != first.DurableTransactionID {
+		t.Fatalf("retry replaced durable transaction history: state=%+v err=%v", durable, err)
+	}
+}
+
+func TestHostingSecurityCommandRejectsUncorrelatedDurableProjection(t *testing.T) {
+	request := CommandRequest{
+		SchemaVersion: CommandSchemaVersion, Operation: CommandPrepare,
+		TransactionID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Release: "1.2.3-rc.4", Channel: "beta",
+		GatewayPort: 18789, OperatorUser: "app", PlatformIdentity: "linux/x64",
+		TrustRootSHA256: strings.Repeat("a", 64), Interactive: true,
+	}
+	state := CommandState{
+		SchemaVersion: CommandSchemaVersion, TransactionID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		DurableTransactionID: "01234567-89ab-4cde-8fab-0123456789ab", Release: request.Release, OperatorUser: request.OperatorUser,
+	}
+	if _, err := state.DurableTransactionIDFor(request); err == nil || !strings.Contains(err.Error(), "correlation") {
+		t.Fatalf("uncorrelated lifecycle-host response was accepted: %v", err)
+	}
+}
+
+func TestHostingSecurityCommandAcceptsLegacyPrepareResumeProjection(t *testing.T) {
+	request := CommandRequest{
+		SchemaVersion: CommandSchemaVersion, Operation: CommandPrepare,
+		TransactionID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Release: "1.2.3-rc.4", Channel: "beta",
+		GatewayPort: 18789, OperatorUser: "app", PlatformIdentity: "linux/x64",
+		TrustRootSHA256: strings.Repeat("a", 64), Interactive: true,
+	}
+	legacyDurable := "01234567-89ab-4cde-8fab-0123456789ab"
+	state := CommandState{
+		SchemaVersion: CommandSchemaVersion, TransactionID: legacyDurable,
+		Release: request.Release, OperatorUser: request.OperatorUser,
+	}
+	resolved, err := state.DurableTransactionIDFor(request)
+	if err != nil || resolved != legacyDurable {
+		t.Fatalf("legacy lifecycle-host retry projection was not recoverable: resolved=%q err=%v", resolved, err)
 	}
 }
 

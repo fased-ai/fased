@@ -317,7 +317,7 @@ func (host LinuxHost) Authenticate(ctx context.Context, authKeyFile string, inte
 	if err != nil {
 		return err
 	}
-	args := []string{"up", "--ssh"}
+	args := []string{"up", "--ssh", "--timeout=5m"}
 	if authKeyFile != "" {
 		if err := validateAuthKeyFile(host.path(authKeyFile), uint32(os.Getuid())); err != nil {
 			return err
@@ -334,6 +334,9 @@ func (host LinuxHost) Authenticate(ctx context.Context, authKeyFile string, inte
 		return err
 	}
 	runErr := host.Runner.Run(ctx, tailscale, args, nil, framed, framed, nil)
+	if runErr != nil {
+		runErr = errors.Join(runErr, errors.New("Tailscale authentication did not complete; retry the same installer command to obtain a fresh authentication URL"))
+	}
 	return errors.Join(runErr, framed.Close())
 }
 
