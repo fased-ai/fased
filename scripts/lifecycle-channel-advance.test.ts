@@ -39,6 +39,38 @@ describe("lifecycle channel advance", () => {
     ).toBe("ALREADY_CURRENT");
   });
 
+  it("initializes and advances the platform-qualified schema-v2 channel", () => {
+    const candidateBytes = index({ schemaVersion: 2 });
+    expect(
+      planLifecycleChannelAdvance({
+        candidateBytes,
+        currentBytes: null,
+        expectedCommit: commit,
+        expectedVersion: "0.1.2-rc.2",
+      }).action,
+    ).toBe("INITIALIZE");
+    expect(
+      planLifecycleChannelAdvance({
+        candidateBytes,
+        currentBytes: index({
+          schemaVersion: 2,
+          version: "0.1.1-rc.1",
+          releaseSequence: 1,
+        }),
+        expectedCommit: commit,
+        expectedVersion: "0.1.2-rc.2",
+      }).action,
+    ).toBe("ADVANCE");
+    expect(() =>
+      planLifecycleChannelAdvance({
+        candidateBytes,
+        currentBytes: index(),
+        expectedCommit: commit,
+        expectedVersion: "0.1.2-rc.2",
+      }),
+    ).toThrow("different schemas");
+  });
+
   it("allows only a strictly monotonic same-channel advance", () => {
     const result = planLifecycleChannelAdvance({
       candidateBytes: index(),
