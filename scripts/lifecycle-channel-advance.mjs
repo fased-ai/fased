@@ -20,7 +20,7 @@ function decodeIndex(bytes, label) {
     throw new Error(`${label} release index is not JSON`);
   }
   if (
-    index?.schemaVersion !== 1 ||
+    ![1, 2].includes(index?.schemaVersion) ||
     index?.type !== "fased-release-index" ||
     !["stable", "beta"].includes(index.channel) ||
     !VERSION.test(index.version ?? "") ||
@@ -53,6 +53,9 @@ export function planLifecycleChannelAdvance({
     return { action: "INITIALIZE", candidate };
   }
   const current = decodeIndex(currentBytes, "current channel");
+  if (current.schemaVersion !== candidate.schemaVersion) {
+    throw new Error("current and candidate release indexes use different schemas");
+  }
   if (current.channel !== candidate.channel) {
     throw new Error("current and candidate release indexes select different channels");
   }
