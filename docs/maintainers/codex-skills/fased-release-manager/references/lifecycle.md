@@ -41,8 +41,11 @@ dist-tags are neither managed discovery authorities nor dependencies. Quiet
 and verbose modes change output only.
 
 The protected publisher exposes the exact immutable release first, then
-advances the predictable `fased-channel-<channel>-v1` release with the exact
-already-attested root/index pair and a short-lived attested root-head witness.
+advances the predecessor-compatible `fased-channel-<channel>-v1` and universal
+`fased-channel-<channel>-v2` releases with the exact already-attested root/index
+pair and a short-lived attested root-head witness. Both channels bind the same
+release identity. The v1 channel remains Linux-only for already-installed
+bootstrap binaries; v2 uses platform-qualified Linux and Darwin assets.
 The witness positively binds the latest root version/digest and exact index
 digest; HTTP absence never defines the end of a root chain. Protected main
 refreshes that witness every six hours with a 36-hour lifetime, while clients

@@ -48,7 +48,16 @@ function exactKeys(value, expected, label) {
 function parseAppIdentity(value, expectedVersion, expectedCommit) {
   exactKeys(
     value,
-    ["schemaVersion", "version", "commit", "architecture", "dependencyHash", "app", "dependencies"],
+    [
+      "schemaVersion",
+      "version",
+      "commit",
+      "operatingSystem",
+      "architecture",
+      "dependencyHash",
+      "app",
+      "dependencies",
+    ],
     "hosted application identity",
   );
   exactKeys(value.app, ["asset", "sha256"], "hosted application artifact identity");
@@ -57,7 +66,8 @@ function parseAppIdentity(value, expectedVersion, expectedCommit) {
     value.schemaVersion !== 1 ||
     value.version !== expectedVersion ||
     value.commit !== expectedCommit ||
-    value.architecture !== "x64" ||
+    !["linux", "darwin"].includes(value.operatingSystem) ||
+    !["x64", "arm64"].includes(value.architecture) ||
     !DIGEST_PATTERN.test(value.dependencyHash || "") ||
     !DIGEST_PATTERN.test(value.app.sha256 || "") ||
     !DIGEST_PATTERN.test(value.dependencies.sha256 || "")
@@ -102,16 +112,24 @@ export async function buildHostedReleaseManifest({
     throw new Error("hosted release manifest profile is unsupported");
   }
   const fixtureOnly = profile === "branch-x64";
-  const architectures = ["x64"];
+  const platforms =
+    profile === "release"
+      ? [
+          { operatingSystem: "linux", architecture: "x64" },
+          { operatingSystem: "linux", architecture: "arm64" },
+          { operatingSystem: "darwin", architecture: "x64" },
+          { operatingSystem: "darwin", architecture: "arm64" },
+        ]
+      : [{ operatingSystem: "linux", architecture: "x64" }];
   const application = {};
-  for (const architecture of architectures) {
-    const identityName = `fased-hosted-app-v2-linux-${architecture}-v${version}.tar.gz.release.json`;
+  for (const { operatingSystem, architecture } of platforms) {
+    const identityName = `fased-hosted-app-v2-${operatingSystem}-${architecture}-v${version}.tar.gz.release.json`;
     const identity = parseAppIdentity(
       await readJSON(path.join(assetsDir, identityName)),
       version,
       commit,
     );
-    if (identity.architecture !== architecture) {
+    if (identity.operatingSystem !== operatingSystem || identity.architecture !== architecture) {
       throw new Error(`hosted application identity architecture mismatch for ${architecture}`);
     }
     for (const artifact of [identity.app, identity.dependencies]) {
@@ -120,7 +138,8 @@ export async function buildHostedReleaseManifest({
         throw new Error(`artifact digest mismatch while assembling release: ${artifact.asset}`);
       }
     }
-    application[architecture] = {
+    application[operatingSystem] ??= {};
+    application[operatingSystem][architecture] = {
       artifact: identity.app,
       dependencies: {
         dependencyHash: identity.dependencyHash,
@@ -135,7 +154,11 @@ export async function buildHostedReleaseManifest({
     commit,
   );
   const signerPlatforms = {};
-  const signerAssets = [["linux-amd64", "fased-signerd-linux-amd64"]];
+  const signerAssets = platforms.map(({ operatingSystem, architecture }) => {
+    const goArchitecture = architecture === "x64" ? "amd64" : "arm64";
+    const platform = `${operatingSystem}-${goArchitecture}`;
+    return [platform, `fased-signerd-${platform}`];
+  });
   for (const [platform, asset] of signerAssets) {
     signerPlatforms[platform] = { asset, sha256: await sha256(path.join(assetsDir, asset)) };
   }
@@ -144,7 +167,7 @@ export async function buildHostedReleaseManifest({
     schemaVersion: 2,
     ...(fixtureOnly ? { fixture: { profile: "branch-x64", publishable: false } } : {}),
     release: { version, tag: `v${version}`, commit },
-    application: { linux: application },
+    application,
     signer: {
       release: {
         version,

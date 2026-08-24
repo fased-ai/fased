@@ -63,10 +63,22 @@ done < <(jq -er '.artifacts[] | [.name, (.size|tostring), .sha256] | @tsv' "$des
 for required in \
   install.sh \
   fased-bootstrap-linux-x64 \
+  fased-bootstrap-linux-arm64 \
+  fased-bootstrap-darwin-x64 \
+  fased-bootstrap-darwin-arm64 \
   fased-lifecycled-linux-amd64 \
+  fased-lifecycled-linux-arm64 \
+  fased-lifecycled-darwin-amd64 \
+  fased-lifecycled-darwin-arm64 \
   fased-signerd-linux-amd64 \
+  fased-signerd-linux-arm64 \
+  fased-signerd-darwin-amd64 \
+  fased-signerd-darwin-arm64 \
   fased-hosted-release-v2.json \
-  "fased-generation-linux-x64-v${VERSION}.tar.gz"; do
+  "fased-generation-linux-x64-v${VERSION}.tar.gz" \
+  "fased-generation-linux-arm64-v${VERSION}.tar.gz" \
+  "fased-generation-darwin-x64-v${VERSION}.tar.gz" \
+  "fased-generation-darwin-arm64-v${VERSION}.tar.gz"; do
   test -s "$OUTPUT_DIR/$required"
 done
 install -m 0755 "$ROOT_DIR/scripts/privileged-release-evidence.mjs" \
@@ -115,35 +127,43 @@ node "$ROOT_DIR/scripts/build-lifecycle-trust-metadata.mjs" \
 
 channel=stable
 [[ "$VERSION" != *-* ]] || channel=beta
-release_index_raw="$(mktemp "${TMPDIR:-/tmp}/fased-release-index.XXXXXX")"
-node "$ROOT_DIR/scripts/build-lifecycle-release-index.mjs" \
-  --assets "$OUTPUT_DIR" \
-  --channel "$channel" \
-  --version "$VERSION" \
-  --commit "$COMMIT" \
-  --tree "$TREE" \
-  --release-sequence "$RELEASE_SEQUENCE" \
-  --security-epoch "$SECURITY_EPOCH" \
-  --issued-at "${lifecycle_times[0]}" \
-  --expires-at "$(jq -er .signed.expiresAt "$root_policy")" \
-  --output "$release_index_raw"
-go -C "$ROOT_DIR/tools/fased-lifecycled" run ./cmd/fased-release-index \
-  --input "$release_index_raw" \
-  --output "$OUTPUT_DIR/fased-release-index-v1.json"
-rm -f -- "$release_index_raw"
+# Existing Linux installations retain their originally installed v1 bootstrap,
+# while new multi-platform bootstraps consume platform-qualified schema v2.
+# Both indexes bind the same release sequence and immutable product bytes.
+for index_schema in 1 2; do
+  release_index_raw="$(mktemp "${TMPDIR:-/tmp}/fased-release-index.XXXXXX")"
+  node "$ROOT_DIR/scripts/build-lifecycle-release-index.mjs" \
+    --assets "$OUTPUT_DIR" \
+    --channel "$channel" \
+    --version "$VERSION" \
+    --commit "$COMMIT" \
+    --tree "$TREE" \
+    --release-sequence "$RELEASE_SEQUENCE" \
+    --security-epoch "$SECURITY_EPOCH" \
+    --issued-at "${lifecycle_times[0]}" \
+    --expires-at "$(jq -er .signed.expiresAt "$root_policy")" \
+    --schema-version "$index_schema" \
+    --output "$release_index_raw"
+  go -C "$ROOT_DIR/tools/fased-lifecycled" run ./cmd/fased-release-index \
+    --input "$release_index_raw" \
+    --output "$OUTPUT_DIR/fased-release-index-v${index_schema}.json"
+  rm -f -- "$release_index_raw"
+done
 
 readarray -t root_head_times < <(node -e '
   const issued = new Date();
   const expires = new Date(issued.getTime() + 36 * 60 * 60 * 1000);
   process.stdout.write(`${issued.toISOString()}\n${expires.toISOString()}\n`);
 ')
-node "$ROOT_DIR/scripts/build-lifecycle-root-head.mjs" \
-  --root "$root_policy" \
-  --index "$OUTPUT_DIR/fased-release-index-v1.json" \
-  --witness-ref "refs/tags/v$VERSION" \
-  --witness-commit "$COMMIT" \
-  --issued-at "${root_head_times[0]}" \
-  --expires-at "${root_head_times[1]}" \
-  --output "$OUTPUT_DIR/fased-lifecycle-root-head-v1.json"
+for index_schema in 1 2; do
+  node "$ROOT_DIR/scripts/build-lifecycle-root-head.mjs" \
+    --root "$root_policy" \
+    --index "$OUTPUT_DIR/fased-release-index-v${index_schema}.json" \
+    --witness-ref "refs/tags/v$VERSION" \
+    --witness-commit "$COMMIT" \
+    --issued-at "${root_head_times[0]}" \
+    --expires-at "${root_head_times[1]}" \
+    --output "$OUTPUT_DIR/fased-lifecycle-root-head-v${index_schema}.json"
+done
 
 echo "$OUTPUT_DIR"

@@ -112,12 +112,17 @@ For a high-level overview, see [Onboarding Wizard](/start/wizard).
     - After onboarding, manage channel credentials and this Agent's routes from **Agent > Channels**.
   </Step>
   <Step title="Daemon install">
+    This step describes the explicit source-development wizard. The public
+    managed installer instead creates root-managed systemd units or macOS
+    LaunchDaemons through the Go lifecycle.
+
     - macOS: LaunchAgent
       - Requires a logged-in user session; for headless, use a custom LaunchDaemon (not shipped).
     - Linux (and Windows via WSL2): systemd user unit
       - Wizard attempts to enable lingering via `loginctl enable-linger <user>` so the Gateway stays up after logout.
       - May prompt for sudo (writes `/var/lib/systemd/linger`); it tries without sudo first.
     - **Runtime selection:** Node (recommended; required for WhatsApp/Telegram). Bun is **not recommended**.
+
   </Step>
   <Step title="Health check">
     - Starts the Gateway (if needed) and runs `fased health`.

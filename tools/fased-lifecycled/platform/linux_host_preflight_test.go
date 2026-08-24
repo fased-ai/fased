@@ -17,6 +17,7 @@ func linuxPreflightFixture(t *testing.T, kernel, pid1, systemdState string) Linu
 		"proc/sys/kernel/osrelease": kernel + "\n",
 		"proc/version":              kernel + "\n",
 		"proc/1/comm":               pid1 + "\n",
+		"usr/lib/os-release":        "NAME=Ubuntu\nID=ubuntu\n",
 	} {
 		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -74,6 +75,17 @@ func TestLinuxHostPreflightRejectsWSL1AndWSL2WithoutSystemd(t *testing.T) {
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(test.message)) {
 			t.Fatalf("invalid WSL host was not rejected with %q: %v", test.message, err)
 		}
+	}
+}
+
+func TestLinuxHostPreflightRejectsNonUbuntuWSL2(t *testing.T) {
+	preflight := linuxPreflightFixture(t, "5.15.153.1-microsoft-standard-WSL2", "systemd", "running")
+	if err := os.WriteFile(filepath.Join(preflight.Root, "usr/lib/os-release"), []byte("NAME=Debian\nID=debian\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := preflight.Verify(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "requires the Ubuntu distribution") {
+		t.Fatalf("non-Ubuntu WSL2 was not rejected: %v", err)
 	}
 }
 

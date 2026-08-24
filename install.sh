@@ -3,6 +3,9 @@ set -euo pipefail
 
 install_entry_release_identity="__FASED_RELEASE_IDENTITY__"
 bootstrap_sha256_x64="__FASED_BOOTSTRAP_SHA256_X64__"
+bootstrap_sha256_arm64="__FASED_BOOTSTRAP_SHA256_ARM64__"
+bootstrap_sha256_darwin_x64="__FASED_BOOTSTRAP_SHA256_DARWIN_X64__"
+bootstrap_sha256_darwin_arm64="__FASED_BOOTSTRAP_SHA256_DARWIN_ARM64__"
 version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
 digest_pattern='^[0-9a-f]{64}$'
 
@@ -99,13 +102,49 @@ fi
 [[ "$gateway_port" =~ ^[0-9]+$ && "$gateway_port" -ge 1 && "$gateway_port" -le 65535 ]] || { echo "Fased installer: invalid Gateway port." >&2; exit 1; }
 
 case "$(uname -s)" in
-  Linux) ;;
-  *) echo "Fased installer: public lifecycle installation supports Linux only." >&2; exit 1 ;;
+  Linux) operating_system="linux" ;;
+  Darwin)
+    operating_system="darwin"
+    [[ "$profile" == "protected-local" ]] || {
+      echo "Fased installer: macOS supports the Local profile only." >&2
+      exit 1
+    }
+    ;;
+  *) echo "Fased installer: managed lifecycle installation supports Linux and macOS." >&2; exit 1 ;;
+esac
+managed_wsl2=0
+kernel_release="$(uname -r)"
+case "$operating_system:$kernel_release" in
+  linux:*Microsoft*|linux:*microsoft*|linux:*WSL*|linux:*wsl*)
+    managed_wsl2=1
+    [[ "$profile" == "protected-local" ]] || {
+      echo "Fased installer: Ubuntu WSL2 supports the Local profile only." >&2
+      exit 1
+    }
+    case "$kernel_release" in
+      *WSL2*|*wsl2*|*Microsoft-standard*|*microsoft-standard*) ;;
+      *) echo "Fased installer: WSL1 is unsupported; install Ubuntu on WSL2." >&2; exit 1 ;;
+    esac
+    ;;
 esac
 case "$(uname -m)" in
-  x86_64|amd64) arch="x64"; bootstrap_sha256="$bootstrap_sha256_x64" ;;
-  *) echo "Fased installer: the first managed lifecycle release supports Linux x86_64 only; architecture $(uname -m) is deferred." >&2; exit 1 ;;
+  x86_64|amd64) arch="x64" ;;
+  aarch64|arm64) arch="arm64" ;;
+  *) echo "Fased installer: managed lifecycle installation supports x86_64 and arm64; architecture $(uname -m) is unsupported." >&2; exit 1 ;;
 esac
+if [[ "$operating_system" == "darwin" ]]; then
+  [[ "$arch" == "x64" ]] && bootstrap_sha256="$bootstrap_sha256_darwin_x64" || bootstrap_sha256="$bootstrap_sha256_darwin_arm64"
+else
+  [[ "$arch" == "x64" ]] && bootstrap_sha256="$bootstrap_sha256_x64" || bootstrap_sha256="$bootstrap_sha256_arm64"
+fi
+[[ "$managed_wsl2" -eq 0 || "$arch" == "x64" ]] || {
+  echo "Fased installer: managed Ubuntu WSL2 Local currently supports x86_64 only." >&2
+  exit 1
+}
+[[ "$profile" != "hosting" || "$arch" == "x64" ]] || {
+  echo "Fased installer: managed Hosting currently supports x86_64 only; Linux arm64 is Local-only." >&2
+  exit 1
+}
 [[ "$bootstrap_sha256" =~ $digest_pattern ]] || { echo "Fased installer: bootstrap digest was not stamped." >&2; exit 1; }
 
 if [[ -z "$operator_user" ]]; then
@@ -117,21 +156,54 @@ if [[ -z "$operator_user" ]]; then
 fi
 [[ "$operator_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$operator_user" != root ]] || { echo "Fased installer: invalid unprivileged operator." >&2; exit 1; }
 
-for tool in curl date sha256sum install mktemp stat uname; do
+for tool in curl date install mktemp stat uname; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Fased installer: missing required system tool: $tool" >&2; exit 1; }
 done
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256_file() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256_file() { shasum -a 256 "$1" | awk '{print $1}'; }
+else
+  echo "Fased installer: missing required SHA-256 tool." >&2
+  exit 1
+fi
+if [[ "$managed_wsl2" -eq 1 ]]; then
+  for tool in getent grep; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "Fased installer: Ubuntu WSL2 is missing required system tool: $tool" >&2; exit 1; }
+  done
+  grep -Eq '^ID="?ubuntu"?$' /etc/os-release || {
+    echo "Fased installer: managed WSL2 Local currently requires the Ubuntu distribution." >&2
+    exit 1
+  }
+  pid1=""
+  IFS= read -r pid1 </proc/1/comm || true
+  [[ "$pid1" == "systemd" ]] || {
+    echo "Fased installer: Ubuntu WSL2 requires systemd; enable it in /etc/wsl.conf, run wsl --shutdown, and reopen Ubuntu." >&2
+    exit 1
+  }
+  operator_record="$(getent passwd "$operator_user")"
+  IFS=: read -r record_name _ _ _ _ operator_home _ <<<"$operator_record"
+  [[ "$record_name" == "$operator_user" && "$operator_home" == /home/* && "$operator_home" != *[[:space:]]* ]] || {
+    echo "Fased installer: Ubuntu WSL2 requires the operator home under /home, not a Windows-mounted path such as /mnt/c." >&2
+    exit 1
+  }
+fi
 if [[ "$(id -u)" -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
   echo "Fased installer: sudo is required for Local lifecycle installation." >&2
   exit 1
 fi
 
-bootstrap_asset="fased-bootstrap-linux-${arch}"
+bootstrap_asset="fased-bootstrap-${operating_system}-${arch}"
 release_base="https://github.com/fased-ai/fased/releases/download/v${release}"
 curl_args=(-fL --proto '=https' --tlsv1.2 --retry 2 --retry-delay 1)
 if [[ "$verbose" -eq 0 ]]; then curl_args+=(-sS); fi
 
-install_started_ms="$(date +%s%3N)"
-bootstrap_dir="/opt/fased/lifecycle/bootstrap-v1"
+install_started_seconds="$(date +%s)"
+if [[ "$operating_system" == "darwin" ]]; then
+  bootstrap_dir="/Library/FasedLifecycle/bootstrap-v1"
+else
+  bootstrap_dir="/opt/fased/lifecycle/bootstrap-v1"
+fi
 bootstrap="${bootstrap_dir}/fased-bootstrap"
 bootstrap_cache_hit="false"
 bootstrap_transferred_bytes=0
@@ -141,24 +213,40 @@ installed_sha256=""
 require_protected_bootstrap_ancestry() {
   local directory=""
   local mode=""
-  for directory in / /opt /opt/fased /opt/fased/lifecycle "$bootstrap_dir"; do
-    [[ -d "$directory" ]] && test ! -L "$directory" && \
+  local directories=(/ /opt /opt/fased /opt/fased/lifecycle "$bootstrap_dir")
+  [[ "$operating_system" != "darwin" ]] || directories=(/ /Library /Library/FasedLifecycle "$bootstrap_dir")
+  for directory in "${directories[@]}"; do
+    [[ -d "$directory" ]] && test ! -L "$directory" || return 1
+    if [[ "$operating_system" == "darwin" ]]; then
+      [[ "$(stat -f '%Su' "$directory")" == "root" ]] || return 1
+      mode="$(stat -f '%Lp' "$directory")"
+    else
       [[ "$(stat -c '%U' "$directory")" == "root" ]] || return 1
-    mode="$(stat -c '%a' "$directory")"
+      mode="$(stat -c '%a' "$directory")"
+    fi
     [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
     (( (8#${mode: -3} & 8#022) == 0 )) || return 1
   done
 }
 
+protected_bootstrap_is_safe() {
+  require_protected_bootstrap_ancestry || return 1
+  [[ -f "$bootstrap" ]] && test ! -L "$bootstrap" || return 1
+  local bootstrap_identity=""
+  if [[ "$operating_system" == "darwin" ]]; then
+    bootstrap_identity="$(stat -f '%Su:%Sg:%Lp:%l' "$bootstrap")"
+  else
+    bootstrap_identity="$(stat -c '%U:%G:%a:%h' "$bootstrap")"
+  fi
+  [[ "$bootstrap_identity" == "root:wheel:555:1" || "$bootstrap_identity" == "root:root:555:1" ]]
+}
+
 if [[ -e "$bootstrap" || -L "$bootstrap" ]]; then
-  require_protected_bootstrap_ancestry && \
-    [[ -f "$bootstrap" ]] && test ! -L "$bootstrap" && \
-    [[ "$(stat -c '%U:%G:%a:%h' "$bootstrap")" == "root:root:555:1" ]] || {
+  protected_bootstrap_is_safe || {
     echo "Fased installer: existing bootstrap projection is unsafe." >&2
     exit 1
   }
-  installed_sha256="$(sha256sum "$bootstrap")"
-  installed_sha256="${installed_sha256%% *}"
+  installed_sha256="$(sha256_file "$bootstrap")"
   if [[ "$installed_sha256" == "$bootstrap_sha256" ]]; then
     bootstrap_cache_hit="true"
   fi
@@ -182,14 +270,12 @@ if [[ "$bootstrap_cache_hit" != "true" ]]; then
     echo "Fased installer: bootstrap transfer evidence is invalid." >&2
     exit 1
   }
-  actual_sha256="$(sha256sum "$download")"
-  actual_sha256="${actual_sha256%% *}"
+  actual_sha256="$(sha256_file "$download")"
   [[ "$actual_sha256" == "$bootstrap_sha256" ]] || { echo "Fased installer: bootstrap digest mismatch." >&2; exit 1; }
   chmod 0500 "$download"
   "${root_command[@]}" install -d -m 0755 "$bootstrap_dir"
   "${root_command[@]}" install -m 0555 "$download" "$bootstrap"
-  installed_sha256="$(sha256sum "$bootstrap")"
-  installed_sha256="${installed_sha256%% *}"
+  installed_sha256="$(sha256_file "$bootstrap")"
   [[ "$installed_sha256" == "$bootstrap_sha256" ]] || { echo "Fased installer: installed bootstrap identity mismatch." >&2; exit 1; }
 fi
 
@@ -228,7 +314,7 @@ verify_public_command() {
 }
 verify_public_command
 if [[ "$verbose" -eq 1 ]]; then
-  install_total_ms="$(( $(date +%s%3N) - install_started_ms ))"
+  install_total_ms="$(( ($(date +%s) - install_started_seconds) * 1000 ))"
   printf 'Installer performance: total=%sms bootstrap-download=%ss transferred=%sB cache-hit=%s\n' \
     "$install_total_ms" "$bootstrap_download_seconds" "$bootstrap_transferred_bytes" "$bootstrap_cache_hit"
 fi

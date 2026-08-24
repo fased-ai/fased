@@ -25,7 +25,7 @@ const removedMutationOwners = [
   "src/infra/hosted-runtime-artifact.ts",
 ];
 
-describe("lean attested Linux-x64 artifact layout", () => {
+describe("lean attested Linux managed artifact layout", () => {
   it("ships only public acquisition wrappers and no retired mutation owners", () => {
     expect(files).toContain("install.sh");
     expect(files).toContain("scripts/privileged-release-evidence.mjs");
@@ -36,14 +36,14 @@ describe("lean attested Linux-x64 artifact layout", () => {
   });
 
   it("routes Local and Hosting through one Go bootstrap", () => {
-    expect(installer).toContain("fased-bootstrap-linux-${arch}");
+    expect(installer).toContain("fased-bootstrap-${operating_system}-${arch}");
     expect(installer).toContain('profile="protected-local"');
     expect(installer).toContain('profile="hosting"');
     expect(installer).toContain('"$bootstrap" "${bootstrap_args[@]}"');
     expect(installer).not.toContain("generation-updater.mjs");
   });
 
-  it("builds only core Linux-x64 product bytes once", () => {
+  it("builds native Linux product bytes once per architecture and combines them once", () => {
     expect(builder).toContain('FASED_SIGNER_TARGETS="linux/amd64"');
     expect(builder).toContain('FASED_LIFECYCLE_TARGETS="linux/amd64"');
     expect(builder).toContain("hosted:artifact:from-dist");
@@ -53,16 +53,16 @@ describe("lean attested Linux-x64 artifact layout", () => {
     expect(builder).not.toContain("docker");
     expect(builder).not.toContain("Containerfile");
     expect(builder).not.toContain("test-lifecycle");
-    expect(builder).toContain("MAX_CORE_ARTIFACT_FILES=96");
-    expect(builder).toContain("MAX_CORE_ARTIFACT_BYTES=805306368");
+    expect(builder).toContain("MAX_CORE_ARTIFACT_FILES=160");
+    expect(builder).toContain("MAX_CORE_ARTIFACT_BYTES=1610612736");
     expect(builder).toContain("artifact_file_count <= MAX_CORE_ARTIFACT_FILES");
     expect(builder).toContain("artifact_total_bytes <= MAX_CORE_ARTIFACT_BYTES");
   });
 
   it("keeps optional implementations outside the core artifact", () => {
     expect(hostedArtifactBuilder).toContain('const tsxLoader = import.meta.resolve("tsx")');
-    expect(hostedArtifactBuilder).toContain("fased-hosted-app-v2-linux-${arch}");
-    expect(hostedArtifactBuilder).toContain("fased-hosted-deps-linux-${arch}");
+    expect(hostedArtifactBuilder).toContain("fased-hosted-app-v2-${platform}-${arch}");
+    expect(hostedArtifactBuilder).toContain("fased-hosted-deps-${platform}-${arch}");
     expect(hostedArtifactBuilder).not.toContain("fased-hosted-linux-${arch}");
   });
 
@@ -73,6 +73,16 @@ describe("lean attested Linux-x64 artifact layout", () => {
     expect(finalizer).toContain("build-lifecycle-release-index.mjs");
     expect(finalizer).not.toContain("pnpm build");
     expect(finalizer).not.toContain("hosted:artifact:from-dist");
+  });
+
+  it("assembles cross-platform payload inventories with the Linux host tool", () => {
+    expect(
+      builder.match(/--inventory-tool "\$OUTPUT_DIR\/fased-lifecycled-linux-amd64"/gu),
+    ).toHaveLength(3);
+    expect(builder).not.toContain('--inventory-tool "$OUTPUT_DIR/fased-lifecycled-linux-arm64"');
+    expect(builder).not.toContain(
+      '--inventory-tool "$OUTPUT_DIR/fased-lifecycled-darwin-${go_architecture}"',
+    );
   });
 
   it("builds, finalizes, and publishes the same bytes once", () => {
@@ -91,13 +101,15 @@ describe("lean attested Linux-x64 artifact layout", () => {
     expect(releaseWorkflow).toContain(
       'test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$SOURCE_COMMIT"',
     );
-    expect(releaseWorkflow).not.toContain("actions/download-artifact");
+    expect(releaseWorkflow).toContain("actions/download-artifact");
+    expect(releaseWorkflow).toContain("build-linux-arm64-release-supplement.sh");
+    expect(releaseWorkflow).toContain("ubuntu-24.04-arm");
     expect(releaseWorkflow).toContain("Verify every official attestation is tag-bound");
     expect(releaseWorkflow).toContain("verify-release-set");
 
     const release = releaseWorkflow.slice(releaseWorkflow.indexOf("  release:"));
     expect(release.match(/build-linux-x64-release-artifact\.sh/gu)?.length).toBe(1);
-    expect(release.match(/actions\/attest@/gu)?.length).toBe(9);
+    expect(release.match(/actions\/attest@/gu)?.length).toBe(11);
   });
 
   it("contains no simulated Protected Local acceptance implementation", () => {

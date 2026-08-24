@@ -60,7 +60,7 @@ func VerifyAttestedReleaseIndex(verifiedRoot VerifiedRoot, indexJSON, bundleJSON
 	expectation := githubAttestationExpectation{
 		Repository: authority.Repository, Workflow: authority.Workflow,
 		SourceRef: authority.SourceRefPrefix + index.Version, Commit: index.Commit,
-		SubjectName: "fased-release-index-v1.json", DigestAlgorithm: "sha256",
+		SubjectName: releaseIndexSubjectName(index.SchemaVersion), DigestAlgorithm: "sha256",
 		Digest: indexDigest[:], DenySelfHosted: authority.DenySelfHostedRunners,
 	}
 	authorityDigest, err := verifyGitHubArtifactAttestation(trustedMaterial, bundleJSON, expectation)
@@ -71,6 +71,10 @@ func VerifyAttestedReleaseIndex(verifiedRoot VerifiedRoot, indexJSON, bundleJSON
 		index: cloneReleaseIndex(index), digest: hex.EncodeToString(indexDigest[:]),
 		releaseAuthorityDigest: authorityDigest,
 	}, nil
+}
+
+func releaseIndexSubjectName(schemaVersion uint32) string {
+	return fmt.Sprintf("fased-release-index-v%d.json", schemaVersion)
 }
 
 func verifyGitHubArtifactAttestation(trustedMaterial sigroot.TrustedMaterial, bundleJSON []byte, expected githubAttestationExpectation) (string, error) {

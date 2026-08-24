@@ -104,30 +104,55 @@ export function parseHostedReleaseManifestV2(value, expected = {}) {
     throw new Error("hosted release version, tag, or commit is malformed or mismatched");
   }
 
-  exactKeys(value.application, ["linux"], "hosted application platforms");
-  exactKeys(value.application.linux, ["x64"], "hosted Linux architectures");
-  const application = { linux: {} };
-  for (const architecture of ["x64"]) {
-    const entry = value.application.linux[architecture];
-    exactKeys(entry, ["artifact", "dependencies"], `hosted Linux ${architecture} entry`);
-    exactKeys(
-      entry.dependencies,
-      ["asset", "sha256", "dependencyHash"],
-      `hosted Linux ${architecture} dependencies`,
-    );
-    if (!SHA256_PATTERN.test(entry.dependencies.dependencyHash || "")) {
-      throw new Error(`hosted Linux ${architecture} dependency hash is invalid`);
+  const operatingSystems = Object.keys(value.application).toSorted();
+  if (
+    JSON.stringify(operatingSystems) !== JSON.stringify(["darwin", "linux"]) &&
+    JSON.stringify(operatingSystems) !== JSON.stringify(["linux"])
+  ) {
+    throw new Error("hosted application platforms are unsupported");
+  }
+  const application = {};
+  const signerPlatformNames = [];
+  for (const operatingSystem of operatingSystems) {
+    const architectures = Object.keys(value.application[operatingSystem]).toSorted();
+    if (
+      JSON.stringify(architectures) !== JSON.stringify(["arm64", "x64"]) &&
+      !(operatingSystem === "linux" && JSON.stringify(architectures) === JSON.stringify(["x64"]))
+    ) {
+      throw new Error(`hosted ${operatingSystem} architectures are unsupported`);
     }
-    application.linux[architecture] = Object.freeze({
-      artifact: parseArtifact(entry.artifact, `hosted Linux ${architecture} app artifact`),
-      dependencies: Object.freeze({
-        ...parseArtifact(
-          { asset: entry.dependencies.asset, sha256: entry.dependencies.sha256 },
-          `hosted Linux ${architecture} dependency artifact`,
+    application[operatingSystem] = {};
+    for (const architecture of architectures) {
+      const entry = value.application[operatingSystem][architecture];
+      exactKeys(
+        entry,
+        ["artifact", "dependencies"],
+        `hosted ${operatingSystem} ${architecture} entry`,
+      );
+      exactKeys(
+        entry.dependencies,
+        ["asset", "sha256", "dependencyHash"],
+        `hosted ${operatingSystem} ${architecture} dependencies`,
+      );
+      if (!SHA256_PATTERN.test(entry.dependencies.dependencyHash || "")) {
+        throw new Error(`hosted ${operatingSystem} ${architecture} dependency hash is invalid`);
+      }
+      application[operatingSystem][architecture] = Object.freeze({
+        artifact: parseArtifact(
+          entry.artifact,
+          `hosted ${operatingSystem} ${architecture} app artifact`,
         ),
-        dependencyHash: entry.dependencies.dependencyHash,
-      }),
-    });
+        dependencies: Object.freeze({
+          ...parseArtifact(
+            { asset: entry.dependencies.asset, sha256: entry.dependencies.sha256 },
+            `hosted ${operatingSystem} ${architecture} dependency artifact`,
+          ),
+          dependencyHash: entry.dependencies.dependencyHash,
+        }),
+      });
+      signerPlatformNames.push(`${operatingSystem}-${architecture === "x64" ? "amd64" : "arm64"}`);
+    }
+    application[operatingSystem] = Object.freeze(application[operatingSystem]);
   }
 
   exactKeys(
@@ -148,15 +173,15 @@ export function parseHostedReleaseManifestV2(value, expected = {}) {
   ) {
     throw new Error("hosted app and signer release identities do not match");
   }
-  exactKeys(value.signer.platforms, ["linux-amd64"], "hosted signer platforms");
+  exactKeys(value.signer.platforms, signerPlatformNames, "hosted signer platforms");
   const platforms = {};
-  for (const platform of ["linux-amd64"]) {
+  for (const platform of signerPlatformNames) {
     platforms[platform] = parseArtifact(value.signer.platforms[platform], `signer ${platform}`);
   }
   return Object.freeze({
     schemaVersion: 2,
     release: Object.freeze({ version, tag: `v${version}`, commit }),
-    application: Object.freeze({ linux: Object.freeze(application.linux) }),
+    application: Object.freeze(application),
     signer: Object.freeze({
       release: Object.freeze({ ...value.signer.release }),
       capabilities: parseCapabilities(value.signer.capabilities, value.signer.capabilitiesDigest),

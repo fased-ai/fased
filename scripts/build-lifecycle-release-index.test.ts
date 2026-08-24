@@ -20,13 +20,25 @@ afterEach(async () => {
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-release-index-test-"));
   roots.push(root);
-  for (const [architecture, go] of [["x64", "amd64"]]) {
-    const dependencyName = `fased-hosted-deps-linux-${architecture}-fixture.tar.gz`;
-    const dependencyBody = `dependency-${architecture}`;
+  for (const [operatingSystem, architecture, go] of [
+    ["linux", "x64", "amd64"],
+    ["linux", "arm64", "arm64"],
+    ["darwin", "x64", "amd64"],
+    ["darwin", "arm64", "arm64"],
+  ]) {
+    const platform = `${operatingSystem}-${architecture}`;
+    const dependencyName = `fased-hosted-deps-${platform}-fixture.tar.gz`;
+    const dependencyBody = `dependency-${platform}`;
     await fs.writeFile(path.join(root, dependencyName), dependencyBody);
-    await fs.writeFile(path.join(root, `fased-lifecycled-linux-${go}`), `host-${go}`);
-    await fs.writeFile(path.join(root, `fased-signerd-linux-${go}`), `signer-${go}`);
-    const generationRoot = path.join(root, `generation-${architecture}`, "generation");
+    await fs.writeFile(
+      path.join(root, `fased-lifecycled-${operatingSystem}-${go}`),
+      `host-${platform}`,
+    );
+    await fs.writeFile(
+      path.join(root, `fased-signerd-${operatingSystem}-${go}`),
+      `signer-${platform}`,
+    );
+    const generationRoot = path.join(root, `generation-${platform}`, "generation");
     await fs.mkdir(generationRoot, { recursive: true });
     const pluginLock = {
       schemaVersion: 1,
@@ -63,11 +75,11 @@ async function fixture() {
       JSON.stringify({
         schemaVersion: 1,
         generation: {
-          id: digest(`generation-${architecture}`),
+          id: digest(`generation-${platform}`),
           version,
           commit,
           tree,
-          artifactSetDigest: digest(`generation-${architecture}`),
+          artifactSetDigest: digest(`generation-${platform}`),
         },
         inventorySHA256: digest(inventoryJSON).slice("sha256:".length),
       }),
@@ -75,7 +87,7 @@ async function fixture() {
     await tar.c(
       {
         cwd: path.dirname(generationRoot),
-        file: path.join(root, `fased-generation-linux-${architecture}-v${version}.tar.gz`),
+        file: path.join(root, `fased-generation-${platform}-v${version}.tar.gz`),
         gzip: true,
       },
       ["generation"],
@@ -132,7 +144,7 @@ describe("production lifecycle release index", () => {
     });
   });
 
-  it("binds the retained x64 architecture and monotonic authority without a private release key", async () => {
+  it("binds Linux and macOS x64 and arm64 without a private release key", async () => {
     const assetsDir = await fixture();
     const index = await buildLifecycleReleaseIndex({
       assetsDir,
@@ -146,16 +158,22 @@ describe("production lifecycle release index", () => {
       version,
     });
     expect(index).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       type: "fased-release-index",
       version,
       releaseSequence: 1,
       securityEpoch: 1,
       application: {
-        x64: { name: `fased-generation-linux-x64-v${version}.tar.gz` },
+        "linux-x64": { name: `fased-generation-linux-x64-v${version}.tar.gz` },
+        "linux-arm64": { name: `fased-generation-linux-arm64-v${version}.tar.gz` },
+        "darwin-x64": { name: `fased-generation-darwin-x64-v${version}.tar.gz` },
+        "darwin-arm64": { name: `fased-generation-darwin-arm64-v${version}.tar.gz` },
       },
       lifecycleHost: {
-        x64: { privilegedComponent: "lifecycle-host" },
+        "linux-x64": { privilegedComponent: "lifecycle-host" },
+        "linux-arm64": { privilegedComponent: "lifecycle-host" },
+        "darwin-x64": { privilegedComponent: "lifecycle-host" },
+        "darwin-arm64": { privilegedComponent: "lifecycle-host" },
       },
     });
     expect(index.artifactSetDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);
@@ -164,6 +182,25 @@ describe("production lifecycle release index", () => {
     );
     expect(index).not.toHaveProperty("privateKey");
     expect(index).not.toHaveProperty("delegation");
+  });
+
+  it("keeps schema 1 Linux-only for predecessor bootstraps", async () => {
+    const assetsDir = await fixture();
+    const index = await buildLifecycleReleaseIndex({
+      assetsDir,
+      channel: "beta",
+      commit,
+      expiresAt: "2031-07-29T20:37:38.000Z",
+      issuedAt: "2026-08-12T20:00:00.000Z",
+      releaseSequence: 1,
+      schemaVersion: 1,
+      securityEpoch: 1,
+      tree,
+      version,
+    });
+    expect(index.schemaVersion).toBe(1);
+    expect(Object.keys(index.application)).toEqual(["x64", "arm64"]);
+    expect(Object.keys(index.lifecycleHost)).toEqual(["x64", "arm64"]);
   });
 
   it("rejects a dependency that differs from the generation inventory", async () => {
@@ -184,6 +221,6 @@ describe("production lifecycle release index", () => {
         tree,
         version,
       }),
-    ).rejects.toThrow("dependency digest differs for x64");
+    ).rejects.toThrow("dependency digest differs for linux-x64");
   });
 });

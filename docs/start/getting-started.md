@@ -15,14 +15,18 @@ Wallets, channels, skills, and Mining can wait.
 
 <Tabs>
   <Tab title="Local">
-    Run in macOS Terminal, a Linux terminal, or Ubuntu WSL2:
+    Run on Linux x86_64/arm64 with systemd, native macOS x86_64/arm64, or inside
+    Ubuntu WSL2 x86_64. Windows users never run it in PowerShell:
 
     ```bash
     curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
-    Native Windows uses [WSL2 Ubuntu](/platforms/windows). Do not run this Bash
-    command in PowerShell or native Windows Node.js.
+    Administrator PowerShell is used only to run `wsl --install -d Ubuntu` and
+    manage WSL. Reopen Ubuntu after any required restart, ensure systemd is
+    active, and run the command above inside the Ubuntu shell. On macOS, run the
+    command in Terminal. Linux arm64 and macOS are Local-only. Native Windows
+    remains deferred. See [Windows](/platforms/windows) and [macOS](/platforms/macos).
 
   </Tab>
 

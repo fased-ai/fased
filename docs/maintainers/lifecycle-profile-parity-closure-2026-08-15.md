@@ -2,6 +2,12 @@
 
 Date: 2026-08-15
 
+> **Historical, non-normative evidence.** This report records the state and
+> decisions at its date. Its platform gaps and release sequence are superseded
+> by the current [platform matrix](/platforms) and
+> [release checklist](/reference/RELEASING); do not use its status table as
+> current release readiness.
+
 ## Decision
 
 Do not promote `v0.1.76-rc.96` to stable. Keep the signed-artifact plus Go

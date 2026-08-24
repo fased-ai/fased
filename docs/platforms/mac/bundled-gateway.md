@@ -7,60 +7,56 @@ read_when:
 title: "Gateway on macOS"
 ---
 
-# Gateway on macOS (external launchd)
+# Gateway on macOS (managed launchd)
 
-Managed macOS install/update is deferred from the first stable matrix. This
-page describes compatibility and source-development behavior only; the app
-does not download a separate npm/global CLI or claim a native managed
-lifecycle.
+Managed macOS Local installation uses root-managed system LaunchDaemons and the
+same signed lifecycle protocol as Linux. The companion app attaches to that
+Gateway; it is not the lifecycle owner.
 
-## Install the CLI (required for local mode)
+## Install the managed CLI and Gateway
 
-You need Node 24 recommended, or Node 22.14+ with `node:sqlite`, on the Mac.
-Then install `fased` from a contributor checkout:
+Run in Terminal as the ordinary macOS user:
 
 ```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-bash scripts/install-development.sh --no-onboard
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
+  | bash -s -- --local
 ```
 
-The macOS app has no public **Install CLI** authority. Use the manual
-repo-backed flow above only when testing a local checkout.
+The release bundles Node and native Darwin binaries. Homebrew and a source
+checkout are not required.
 
-## Launchd (Gateway as LaunchAgent)
+## launchd (managed system services)
 
-Label:
-
-- `ai.fased.gateway` (or `ai.fased.<profile>`; legacy `com.fased.*` may remain)
-
-Plist location (per‑user):
-
-- `~/Library/LaunchAgents/ai.fased.gateway.plist`
-  (or `~/Library/LaunchAgents/ai.fased.<profile>.plist`)
+Managed plist location: `/Library/LaunchDaemons`.
 
 Manager:
 
-- The macOS app may manage a LaunchAgent only in compatibility/source mode.
-- The CLI can also install it: `fased gateway install`.
+- The Go lifecycle owns the system LaunchDaemons transactionally.
+- The app attaches to the managed Gateway and does not replace its service.
 
 Behavior:
 
-- The current app UI label is “FasedAgent Active”; it enables or disables the LaunchAgent.
-- App quit does **not** stop the gateway (launchd keeps it alive).
+- `fased` and the Go lifecycle manage the system LaunchDaemons; the companion
+  app does not enable, disable, replace, or repair them.
+- App quit does **not** stop the Gateway (`launchd` keeps it alive).
 - If a Gateway is already running on the configured port, the app attaches to
   it instead of starting a new one.
 
 Logging:
 
-- launchd stdout/err: `/tmp/fased/fased-gateway.log`
+- Managed service logs are owned by the installed lifecycle. Use `fased status`
+  and `fased doctor --non-interactive` for user-facing diagnostics.
 
 ## Version compatibility
 
-The macOS app checks the gateway version against its own version. This does not
-turn the compatibility path into a supported managed release.
+The macOS app checks the Gateway version against its own version. Managed Local
+acceptance requires the platform-qualified Darwin release assets and matching
+Gateway, signer, and lifecycle identities.
 
-## Smoke check
+## Source-development smoke check
+
+The following manual Gateway command is for contributor/source development; it
+does not replace managed Local acceptance:
 
 ```bash
 fased --version

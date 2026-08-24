@@ -6,25 +6,26 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$script_dir/lib/github-release-draft.sh"
 
 usage() {
-  echo "usage: publish-lifecycle-channel.sh <candidate-directory> <source-commit> <attestation-source-ref> <attestation-source-digest>" >&2
+  echo "usage: publish-lifecycle-channel.sh <candidate-directory> <source-commit> <attestation-source-ref> <attestation-source-digest> [v1|v2]" >&2
   exit 2
 }
 
-[[ $# -eq 4 ]] || usage
+[[ $# -eq 4 || $# -eq 5 ]] || usage
 candidate_dir="$(realpath -e "$1")"
 source_commit="$2"
 attestation_source_ref="$3"
 attestation_source_digest="$4"
+index_schema="${5:-v1}"
 [[ -d "$candidate_dir" && "$source_commit" =~ ^[a-f0-9]{40}$ &&
   ( "$attestation_source_ref" == refs/heads/main ||
     "$attestation_source_ref" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ) &&
-  "$attestation_source_digest" =~ ^[a-f0-9]{40}$ ]] || usage
+  "$attestation_source_digest" =~ ^[a-f0-9]{40}$ && "$index_schema" =~ ^v[12]$ ]] || usage
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
-index_name=fased-release-index-v1.json
-attestation_name=fased-release-index-v1.json.attestation.json
-root_head_name=fased-lifecycle-root-head-v1.json
+index_name="fased-release-index-${index_schema}.json"
+attestation_name="${index_name}.attestation.json"
+root_head_name="fased-lifecycle-root-head-${index_schema}.json"
 root_head_attestation_name="$root_head_name.attestation.json"
 mapfile -t root_names < <(find "$candidate_dir" -maxdepth 1 -type f \
   -name 'fased-lifecycle-root-v*.json' -printf '%f\n' | sort -V)
@@ -54,6 +55,7 @@ node scripts/verify-lifecycle-root-chain.mjs \
 
 version="$(jq -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"))' "$index")"
 channel="$(jq -er '.channel | select(. == "stable" or . == "beta")' "$index")"
+test "$(jq -er .schemaVersion "$index")" = "${index_schema#v}"
 test "$(jq -er .commit "$index")" = "$source_commit"
 if [[ "$version" == *-* ]]; then
   test "$channel" = beta
@@ -151,8 +153,8 @@ jq -e \
 verify_release_assets "$exact_release" "$workspace/exact"
 verify_release_head_assets "$exact_release" "$workspace/exact"
 
-channel_tag="fased-channel-$channel-v1"
-channel_title="Fased signed $channel channel v1"
+channel_tag="fased-channel-$channel-$index_schema"
+channel_title="Fased signed $channel channel $index_schema"
 channel_release="$workspace/channel-release.json"
 if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$channel_tag" >"$channel_release" 2>/dev/null; then
   draft_id=""
@@ -323,7 +325,7 @@ else
   fi
 fi
 
-bash scripts/publish-lifecycle-root-head.sh "$candidate_dir" "$channel_tag"
+bash scripts/publish-lifecycle-root-head.sh "$candidate_dir" "$channel_tag" "$index_schema"
 
 gh api "repos/$GITHUB_REPOSITORY/releases/tags/$channel_tag" >"$channel_release"
 final_assets="$(jq -c '[.assets[].name] | sort' "$channel_release")"

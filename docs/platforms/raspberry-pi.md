@@ -9,16 +9,15 @@ title: "Raspberry Pi"
 
 # Fased on Raspberry Pi
 
-<Warning>
-Raspberry Pi and Linux arm64 are deferred from the first managed stable matrix.
-The public installer rejects arm64 before download, sudo, cache, or `/opt`
-mutation. Do not copy x64 release assets onto a Pi or use this page as managed
-installation guidance.
-</Warning>
+<Note>
+Fased supports managed **Local** installation on 64-bit Raspberry Pi OS with
+systemd. Managed Hosting remains x86_64-only. The installer selects the signed
+Linux arm64 release automatically; never copy x64 assets onto a Pi.
+</Note>
 
 ## Goal
 
-Plan or test a future Raspberry Pi port from source.
+Run the normal managed Local profile on a small 64-bit Linux arm64 computer.
 
 Perfect for:
 
@@ -83,8 +82,9 @@ sudo apt install -y curl ca-certificates
 sudo timedatectl set-timezone America/Chicago  # Change to your timezone
 ```
 
-Contributor testing requires its own Node and pnpm toolchain. There is no
-supported managed arm64 runtime in the first stable matrix.
+Confirm that `uname -m` reports `aarch64` and that systemd is PID 1. The public
+installer supplies the managed Node runtime and native Fased binaries; users do
+not install Node, pnpm, Go, or a source checkout.
 
 ## 5) Add Swap (Important for 2GB or less)
 
@@ -105,35 +105,30 @@ echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 ```
 
-## 6) Contributor source test only
+## 6) Install Fased Local
 
-Contributors who intentionally accept an unsupported development environment
-can use a non-root checkout:
-
-```bash
-git clone https://github.com/fased-ai/fased.git fased
-cd fased
-pnpm install
-pnpm build:app
-bash scripts/install-development.sh --no-onboard
-```
-
-This is a contributor/debug path, not a managed Pi installation. Do not use it
-for production Wallet custody or as release acceptance.
-
-## 7) Private access before onboarding
-
-No managed Hosting hardening is available for Pi/arm64 in the first matrix.
-Do not run the source checkout with sudo or assume it manages SSH/firewall.
-
-## 8) Run Onboarding
-
-The installer runs onboarding automatically. If it was interrupted, reconnect
-as `app` and resume:
+Run the same public Local command used on other Linux machines:
 
 ```bash
-fased onboard --install-daemon
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
+  | bash -s -- --local
 ```
+
+The installer verifies the signed Linux arm64 assets, creates the root-managed
+services, and runs onboarding as your ordinary user.
+
+## 7) Local access
+
+The Pi uses the Local profile. It does not modify SSH, the firewall, fail2ban,
+or Tailscale. Choose a Gateway bind/auth mode during onboarding that matches
+your trusted local network. Use the Hosting profile only on a supported x86_64
+VPS.
+
+## 8) Run onboarding
+
+The installer runs onboarding automatically as the current user. If it is
+interrupted, retry the exact installer command; the managed transaction resumes
+without replacing Wallet or agent state.
 
 After the Gateway is online, use the browser Control UI from the selected Agent:
 **Agent > Models** for API keys/OAuth and model roles, **Agent > Channels** for
@@ -146,16 +141,13 @@ connectors, and **Agent > Skills** for skill setup.
 # Check status
 fased status
 
-# Check service
-fased gateway status
-
-# View logs
-journalctl --user -u fased-gateway.service -f
+# Verify update convergence
+fased update
 ```
 
 ## 10) Access the Control UI
 
-Since the Pi is headless, use an SSH tunnel:
+If the Pi is headless and the Gateway is bound to loopback, use an SSH tunnel:
 
 ```bash
 # From your laptop/desktop
@@ -169,14 +161,7 @@ Use **Dashboard** for overview, **Chat** to test the Agent, **Agents** for
 models, channels, skills, tools, memory, services, and tasks, and **Advanced >
 Nodes** for paired device status.
 
-Or use Tailscale Serve for always-on private access:
-
-```bash
-sudo tailscale serve --bg 443 http://127.0.0.1:18789
-```
-
-This keeps the Gateway loopback-only and gives you HTTPS on your tailnet access
-path.
+Tailscale is optional in the Local profile and is not configured by Fased.
 
 ---
 

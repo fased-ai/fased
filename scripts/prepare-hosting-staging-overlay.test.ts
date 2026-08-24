@@ -17,6 +17,7 @@ describe("real Hosting staging overlay", () => {
     expect(source).toContain("fased-branch-trust");
     expect(source).toContain("fased-lifecycle-root-v1.json");
     expect(source).toContain("fased-release-index-v1.json.attestation.json");
+    expect(source).toContain("fased-release-index-v2.json.attestation.json");
     expect(source).toContain("main.branchFixturePinnedRootSHA256");
     expect(source).toContain("staging installer release base is not unique");
     expect(source).toContain('source.replace(expected, `release_base="${replacement}"`)');

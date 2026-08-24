@@ -18,6 +18,9 @@ function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fased-lifecycle-trust-"));
   fs.writeFileSync(path.join(root, "install.sh"), "bootstrap\n");
   fs.writeFileSync(path.join(root, "fased-lifecycled-linux-amd64"), "lifecycle x64\n");
+  fs.writeFileSync(path.join(root, "fased-lifecycled-linux-arm64"), "lifecycle arm64\n");
+  fs.writeFileSync(path.join(root, "fased-lifecycled-darwin-amd64"), "lifecycle mac x64\n");
+  fs.writeFileSync(path.join(root, "fased-lifecycled-darwin-arm64"), "lifecycle mac arm64\n");
   fs.writeFileSync(path.join(root, "fased-privileged-release-evidence.mjs"), "evidence verifier\n");
   fs.writeFileSync(
     path.join(root, "fased-privileged-provenance-v1.intoto.json"),
@@ -45,12 +48,15 @@ describe("lifecycle trust metadata", () => {
       release: { version: "1.2.3", tag: "v1.2.3", commit: "a".repeat(40) },
       policy: {
         channels: ["beta", "stable"],
-        platforms: ["linux-x64"],
+        platforms: ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"],
         lifecycleProtocol: 1,
       },
       targets: {
         bootstrap: { asset: "install.sh" },
         lifecycleLinuxX64: { asset: "fased-lifecycled-linux-amd64" },
+        lifecycleLinuxArm64: { asset: "fased-lifecycled-linux-arm64" },
+        lifecycleDarwinX64: { asset: "fased-lifecycled-darwin-amd64" },
+        lifecycleDarwinArm64: { asset: "fased-lifecycled-darwin-arm64" },
         evidenceVerifier: { asset: "fased-privileged-release-evidence.mjs" },
       },
       evidence: {

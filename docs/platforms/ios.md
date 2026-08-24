@@ -20,7 +20,8 @@ Availability: internal preview. The iOS app is not publicly distributed yet.
 
 ## Requirements
 
-- Gateway running on another device (macOS, Linux, or Windows via WSL2).
+- Gateway running on a supported Linux x86_64/systemd host, including Ubuntu
+  WSL2.
 - Network path:
   - Same LAN via Bonjour, **or**
   - Tailnet via unicast DNS-SD (example domain: `fased.internal.`), **or**

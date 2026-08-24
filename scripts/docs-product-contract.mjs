@@ -32,6 +32,21 @@ const retiredWalletPhrases = [
   "Verify and save RPC",
   "wallet Security",
 ];
+const stalePlatformClaims = new Map([
+  [
+    "docs/install/installer.md",
+    [
+      "retained Linux x86_64 platform",
+      "Fresh Linux x86_64 Local install",
+      "every architecture except x86_64",
+    ],
+  ],
+  ["docs/install/node.md", ["installer does not support macOS in the first stable matrix"]],
+  ["docs/install/updating.md", ["The native signer is only needed after"]],
+  ["docs/platforms/mac/bundled-gateway.md", ["enables or disables the LaunchAgent"]],
+  ["docs/reference/RELEASING.md", ["wait for its prepare job", "gh release create"]],
+  ["docs/reference/ci.md", ["version-only pull request"]],
+]);
 
 function fail(message) {
   throw new Error(`docs product contract: ${message}`);
@@ -202,6 +217,22 @@ for (const translation of [
   if (!fs.existsSync(path.join(root, translation))) {
     fail(`missing Chinese product-contract page ${translation}`);
   }
+}
+
+for (const [relative, phrases] of stalePlatformClaims) {
+  const source = read(relative);
+  for (const phrase of phrases) {
+    if (source.includes(phrase)) {
+      fail(`${relative} retains stale platform/release wording: ${phrase}`);
+    }
+  }
+}
+
+const historicalParityReport = read(
+  "docs/maintainers/lifecycle-profile-parity-closure-2026-08-15.md",
+);
+if (!historicalParityReport.includes("Historical, non-normative evidence")) {
+  fail("historical lifecycle parity report lacks its superseded-status banner");
 }
 
 console.log("docs product contract passed");

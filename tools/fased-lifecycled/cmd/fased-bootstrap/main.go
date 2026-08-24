@@ -41,7 +41,7 @@ const maxMetadataSize = 1 << 20
 
 type bootstrapRequest struct {
 	StateRoot, HostRoot, RootURL, RootRotationBaseURL, IndexURL, IndexAttestationURL, ReleaseBaseURL string
-	Channel, Version, Architecture, PinnedRootSHA256                                                 string
+	Channel, Version, OperatingSystem, Architecture, PinnedRootSHA256                                string
 	RootRotationURLs                                                                                 []string
 	ExpectedRootVersion                                                                              uint64
 	ExpectedRootSHA256                                                                               string
@@ -513,7 +513,7 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	if index.Channel != request.Channel || (request.Version != "" && index.Version != request.Version) {
 		return bootstrapResult{}, errors.New("signed release index differs from requested channel or version")
 	}
-	asset, ok := index.LifecycleHost[request.Architecture]
+	asset, ok := selectPlatformAsset(index.LifecycleHost, request)
 	if !ok {
 		return bootstrapResult{}, errors.New("signed release index lacks the requested lifecycle-host architecture")
 	}
@@ -619,7 +619,7 @@ func plainSHA256(candidate string) bool {
 }
 
 func fetchIndexedAsset(ctx context.Context, client *http.Client, request bootstrapRequest, inbox *acquire.Inbox, assets map[string]trust.Asset) (string, acquire.Receipt, error) {
-	asset, ok := assets[request.Architecture]
+	asset, ok := selectPlatformAsset(assets, request)
 	if !ok {
 		return "", acquire.Receipt{}, errors.New("signed release index lacks the requested architecture")
 	}
@@ -636,6 +636,23 @@ func fetchIndexedAsset(ctx context.Context, client *http.Client, request bootstr
 		return "", acquire.Receipt{}, err
 	}
 	return path.Join(request.StateRoot, "inbox", receipt.RelativePath), receipt, nil
+}
+
+func selectPlatformAsset(assets map[string]trust.Asset, request bootstrapRequest) (trust.Asset, bool) {
+	operatingSystem := request.OperatingSystem
+	if operatingSystem == "" {
+		operatingSystem = "linux"
+	}
+	if asset, ok := assets[operatingSystem+"-"+request.Architecture]; ok {
+		return asset, true
+	}
+	// Schema-1 Linux releases published before platform-qualified keys remain
+	// updateable. Darwin never falls back to an unqualified Linux-era key.
+	if operatingSystem == "linux" {
+		asset, ok := assets[request.Architecture]
+		return asset, ok
+	}
+	return trust.Asset{}, false
 }
 
 func fetchMetadata(ctx context.Context, client *http.Client, rawURL string) ([]byte, error) {

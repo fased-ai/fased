@@ -118,7 +118,7 @@ describe("single Go lifecycle production routing", () => {
       }
     }
     const installer = await readFile(resolve(repoRoot, "install.sh"), "utf8");
-    if (!installer.includes("fased-bootstrap-linux-${arch}")) {
+    if (!installer.includes("fased-bootstrap-${operating_system}-${arch}")) {
       violations.push("install.sh: public route does not acquire the static lifecycle bootstrap");
     }
     if (!installer.includes('"$bootstrap" "${bootstrap_args[@]}"')) {

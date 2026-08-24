@@ -1,5 +1,5 @@
 ---
-summary: "Use Windows to access a supported remote Linux VPS; managed WSL2 Local is deferred."
+summary: "Run managed Fased Local inside Ubuntu WSL2, or access a remote Linux VPS from Windows."
 read_when:
   - Installing Fased on Windows
   - Accessing a Fased VPS from Windows
@@ -8,28 +8,25 @@ title: "Windows (WSL2)"
 
 # Windows
 
-The first managed stable matrix does **not** include native Windows or WSL2.
+The managed Local matrix includes **Ubuntu WSL2 x86_64 with systemd**. Fased
+does not run directly in native Windows, PowerShell, Command Prompt, Git Bash,
+or native Windows Node.js.
 There are two distinct uses:
 
-- **Source development:** maintainers may run an unsupported checkout inside
-  WSL2 Ubuntu.
+- **Fased Local on this PC:** PowerShell provisions Ubuntu WSL2; installation,
+  onboarding, and every `fased` command run inside the Ubuntu shell.
 - **Fased runs on a VPS:** use native Windows Tailscale and SSH; Fased runs on
   the remote Linux VPS, not in Windows or WSL.
 
+Ubuntu WSL2 reuses the verified Linux x86_64 release. The installer accepts
+only WSL2—not WSL1—requires Ubuntu and systemd, permits only the Local profile,
+and requires the operator home under Linux `/home` rather than `/mnt/c`.
+
 <Tabs>
   <Tab title="Local Fased in WSL2">
-    <Warning>
-    Managed WSL2 Local installation is deferred. Do not run the public
-    `install.sh` inside WSL2 until WSL2 has its own systemd convergence and
-    command-backed acceptance package.
-    </Warning>
-
     Fased Local requires Windows 11 or Windows 10 version 2004/build 19041 or
     newer. The wallet signer uses Unix sockets, so native Windows Node.js,
     PowerShell, Command Prompt, Git Bash, and WSL1 are not supported runtimes.
-    The published npm package intentionally rejects native Windows with
-    `EBADPLATFORM`; do not override npm's platform check. WSL2 reports Linux and
-    can be used for contributor source testing only.
 
     ### 1. Administrator PowerShell
 
@@ -43,32 +40,55 @@ There are two distinct uses:
     wsl --list --verbose
     ```
 
-    Restart Windows if requested. WSL must be `0.67.6` or newer and the Ubuntu
-    row must show `VERSION 2`.
+    Restart Windows if requested. The Ubuntu row must show `VERSION 2`.
 
     ### 2. Ubuntu WSL2 shell
 
     Open **Ubuntu** from the Start menu and create its Linux username/password
-    if prompted. Then run this separate block inside Ubuntu:
+    if prompted. Check systemd inside Ubuntu:
 
     ```bash
-    uname -s
     ps -p 1 -o comm=
-    git clone https://github.com/fased-ai/fased.git
-    cd fased
-    bash scripts/install-development.sh
     ```
 
-    `uname -s` must print `Linux`; PID 1 must be `systemd`. This is an
-    unsupported contributor environment, not managed release evidence.
+    It must print `systemd`. If it does not, create `/etc/wsl.conf` inside
+    Ubuntu:
 
     ```bash
-    fased health
-    fased dashboard
+    printf '[boot]\nsystemd=true\n' | sudo tee /etc/wsl.conf
+    exit
     ```
 
-    The dashboard opens in the normal Windows browser through WSL localhost
-    forwarding.
+    Back in PowerShell, stop WSL cleanly:
+
+    ```powershell
+    wsl --shutdown
+    ```
+
+    Reopen Ubuntu, confirm `ps -p 1 -o comm=` prints `systemd`, then run the
+    managed Local installer inside Ubuntu:
+
+    ```bash
+    curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
+      | bash -s -- --local
+    ```
+
+    Keep Fased state in the default Ubuntu home under `/home`. Do not move
+    `~/.fased` onto `/mnt/c` or another Windows-mounted filesystem.
+
+    ```bash
+    fased status
+    fased update
+    ```
+
+    `fased update` must finish with `Already current`. Open
+    `http://localhost:18789` in the normal Windows browser; WSL localhost
+    forwarding reaches the Gateway running inside Ubuntu.
+
+    For first-machine acceptance, exit Ubuntu, run `wsl --shutdown` in
+    PowerShell, reopen Ubuntu, and run `fased status` again. Gateway, signer,
+    Wallet, task-ledger, and configuration state must remain available without
+    reinstalling.
 
   </Tab>
 

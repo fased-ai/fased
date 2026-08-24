@@ -15,10 +15,15 @@ const digest = (value: string | Buffer) => createHash("sha256").update(value).di
 
 function fixture() {
   const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "fased-hosted-release-v2-"));
-  for (const architecture of ["x64"]) {
+  for (const [operatingSystem, architecture] of [
+    ["linux", "x64"],
+    ["linux", "arm64"],
+    ["darwin", "x64"],
+    ["darwin", "arm64"],
+  ]) {
     const app = `app-${architecture}`;
     const dependencies = `dependencies-${architecture}`;
-    const appAsset = `fased-hosted-app-v2-linux-${architecture}-v${version}.tar.gz`;
+    const appAsset = `fased-hosted-app-v2-${operatingSystem}-${architecture}-v${version}.tar.gz`;
     const dependencyHash = digest(`lock-${architecture}`);
     const dependenciesAsset = `fased-hosted-deps-linux-${architecture}-${dependencyHash}.tar.gz`;
     fs.writeFileSync(path.join(assetsDir, appAsset), app);
@@ -29,6 +34,7 @@ function fixture() {
         schemaVersion: 1,
         version,
         commit,
+        operatingSystem,
         architecture,
         dependencyHash,
         app: { asset: appAsset, sha256: digest(app) },
@@ -47,7 +53,12 @@ function fixture() {
     path.join(assetsDir, "fased-signerd-release.json"),
     `${JSON.stringify(signerIdentity)}\n`,
   );
-  for (const asset of ["fased-signerd-linux-amd64"]) {
+  for (const asset of [
+    "fased-signerd-linux-amd64",
+    "fased-signerd-linux-arm64",
+    "fased-signerd-darwin-amd64",
+    "fased-signerd-darwin-arm64",
+  ]) {
     fs.writeFileSync(path.join(assetsDir, asset), asset);
   }
   return assetsDir;
@@ -72,6 +83,15 @@ describe("unified hosted release manifest v2", () => {
     expect(manifest.signer.platforms["linux-amd64"].sha256).toBe(
       digest("fased-signerd-linux-amd64"),
     );
+    expect(manifest.application.linux.arm64.artifact.sha256).toBe(
+      digest(
+        fs.readFileSync(path.join(assetsDir, manifest.application.linux.arm64.artifact.asset)),
+      ),
+    );
+    expect(manifest.signer.platforms["linux-arm64"].sha256).toBe(
+      digest("fased-signerd-linux-arm64"),
+    );
+    expect(manifest.application.darwin.arm64.artifact.asset).toContain("darwin-arm64");
   });
 
   it("rejects a mixed-commit app before producing a release manifest", async () => {

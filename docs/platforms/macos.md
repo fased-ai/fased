@@ -9,12 +9,12 @@ title: "macOS"
 
 # Fased macOS
 
-<Warning>
-Managed macOS install/update is deferred from the first stable matrix. The app
-may connect to a supported remote Linux Gateway or participate in explicit
-source-development compatibility tests, but it does not install a public
-npm/global CLI or own a supported managed LaunchAgent lifecycle.
-</Warning>
+<Note>
+Managed **Local** install/update targets both Apple Silicon and Intel macOS.
+The signed release supplies native Darwin lifecycle, signer, Node, application,
+and dependency assets. Hosting remains Linux x86_64-only. A release must include
+the Darwin assets before its public installer can be used on macOS.
+</Note>
 
 The macOS app is the menu-bar companion for Fased. It owns macOS permissions,
 connects to a local or remote Gateway, and exposes Mac capabilities as a node.
@@ -34,10 +34,34 @@ and one-click entry into the browser Control UI.
 - Optionally hosts **PeekabooBridge** for UI automation.
 - Uses a repo-backed CLI only for explicit source-development compatibility.
 
+## Managed Local install
+
+Open Terminal as your normal macOS user and run:
+
+```bash
+curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh \
+  | bash -s -- --local
+```
+
+The installer asks for `sudo` only for the root-managed lifecycle transaction,
+installs the public `fased` command, and uses system `launchd` services. It does
+not require Homebrew, npm, pnpm, Go, or a checkout.
+
+After onboarding:
+
+```bash
+fased status
+fased update
+```
+
+`fased update` must report `Already current` when the selected channel has not
+advanced. Open the Control UI at <http://localhost:18789>.
+
 ## Local vs remote mode
 
-- **Local compatibility:** the app may attach to an already running
-  source-development Gateway. It is not a managed public install.
+- **Local:** the app attaches to the root-managed Local Gateway installed by the
+  public lifecycle. Contributor builds may attach to a source-development
+  Gateway but do not replace managed acceptance.
 - **Remote**: the app connects to a Gateway over SSH/Tailscale and does not
   start a local Gateway.
   The app starts the local **node host service** so the remote Gateway can reach
@@ -62,20 +86,18 @@ flowchart TD
   class gateway,control runtime;
 ```
 
-## Launchd control
+## launchd control
 
-In compatibility/source mode, the app may manage a per-user LaunchAgent labeled `ai.fased.gateway`
-or `ai.fased.<profile>` when using `--profile`/`FASED_PROFILE`. Legacy
-`com.fased.*` agents still unload.
+The managed Local profile owns system LaunchDaemons under
+`/Library/LaunchDaemons` with instance-bound `ai.fased.*` labels. The public
+`fased` command is the user interface; these commands are maintainer diagnostics:
 
 ```bash
-launchctl kickstart -k gui/$UID/ai.fased.gateway
-launchctl bootout gui/$UID/ai.fased.gateway
+sudo launchctl print system/ai.fased.lifecycle.<instance>
 ```
 
-Replace the label with `ai.fased.<profile>` when running a named profile.
-
-Do not treat this LaunchAgent as lifecycle-managed release evidence.
+Older source-development LaunchAgents are separate and are not managed release
+evidence.
 
 ## Node capabilities (mac)
 
@@ -136,10 +158,10 @@ automation.
 
 ## Onboarding flow (typical)
 
-1. Build and launch **FasedAgent.app** from a contributor checkout.
-2. Complete the permissions checklist (TCC prompts).
-3. Connect to a supported remote Linux Gateway, or start an explicit
-   source-development Gateway.
+1. Run the managed Local installer.
+2. Complete Gateway, Wallet, model, and optional component onboarding.
+3. Optionally install and launch **FasedAgent.app** for native Mac permissions
+   and node capabilities.
 4. Open `http://localhost:18789` for the Control UI.
 5. Finish normal setup in **Agents**: choose model refs, channel accounts,
    skills, tools, memory, and tasks for the selected Agent.

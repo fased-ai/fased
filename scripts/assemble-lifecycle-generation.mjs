@@ -28,6 +28,7 @@ function args(argv) {
     "--commit",
     "--tree",
     "--architecture",
+    "--platform",
   ]) {
     if (!values.has(required)) {
       throw new Error(`missing ${required}`);
@@ -126,7 +127,7 @@ export async function assembleLifecycleGeneration(argv = process.argv.slice(2)) 
     const dependencyArchive = path.resolve(value["dependency-archive"]);
     const releaseManifest = path.resolve(value["release-manifest"]);
     const release = JSON.parse(await fs.readFile(releaseManifest, "utf8"));
-    const selected = release?.application?.linux?.[value.architecture];
+    const selected = release?.application?.[value.platform]?.[value.architecture];
     if (
       release?.schemaVersion !== 2 ||
       release?.release?.version !== value.version ||
@@ -172,7 +173,7 @@ export async function assembleLifecycleGeneration(argv = process.argv.slice(2)) 
       "--plugin-lock-digest",
       pluginLockDigest,
     ]);
-    const name = `fased-generation-linux-${value.architecture}-v${value.version}.tar.gz`;
+    const name = `fased-generation-${value.platform}-${value.architecture}-v${value.version}.tar.gz`;
     const destination = path.join(outputDir, name);
     await tar.c({ cwd: workspace, file: destination, gzip: true, portable: true }, ["generation"]);
     return destination;

@@ -43,7 +43,7 @@ func acquireReleaseManagedComponent(ctx context.Context, config platform.Config,
 	if err != nil {
 		return acquiredManagedComponent{}, err
 	}
-	route.RootRotationBaseURL = productionChannelReleasePrefix + channel + "-v1"
+	route.RootRotationBaseURL = productionChannelReleasePrefix + channel + "-v2"
 	client := &http.Client{Timeout: 2 * time.Minute, CheckRedirect: secureMetadataRedirect}
 	stateRoot := platform.BootstrapCacheRootForOS(runtime.GOOS)
 	now := time.Now().UTC()

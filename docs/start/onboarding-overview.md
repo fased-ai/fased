@@ -33,10 +33,13 @@ personal machine.
 
 Use Local when the Gateway runs on the computer you are using:
 
-- macOS Terminal
-- Windows with WSL2 Ubuntu
-- Linux desktop
-- dev box
+- Linux x86_64 desktop with systemd
+- Linux x86_64 development machine with systemd
+- Ubuntu WSL2 x86_64 with systemd, from the Ubuntu shell
+- Native macOS x86_64 or arm64 with launchd, from Terminal
+
+Native Windows may run source-development or remote-client paths, but it is not
+a managed Local installation target.
 
 Local is the fastest path to a working browser chat. It does not apply VPS
 SSH/firewall hardening.

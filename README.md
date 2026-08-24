@@ -33,10 +33,10 @@ Public install is repo-backed:
 
 ### Local vs VPS Hosting
 
-| Path        | Runs where                        | Private access                           | Normal operator                            |
-| ----------- | --------------------------------- | ---------------------------------------- | ------------------------------------------ |
-| Local       | Linux x86_64 with systemd         | Loopback on your local OS                | Your OS account                            |
-| VPS Hosting | Ubuntu or Rocky-compatible x86_64 | Tailscale plus provider-console recovery | `app`; Gateway isolated as `fased-gateway` |
+| Path        | Runs where                                                                 | Private access                           | Normal operator                            |
+| ----------- | -------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------ |
+| Local       | Linux x86_64/arm64 with systemd, Ubuntu WSL2 x86_64, or macOS x86_64/arm64 | Loopback on your local OS                | Your OS account                            |
+| VPS Hosting | Ubuntu or Rocky-compatible x86_64                                          | Tailscale plus provider-console recovery | `app`; Gateway isolated as `fased-gateway` |
 
 If you lose access to the Tailscale account used for a hosted VPS, normal
 dashboard and SSH access can be lost. Recovery then depends on the VPS
@@ -45,10 +45,12 @@ recovery options and VPS provider console access working.
 
 ### Local install
 
-The first managed lifecycle release supports Linux x86_64 with systemd. macOS,
-WSL2, Linux arm64, and native Windows are deferred until each has native
-artifacts and command-backed acceptance. Contributor source builds remain a
-separate pnpm workflow and are not managed installations.
+The managed Local lifecycle supports Linux x86_64 and arm64 with systemd,
+including Ubuntu WSL2 x86_64 when systemd is active. On Windows, PowerShell
+installs WSL2; the Fased installer and every `fased` command run inside the
+Ubuntu shell. On macOS, run the same command in Terminal; the installer selects
+native Darwin assets and system LaunchDaemons. Native Windows remains deferred.
+Contributor source builds remain separate.
 
 ```bash
 curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
@@ -79,8 +81,9 @@ only when you want optional channel details.
 
 Use this on the x86_64 VPS that will run Fased all the time. Ubuntu LTS is the
 recommended default; the retained alternative is Rocky-compatible Linux with
-systemd. Other distributions and arm64 are deferred from the first managed
-lifecycle release.
+systemd. Linux arm64 is supported for managed Local installations, including
+64-bit Raspberry Pi, but Hosting remains x86_64-only until literal Hosting
+acceptance exists for that architecture.
 
 A 1 vCPU / 1 GB RAM VPS can work as a minimum test node, but expect slow
 install/onboarding. For a smoother public node, use at least 2 GB RAM; 2 vCPU /
@@ -239,9 +242,9 @@ when you want to install first and run onboarding later.
 
 Hosted support boundary:
 
-- **Managed Local:** Linux x86_64 with systemd.
+- **Managed Local:** Linux x86_64/arm64 with systemd, Ubuntu WSL2 x86_64, or macOS x86_64/arm64 with launchd.
 - **Managed VPS Hosting:** Ubuntu or Rocky-compatible x86_64 with systemd.
-- **Deferred:** macOS, WSL2, Linux arm64, native Windows, and other
+- **Deferred:** native Windows and other
   distributions. Source/developer workflows are separate and do not imply
   managed support.
 

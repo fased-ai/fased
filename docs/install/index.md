@@ -13,15 +13,17 @@ remote Linux server.
 
 <Tabs>
   <Tab title="Local">
-    Run this on Linux x86_64 with systemd:
+    Run this on Linux x86_64 or arm64 with systemd, including inside Ubuntu
+    WSL2 x86_64:
 
     ```bash
     curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
     Local binds the Gateway to loopback and does not install or prompt for
-    Tailscale. macOS, WSL2, Linux arm64, and native Windows are deferred until
-    their native lifecycle assets and acceptance packages pass.
+    Tailscale. On Windows, provision Ubuntu WSL2 in Administrator PowerShell,
+    then run this command inside the Ubuntu shell. On macOS, run it in Terminal.
+    Linux arm64 and macOS are Local-only; native Windows is deferred.
 
   </Tab>
 
@@ -67,7 +69,7 @@ fased update
   <Accordion title="Local or Hosting?">
     | Path | Runs where | Private access | Normal operator |
     | --- | --- | --- | --- |
-    | Local | Linux x86_64 with systemd | Loopback on the local OS | Your OS account; Gateway and signer use isolated services |
+    | Local | Linux x86_64/arm64 with systemd, Ubuntu WSL2 x86_64, or macOS x86_64/arm64 | Loopback on the local OS | Your OS account; Gateway and signer use isolated services |
     | VPS Hosting | Ubuntu or Rocky-compatible x86_64 | Tailscale plus provider-console recovery | `app`; Gateway is isolated as `fased-gateway` |
   </Accordion>
 
@@ -101,8 +103,9 @@ fased update
   <Card title="VPS Hosting" href="/install/vps" icon="server">
     Three normal steps, access checks, and collapsed troubleshooting.
   </Card>
-  <Card title="Deferred platforms" href="/platforms/windows" icon="windows">
-    WSL2, macOS, arm64, and native Windows are not in the first managed matrix.
+  <Card title="Windows and WSL2" href="/platforms/windows" icon="windows">
+    Ubuntu WSL2 x86_64 is supported with systemd and Linux-owned state under
+    `/home`. Native Windows remains deferred. Linux arm64 and macOS are Local-only.
   </Card>
   <Card title="Advanced installer" href="/install/installer" icon="terminal">
     Exact-tag verification, flags, restrictions, repair, and recovery.

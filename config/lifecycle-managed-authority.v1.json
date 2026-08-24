@@ -11,14 +11,14 @@
     },
     {
       "id": "linux-arm64-protected-local",
-      "support": "deferred",
+      "support": "retained",
       "platforms": ["linux-arm64"],
       "serviceManager": "systemd"
     },
     {
       "id": "wsl2-protected-local",
-      "support": "deferred",
-      "platforms": ["linux-x64", "linux-arm64"],
+      "support": "retained",
+      "platforms": ["linux-x64"],
       "serviceManager": "systemd"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "id": "darwin-protected-local",
-      "support": "deferred",
+      "support": "retained",
       "platforms": ["darwin-x64", "darwin-arm64"],
       "serviceManager": "launchd"
     }
@@ -98,7 +98,12 @@
     {
       "id": "principals-paths-acls-and-services",
       "boundary": "managed",
-      "profiles": ["linux-protected-local", "wsl2-protected-local", "linux-hosting"],
+      "profiles": [
+        "linux-protected-local",
+        "linux-arm64-protected-local",
+        "wsl2-protected-local",
+        "linux-hosting"
+      ],
       "owner": "go-linux-systemd-adapter",
       "implementation": [
         "tools/fased-lifecycled/bootstrap",
@@ -111,7 +116,13 @@
     {
       "id": "gateway-signer-transaction",
       "boundary": "managed",
-      "profiles": ["linux-protected-local", "wsl2-protected-local", "linux-hosting"],
+      "profiles": [
+        "linux-protected-local",
+        "linux-arm64-protected-local",
+        "wsl2-protected-local",
+        "linux-hosting",
+        "darwin-protected-local"
+      ],
       "owner": "go-lifecycle",
       "implementation": [
         "tools/fased-lifecycled/engine",
@@ -172,7 +183,13 @@
     {
       "id": "already-current-no-mutation",
       "boundary": "managed",
-      "profiles": ["linux-protected-local", "wsl2-protected-local", "linux-hosting"],
+      "profiles": [
+        "linux-protected-local",
+        "linux-arm64-protected-local",
+        "wsl2-protected-local",
+        "linux-hosting",
+        "darwin-protected-local"
+      ],
       "owner": "go-bootstrap",
       "implementation": [
         "tools/fased-lifecycled/cmd/fased-lifecycled/main.go",
@@ -276,9 +293,10 @@
       "evidence": [
         "tools/fased-lifecycled/platform/launchd_test.go",
         "tools/fased-lifecycled/platform/acl_darwin_format_test.go",
-        "tools/fased-lifecycled/platform/config_test.go"
+        "tools/fased-lifecycled/platform/config_test.go",
+        "scripts/test-fased-lifecycle-portable-builds.sh"
       ],
-      "status": "partial"
+      "status": "implemented"
     },
     {
       "id": "retained-platform-native-assets",
@@ -315,14 +333,9 @@
       "status": "implemented"
     },
     {
-      "id": "deferred-platform-pre-mutation-enforcement",
+      "id": "unsupported-profile-pre-mutation-enforcement",
       "boundary": "managed",
-      "profiles": [
-        "linux-arm64-protected-local",
-        "linux-arm64-hosting",
-        "wsl2-protected-local",
-        "darwin-protected-local"
-      ],
+      "profiles": ["linux-arm64-hosting"],
       "owner": "public-installer-and-release-build",
       "implementation": [
         ".github/workflows/hosted-runtime-release.yml",
@@ -344,7 +357,7 @@
       "owner": "go-linux-systemd-adapter",
       "implementation": ["tools/fased-lifecycled/platform/linux_host_preflight.go"],
       "evidence": ["tools/fased-lifecycled/platform/linux_host_preflight_test.go"],
-      "status": "partial"
+      "status": "implemented"
     },
     {
       "id": "managed-repair",
@@ -485,7 +498,7 @@
     {
       "id": "managed-third-party-plugin-transaction",
       "boundary": "managed",
-      "profiles": ["linux-protected-local", "linux-hosting"],
+      "profiles": ["linux-protected-local", "linux-arm64-protected-local", "linux-hosting"],
       "owner": "go-lifecycle",
       "implementation": [
         "tools/fased-lifecycled/cmd/fased-bootstrap/main.go",

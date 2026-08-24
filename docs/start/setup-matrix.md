@@ -35,15 +35,17 @@ flowchart TD
 
 ### Local
 
-Use this when the agent runs on a Linux x86_64 computer with systemd. macOS,
-WSL2, Linux arm64, and native Windows are deferred from the first managed
-stable matrix; their source-development paths are not public managed installs.
+Use this when the agent runs on a Linux x86_64 or arm64 computer with systemd.
+This includes Ubuntu WSL2 x86_64 when systemd is active and the operator home
+is under `/home`, not a Windows-mounted `/mnt` path. Native macOS x86_64 and
+arm64 use launchd. Linux arm64 and macOS are Local-only; native Windows is
+deferred.
 
 It creates local config, workspace, gateway settings, signer/wallet state if
 selected, and local service startup. A verified prebuilt install on supported
 Linux/systemd creates per-profile protected Gateway, signer, and controller
-services after normal OS administrator authorization. macOS and explicit
-source installs remain same-user Local. Tailscale is not part of the Local path.
+services after normal OS administrator authorization. macOS uses equivalent
+root-managed system LaunchDaemons. Tailscale is not part of the Local path.
 
 Risk: Do not select Local on a VPS. It does not apply the Hosting security
 baseline.

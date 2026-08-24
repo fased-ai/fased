@@ -52,11 +52,11 @@ flowchart TD
 
 Pick where Fased Agent runs.
 
-| Setup           | Use when                                     | Recommended path                                       |
-| --------------- | -------------------------------------------- | ------------------------------------------------------ |
-| Local           | you are learning or testing on this computer | macOS Terminal, Windows WSL2 Ubuntu, or Linux terminal |
-| VPS Hosting     | you need an always-on machine                | Ubuntu LTS VPS first; Debian is close                  |
-| Hosted advanced | you already manage Linux servers             | Fedora or RHEL-family with systemd                     |
+| Setup              | Use when                                     | Recommended path                             |
+| ------------------ | -------------------------------------------- | -------------------------------------------- |
+| Local              | you are learning or testing on this computer | Linux/systemd, Ubuntu WSL2, or native macOS  |
+| VPS Hosting        | you need an always-on machine                | Ubuntu-compatible or Rocky-compatible x86_64 |
+| Source development | you are contributing from a checkout         | Any supported contributor environment        |
 
 Practical baseline:
 
@@ -74,17 +74,17 @@ Choose the setup profile first.
 
 <Tabs>
   <Tab title="Local install">
-    Use this on your own computer. On macOS, use Terminal. On Windows, use WSL2
-    with Ubuntu. On Linux, use your distro terminal.
+    Use this on Linux x86_64 with systemd. On Windows, run it inside Ubuntu
+    WSL2 after systemd is enabled; never run it in PowerShell.
 
     ```bash
     curl -fsSL https://github.com/fased-ai/fased/releases/latest/download/install.sh | bash -s -- --local
     ```
 
-    On Windows, first follow [Windows Local setup](/platforms/windows). Run the
-    command above in the Ubuntu WSL2 shell—not PowerShell, Command Prompt, Git
-    Bash, or native Windows Node.js. Wallet signing uses Unix sockets, and the
-    verified Linux signer is installed automatically; users do not install Go.
+    Native Windows installation is deferred. Ubuntu WSL2 reuses the managed
+    Linux x86_64 lifecycle and keeps state under `/home`; macOS uses native
+    Darwin assets and launchd. See [Windows](/platforms/windows) and
+    [macOS](/platforms/macos).
 
     This selects the **Local** profile and keeps VPS SSH/firewall hardening off.
 

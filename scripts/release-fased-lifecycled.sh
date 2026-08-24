@@ -27,4 +27,11 @@ for target in "${target_list[@]}"; do
 done
 node -e 'const fs=require("node:fs"); fs.writeFileSync(process.argv[2], JSON.stringify({schemaVersion:1,...JSON.parse(process.argv[1])},null,2)+"\n",{mode:0o644})' "$IDENTITY" "$OUT/fased-lifecycled-release.json"
 assets+=("fased-lifecycled-release.json")
-(cd "$OUT"; sha256sum "${assets[@]}" > fased-lifecycled-checksums.txt)
+(
+  cd "$OUT"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${assets[@]}" > fased-lifecycled-checksums.txt
+  else
+    shasum -a 256 "${assets[@]}" > fased-lifecycled-checksums.txt
+  fi
+)

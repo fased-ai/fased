@@ -47,8 +47,9 @@ For dev run modes, signing flags, and Team ID troubleshooting, see the
 
 ## 3. Install the CLI
 
-Managed macOS installation is deferred. For development, use the repo-backed
-CLI from the same checkout as the app.
+Managed macOS Local installation uses the public installer. For development,
+use the repo-backed CLI from the same checkout as the app so local changes are
+not confused with managed release evidence.
 
 Install the developer CLI manually:
 

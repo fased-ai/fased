@@ -143,7 +143,8 @@ describe("lean CI and release workflow contracts", () => {
     const value = await workflow(".github/workflows/hosted-runtime-release.yml");
     const source = await text(".github/workflows/hosted-runtime-release.yml");
     const channelScript = await text("scripts/publish-lifecycle-channel.sh");
-    expect(Object.keys(value.jobs ?? {})).toEqual(["release"]);
+    expect(Object.keys(value.jobs ?? {})).toEqual(["build-linux-arm64", "build-darwin", "release"]);
+    expect(value.jobs?.["build-linux-arm64"]?.["runs-on"]).toBe("ubuntu-24.04-arm");
     expect(value.jobs?.release?.["timeout-minutes"]).toBe(25);
     expect(value.jobs?.release?.environment).toBeUndefined();
     expect(source).toContain("attestations: write");
@@ -154,12 +155,13 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).toContain("run Hosted Runtime Promote instead");
     expect(source).toContain("scripts/build-linux-x64-release-artifact.sh");
     expect(source).toContain("scripts/finalize-pretag-candidate.sh");
-    expect(source.match(/actions\/attest@/gu)?.length).toBe(9);
+    expect(source.match(/actions\/attest@/gu)?.length).toBe(11);
     expect(source).toContain("Verify every official attestation is tag-bound");
     expect(source).toContain("Verify staged set with production bootstrap trust policy");
     expect(source).not.toContain("prepare_run_id");
     expect(source).not.toContain("inputs.phase");
-    expect(source).not.toContain("actions/download-artifact");
+    expect(source).toContain("actions/download-artifact");
+    expect(source).toContain("build-linux-arm64-release-supplement.sh");
     expect(source).toContain("Verify candidate and owner-created immutable tag");
     expect(source).toContain(
       "Owner-created annotated tag $tag is required before release publication.",
@@ -175,7 +177,7 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).not.toContain("test-lifecycle-local-acceptance.sh");
     expect(source).not.toContain("test-lifecycle-hosting-acceptance.sh");
     expect(releaseText.match(/build-linux-x64-release-artifact\.sh/gu)?.length).toBe(1);
-    expect(releaseText.match(/actions\/attest@/gu)?.length).toBe(9);
+    expect(releaseText.match(/actions\/attest@/gu)?.length).toBe(11);
     expect(channelScript).toContain('--source-ref "$attestation_source_ref"');
     expect(channelScript).toContain('--source-digest "$attestation_source_digest"');
     expect(channelScript).toContain("verify_historical_index_attestation");

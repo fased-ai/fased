@@ -277,7 +277,7 @@ func unsafeRootFileMetadataError(kind, path string, info os.FileInfo, stat *sysc
 	links := uint64(0)
 	if stat != nil {
 		actualUID = stat.Uid
-		links = stat.Nlink
+		links = uint64(stat.Nlink)
 	}
 	return fmt.Errorf("Hosting security %s %q is unsafe: expected %s; got type=%s uid=%d mode=%04o links=%d size=%d",
 		kind, path, expected, info.Mode().Type(), actualUID, info.Mode().Perm(), links, info.Size())

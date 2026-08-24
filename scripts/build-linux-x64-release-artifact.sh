@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_DIR="${1:-}"
+ARM64_SUPPLEMENT_DIR="${2:-}"
+DARWIN_X64_SUPPLEMENT_DIR="${3:-}"
+DARWIN_ARM64_SUPPLEMENT_DIR="${4:-}"
 VERSION="$(node -p 'require(process.argv[1]).version' "$ROOT_DIR/package.json")"
 COMMIT="${FASED_RELEASE_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
 TREE="$(git -C "$ROOT_DIR" rev-parse "${COMMIT}^{tree}")"
@@ -10,11 +13,11 @@ LOCKFILE_DIGEST="sha256:$(git -C "$ROOT_DIR" show "${COMMIT}:pnpm-lock.yaml" | s
 GO_BIN="${FASED_GO_BIN:-$(command -v go || true)}"
 RELEASE_SEQUENCE="${FASED_LIFECYCLE_RELEASE_SEQUENCE:-1}"
 SECURITY_EPOCH="${FASED_LIFECYCLE_SECURITY_EPOCH:-1}"
-readonly MAX_CORE_ARTIFACT_FILES=96
-readonly MAX_CORE_ARTIFACT_BYTES=805306368
+readonly MAX_CORE_ARTIFACT_FILES=160
+readonly MAX_CORE_ARTIFACT_BYTES=1610612736
 
 usage() {
-  echo "usage: build-linux-x64-release-artifact.sh EMPTY_ABSOLUTE_OUTPUT_DIR" >&2
+  echo "usage: build-linux-x64-release-artifact.sh EMPTY_ABSOLUTE_OUTPUT_DIR [LINUX_ARM64_DIR DARWIN_X64_DIR DARWIN_ARM64_DIR]" >&2
   exit 2
 }
 
@@ -79,21 +82,59 @@ FASED_LIFECYCLE_TARGETS="linux/amd64" \
 pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$OUTPUT_DIR"
 cp -a "$release_dir/." "$OUTPUT_DIR/"
 
-node "$ROOT_DIR/scripts/stamp-release-installer.mjs" \
-  --source "$ROOT_DIR/install.sh" \
-  --output "$OUTPUT_DIR/install.sh" \
-  --version "$VERSION" \
-  --bootstrap-x64 "$OUTPUT_DIR/fased-bootstrap-linux-x64" \
+has_all_platforms=0
+merge_supplement() {
+  local directory="$1" operating_system="$2" architecture="$3" go_architecture="$4"
+  [[ "$directory" == /* && -d "$directory" ]] || usage
+  local identity="$directory/fased-hosted-app-v2-${operating_system}-${architecture}-v${VERSION}.tar.gz.release.json"
+  jq -e --arg version "$VERSION" --arg commit "$COMMIT" --arg os "$operating_system" --arg architecture "$architecture" \
+    '.schemaVersion == 1 and .version == $version and .commit == $commit and .operatingSystem == $os and .architecture == $architecture' \
+    "$identity" >/dev/null
+  for required in "fased-bootstrap-${operating_system}-${architecture}" \
+    "fased-lifecycled-${operating_system}-${go_architecture}" "fased-signerd-${operating_system}-${go_architecture}" \
+    "fased-node-${operating_system}-${architecture}" "fased-node-license-${operating_system}-${architecture}"; do
+    test -s "$directory/$required"
+  done
+  while IFS= read -r source; do
+    name="$(basename "$source")"
+    test ! -e "$OUTPUT_DIR/$name"
+    install -m "$(stat -c %a "$source")" "$source" "$OUTPUT_DIR/$name"
+  done < <(find "$directory" -mindepth 1 -maxdepth 1 -type f | sort)
+}
+if [[ -n "$ARM64_SUPPLEMENT_DIR" || -n "$DARWIN_X64_SUPPLEMENT_DIR" || -n "$DARWIN_ARM64_SUPPLEMENT_DIR" ]]; then
+  [[ -n "$ARM64_SUPPLEMENT_DIR" && -n "$DARWIN_X64_SUPPLEMENT_DIR" && -n "$DARWIN_ARM64_SUPPLEMENT_DIR" ]] || usage
+  merge_supplement "$ARM64_SUPPLEMENT_DIR" linux arm64 arm64
+  merge_supplement "$DARWIN_X64_SUPPLEMENT_DIR" darwin x64 amd64
+  merge_supplement "$DARWIN_ARM64_SUPPLEMENT_DIR" darwin arm64 arm64
+  has_all_platforms=1
+fi
+
+stamp_args=(
+  --source "$ROOT_DIR/install.sh"
+  --output "$OUTPUT_DIR/install.sh"
+  --version "$VERSION"
+  --bootstrap-x64 "$OUTPUT_DIR/fased-bootstrap-linux-x64"
   --architecture x64
+)
+if [[ "$has_all_platforms" -eq 1 ]]; then
+  stamp_args+=(--bootstrap-arm64 "$OUTPUT_DIR/fased-bootstrap-linux-arm64")
+  stamp_args+=(--bootstrap-darwin-x64 "$OUTPUT_DIR/fased-bootstrap-darwin-x64")
+  stamp_args+=(--bootstrap-darwin-arm64 "$OUTPUT_DIR/fased-bootstrap-darwin-arm64")
+  stamp_args[9]=all
+fi
+node "$ROOT_DIR/scripts/stamp-release-installer.mjs" "${stamp_args[@]}"
 
 x64_identity="$OUTPUT_DIR/fased-hosted-app-v2-linux-x64-v${VERSION}.tar.gz.release.json"
 x64_app="$(jq -er .app.asset "$x64_identity")"
 x64_dependency="$(jq -er .dependencies.asset "$x64_identity")"
+manifest_profile=branch-x64
+[[ "$has_all_platforms" -eq 0 ]] || manifest_profile=release
 node "$ROOT_DIR/scripts/build-hosted-release-manifest.mjs" \
   --assets "$OUTPUT_DIR" \
   --version "$VERSION" \
   --commit "$COMMIT" \
-  --output "$OUTPUT_DIR/fased-hosted-release-v2.json"
+  --output "$OUTPUT_DIR/fased-hosted-release-v2.json" \
+  --profile "$manifest_profile"
 node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
   --runtime-archive "$OUTPUT_DIR/$x64_app" \
   --dependency-archive "$OUTPUT_DIR/$x64_dependency" \
@@ -106,9 +147,52 @@ node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
   --version "$VERSION" \
   --commit "$COMMIT" \
   --tree "$TREE" \
+  --platform linux \
   --architecture x64
 
-printf '{"schemaVersion":1,"profile":"linux-x64","publishable":false,"platforms":["linux-x64"]}\n' \
+if [[ "$has_all_platforms" -eq 1 ]]; then
+  arm64_identity="$OUTPUT_DIR/fased-hosted-app-v2-linux-arm64-v${VERSION}.tar.gz.release.json"
+  arm64_app="$(jq -er .app.asset "$arm64_identity")"
+  arm64_dependency="$(jq -er .dependencies.asset "$arm64_identity")"
+  node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
+    --runtime-archive "$OUTPUT_DIR/$arm64_app" \
+    --dependency-archive "$OUTPUT_DIR/$arm64_dependency" \
+    --release-manifest "$OUTPUT_DIR/fased-hosted-release-v2.json" \
+    --signer "$OUTPUT_DIR/fased-signerd-linux-arm64" \
+    --inventory-tool "$OUTPUT_DIR/fased-lifecycled-linux-amd64" \
+    --node "$OUTPUT_DIR/fased-node-linux-arm64" \
+    --node-license "$OUTPUT_DIR/fased-node-license-linux-arm64" \
+    --output-dir "$OUTPUT_DIR" \
+    --version "$VERSION" \
+    --commit "$COMMIT" \
+    --tree "$TREE" \
+    --platform linux \
+    --architecture arm64
+fi
+
+if [[ "$has_all_platforms" -eq 1 ]]; then
+  for darwin_architecture in x64 arm64; do
+    go_architecture="$darwin_architecture"
+    [[ "$go_architecture" != x64 ]] || go_architecture=amd64
+    identity="$OUTPUT_DIR/fased-hosted-app-v2-darwin-${darwin_architecture}-v${VERSION}.tar.gz.release.json"
+    app="$(jq -er .app.asset "$identity")"
+    dependency="$(jq -er .dependencies.asset "$identity")"
+    node "$ROOT_DIR/scripts/assemble-lifecycle-generation.mjs" \
+      --runtime-archive "$OUTPUT_DIR/$app" \
+      --dependency-archive "$OUTPUT_DIR/$dependency" \
+      --release-manifest "$OUTPUT_DIR/fased-hosted-release-v2.json" \
+      --signer "$OUTPUT_DIR/fased-signerd-darwin-${go_architecture}" \
+      --inventory-tool "$OUTPUT_DIR/fased-lifecycled-linux-amd64" \
+      --node "$OUTPUT_DIR/fased-node-darwin-${darwin_architecture}" \
+      --node-license "$OUTPUT_DIR/fased-node-license-darwin-${darwin_architecture}" \
+      --output-dir "$OUTPUT_DIR" --version "$VERSION" --commit "$COMMIT" --tree "$TREE" \
+      --platform darwin --architecture "$darwin_architecture"
+  done
+fi
+
+platforms='["linux-x64"]'
+[[ "$has_all_platforms" -eq 0 ]] || platforms='["linux-x64","linux-arm64","darwin-x64","darwin-arm64"]'
+printf '{"schemaVersion":1,"profile":"linux-managed","publishable":false,"platforms":%s}\n' "$platforms" \
   >"$OUTPUT_DIR/fased-branch-proof-x64.json"
 install -m 0644 \
   "$ROOT_DIR/config/lifecycle-acceptance.v2.json" \
@@ -144,6 +228,25 @@ for required_asset in \
     exit 1
   }
 done
+if [[ "$has_all_platforms" -eq 1 ]]; then
+  for required_asset in \
+    fased-bootstrap-linux-arm64 \
+    fased-lifecycled-linux-arm64 \
+    fased-signerd-linux-arm64 \
+     "fased-generation-linux-arm64-v${VERSION}.tar.gz"; do
+    [[ -s "$OUTPUT_DIR/$required_asset" ]] || {
+      echo "The Linux multi-architecture release artifact is missing $required_asset." >&2
+      exit 1
+    }
+  done
+  for required_asset in fased-bootstrap-darwin-x64 fased-bootstrap-darwin-arm64 \
+    fased-lifecycled-darwin-amd64 fased-lifecycled-darwin-arm64 \
+    fased-signerd-darwin-amd64 fased-signerd-darwin-arm64 \
+    "fased-generation-darwin-x64-v${VERSION}.tar.gz" \
+    "fased-generation-darwin-arm64-v${VERSION}.tar.gz"; do
+    [[ -s "$OUTPUT_DIR/$required_asset" ]] || exit 1
+  done
+fi
 
 unsupported_entries="$(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 ! -type f -print)"
 [[ -z "$unsupported_entries" ]] || {
