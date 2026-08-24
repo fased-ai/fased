@@ -193,7 +193,7 @@ describe("configureGatewayForOnboarding", () => {
 
     expect(result.nextConfig.gateway?.auth).toEqual({
       mode: "password",
-      password: "new-password",
+      password: "new-password", // pragma: allowlist secret
       allowTailscale: true,
     });
   });
@@ -210,7 +210,13 @@ describe("configureGatewayForOnboarding", () => {
       hostProfile: "local",
       baseConfig: {},
       nextConfig: {
-        gateway: { auth: { mode: "password", password: "stale-password", allowTailscale: true } },
+        gateway: {
+          auth: {
+            mode: "password",
+            password: "stale-password", // pragma: allowlist secret
+            allowTailscale: true,
+          },
+        },
       },
       localPort: 18789,
       quickstartGateway: {
@@ -322,7 +328,7 @@ describe("configureGatewayForOnboarding", () => {
     expect(result.settings.gatewayToken).toBeUndefined();
     expect(result.nextConfig.gateway?.auth).toEqual({
       mode: "password",
-      password: "hosting-password",
+      password: "hosting-password", // pragma: allowlist secret
     });
     expect(mocks.randomToken).not.toHaveBeenCalled();
   });

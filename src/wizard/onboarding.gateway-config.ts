@@ -21,7 +21,9 @@ async function promptSecretOrText(
   prompter: WizardPrompter,
   params: Parameters<WizardPrompter["text"]>[0],
 ): Promise<string> {
-  if (typeof prompter.secret === "function") {
+  if (
+    typeof prompter.secret === "function" // pragma: allowlist secret
+  ) {
     return await prompter.secret(params);
   }
   return await prompter.text(params);
