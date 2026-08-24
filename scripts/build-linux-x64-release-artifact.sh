@@ -16,6 +16,11 @@ SECURITY_EPOCH="${FASED_LIFECYCLE_SECURITY_EPOCH:-1}"
 readonly MAX_CORE_ARTIFACT_FILES=160
 readonly MAX_CORE_ARTIFACT_BYTES=1610612736
 
+record_phase() {
+  [[ -z "${FASED_RELEASE_TIMINGS_FILE:-}" ]] || \
+    node "$ROOT_DIR/scripts/release-phase-timings.mjs" "$1" "$FASED_RELEASE_TIMINGS_FILE" "$2"
+}
+
 usage() {
   echo "usage: build-linux-x64-release-artifact.sh EMPTY_ABSOLUTE_OUTPUT_DIR [LINUX_ARM64_DIR DARWIN_X64_DIR DARWIN_ARM64_DIR]" >&2
   exit 2
@@ -48,11 +53,13 @@ mkdir -p "$OUTPUT_DIR"
   exit 1
 }
 
+record_phase start nodeBuild
 if [[ ! -f "$ROOT_DIR/dist/build-info.json" ]] ||
   [[ "$(jq -r .version "$ROOT_DIR/dist/build-info.json")" != "$VERSION" ]] ||
   [[ "$(jq -r .commit "$ROOT_DIR/dist/build-info.json")" != "$COMMIT" ]]; then
   pnpm --dir "$ROOT_DIR" build
 fi
+record_phase finish nodeBuild
 [[ "$(jq -r .version "$ROOT_DIR/dist/build-info.json")" == "$VERSION" &&
   "$(jq -r .commit "$ROOT_DIR/dist/build-info.json")" == "$COMMIT" ]] || {
   echo "The release artifact builder refuses stale dist identity." >&2
@@ -75,6 +82,7 @@ fi
   exit 1
 }
 mkdir -p "$go_tmp" "$go_cache"
+record_phase start goBuild
 GOTMPDIR="$go_tmp" \
 GOCACHE="$go_cache" \
 FASED_SIGNER_BUILD_COMMIT="$COMMIT" \
@@ -83,9 +91,11 @@ FASED_LIFECYCLE_BUILD_COMMIT="$COMMIT" \
 FASED_LIFECYCLE_BUILD_TREE="$TREE" \
 FASED_LIFECYCLE_TARGETS="linux/amd64" \
   bash "$ROOT_DIR/scripts/build-native-release-assets.sh"
+record_phase finish goBuild
 
 # Core is the only eagerly installed package. Optional component packs are
 # independent P6 transactions and are intentionally absent from this artifact.
+record_phase start packaging
 pnpm --dir "$ROOT_DIR" hosted:artifact:from-dist --output "$OUTPUT_DIR"
 cp -a "$release_dir/." "$OUTPUT_DIR/"
 
@@ -245,6 +255,7 @@ for required_asset in \
     exit 1
   }
 done
+
 if [[ "$has_all_platforms" -eq 1 ]]; then
   for required_asset in \
     fased-bootstrap-linux-arm64 \
@@ -280,6 +291,8 @@ artifact_total_bytes="$(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type f -prin
   echo "The Linux-x64 core artifact exceeds its ${MAX_CORE_ARTIFACT_BYTES}-byte budget." >&2
   exit 1
 }
+
+record_phase finish packaging
 
 echo "Linux-x64 release artifact: commit=$COMMIT tree=$TREE lock=$LOCKFILE_DIGEST"
 echo "Linux-x64 core budget: files=$artifact_file_count bytes=$artifact_total_bytes"

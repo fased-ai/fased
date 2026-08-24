@@ -1095,6 +1095,49 @@ func TestLifecycleOutcomeKeepsAutomationExactAndOffersOneInteractiveFrame(t *tes
 	}
 }
 
+func TestLifecycleUpdatedOutcomeShowsHealthPreservationAndRollback(t *testing.T) {
+	outcome := lifecycleUpdatedOutcome{
+		FromVersion: "0.1.76-rc.140", ToVersion: "0.1.76-rc.141",
+		RollbackVersion: "0.1.76-rc.140", Duration: 14 * time.Second,
+	}
+	interactive := formatLifecycleUpdatedOutcomeFrame(outcome)
+	for _, expected := range []string{
+		"Updated: 0.1.76-rc.140 → 0.1.76-rc.141",
+		"Gateway / signer / lifecycle: healthy",
+		"Configuration and state: preserved",
+		"Rollback generation retained: 0.1.76-rc.140",
+		"Duration: 14s",
+	} {
+		if !strings.Contains(interactive, expected) {
+			t.Fatalf("updated outcome is missing %q: %q", expected, interactive)
+		}
+	}
+	var automation bytes.Buffer
+	if err := writeLifecycleUpdatedOutcome(&automation, outcome, "Updated successfully: 0.1.76-rc.141"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := automation.String(), "Updated successfully: 0.1.76-rc.141\n"; got != want {
+		t.Fatalf("automation outcome = %q, want %q", got, want)
+	}
+}
+
+func TestPublicLifecycleFailureIsConciseUntilVerbose(t *testing.T) {
+	err := &publicLifecycleFailure{
+		Operation: "update", Phase: "acquiring the verified lifecycle release",
+		Cause: errors.New("release download failed\nlarge internal diagnostic"),
+	}
+	concise := formatBootstrapFailure([]string{"update"}, err)
+	if !strings.Contains(concise, "Phase: acquiring the verified lifecycle release") ||
+		!strings.Contains(concise, "Retry: fased update") ||
+		strings.Contains(concise, "large internal diagnostic") {
+		t.Fatalf("concise lifecycle failure is invalid: %q", concise)
+	}
+	verbose := formatBootstrapFailure([]string{"update", "--verbose"}, err)
+	if !strings.Contains(verbose, "large internal diagnostic") {
+		t.Fatalf("verbose lifecycle failure omitted details: %q", verbose)
+	}
+}
+
 func TestLifecycleApplyStopsTerminalProgressBeforeVerboseOutput(t *testing.T) {
 	var output bytes.Buffer
 	applyProgress := newLifecyclePhaseProgress(&output, "applying the lifecycle generation", true, time.Hour)

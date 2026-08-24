@@ -171,4 +171,17 @@ describe("maybeRepairGatewayServiceConfig", () => {
       expect(mocks.install).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("does not plan or mutate a managed lifecycle service", async () => {
+    await withEnvAsync({ FASED_RUNTIME_SOURCE: "go-lifecycle" }, async () => {
+      const cfg: FasedAgentConfig = { gateway: {} };
+
+      await runRepair(cfg);
+
+      expect(mocks.readCommand).not.toHaveBeenCalled();
+      expect(mocks.auditGatewayServiceConfig).not.toHaveBeenCalled();
+      expect(mocks.buildGatewayInstallPlan).not.toHaveBeenCalled();
+      expect(mocks.install).not.toHaveBeenCalled();
+    });
+  });
 });

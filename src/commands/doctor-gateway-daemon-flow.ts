@@ -16,6 +16,7 @@ import {
 import { resolveGatewayService } from "../daemon/service.js";
 import { renderSystemdUnavailableHints } from "../daemon/systemd-hints.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
+import { isManagedLifecycleRuntime } from "../infra/managed-runtime-authority.js";
 import { formatPortDiagnostics, inspectPortUsage } from "../infra/ports.js";
 import { isWSL } from "../infra/wsl.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -104,6 +105,14 @@ export async function maybeRepairGatewayDaemon(params: {
   healthOk: boolean;
 }) {
   if (params.healthOk) {
+    return;
+  }
+
+  if (isManagedLifecycleRuntime()) {
+    note(
+      "Managed Gateway health check failed. Run `fased repair`; service mutation remains owned by the verified Go lifecycle.",
+      "Gateway",
+    );
     return;
   }
 

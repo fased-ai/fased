@@ -18,6 +18,7 @@ import {
 } from "../daemon/service-audit.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { uninstallLegacySystemdUnits } from "../daemon/systemd.js";
+import { isManagedLifecycleRuntime } from "../infra/managed-runtime-authority.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { note } from "../terminal/note.js";
 import { buildGatewayInstallPlan } from "./daemon-install-helpers.js";
@@ -201,6 +202,13 @@ export async function maybeRepairGatewayServiceConfig(
   runtime: RuntimeEnv,
   prompter: DoctorPrompter,
 ) {
+  // Managed Local and Hosting services are generated and repaired exclusively by
+  // the Go lifecycle. Doctor may inspect their health, but it must never feed a
+  // managed service command into the legacy user-service installation planner.
+  if (isManagedLifecycleRuntime()) {
+    return;
+  }
+
   if (resolveIsNixMode(process.env)) {
     note("Nix mode detected; skip service updates.", "Gateway");
     return;

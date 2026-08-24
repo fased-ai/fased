@@ -142,6 +142,7 @@ describe("lean CI and release workflow contracts", () => {
   it("builds, attests, and publishes once from the owner tag", async () => {
     const value = await workflow(".github/workflows/hosted-runtime-release.yml");
     const source = await text(".github/workflows/hosted-runtime-release.yml");
+    const artifactBuilder = await text("scripts/build-linux-x64-release-artifact.sh");
     const channelScript = await text("scripts/publish-lifecycle-channel.sh");
     expect(Object.keys(value.jobs ?? {})).toEqual(["release"]);
     expect(value.jobs?.release?.["timeout-minutes"]).toBe(25);
@@ -171,6 +172,16 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).not.toContain('git push origin "refs/tags/$tag"');
     expect(source).toContain("gh release create");
     expect(source).toContain("publish-lifecycle-channel.sh");
+    expect(source).toContain("release-phase-timings.mjs");
+    expect(source).toContain("phaseTimings:$timings[0].phases");
+    expect(source).toContain('schemaVersion:2,role:"fased-candidate-publication"');
+    for (const phase of ["attestation", "upload", "channelAdvancement"]) {
+      expect(source).toContain(phase);
+    }
+    for (const phase of ["nodeBuild", "goBuild", "packaging"]) {
+      expect(artifactBuilder).toContain(`record_phase start ${phase}`);
+      expect(artifactBuilder).toContain(`record_phase finish ${phase}`);
+    }
     expect(source).not.toContain("pre_candidate_run_id");
     expect(source).not.toContain("pre_tag_p1_run_id");
     expect(source).not.toContain("release-gate-verify.yml");
