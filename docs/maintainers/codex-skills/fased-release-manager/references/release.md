@@ -5,17 +5,18 @@ Read this file only after explicit candidate, publication, or stable authority.
 ## Candidate
 
 Start from one clean exact protected-main commit. Finish the normal fix path and
-the literal affected-environment proof before release work begins.
+focused source proof before release work begins.
 
 ```text
 focused changed-surface checks
 -> protected source PR and exact merged tree
--> affected real-environment proof when the change requires it
 -> version-only protected PR
 -> prepare on protected main
    -> derive the next signed channel sequence
-   -> build one Linux-x64 artifact and record its exact identity
--> owner creates the annotated tag at that tested commit
+   -> build one unpublished Linux-x64 artifact and record its exact identity
+-> literal fresh Local and/or Hosting proof against those exact bytes
+   -> record a bound acceptance receipt
+-> owner creates the annotated tag at that accepted commit
 -> finalize from the actual immutable tag ref
    -> download and verify the prepared artifact without rebuilding
    -> generate official attestations whose certificate SAN names the tag
@@ -23,10 +24,11 @@ focused changed-surface checks
    -> publish those exact bytes and advance the signed channel
 ```
 
-Do not write the next RC version or start the release workflow until required
-focused checks and the affected real-environment predicate pass. Any product
-change after that proof returns to the normal fix path. Never allocate an RC to
-discover whether a correction works.
+Do not write the next RC version or start preparation until focused source
+checks pass. Never use successive RC names to diagnose source behavior: one
+version-only PR creates the exact identity needed to prepare unpublished bytes,
+and literal machine proof follows against those bytes. Any product change after
+preparation invalidates the artifact and returns to the normal fix path.
 
 Preparation derives the next release sequence from the current signed channel index
 instead of accepting an operator-supplied sequence. It installs dependencies once,
@@ -36,8 +38,14 @@ transaction.
 
 The candidate descriptor binds version, commit, tree, lockfile, prepare run,
 artifact names, sizes and digests, provenance, SBOM/VEX, signer/controller identity,
-and the acceptance-contract identity. The owner creates the annotated tag only after
-preparation passes. Finalization must execute with its actual `GITHUB_REF` equal to
+and the acceptance-contract identity. The literal acceptance receipt must bind
+`version`, exact `commit`, exact `tree`, `prepareRunId`, and the complete
+`artifactSetSha256`, plus the environment, exact public commands and outcomes.
+Local or Hosting output without those identities is not a release receipt.
+
+The owner creates the annotated tag only after preparation and every selected
+literal acceptance pass. Finalization must verify the prepared descriptor and
+acceptance receipt, and execute with its actual `GITHUB_REF` equal to
 `refs/tags/v<version>`; checking out the tag inside a branch-triggered run does not
 change the certificate identity. It downloads and verifies the prepared artifact,
 requires every official attestation's `SourceRepositoryRef` to equal that tag and
@@ -64,25 +72,24 @@ reattest, create a candidate, or rerun acceptance.
 Do not rerun the full release workflow after the immutable public release exists.
 An identical promotion retry must return `ALREADY_CURRENT`.
 
-## Publication and acceptance
+## Publication and readback
 
 ```text
 GitHub prerelease exact bytes
 -> signed beta channel advancement from those exact bytes
 -> PUBLIC0 readback
--> owner Local
--> real Hosting
 -> stable promotion
 ```
 
 PUBLIC0 is readback-only. It verifies the exact GitHub tag, release metadata,
 asset inventory, sizes, digests, attestations, root-head freshness, and signed
-channel binding. It does not provide Local or Hosting acceptance.
+channel binding. It does not provide or repeat Local or Hosting acceptance.
 
-Owner Local uses only the documented public curl command, `fased status`, and
-`fased update`. Real Hosting uses only an authorized real VPS and the documented
-public command; containers, generated VMs, and substituted fixtures are
-`SUPPORTING`, never `PASS`.
+Pre-tag fresh Local uses only the documented public installer behavior,
+`fased status`, and `fased update` against the prepared unpublished artifact.
+Pre-tag real Hosting uses only an authorized real VPS and the same prepared
+artifact; containers, generated VMs, and substituted fixtures are `SUPPORTING`,
+never `PASS`.
 
 Stable promotion reuses accepted candidate bytes and changes only authorized
 GitHub release/channel metadata.
