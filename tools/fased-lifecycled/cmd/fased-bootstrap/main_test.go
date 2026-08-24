@@ -661,6 +661,64 @@ func TestUpdateBindsExistingPlatformPortWithoutChangingTopology(t *testing.T) {
 	}
 }
 
+func TestPreparedHostingOperatorRefreshesFirstInstallPlaceholder(t *testing.T) {
+	placeholder := publicOperator{Name: "app", Home: "/home/app"}
+	resolved := publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}
+	calls := 0
+	got, err := refreshPublicOperatorAfterPreparation(placeholder, model.ProfileHosting, "app", func(name string, profile model.Profile) (publicOperator, error) {
+		calls++
+		if name != "app" || profile != model.ProfileHosting {
+			t.Fatalf("resolver received name=%q profile=%q", name, profile)
+		}
+		return resolved, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != resolved || calls != 1 {
+		t.Fatalf("refreshed operator = %+v calls=%d, want %+v calls=1", got, calls, resolved)
+	}
+}
+
+func TestPreparedOperatorPreservesExistingLocalIdentity(t *testing.T) {
+	local := publicOperator{Name: "owner", Home: "/home/owner", UID: 1000, GID: 1000}
+	got, err := refreshPublicOperatorAfterPreparation(local, model.ProfileProtectedLocal, "", func(string, model.Profile) (publicOperator, error) {
+		t.Fatal("existing Local operator unexpectedly re-resolved")
+		return publicOperator{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != local {
+		t.Fatalf("Local operator changed: got %+v want %+v", got, local)
+	}
+}
+
+func TestPreparedHostingOperatorRejectsChangedIdentity(t *testing.T) {
+	placeholder := publicOperator{Name: "app", Home: "/home/app"}
+	for name, resolver := range map[string]publicOperatorResolver{
+		"wrong prepared owner": func(string, model.Profile) (publicOperator, error) {
+			return publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}, nil
+		},
+		"changed home": func(string, model.Profile) (publicOperator, error) {
+			return publicOperator{Name: "app", Home: "/srv/app", UID: 1001, GID: 1001}, nil
+		},
+		"still unresolved": func(string, model.Profile) (publicOperator, error) {
+			return placeholder, nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			preparedOwner := "app"
+			if name == "wrong prepared owner" {
+				preparedOwner = "other"
+			}
+			if _, err := refreshPublicOperatorAfterPreparation(placeholder, model.ProfileHosting, preparedOwner, resolver); err == nil {
+				t.Fatal("unsafe prepared operator identity was accepted")
+			}
+		})
+	}
+}
+
 func TestPublicLifecycleRouteRejectsAmbiguousOrLegacySelectors(t *testing.T) {
 	for _, fixture := range [][]string{
 		{"--profile", "portable", "--version", "1.2.3", "--operator-user", "owner"},

@@ -810,6 +810,7 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 	performance.Acquisition = result.Performance
 	var hostingParticipant *hostsecurity.Participant
 	var hostingState hostsecurity.State
+	preparedOperatorUser := ""
 	hostingTransactionID := ""
 	hostingSecurityReused := false
 	if request.Profile == model.ProfileHosting {
@@ -853,7 +854,12 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		}
 		hostingTransactionID = prepared.TransactionID
 		hostingState = prepared
+		preparedOperatorUser = prepared.OperatorUser
 		hostingSecurityReused = !hostingSecurityTransactionNeedsFinalization(prepared)
+	}
+	operator, err = refreshPublicOperatorAfterPreparation(operator, request.Profile, preparedOperatorUser, resolveOperator)
+	if err != nil {
+		return err
 	}
 	resumePendingOnboarding := hostingState.Phase == hostsecurity.PhaseOnboardingPending
 	applyStarted := time.Now()
@@ -1713,6 +1719,25 @@ type publicOperator struct {
 	Home string
 	UID  uint32
 	GID  uint32
+}
+
+type publicOperatorResolver func(string, model.Profile) (publicOperator, error)
+
+func refreshPublicOperatorAfterPreparation(operator publicOperator, profile model.Profile, preparedOperatorUser string, resolve publicOperatorResolver) (publicOperator, error) {
+	if operator.UID != 0 {
+		return operator, nil
+	}
+	if profile != model.ProfileHosting || operator.Name != "app" || operator.Home != "/home/app" || preparedOperatorUser != operator.Name {
+		return publicOperator{}, errors.New("prepared public lifecycle operator identity is unsafe")
+	}
+	refreshed, err := resolve(operator.Name, profile)
+	if err != nil {
+		return publicOperator{}, fmt.Errorf("resolve prepared Hosting operator: %w", err)
+	}
+	if refreshed.UID == 0 || refreshed.Name != operator.Name || refreshed.Home != operator.Home {
+		return publicOperator{}, errors.New("prepared Hosting operator identity changed unexpectedly")
+	}
+	return refreshed, nil
 }
 
 func resolveOperator(name string, profile model.Profile) (publicOperator, error) {
