@@ -277,7 +277,14 @@ describe("configureGatewayForOnboarding", () => {
     expect(result.settings.tailscaleMode).toBe("serve");
     expect(result.settings.gatewayToken).toBe("strict-token");
     expect(prompter.select).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "Gateway auth", initialValue: "token" }),
+      expect.objectContaining({
+        message: "Gateway auth",
+        initialValue: "token",
+        options: [
+          { value: "token", label: "Token", hint: "Recommended" },
+          { value: "password", label: "Password" },
+        ],
+      }),
     );
     expect(prompter.text).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Gateway token (blank to generate)" }),

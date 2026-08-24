@@ -113,6 +113,7 @@ export async function configureGatewayForOnboarding(
       {
         value: "token",
         label: "Token",
+        hint: "Recommended",
       },
       { value: "password", label: "Password" },
     ],
