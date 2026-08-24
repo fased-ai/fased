@@ -42,7 +42,7 @@ export async function buildLifecycleRootHead(options) {
     root.value?.signed?.type !== "fased-lifecycle-root" ||
     !Number.isSafeInteger(rootVersion) ||
     rootVersion < 1 ||
-    release?.schemaVersion !== 1 ||
+    ![1, 2].includes(release?.schemaVersion) ||
     release?.type !== "fased-release-index" ||
     !["stable", "beta"].includes(release.channel) ||
     !VERSION.test(release.version ?? "") ||
