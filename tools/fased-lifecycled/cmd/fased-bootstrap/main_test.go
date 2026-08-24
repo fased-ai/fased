@@ -694,6 +694,20 @@ func TestPreparedOperatorPreservesExistingLocalIdentity(t *testing.T) {
 	}
 }
 
+func TestPreparedHostingOperatorPreservesExistingIdentity(t *testing.T) {
+	hosting := publicOperator{Name: "app", Home: "/home/app", UID: 1001, GID: 1001}
+	got, err := refreshPublicOperatorAfterPreparation(hosting, model.ProfileHosting, "app", func(string, model.Profile) (publicOperator, error) {
+		t.Fatal("existing Hosting operator unexpectedly re-resolved")
+		return publicOperator{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != hosting {
+		t.Fatalf("Hosting operator changed: got %+v want %+v", got, hosting)
+	}
+}
+
 func TestPreparedHostingOperatorRejectsChangedIdentity(t *testing.T) {
 	placeholder := publicOperator{Name: "app", Home: "/home/app"}
 	for name, resolver := range map[string]publicOperatorResolver{
