@@ -116,7 +116,11 @@ func (host LinuxHost) Inspect(ctx context.Context, port uint16, operator string)
 		return Inspection{}, prerequisitesErr
 	}
 	inspection.LifecyclePrerequisitesReady = prerequisitesReady
-	inspection.HardeningReady = host.hardeningReady(ctx)
+	inspection.HardeningIssues, err = host.inspectHardening(ctx)
+	if err != nil {
+		return Inspection{}, fmt.Errorf("inspect Hosting hardening: %w", err)
+	}
+	inspection.HardeningReady = len(inspection.HardeningIssues) == 0
 	inspection.SignerWebAuthnReady = host.signerWebAuthnReady(inspection.TailscaleDNS)
 	if !inspection.HardeningReady {
 		inspection.LegacyHardeningReady = host.legacyHardeningReady(ctx, inspection, port)

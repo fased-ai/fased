@@ -23,6 +23,20 @@ func TestHostingProgressUsesSetupFrame(t *testing.T) {
 	}
 }
 
+func TestHostingSecurityStateAcceptsSchemaTwoWithoutNewReconciliationMarker(t *testing.T) {
+	_, _, request := fixture(t)
+	state := State{SchemaVersion: 2, TransactionID: request.TransactionID, Release: request.Release,
+		Channel: request.Channel, GatewayPort: request.GatewayPort, OperatorUser: request.OperatorUser,
+		PlatformIdentity: request.PlatformIdentity, TrustRootSHA256: request.TrustRootSHA256, Phase: PhasePreflight}
+	if err := state.Validate(); err != nil {
+		t.Fatalf("schema-two predecessor state was rejected: %v", err)
+	}
+	state.HardeningReconciled = true
+	if err := state.Validate(); err == nil || !strings.Contains(err.Error(), "predecessor state") {
+		t.Fatalf("schema-two state accepted a newer reconciliation marker: %v", err)
+	}
+}
+
 type fakeHost struct {
 	inspection           Inspection
 	calls                []string
@@ -152,6 +166,7 @@ func (host *fakeHost) CommitHardening(context.Context, string) error {
 		return err
 	}
 	host.inspection.HardeningReady = true
+	host.inspection.HardeningIssues = nil
 	return nil
 }
 func (host *fakeHost) RestoreHardening(context.Context, string) error {
@@ -797,7 +812,7 @@ func TestHostingSecurityUninstallResumesAfterLastDurableStep(t *testing.T) {
 func TestHostingSecurityUpdateRefusesBrokenPredecessorBeforeMutation(t *testing.T) {
 	participant, host, request := fixture(t)
 	request.RequireExistingHardening = true
-	if _, err := participant.Prepare(context.Background(), request); err == nil || !strings.Contains(err.Error(), "boundary is not intact") {
+	if _, err := participant.Prepare(context.Background(), request); err == nil || !strings.Contains(err.Error(), "hardening_issue_unclassified") {
 		t.Fatalf("broken Hosting predecessor was accepted: %v", err)
 	}
 	joined := strings.Join(host.calls, ",")
@@ -805,6 +820,86 @@ func TestHostingSecurityUpdateRefusesBrokenPredecessorBeforeMutation(t *testing.
 		if strings.Contains(joined, mutation) {
 			t.Fatalf("update preflight mutated the broken host via %s: %s", mutation, joined)
 		}
+	}
+}
+
+func TestHostingSecurityUpdateReconcilesTypedHardeningDrift(t *testing.T) {
+	participant, host, request := fixture(t)
+	request.RequireExistingHardening = true
+	host.signerWebAuthn = "existing.tailnet.ts.net"
+	host.inspection = Inspection{
+		TailscaleInstalled: true, TailscaleRunning: true, Authenticated: true,
+		TailscaleDNS: "existing.tailnet.ts.net", TailscaleIPv4: "100.100.1.2",
+		TailscaleVersion: "1.88.1", PrivateServeReady: true, SignerWebAuthnReady: true,
+		SignerReady: true, HardeningIssues: []HardeningIssue{HardeningIssueFirewallRules, HardeningIssueFail2ban},
+	}
+	var user bytes.Buffer
+	participant.User = &user
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.HardeningReconciled || !state.HardeningStarted || !state.HardeningStaged {
+		t.Fatalf("typed hardening drift was not durably reconciled: %+v", state)
+	}
+	joined := strings.Join(host.calls, ",")
+	for _, required := range []string{"snapshot-hardening", "stage-hardening", "commit-hardening"} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("hardening reconciliation omitted %s: %s", required, joined)
+		}
+	}
+	if !strings.Contains(user.String(), string(HardeningIssueFirewallRules)+","+string(HardeningIssueFail2ban)) {
+		t.Fatalf("reconciliation progress omitted exact predicates: %q", user.String())
+	}
+}
+
+func TestHostingSecurityReconciledHardeningSurvivesLaterUpdateAbort(t *testing.T) {
+	participant, host, request := fixture(t)
+	request.RequireExistingHardening = true
+	host.inspection = Inspection{
+		TailscaleInstalled: true, TailscaleRunning: true, Authenticated: true,
+		TailscaleDNS: "existing.tailnet.ts.net", TailscaleIPv4: "100.100.1.2",
+		TailscaleVersion: "1.88.1", PrivateServeReady: true, SignerReady: true,
+		HardeningIssues: []HardeningIssue{HardeningIssueFirewallRules},
+	}
+	host.fail = "configure-signer-webauthn"
+	if _, err := participant.Prepare(context.Background(), request); err == nil {
+		t.Fatal("post-reconciliation update failure was ignored")
+	}
+	joined := strings.Join(host.calls, ",")
+	if !strings.Contains(joined, "commit-hardening") || strings.Contains(joined, "restore-hardening") {
+		t.Fatalf("safe committed reconciliation was rolled back with the later update: %s", joined)
+	}
+}
+
+func TestHostingSecurityUpdateNamesUnsafeOperatorElevation(t *testing.T) {
+	participant, host, request := fixture(t)
+	request.RequireExistingHardening = true
+	host.inspection.AppCanElevate = true
+	if _, err := participant.Prepare(context.Background(), request); err == nil || !strings.Contains(err.Error(), "operator_can_elevate") {
+		t.Fatalf("unsafe operator elevation was not named exactly: %v", err)
+	}
+	joined := strings.Join(host.calls, ",")
+	for _, mutation := range []string{"snapshot-hardening", "stage-hardening", "commit-hardening"} {
+		if strings.Contains(joined, mutation) {
+			t.Fatalf("unsafe operator elevation triggered %s: %s", mutation, joined)
+		}
+	}
+}
+
+func TestHostingSecurityAlreadyCurrentReconcilesTypedHardeningDrift(t *testing.T) {
+	participant, host, request, _ := commitFixtureHostingSecurity(t)
+	host.calls = nil
+	host.inspection.HardeningReady = false
+	host.inspection.HardeningIssues = []HardeningIssue{HardeningIssueFirewallRules}
+	request.TransactionID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	request.RequireExistingHardening = true
+	state, err := participant.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.HardeningReconciled || !host.inspection.HardeningReady {
+		t.Fatalf("already-current hardening drift did not reconcile: state=%+v inspection=%+v", state, host.inspection)
 	}
 }
 

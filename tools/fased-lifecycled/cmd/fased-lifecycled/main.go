@@ -77,6 +77,9 @@ func run(args []string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("lifecycle supervisor and target modes require root")
 	}
+	if args[0] == "hosting-security" {
+		return runHostingSecurity(args[1:], os.Stdin, os.Stdout, os.Stderr)
+	}
 	if args[0] == "initialize" {
 		return runInitialize(args[1:], os.Stdout)
 	}
@@ -103,6 +106,36 @@ func run(args []string) error {
 	default:
 		return errors.New("unsupported lifecycle daemon mode")
 	}
+}
+
+func runHostingSecurity(args []string, input io.Reader, output, userOutput io.Writer) error {
+	if len(args) != 0 {
+		return errors.New("invalid Hosting security command arguments")
+	}
+	request, err := hostsecurity.DecodeCommandRequest(input)
+	if err != nil {
+		return err
+	}
+	lock, err := hostsecurity.AcquireMutationLock("/run/lock/fased-host-security.lock", 0)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	log, err := hostsecurity.OpenSystemLog()
+	if err != nil {
+		return err
+	}
+	defer log.Close()
+	state, err := hostsecurity.ExecuteCommand(context.Background(), hostsecurity.Participant{
+		Store: hostsecurity.Store{
+			StatePath: "/var/lib/fased-host-security/active.json", ReceiptPath: "/etc/fased/hosting-prerequisites", ExpectedUID: 0,
+		},
+		Host: hostsecurity.NewLinuxHost(), Log: log, User: userOutput,
+	}, request)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(state)
 }
 
 func runStateAccessCheck(args []string) error {
