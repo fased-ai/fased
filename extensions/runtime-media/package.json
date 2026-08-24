@@ -1,6 +1,6 @@
 {
   "name": "@fased/media-runtime",
-  "version": "0.1.76-rc.138",
+  "version": "0.1.76-rc.139",
   "private": true,
   "description": "Optional media runtime for Fased Agent",
   "files": [
@@ -15,7 +15,7 @@
     "sharp": "^0.35.0"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.138"
+    "@fased/fased": "^0.1.76-rc.139"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
