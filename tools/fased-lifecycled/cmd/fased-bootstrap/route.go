@@ -857,30 +857,30 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) error
 		preparedOperatorUser = prepared.OperatorUser
 		hostingSecurityReused = !hostingSecurityTransactionNeedsFinalization(prepared)
 	}
-	operator, err = refreshPublicOperatorAfterPreparation(operator, request.Profile, preparedOperatorUser, resolveOperator)
-	if err != nil {
-		return err
-	}
 	resumePendingOnboarding := hostingState.Phase == hostsecurity.PhaseOnboardingPending
 	applyStarted := time.Now()
 	applyProgress := beginLifecyclePhase(output, request.JSON, "applying the lifecycle generation")
 	var convergence protocol.Response
 	var verboseOutput []byte
+	lifecycleApplied := false
 	if resumePendingOnboarding {
 		var alreadyCurrent bool
 		convergence, alreadyCurrent, err = recoverPendingHostingOnboarding(operator, hostingState, result)
 		if err == nil && !alreadyCurrent {
-			convergence, verboseOutput, err = invokeLifecycleHost(ctx, request, operator, result, lock)
+			convergence, verboseOutput, operator, lifecycleApplied, err = invokeLifecycleHostWithProvisionedOperator(ctx, request, operator, result, lock, preparedOperatorUser, invokeLifecycleHost, resolveOperator)
+		} else if err == nil {
+			lifecycleApplied = true
+			operator, err = refreshPublicOperatorAfterLifecycleApply(operator, request.Profile, preparedOperatorUser, resolveOperator)
 		}
 	} else {
-		convergence, verboseOutput, err = invokeLifecycleHost(ctx, request, operator, result, lock)
+		convergence, verboseOutput, operator, lifecycleApplied, err = invokeLifecycleHostWithProvisionedOperator(ctx, request, operator, result, lock, preparedOperatorUser, invokeLifecycleHost, resolveOperator)
 	}
 	applyProgress.Stop()
 	performance.ApplyMillis = durationMillis(applyStarted)
 	performance.Transaction = convergence.Performance
 	emitLifecycleHostVerbose(lifecycleHostVerboseOutputWriter(request, output, os.Stderr), verboseOutput)
 	if err != nil {
-		if hostingParticipant != nil && !hostingSecurityReused && !resumePendingOnboarding {
+		if hostingParticipant != nil && !hostingSecurityReused && !resumePendingOnboarding && !lifecycleApplied {
 			err = errors.Join(err, hostingParticipant.Abort(ctx, hostingTransactionID))
 		}
 		return err
@@ -1723,19 +1723,30 @@ type publicOperator struct {
 
 type publicOperatorResolver func(string, model.Profile) (publicOperator, error)
 
-func refreshPublicOperatorAfterPreparation(operator publicOperator, profile model.Profile, preparedOperatorUser string, resolve publicOperatorResolver) (publicOperator, error) {
+type lifecycleHostInvoker func(context.Context, publicLifecycleRequest, publicOperator, bootstrapResult, *hostsecurity.MutationLock) (protocol.Response, []byte, error)
+
+func invokeLifecycleHostWithProvisionedOperator(ctx context.Context, request publicLifecycleRequest, operator publicOperator, result bootstrapResult, lifecycleLease *hostsecurity.MutationLock, preparedOperatorUser string, invoke lifecycleHostInvoker, resolve publicOperatorResolver) (protocol.Response, []byte, publicOperator, bool, error) {
+	response, output, err := invoke(ctx, request, operator, result, lifecycleLease)
+	if err != nil {
+		return response, output, operator, false, err
+	}
+	refreshed, err := refreshPublicOperatorAfterLifecycleApply(operator, request.Profile, preparedOperatorUser, resolve)
+	return response, output, refreshed, true, err
+}
+
+func refreshPublicOperatorAfterLifecycleApply(operator publicOperator, profile model.Profile, preparedOperatorUser string, resolve publicOperatorResolver) (publicOperator, error) {
 	if operator.UID != 0 {
 		return operator, nil
 	}
 	if profile != model.ProfileHosting || operator.Name != "app" || operator.Home != "/home/app" || preparedOperatorUser != operator.Name {
-		return publicOperator{}, errors.New("prepared public lifecycle operator identity is unsafe")
+		return publicOperator{}, errors.New("provisioned public lifecycle operator identity is unsafe")
 	}
 	refreshed, err := resolve(operator.Name, profile)
 	if err != nil {
-		return publicOperator{}, fmt.Errorf("resolve prepared Hosting operator: %w", err)
+		return publicOperator{}, fmt.Errorf("resolve provisioned Hosting operator: %w", err)
 	}
-	if refreshed.UID == 0 || refreshed.Name != operator.Name || refreshed.Home != operator.Home {
-		return publicOperator{}, errors.New("prepared Hosting operator identity changed unexpectedly")
+	if refreshed.UID == 0 || refreshed.GID == 0 || refreshed.Name != operator.Name || refreshed.Home != operator.Home {
+		return publicOperator{}, errors.New("provisioned Hosting operator identity changed unexpectedly")
 	}
 	return refreshed, nil
 }
