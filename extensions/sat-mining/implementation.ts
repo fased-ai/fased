@@ -153,9 +153,9 @@ import {
   submitSatValidatorAttestation,
   runWithSatSubmissionWorkflow,
 } from "./src/solana-submit.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./src/state-identity.js";
 import {
   digestSatSubmissionIntent,
-  resolveSatSubmissionLedgerPath,
   setSatSubmissionLedgerAdapterResolver,
 } from "./src/submission-ledger.js";
 import {
@@ -2342,7 +2342,7 @@ const satMiningPlugin = {
         mintAddress: optionalId(() => resolveSatMintAddress(state.activeConfig, effectiveEnv)),
         mintProgramId: optionalId(() => resolveSatMintProgramId(state.activeConfig, effectiveEnv)),
         manifestDigest: metadataString("satManifestDigest", "manifestDigest"),
-        protocolVersion: "sat-v2",
+        protocolVersion: SAT_RUNTIME_PROTOCOL_GENERATION,
       };
     };
     const buildMiningOperationalState = () => ({
@@ -2454,10 +2454,7 @@ const satMiningPlugin = {
       resetWalletScopedRuntimeMemory();
       const { effectiveEnv } = resolveWalletRuntimeContext();
       const canonicalWalletId = String(walletId ?? "").trim() || "unattached";
-      const submissionLedgerPath = resolveSatSubmissionLedgerPath({
-        walletId: canonicalWalletId,
-        env: effectiveEnv,
-      });
+      const submissionLedgerPath = path.join(nextMiningWalletStateDir, "submission-ledger.json");
       let runtimeSummary = {
         recentActions: [],
         archivedFailures: [],
@@ -9473,8 +9470,8 @@ const satMiningPlugin = {
         const recoveringTerminalFence = miningHistoryTransitionFailed;
         serviceContext = ctx;
         try {
-          setSatSubmissionLedgerAdapterResolver((walletId) =>
-            miningHistoryStore?.walletId === walletId ? miningHistoryStore : null,
+          setSatSubmissionLedgerAdapterResolver((identity) =>
+            miningHistoryStore?.walletId === identity.walletId ? miningHistoryStore : null,
           );
           const walletRuntimeSummary = await loadWalletScopedPersistence(
             state.activeConfig.walletId,

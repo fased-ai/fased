@@ -37,6 +37,16 @@ function scope(walletId = "agent", network = "devnet"): SatMiningHistoryScope {
   };
 }
 
+function submissionIdentity(walletId = "agent", network = "devnet") {
+  const selected = scope(walletId, network);
+  return {
+    cluster: selected.network as "local" | "devnet" | "mainnet-beta",
+    programId: selected.programId!,
+    protocolGeneration: selected.protocolVersion!,
+    walletId: selected.walletId,
+  };
+}
+
 function action(
   cycleId: number,
   at: string,
@@ -144,8 +154,8 @@ describe("per-wallet Mining history ledger", () => {
   it("owns active signer submissions and their transition audit in one SQLite transaction", async () => {
     const stateDir = await tempState();
     const { store } = await openStore({ stateDir, walletId: "mining" });
-    setSatSubmissionLedgerAdapterResolver((walletId) =>
-      walletId === store.walletId ? store : null,
+    setSatSubmissionLedgerAdapterResolver((identity) =>
+      identity.walletId === store.walletId ? store : null,
     );
     const env = {
       ...process.env,
@@ -154,7 +164,7 @@ describe("per-wallet Mining history ledger", () => {
     };
     const intentDigest = `sha256:${"ab".repeat(32)}`;
     const first = await claimSatSubmission({
-      walletId: "mining",
+      ...submissionIdentity("mining"),
       workflowId: "cycle:42:commit",
       operationKey: "commitCycle:42",
       intentDigest,
@@ -163,7 +173,7 @@ describe("per-wallet Mining history ledger", () => {
       env,
     });
     const competing = await claimSatSubmission({
-      walletId: "mining",
+      ...submissionIdentity("mining"),
       workflowId: "cycle:42:commit",
       operationKey: "commitCycle:42",
       intentDigest,
@@ -175,7 +185,7 @@ describe("per-wallet Mining history ledger", () => {
     expect(competing).toMatchObject({ created: false, claimed: false });
 
     await updateSatSubmission({
-      walletId: "mining",
+      ...submissionIdentity("mining"),
       requestId: first.record.requestId,
       intentDigest,
       state: "broadcast",
@@ -184,7 +194,7 @@ describe("per-wallet Mining history ledger", () => {
       env,
     });
     await updateSatSubmission({
-      walletId: "mining",
+      ...submissionIdentity("mining"),
       requestId: first.record.requestId,
       intentDigest,
       state: "confirmed",
@@ -196,7 +206,7 @@ describe("per-wallet Mining history ledger", () => {
 
     await expect(
       readSatSubmission({
-        walletId: "mining",
+        ...submissionIdentity("mining"),
         requestId: first.record.requestId,
         env,
       }),
@@ -235,6 +245,105 @@ describe("per-wallet Mining history ledger", () => {
       ]);
     } finally {
       inspection.close();
+    }
+  });
+
+  it("rejects cross-generation commitment, recovery, and claim submission state", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir, walletId: "mining" });
+    setSatSubmissionLedgerAdapterResolver((identity) =>
+      identity.walletId === store.walletId ? store : null,
+    );
+    const env = { ...process.env, FASED_STATE_DIR: stateDir };
+    const exactIdentity = submissionIdentity("mining");
+    const wrongIdentities = [
+      { ...exactIdentity, protocolGeneration: "sat-protocol-generation-3" },
+      { ...exactIdentity, programId: "sat-program-generation-3" },
+      { ...exactIdentity, cluster: "mainnet-beta" as const },
+    ];
+    const actions = ["commitCycle", "revealCycle", "claimCycleRewards"] as const;
+
+    for (const [index, action] of actions.entries()) {
+      await expect(
+        claimSatSubmission({
+          ...wrongIdentities[index]!,
+          workflowId: `cycle:42:${action}`,
+          operationKey: `${action}:42`,
+          intentDigest: `sha256:${"42".repeat(32)}`,
+          action,
+          env,
+        }),
+      ).rejects.toThrow(/state identity mismatch/);
+    }
+
+    const exact = await claimSatSubmission({
+      ...exactIdentity,
+      workflowId: "cycle:42:commit",
+      operationKey: "commitCycle:42",
+      intentDigest: `sha256:${"24".repeat(32)}`,
+      action: "commitCycle",
+      env,
+    });
+    await expect(
+      readSatSubmission({
+        ...wrongIdentities[0]!,
+        requestId: exact.record.requestId,
+        env,
+      }),
+    ).rejects.toThrow(/state identity mismatch/);
+  });
+
+  it("does not reinterpret persisted recovery or claim state after a generation rebind", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir, walletId: "mining" });
+    await store.replaceOperationalState({
+      roundExecution: [{ roundKey: "42:0", execution: { cycleId: 42, commitSubmitted: true } }],
+      claimBacklog: [{ cycleId: 42, nextClaimPage: 1 }],
+      workers: { recovery: { enabled: true, running: false } },
+    });
+
+    await store.rebindScope({
+      ...scope("mining"),
+      protocolVersion: "sat-protocol-generation-3",
+    });
+
+    expect(store.readOperationalState()).toMatchObject({
+      roundExecution: [],
+      claimBacklog: [],
+    });
+  });
+
+  it("opens the activated deployment by default when unbound legacy state is newer", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({
+      stateDir,
+      migration: {
+        operationalState: {
+          claimBacklog: [{ cycleId: 42, nextClaimPage: 1 }],
+        },
+      },
+    });
+    const legacyScope = store
+      .listScopes()
+      .find((entry) => entry.scope.network === "legacy-unknown");
+    expect(legacyScope).toBeDefined();
+
+    const active = await SatMiningHistoryStore.openReadOnly({
+      databasePath: store.databasePath,
+    });
+    const legacy = await SatMiningHistoryStore.openReadOnly({
+      databasePath: store.databasePath,
+      scopeKey: legacyScope!.scopeKey,
+    });
+    try {
+      expect(active.getScope().network).toBe("devnet");
+      expect(active.readOperationalState().claimBacklog).toEqual([]);
+      expect(legacy.readOperationalState().claimBacklog).toEqual([
+        { cycleId: 42, nextClaimPage: 1 },
+      ]);
+    } finally {
+      active.close();
+      legacy.close();
     }
   });
 
@@ -1219,15 +1328,43 @@ describe("per-wallet Mining history ledger", () => {
         ),
       ).toBe(original);
       if (kind === "runtime") {
-        expect(store.queryActions({ window: "all" }).actions).toMatchObject([{ cycleId: 91 }]);
+        expect(store.queryActions({ window: "all" }).actions).toEqual([]);
       } else if (kind === "audit") {
-        expect(store.readAuditArtifacts()).toEqual([
-          { roundKey: "audit-original", updatedAt: "2026-08-19T00:00:00.000Z" },
-        ]);
+        expect(store.readAuditArtifacts()).toEqual([]);
+        const inspection = new DatabaseSync(store.databasePath, { readOnly: true });
+        try {
+          expect(
+            inspection
+              .prepare(
+                `SELECT history_scope.network
+                   FROM audit_artifact
+                   JOIN history_scope ON history_scope.id=audit_artifact.scope_id
+                  WHERE audit_artifact.artifact_key='audit-original'`,
+              )
+              .get(),
+          ).toEqual({ network: "legacy-unknown" });
+        } finally {
+          inspection.close();
+        }
       } else {
         await expect(
-          store.read({ walletId: "agent", requestId: "request-original" }),
-        ).resolves.toMatchObject({ requestId: "request-original" });
+          store.read({ ...submissionIdentity(), requestId: "request-original" }),
+        ).resolves.toBeNull();
+        const inspection = new DatabaseSync(store.databasePath, { readOnly: true });
+        try {
+          expect(
+            inspection
+              .prepare(
+                `SELECT history_scope.network
+                   FROM submission_record
+                   JOIN history_scope ON history_scope.id=submission_record.scope_id
+                  WHERE submission_record.request_id='request-original'`,
+              )
+              .get(),
+          ).toEqual({ network: "legacy-unknown" });
+        } finally {
+          inspection.close();
+        }
       }
     },
   );
@@ -1526,9 +1663,19 @@ describe("per-wallet Mining history ledger", () => {
       { length: 512 },
       (_unused, index) => `failure-${520 - index}`,
     );
-    expect(
-      opened.store.readOperationalState().archivedFailures?.map((entry) => entry.action),
-    ).toEqual(expectedActions);
+    const legacyScope = opened.store
+      .listScopes()
+      .find((entry) => entry.scope.network === "legacy-unknown");
+    expect(legacyScope).toBeDefined();
+    const legacy = await SatMiningHistoryStore.openReadOnly({
+      databasePath: opened.store.databasePath,
+      scopeKey: legacyScope!.scopeKey,
+    });
+    expect(legacy.readOperationalState().archivedFailures?.map((entry) => entry.action)).toEqual(
+      expectedActions,
+    );
+    legacy.close();
+    expect(opened.store.readOperationalState().archivedFailures).toEqual([]);
     const databasePath = opened.store.databasePath;
     opened.store.close();
     stores.splice(stores.indexOf(opened.store), 1);
@@ -1543,9 +1690,7 @@ describe("per-wallet Mining history ledger", () => {
     });
     stores.push(reopened.store);
     expect(factory).not.toHaveBeenCalled();
-    expect(
-      reopened.store.readOperationalState().archivedFailures?.map((entry) => entry.action),
-    ).toEqual(expectedActions);
+    expect(reopened.store.readOperationalState().archivedFailures).toEqual([]);
 
     await reopened.store.replaceOperationalState({ archivedFailures: failures.toReversed() });
     expect(

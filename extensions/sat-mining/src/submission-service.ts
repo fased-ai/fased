@@ -6,12 +6,13 @@ import {
   type WalletProviderJupiterReviewV2,
 } from "fased/plugin-sdk/sat-runtime";
 import type { SatSignerAction } from "./signer-codec-manifest.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION, type SatMiningStateIdentity } from "./state-identity.js";
 import {
   buildSatSubmissionOperationKey,
-  claimSatSubmission,
+  claimSatSubmission as claimUnboundSatSubmission,
   digestSatSubmissionIntent,
-  updateSatSubmission,
-  waitForSatSubmissionLease,
+  updateSatSubmission as updateUnboundSatSubmission,
+  waitForSatSubmissionLease as waitForUnboundSatSubmissionLease,
   type SatSubmissionSignerState,
 } from "./submission-ledger.js";
 
@@ -235,6 +236,7 @@ export class SatSubmissionDefinitiveFailureError extends Error {
 export async function executeTypedSatIntent(params: {
   socketPath: string;
   walletId: string;
+  stateProgramId: string;
   action: SatSubmissionAction;
   instruction?: SatSubmissionInstruction;
   instructions?: SatSubmissionInstruction[];
@@ -249,6 +251,33 @@ export async function executeTypedSatIntent(params: {
   cluster: "local" | "devnet" | "mainnet-beta";
   env: NodeJS.ProcessEnv;
 }): Promise<SatSubmissionOutcome> {
+  if (!params.stateProgramId.trim()) {
+    throw new Error("typed SAT execution requires its canonical Mining program ID");
+  }
+  const stateIdentity: SatMiningStateIdentity = {
+    cluster: params.cluster,
+    programId: params.stateProgramId,
+    protocolGeneration: SAT_RUNTIME_PROTOCOL_GENERATION,
+    walletId: params.walletId,
+  };
+  const claimSatSubmission = (
+    request: Omit<
+      Parameters<typeof claimUnboundSatSubmission>[0],
+      Exclude<keyof SatMiningStateIdentity, "walletId">
+    >,
+  ) => claimUnboundSatSubmission({ ...stateIdentity, ...request });
+  const updateSatSubmission = (
+    request: Omit<
+      Parameters<typeof updateUnboundSatSubmission>[0],
+      Exclude<keyof SatMiningStateIdentity, "walletId">
+    >,
+  ) => updateUnboundSatSubmission({ ...stateIdentity, ...request });
+  const waitForSatSubmissionLease = (
+    request: Omit<
+      Parameters<typeof waitForUnboundSatSubmissionLease>[0],
+      Exclude<keyof SatMiningStateIdentity, "walletId">
+    >,
+  ) => waitForUnboundSatSubmissionLease({ ...stateIdentity, ...request });
   const isLookupTable = params.lookupTable != null;
   const isVaultBond =
     !isLookupTable &&
