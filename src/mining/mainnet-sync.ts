@@ -17,6 +17,8 @@ import {
 
 const DEFAULT_MANIFEST_URL = "https://satcoin.app/.well-known/sat-mainnet-addresses.json";
 const DEFAULT_TIMEOUT_MS = 12_000;
+const MAX_MANIFEST_BYTES = 512 * 1024;
+const MAX_SIDECAR_BYTES = 1024;
 
 type ManifestStatus = "not_live" | "live";
 
@@ -98,6 +100,12 @@ type SatMainnetSyncOptions = {
   env?: NodeJS.ProcessEnv;
   manifestUrl?: string;
   signerAcknowledgement?: SatReleaseAcknowledgement | null;
+  verifiedManifestSink?: (manifest: {
+    raw: string;
+    manifestSha256: string;
+    signature: string;
+    signerAcknowledgementState: string | null;
+  }) => void;
 };
 
 function trustedKeysFromEnv(env: NodeJS.ProcessEnv): ResolvedTrustedManifestKey[] {
@@ -146,9 +154,13 @@ function timeoutSignal(timeoutMs: number): AbortSignal {
   return controller.signal;
 }
 
-async function fetchText(url: string, opts?: { required?: boolean; timeoutMs?: number }) {
+async function fetchText(
+  url: string,
+  opts?: { required?: boolean; timeoutMs?: number; maxBytes?: number },
+): Promise<string | null> {
   const response = await fetch(url, {
     cache: "no-store",
+    redirect: "error",
     signal: timeoutSignal(opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   });
   if (!response.ok) {
@@ -157,7 +169,30 @@ async function fetchText(url: string, opts?: { required?: boolean; timeoutMs?: n
     }
     throw new Error(`fetch ${url} failed with HTTP ${response.status}`);
   }
-  return await response.text();
+  const maxBytes = opts?.maxBytes ?? MAX_MANIFEST_BYTES;
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number(contentLength) > maxBytes) {
+    throw new Error(`fetch ${url} exceeded the ${maxBytes}-byte limit`);
+  }
+  if (!response.body) {
+    return "";
+  }
+  const chunks: Uint8Array[] = [];
+  let bytesRead = 0;
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    bytesRead += value.byteLength;
+    if (bytesRead > maxBytes) {
+      await reader.cancel();
+      throw new Error(`fetch ${url} exceeded the ${maxBytes}-byte limit`);
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
 }
 
 function sha256Hex(raw: string): string {
@@ -222,52 +257,79 @@ function verifyDetachedEd25519Signature(params: {
   return null;
 }
 
-async function verifyLiveManifest(params: {
-  manifestUrl: string;
-  raw: string;
-  env: NodeJS.ProcessEnv;
-}): Promise<{
+type VerifiedManifestFetch = {
+  raw: string | null;
+  manifestSha256: string | null;
+  signature: string | null;
   verification: SatMainnetSyncVerification;
   trustKeySource: "embedded" | "environment" | "missing";
-}> {
+};
+
+async function fetchVerifiedManifest(params: {
+  manifestUrl: string;
+  env: NodeJS.ProcessEnv;
+}): Promise<VerifiedManifestFetch> {
   const configuredTrustKeySource = resolveConfiguredTrustKeySource(params.env);
   const expectedHash = parseSha256(
-    await fetchText(`${params.manifestUrl}.sha256`, { required: false }).catch(() => null),
+    await fetchText(`${params.manifestUrl}.sha256`, {
+      required: false,
+      maxBytes: MAX_SIDECAR_BYTES,
+    }),
   );
   if (!expectedHash) {
     return {
+      raw: null,
+      manifestSha256: null,
+      signature: null,
       verification: { hash: "missing", signature: "missing" },
       trustKeySource: configuredTrustKeySource,
     };
   }
-  if (sha256Hex(params.raw) !== expectedHash) {
+  const signature = await fetchText(`${params.manifestUrl}.sig`, {
+    required: false,
+    maxBytes: MAX_SIDECAR_BYTES,
+  });
+  if (!signature?.trim()) {
     return {
-      verification: { hash: "invalid", signature: "missing" },
+      raw: null,
+      manifestSha256: expectedHash,
+      signature: null,
+      verification: { hash: "valid", signature: "missing" },
       trustKeySource: configuredTrustKeySource,
     };
   }
-  const signature = await fetchText(`${params.manifestUrl}.sig`, { required: false }).catch(
-    () => null,
-  );
-  if (!signature?.trim()) {
+  const raw = await fetchText(params.manifestUrl, {
+    required: true,
+    maxBytes: MAX_MANIFEST_BYTES,
+  });
+  if (raw == null || sha256Hex(raw) !== expectedHash) {
     return {
-      verification: { hash: "valid", signature: "missing" },
+      raw: null,
+      manifestSha256: expectedHash,
+      signature: signature.trim(),
+      verification: { hash: "invalid", signature: "missing" },
       trustKeySource: configuredTrustKeySource,
     };
   }
   const trustedKeys = resolveTrustedKeys(params.env);
   const verifiedKey = verifyDetachedEd25519Signature({
-    payload: params.raw,
+    payload: raw,
     signatureBase64: signature.trim(),
     trustedKeys,
   });
   if (!verifiedKey) {
     return {
+      raw: null,
+      manifestSha256: expectedHash,
+      signature: signature.trim(),
       verification: { hash: "valid", signature: "invalid" },
       trustKeySource: configuredTrustKeySource,
     };
   }
   return {
+    raw,
+    manifestSha256: expectedHash,
+    signature: signature.trim(),
     verification: { hash: "valid", signature: "valid" },
     trustKeySource: verifiedKey.source,
   };
@@ -398,10 +460,33 @@ export async function getSatMainnetSyncStatus(
   const manifestUrl = opts?.manifestUrl?.trim() || resolveManifestUrl(env);
   const checkedAt = new Date().toISOString();
   try {
-    const raw = await fetchText(manifestUrl, { required: true });
-    if (raw == null) {
-      throw new Error("manifest response was empty");
+    const verifiedManifest = await fetchVerifiedManifest({ manifestUrl, env });
+    const { verification, trustKeySource } = verifiedManifest;
+    if (
+      verification.hash !== "valid" ||
+      verification.signature !== "valid" ||
+      verifiedManifest.raw == null ||
+      verifiedManifest.manifestSha256 == null ||
+      verifiedManifest.signature == null
+    ) {
+      return {
+        ok: false,
+        state: "failed",
+        manifestUrl,
+        checkedAt,
+        message: "Mainnet manifest is not verified.",
+        localIds: readLocalIds(env),
+        officialIds: null,
+        needsSync: false,
+        verification,
+        trustKeySource,
+        error:
+          trustKeySource === "missing"
+            ? "This Fased release has no trusted SAT mainnet manifest key. Update Fased before syncing or mining."
+            : "Signed manifest verification failed.",
+      };
     }
+    const raw = verifiedManifest.raw;
     const manifest = JSON.parse(raw) as RawManifest;
     if (readString(manifest.schema) !== "sat-mainnet-addresses.v1") {
       throw new Error("manifest schema is not sat-mainnet-addresses.v1");
@@ -421,38 +506,15 @@ export async function getSatMainnetSyncStatus(
         localIds: readLocalIds(env),
         officialIds: null,
         needsSync: false,
-        verification: { hash: "not_required", signature: "not_required" },
-        trustKeySource: "not_required",
+        verification,
+        trustKeySource,
       };
     }
     const officialIds = readOfficialIds(manifest);
     if (!officialIds) {
       throw new Error("live manifest is missing the complete SAT runtime id tuple");
     }
-    const verifiedManifest = await verifyLiveManifest({ manifestUrl, raw, env });
-    const { verification, trustKeySource } = verifiedManifest;
     const localIds = readLocalIds(env);
-    if (verification.hash !== "valid" || verification.signature !== "valid") {
-      return {
-        ok: false,
-        state: "failed",
-        manifestUrl,
-        checkedAt,
-        manifestStatus,
-        releaseTag: readString(manifest.releaseTag) || undefined,
-        sourceCommit: readString(manifest.sourceCommit) || undefined,
-        message: "Mainnet manifest is live but not verified.",
-        localIds,
-        officialIds,
-        needsSync: false,
-        verification,
-        trustKeySource,
-        error:
-          trustKeySource === "missing"
-            ? "This Fased release has no trusted SAT mainnet manifest key. Update Fased before syncing or mining."
-            : "Signed manifest verification failed.",
-      };
-    }
     const signerAcknowledgement = await readSignerAcknowledgement(env, opts?.signerAcknowledgement);
     let releaseDescriptor;
     try {
@@ -481,6 +543,12 @@ export async function getSatMainnetSyncStatus(
         error: error instanceof Error ? error.message : String(error),
       };
     }
+    opts?.verifiedManifestSink?.({
+      raw,
+      manifestSha256: verifiedManifest.manifestSha256,
+      signature: verifiedManifest.signature,
+      signerAcknowledgementState: signerAcknowledgement?.state ?? null,
+    });
     const installedDescriptorDigest = await readInstalledDescriptorDigest(env);
     const synced =
       signerAcknowledgement?.state === "ACTIVE" &&
@@ -529,12 +597,23 @@ export async function syncSatMainnetRuntimeIds(
   opts?: SatMainnetSyncOptions,
 ): Promise<SatMainnetSyncStatus> {
   const env = opts?.env ?? process.env;
+  let verifiedManifest:
+    | {
+        raw: string;
+        manifestSha256: string;
+        signature: string;
+        signerAcknowledgementState: string | null;
+      }
+    | undefined;
   const before = await getSatMainnetSyncStatus({
     env,
     manifestUrl: opts?.manifestUrl,
     signerAcknowledgement: opts?.signerAcknowledgement,
+    verifiedManifestSink: (manifest) => {
+      verifiedManifest = manifest;
+    },
   });
-  if (before.state !== "available" || !before.officialIds) {
+  if (before.state !== "available" || !before.officialIds || !verifiedManifest) {
     return before.state === "synced"
       ? before
       : {
@@ -546,61 +625,25 @@ export async function syncSatMainnetRuntimeIds(
               : before.message || "SAT mainnet manifest is not ready to apply.",
         };
   }
-  const manifestUrl = opts?.manifestUrl?.trim() || resolveManifestUrl(env);
-  const rawManifest = await fetchText(manifestUrl, { required: true });
-  const manifestSha256 = parseSha256(await fetchText(`${manifestUrl}.sha256`, { required: true }));
-  const signature = await fetchText(`${manifestUrl}.sig`, { required: true });
-  if (!rawManifest || !manifestSha256 || !signature?.trim()) {
-    return {
-      ...before,
-      ok: false,
-      state: "failed",
-      message: "Verified SAT manifest artifacts could not be persisted for the native signer.",
-      error: "signed SAT runtime manifest, hash, or detached signature is missing",
-    };
-  }
-  const finalVerification = await verifyLiveManifest({ manifestUrl, raw: rawManifest, env });
-  if (
-    finalVerification.verification.hash !== "valid" ||
-    finalVerification.verification.signature !== "valid" ||
-    sha256Hex(rawManifest) !== manifestSha256
-  ) {
-    return {
-      ...before,
-      ok: false,
-      state: "failed",
-      message: "SAT manifest changed before signer runtime persistence.",
-      verification: finalVerification.verification,
-      trustKeySource: finalVerification.trustKeySource,
-      error: "signed SAT runtime manifest verification raced or failed",
-    };
-  }
-  const persistedManifest = JSON.parse(rawManifest) as RawManifest;
-  if (!idsEqual(readOfficialIds(persistedManifest), before.officialIds)) {
-    return {
-      ...before,
-      ok: false,
-      state: "failed",
-      message: "SAT manifest IDs changed before signer runtime persistence.",
-      error: "signed SAT runtime ID tuple changed during sync",
-    };
-  }
   const runtimeFile = await writeRuntimeIds(before.officialIds, env, {
-    rawManifest,
-    manifestSha256,
-    signature,
+    rawManifest: verifiedManifest.raw,
+    manifestSha256: verifiedManifest.manifestSha256,
+    signature: verifiedManifest.signature,
   });
-  const after = await getSatMainnetSyncStatus({
-    env,
-    manifestUrl: opts?.manifestUrl,
-    signerAcknowledgement: opts?.signerAcknowledgement,
-  });
+  const installedDescriptorDigest = await readInstalledDescriptorDigest(env);
+  const synced =
+    verifiedManifest.signerAcknowledgementState === "ACTIVE" &&
+    installedDescriptorDigest === before.releaseDescriptorDigest;
   return {
-    ...after,
+    ...before,
+    state: synced ? "synced" : "available",
+    needsSync: !synced,
     runtimeFile,
-    message:
-      after.state === "synced"
-        ? "SAT mainnet IDs synced."
-        : after.message || "SAT mainnet IDs were written, but status did not confirm synced state.",
+    message: synced
+      ? "SAT mainnet IDs synced."
+      : installedDescriptorDigest === before.releaseDescriptorDigest
+        ? "Signed SAT release is installed, but its generated Mining contract remains inactive."
+        : "SAT mainnet IDs were written, but local descriptor persistence did not verify.",
+    installedDescriptorDigest,
   };
 }
