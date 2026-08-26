@@ -18,6 +18,12 @@ import {
 const execFileAsync = promisify(execFile);
 const DIGEST_A = `sha256:${"11".repeat(32)}`;
 const DIGEST_B = `sha256:${"22".repeat(32)}`;
+const STATE_IDENTITY = {
+  cluster: "devnet" as const,
+  programId: "sat-program-generation-2",
+  protocolGeneration: "sat-protocol-generation-2",
+  walletId: "mining-1",
+};
 
 describe("SAT durable submission ledger", () => {
   let stateDir: string;
@@ -50,6 +56,46 @@ describe("SAT durable submission ledger", () => {
     );
   });
 
+  it("isolates durable requests by cluster, program, protocol generation, and Wallet", async () => {
+    const otherIdentities = [
+      { ...STATE_IDENTITY, cluster: "mainnet-beta" as const },
+      { ...STATE_IDENTITY, programId: "sat-program-generation-3" },
+      { ...STATE_IDENTITY, protocolGeneration: "sat-protocol-generation-3" },
+      { ...STATE_IDENTITY, walletId: "mining-2" },
+    ];
+    const shared = {
+      workflowId: "cycle:42:commit",
+      operationKey: "commitCycle:accounts",
+      intentDigest: DIGEST_A,
+      action: "commitCycle",
+      env,
+    };
+
+    const exact = await claimSatSubmission({
+      ...STATE_IDENTITY,
+      ...shared,
+      owner: "worker-exact",
+    });
+    for (const [index, identity] of otherIdentities.entries()) {
+      const isolated = await claimSatSubmission({
+        ...identity,
+        ...shared,
+        owner: `worker-isolated-${index}`,
+      });
+      expect(isolated.record.requestId).not.toBe(exact.record.requestId);
+      expect(resolveSatSubmissionLedgerPath({ ...STATE_IDENTITY, env })).not.toBe(
+        resolveSatSubmissionLedgerPath({ ...identity, env }),
+      );
+      await expect(
+        readSatSubmission({
+          ...identity,
+          requestId: exact.record.requestId,
+          env,
+        }),
+      ).resolves.toBeNull();
+    }
+  });
+
   it("parses descriptor-pinned migration bytes without reopening a ledger path", () => {
     expect(
       parseSatSubmissionRecordsBytes(
@@ -78,7 +124,7 @@ describe("SAT durable submission ledger", () => {
 
   it("serializes concurrent workers and lets the waiter claim after the exact owner releases", async () => {
     const first = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:42:commit",
       operationKey: "commitCycle:accounts",
       intentDigest: DIGEST_A,
@@ -87,7 +133,7 @@ describe("SAT durable submission ledger", () => {
       owner: "worker-a",
     });
     const second = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:42:commit",
       operationKey: "commitCycle:accounts",
       intentDigest: DIGEST_A,
@@ -100,7 +146,7 @@ describe("SAT durable submission ledger", () => {
     expect(second).toMatchObject({ created: false, claimed: false });
 
     await updateSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       requestId: first.record.requestId,
       intentDigest: DIGEST_A,
       state: "confirmed",
@@ -110,7 +156,7 @@ describe("SAT durable submission ledger", () => {
       env,
     });
     const retry = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:42:commit",
       operationKey: "commitCycle:accounts",
       intentDigest: DIGEST_A,
@@ -124,7 +170,7 @@ describe("SAT durable submission ledger", () => {
 
   it("allocates a new request only for an explicitly retryable definitive failure", async () => {
     const first = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:42:lookup:extend",
       operationKey: "extend:lookup-table",
       intentDigest: DIGEST_A,
@@ -134,7 +180,7 @@ describe("SAT durable submission ledger", () => {
       owner: "worker-a",
     });
     await updateSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       requestId: first.record.requestId,
       intentDigest: DIGEST_A,
       state: "failed",
@@ -146,7 +192,7 @@ describe("SAT durable submission ledger", () => {
     });
 
     const retry = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:42:lookup:extend",
       operationKey: "extend:lookup-table",
       intentDigest: DIGEST_A,
@@ -160,7 +206,7 @@ describe("SAT durable submission ledger", () => {
     expect(retry.record.operationKey).toBe("extend:lookup-table:retry:1");
 
     const stable = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:42:lookup:extend",
       operationKey: "extend:lookup-table",
       intentDigest: DIGEST_A,
@@ -178,7 +224,7 @@ describe("SAT durable submission ledger", () => {
         { length: 24 },
         async (_, index) =>
           await claimSatSubmission({
-            walletId: "mining-1",
+            ...STATE_IDENTITY,
             workflowId: `cycle:${index}:open`,
             operationKey: `openCycle:cycle-${index}`,
             intentDigest: `sha256:${index.toString(16).padStart(2, "0").repeat(32)}`,
@@ -194,7 +240,7 @@ describe("SAT durable submission ledger", () => {
       claims.map(
         async (claim) =>
           await readSatSubmission({
-            walletId: "mining-1",
+            ...STATE_IDENTITY,
             requestId: claim.record.requestId,
             env,
           }),
@@ -205,7 +251,7 @@ describe("SAT durable submission ledger", () => {
 
   it("fails closed when one idempotency key is reused for a different immutable intent", async () => {
     await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "manual-key",
       operationKey: "deposit:capital-account",
       intentDigest: DIGEST_A,
@@ -215,7 +261,7 @@ describe("SAT durable submission ledger", () => {
 
     await expect(
       claimSatSubmission({
-        walletId: "mining-1",
+        ...STATE_IDENTITY,
         workflowId: "manual-key",
         operationKey: "deposit:capital-account",
         intentDigest: DIGEST_B,
@@ -227,7 +273,7 @@ describe("SAT durable submission ledger", () => {
 
   it("rejects state regression after a potentially broadcast operation", async () => {
     const claim = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:18:commit",
       operationKey: "commitCycle:accounts",
       intentDigest: DIGEST_A,
@@ -236,7 +282,7 @@ describe("SAT durable submission ledger", () => {
       owner: "worker-a",
     });
     await updateSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       requestId: claim.record.requestId,
       intentDigest: DIGEST_A,
       state: "unknown",
@@ -247,7 +293,7 @@ describe("SAT durable submission ledger", () => {
 
     await expect(
       updateSatSubmission({
-        walletId: "mining-1",
+        ...STATE_IDENTITY,
         requestId: claim.record.requestId,
         intentDigest: DIGEST_A,
         state: "reserved",
@@ -260,7 +306,7 @@ describe("SAT durable submission ledger", () => {
   it("recovers a stale lease after its bounded expiry", async () => {
     const shortLeaseEnv = { ...env, FASED_SAT_SUBMISSION_LEASE_MS: "75" };
     const first = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:7:reveal",
       operationKey: "reveal:cycle-7",
       intentDigest: DIGEST_A,
@@ -270,7 +316,7 @@ describe("SAT durable submission ledger", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 100));
     const recovered = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:7:reveal",
       operationKey: "reveal:cycle-7",
       intentDigest: DIGEST_A,
@@ -287,6 +333,9 @@ describe("SAT durable submission ledger", () => {
     const script = `
       const ledger = await import(${JSON.stringify(moduleUrl)});
       const claim = await ledger.claimSatSubmission({
+        cluster: "devnet",
+        programId: "sat-program-generation-2",
+        protocolGeneration: "sat-protocol-generation-2",
         walletId: "mining-1",
         workflowId: "cycle:99:settle:0:0",
         operationKey: "settle:cycle-99-page-0",
@@ -304,7 +353,7 @@ describe("SAT durable submission ledger", () => {
     );
 
     const recovered = await claimSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:99:settle:0:0",
       operationKey: "settle:cycle-99-page-0",
       intentDigest: DIGEST_A,
@@ -313,7 +362,7 @@ describe("SAT durable submission ledger", () => {
       owner: "parent-after-restart",
     });
     const expectedRequestId = buildSatSubmissionRequestId({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       workflowId: "cycle:99:settle:0:0",
       operationKey: "settle:cycle-99-page-0",
     });
@@ -321,11 +370,11 @@ describe("SAT durable submission ledger", () => {
     expect(recovered.record.requestId).toBe(expectedRequestId);
 
     const persisted = await readSatSubmission({
-      walletId: "mining-1",
+      ...STATE_IDENTITY,
       requestId: expectedRequestId,
       env,
     });
     expect(persisted?.attempts).toBe(2);
-    expect(resolveSatSubmissionLedgerPath({ walletId: "mining-1", env })).toContain(stateDir);
+    expect(resolveSatSubmissionLedgerPath({ ...STATE_IDENTITY, env })).toContain(stateDir);
   });
 });

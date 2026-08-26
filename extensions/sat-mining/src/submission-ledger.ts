@@ -2,6 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveStateDir, withFileLock, type FileLockOptions } from "fased/plugin-sdk/sat-runtime";
+import {
+  assertSatMiningStateIdentity,
+  normalizeSatMiningStateIdentity,
+  satMiningStateIdentityKey,
+  type SatMiningStateIdentity,
+} from "./state-identity.js";
 
 export type SatSubmissionSignerState =
   | "prepared"
@@ -47,6 +53,9 @@ export type SatSubmissionClaim = {
 };
 
 export type SatSubmissionClaimParams = {
+  cluster: SatMiningStateIdentity["cluster"];
+  programId: string;
+  protocolGeneration: string;
   walletId: string;
   workflowId: string;
   operationKey: string;
@@ -58,17 +67,26 @@ export type SatSubmissionClaimParams = {
 };
 
 export type SatSubmissionReadParams = {
+  cluster: SatMiningStateIdentity["cluster"];
+  programId: string;
+  protocolGeneration: string;
   walletId: string;
   requestId: string;
   env?: NodeJS.ProcessEnv;
 };
 
 export type SatSubmissionReadAllParams = {
+  cluster: SatMiningStateIdentity["cluster"];
+  programId: string;
+  protocolGeneration: string;
   walletId: string;
   env?: NodeJS.ProcessEnv;
 };
 
 export type SatSubmissionUpdateParams = {
+  cluster: SatMiningStateIdentity["cluster"];
+  programId: string;
+  protocolGeneration: string;
   walletId: string;
   requestId: string;
   intentDigest: string;
@@ -81,6 +99,7 @@ export type SatSubmissionUpdateParams = {
 };
 
 export type SatSubmissionLedgerAdapter = {
+  stateIdentity: SatMiningStateIdentity;
   walletId: string;
   claim(params: SatSubmissionClaimParams): Promise<SatSubmissionClaim>;
   read(params: SatSubmissionReadParams): Promise<SatSubmissionRecord | null>;
@@ -88,7 +107,9 @@ export type SatSubmissionLedgerAdapter = {
   update(params: SatSubmissionUpdateParams): Promise<SatSubmissionRecord>;
 };
 
-type SatSubmissionLedgerAdapterResolver = (walletId: string) => SatSubmissionLedgerAdapter | null;
+type SatSubmissionLedgerAdapterResolver = (
+  identity: SatMiningStateIdentity,
+) => SatSubmissionLedgerAdapter | null;
 
 const DEFAULT_LOCK_OPTIONS: FileLockOptions = {
   retries: {
@@ -110,12 +131,13 @@ export function setSatSubmissionLedgerAdapterResolver(
   submissionLedgerAdapterResolver = resolver;
 }
 
-function resolveSubmissionLedgerAdapter(walletId: string): SatSubmissionLedgerAdapter | null {
-  const adapter = submissionLedgerAdapterResolver?.(walletId) ?? null;
-  if (adapter && adapter.walletId !== walletId) {
-    throw new Error(
-      `SAT submission ledger adapter wallet mismatch: expected ${walletId}, received ${adapter.walletId}`,
-    );
+function resolveSubmissionLedgerAdapter(
+  identity: SatMiningStateIdentity,
+): SatSubmissionLedgerAdapter | null {
+  const normalized = normalizeSatMiningStateIdentity(identity);
+  const adapter = submissionLedgerAdapterResolver?.(normalized) ?? null;
+  if (adapter) {
+    assertSatMiningStateIdentity(normalized, adapter.stateIdentity);
   }
   return adapter;
 }
@@ -193,15 +215,21 @@ function normalizeStateKey(value: string): string {
 }
 
 export function resolveSatSubmissionLedgerPath(params: {
+  cluster: SatMiningStateIdentity["cluster"];
+  programId: string;
+  protocolGeneration: string;
   walletId: string;
   env?: NodeJS.ProcessEnv;
 }): string {
   const env = params.env ?? process.env;
+  const identity = normalizeSatMiningStateIdentity(params);
   return path.join(
     resolveStateDir(env),
     "sat-mining",
     "wallets",
-    normalizeStateKey(params.walletId),
+    normalizeStateKey(identity.walletId),
+    "deployments",
+    satMiningStateIdentityKey(identity),
     "submission-ledger.json",
   );
 }
@@ -347,14 +375,21 @@ export function assertSatSubmissionStateTransition(
 }
 
 export function buildSatSubmissionRequestId(params: {
+  cluster: SatMiningStateIdentity["cluster"];
+  programId: string;
+  protocolGeneration: string;
   walletId: string;
   workflowId: string;
   operationKey: string;
 }): string {
+  const identity = normalizeSatMiningStateIdentity(params);
   const digest = sha256(
     JSON.stringify([
-      "fased-sat-submission-v1",
-      params.walletId,
+      "fased-sat-submission-v2",
+      identity.cluster,
+      identity.programId,
+      identity.protocolGeneration,
+      identity.walletId,
       params.workflowId,
       params.operationKey,
     ]),
@@ -365,12 +400,12 @@ export function buildSatSubmissionRequestId(params: {
 export async function claimSatSubmission(
   params: SatSubmissionClaimParams,
 ): Promise<SatSubmissionClaim> {
-  const adapter = resolveSubmissionLedgerAdapter(params.walletId);
+  const adapter = resolveSubmissionLedgerAdapter(params);
   if (adapter) {
     return await adapter.claim(params);
   }
   const env = params.env ?? process.env;
-  const filePath = resolveSatSubmissionLedgerPath({ walletId: params.walletId, env });
+  const filePath = resolveSatSubmissionLedgerPath({ ...params, env });
   const owner = params.owner ?? `${process.pid}:${randomUUID()}`;
   return await withSatSubmissionLedgerLock(filePath, async () => {
     const ledger = await readLedger(filePath);
@@ -444,7 +479,7 @@ export async function claimSatSubmission(
 export async function readSatSubmission(
   params: SatSubmissionReadParams,
 ): Promise<SatSubmissionRecord | null> {
-  const adapter = resolveSubmissionLedgerAdapter(params.walletId);
+  const adapter = resolveSubmissionLedgerAdapter(params);
   if (adapter) {
     return await adapter.read(params);
   }
@@ -458,7 +493,7 @@ export async function readSatSubmission(
 export async function readSatSubmissionRecords(
   params: SatSubmissionReadAllParams,
 ): Promise<SatSubmissionRecord[]> {
-  const adapter = resolveSubmissionLedgerAdapter(params.walletId);
+  const adapter = resolveSubmissionLedgerAdapter(params);
   if (adapter) {
     return await adapter.readAll(params);
   }
@@ -474,7 +509,7 @@ export async function readSatSubmissionRecords(
 export async function updateSatSubmission(
   params: SatSubmissionUpdateParams,
 ): Promise<SatSubmissionRecord> {
-  const adapter = resolveSubmissionLedgerAdapter(params.walletId);
+  const adapter = resolveSubmissionLedgerAdapter(params);
   if (adapter) {
     return await adapter.update(params);
   }
@@ -518,6 +553,9 @@ export async function updateSatSubmission(
 }
 
 export async function waitForSatSubmissionLease(params: {
+  cluster: SatMiningStateIdentity["cluster"];
+  programId: string;
+  protocolGeneration: string;
   walletId: string;
   requestId: string;
   env?: NodeJS.ProcessEnv;

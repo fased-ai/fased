@@ -394,6 +394,7 @@ async function executeTypedSatLookupOperation(params: {
   return await executeTypedSatIntent({
     socketPath: params.context.socketPath,
     walletId: params.context.walletId,
+    stateProgramId: resolveSatProgramIdFromEnv(params.context.effectiveEnv),
     action: params.action,
     lookupTable: {
       address: params.address,
@@ -795,6 +796,7 @@ async function submitInstructionViaLocalSigner(
   const submitted = await executeTypedSatIntent({
     socketPath: context.socketPath,
     walletId: context.walletId,
+    stateProgramId: resolveSatProgramIdFromEnv(context.effectiveEnv),
     action: request.action,
     instruction: request,
     cluster: resolveSatCluster(params.cfg),
@@ -879,6 +881,7 @@ async function submitInstructionBatch(params: {
   const submitted = await executeTypedSatIntent({
     socketPath: context.socketPath,
     walletId: context.walletId,
+    stateProgramId: resolveSatProgramIdFromEnv(context.effectiveEnv),
     action: "cleanupBatch",
     instructions,
     cluster: resolveSatCluster(params.cfg),

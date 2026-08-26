@@ -30,6 +30,7 @@ vi.mock("./submission-ledger.js", () => ({
   waitForSatSubmissionLease,
 }));
 
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
 import {
   assertSatSignerOperationIdentity,
   executeTypedSatIntent,
@@ -160,6 +161,7 @@ describe("SAT submission service boundary", () => {
       executeTypedSatIntent({
         socketPath: "/run/fased-signerd.sock",
         walletId: "wallet-mining",
+        stateProgramId: "program-id",
         action: "initMinerCapital",
         instruction,
         cluster: "devnet",
@@ -178,6 +180,9 @@ describe("SAT submission service boundary", () => {
     ]);
     expect(updateSatSubmission).toHaveBeenCalledWith(
       expect.objectContaining({
+        cluster: "devnet",
+        programId: "program-id",
+        protocolGeneration: SAT_RUNTIME_PROTOCOL_GENERATION,
         walletId: "wallet-mining",
         requestId: "request-exact",
         state: "confirmed",
@@ -221,6 +226,7 @@ describe("SAT submission service boundary", () => {
       executeTypedSatIntent({
         socketPath: "/run/fased-signerd.sock",
         walletId: "wallet-mining",
+        stateProgramId: "program-id",
         action: "initMinerCapital",
         instruction,
         cluster: "devnet",

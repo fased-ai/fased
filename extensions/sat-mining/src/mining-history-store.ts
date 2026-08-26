@@ -17,6 +17,11 @@ import type {
   SatPlannerOutcomeMemory,
 } from "./audit-store.js";
 import {
+  assertSatMiningStateIdentity,
+  normalizeSatMiningStateIdentity,
+  type SatMiningStateIdentity,
+} from "./state-identity.js";
+import {
   assertSatSubmissionStateTransition,
   buildSatSubmissionRequestId,
   normalizeSatSubmissionRecord,
@@ -312,6 +317,11 @@ function migrationScope(scope: SatMiningHistoryScope): SatMiningHistoryScope {
   if (provable) {
     return normalized;
   }
+  return unboundMigrationScope(normalized);
+}
+
+function unboundMigrationScope(scope: SatMiningHistoryScope): SatMiningHistoryScope {
+  const normalized = normalizeScope(scope);
   return {
     walletId: normalized.walletId,
     authority: null,
@@ -368,6 +378,30 @@ function writeMigrationActivation(db: DatabaseSync, scope: SatMiningHistoryScope
     migrationActivationKey(scope),
     migrationActivationValue(scope),
   );
+}
+
+function readActivatedScopeId(db: DatabaseSync): number {
+  const rows = db
+    .prepare("SELECT key FROM mining_meta WHERE key LIKE ? ORDER BY key ASC")
+    .all(`${MIGRATION_ACTIVATION_PREFIX}%`) as SqlRow[];
+  const match =
+    rows.length === 1
+      ? new RegExp(
+          `^${MIGRATION_ACTIVATION_PREFIX}([a-f0-9]{64}):schema-${String(MINING_HISTORY_SCHEMA_VERSION)}$`,
+          "u",
+        ).exec(String(rows[0]?.key ?? ""))
+      : null;
+  if (!match) {
+    throw new Error("Mining history migration activation marker is malformed or mismatched");
+  }
+  const row = db.prepare("SELECT id FROM history_scope WHERE scope_key=?").get(match[1]) as
+    | SqlRow
+    | undefined;
+  const scopeId = Number(row?.id);
+  if (!Number.isSafeInteger(scopeId) || scopeId <= 0) {
+    throw new Error("Mining history activated scope is missing");
+  }
+  return scopeId;
 }
 
 function bindingKey(scope: SatMiningHistoryScope): string {
@@ -2656,6 +2690,7 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
         const inputs = await materializeArchivedMigrationInput(migration, archive);
         const scopeId = ensureScope(db, normalizedScope);
         const migrationScopeId = ensureScope(db, migrationScope(normalizedScope));
+        const unboundOperationalScopeId = ensureScope(db, unboundMigrationScope(normalizedScope));
         for (const source of inputs?.sources ?? []) {
           const archived = archive?.archivedSources.get(path.resolve(source.path));
           // The index always declares the legacy topology. Missing optional
@@ -2667,7 +2702,10 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
           await importNdjsonSource(db, migrationScopeId, source, counters, source.path, archived);
         }
         importRuntimeRecords(db, migrationScopeId, inputs, counters);
-        importOperationalRecords(db, scopeId, inputs);
+        // Wallet-only JSON has no cluster/program/generation proof. Preserve
+        // it under the explicit legacy scope; never reinterpret commitments,
+        // recovery state, or claims as belonging to the requested deployment.
+        importOperationalRecords(db, unboundOperationalScopeId, inputs);
         bindLegacyArchiveReceipt(db, archive);
         writeMigrationActivation(db, normalizedScope);
       };
@@ -2801,10 +2839,8 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
         ? (db.prepare("SELECT id FROM history_scope WHERE scope_key=?").get(params.scopeKey) as
             | SqlRow
             | undefined)
-        : (db
-            .prepare("SELECT id FROM history_scope ORDER BY created_at_ms DESC, id DESC LIMIT 1")
-            .get() as SqlRow | undefined);
-      const scopeId = Number(row?.id);
+        : undefined;
+      const scopeId = params.scopeKey ? Number(row?.id) : readActivatedScopeId(db);
       if (!Number.isSafeInteger(scopeId) || scopeId <= 0) {
         throw new Error("Mining history has no readable scope");
       }
@@ -2821,6 +2857,19 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
 
   get walletId(): string {
     return this.scope.walletId;
+  }
+
+  get stateIdentity(): SatMiningStateIdentity {
+    return normalizeSatMiningStateIdentity({
+      cluster: this.scope.network as SatMiningStateIdentity["cluster"],
+      programId: this.scope.programId ?? "",
+      protocolGeneration: this.scope.protocolVersion ?? "",
+      walletId: this.scope.walletId,
+    });
+  }
+
+  private assertSubmissionStateIdentity(identity: SatMiningStateIdentity): void {
+    assertSatMiningStateIdentity(this.stateIdentity, identity);
   }
 
   getScopeKey(): string {
@@ -3414,11 +3463,7 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
   }
 
   async claim(params: SatSubmissionClaimParams): Promise<SatSubmissionClaim> {
-    if (params.walletId !== this.walletId) {
-      throw new Error(
-        `Mining submission ledger is bound to ${this.walletId}, not ${params.walletId}`,
-      );
-    }
+    this.assertSubmissionStateIdentity(params);
     return await this.enqueueWrite(() => {
       const env = params.env ?? process.env;
       const owner = params.owner ?? `${process.pid}:${randomUUID()}`;
@@ -3538,11 +3583,7 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
   }
 
   async read(params: SatSubmissionReadParams): Promise<SatSubmissionRecord | null> {
-    if (params.walletId !== this.walletId) {
-      throw new Error(
-        `Mining submission ledger is bound to ${this.walletId}, not ${params.walletId}`,
-      );
-    }
+    this.assertSubmissionStateIdentity(params);
     await this.flush();
     return readSubmissionRecordRow(
       this.db
@@ -3556,11 +3597,7 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
   }
 
   async readAll(params: SatSubmissionReadAllParams): Promise<SatSubmissionRecord[]> {
-    if (params.walletId !== this.walletId) {
-      throw new Error(
-        `Mining submission ledger is bound to ${this.walletId}, not ${params.walletId}`,
-      );
-    }
+    this.assertSubmissionStateIdentity(params);
     await this.flush();
     const countRow = this.db
       .prepare("SELECT COUNT(*) AS count FROM submission_record WHERE scope_id=?")
@@ -3590,11 +3627,7 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
   }
 
   async update(params: SatSubmissionUpdateParams): Promise<SatSubmissionRecord> {
-    if (params.walletId !== this.walletId) {
-      throw new Error(
-        `Mining submission ledger is bound to ${this.walletId}, not ${params.walletId}`,
-      );
-    }
+    this.assertSubmissionStateIdentity(params);
     return await this.enqueueWrite(() => {
       this.db.exec("BEGIN IMMEDIATE");
       try {
