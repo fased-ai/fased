@@ -255,6 +255,7 @@ vi.mock("./src/rpc-read.js", async (importOriginal) => {
     })),
     inspectSatMinerCapital: vi.fn(async () => ({
       address: "miner-capital-1",
+      version: 2,
       authority: "miner-wallet-1",
       fundedLamports: "500000000",
       lockedLamports: "0",
@@ -2113,6 +2114,7 @@ describe("sat-mining plugin config persistence", () => {
     const rpcRead = await import("./src/rpc-read.js");
     vi.mocked(rpcRead.inspectSatMinerCapital).mockResolvedValueOnce({
       address: "capital",
+      version: 2,
       authority: "miner-wallet-1",
       fundedLamports: "1000000000",
       lockedLamports: "0",
@@ -2750,6 +2752,7 @@ describe("sat-mining plugin config persistence", () => {
       const { satOps } = await import("./src/sat-ops.js");
       inspectSatOpsCapitalSpy = vi.spyOn(satOps, "inspectSatMinerCapital").mockResolvedValue({
         address: "miner-capital-1",
+        version: 2,
         authority: "miner-wallet-1",
         fundedLamports: "2494717813",
         lockedLamports: "2475000000",
@@ -2761,6 +2764,7 @@ describe("sat-mining plugin config persistence", () => {
       vi.mocked(rpcRead.inspectSatMinerCapital)
         .mockResolvedValueOnce({
           address: "miner-capital-1",
+          version: 2,
           authority: "miner-wallet-1",
           fundedLamports: "2494717813",
           lockedLamports: "2475000000",
@@ -2771,6 +2775,7 @@ describe("sat-mining plugin config persistence", () => {
         })
         .mockResolvedValueOnce({
           address: "miner-capital-1",
+          version: 2,
           authority: "miner-wallet-1",
           fundedLamports: "2494717813",
           lockedLamports: "2475000000",
@@ -2912,6 +2917,7 @@ describe("sat-mining plugin config persistence", () => {
       const { satOps } = await import("./src/sat-ops.js");
       inspectSatOpsCapitalSpy = vi.spyOn(satOps, "inspectSatMinerCapital").mockResolvedValue({
         address: "miner-capital-1",
+        version: 2,
         authority: "miner-wallet-1",
         fundedLamports: "9969049396",
         lockedLamports: "9945000000",
@@ -3708,6 +3714,7 @@ describe("sat-mining plugin config persistence", () => {
       const inspectMinerCapitalMock = vi.mocked(rpcRead.inspectSatMinerCapital);
       inspectMinerCapitalMock.mockImplementation(async () => ({
         address: "capital",
+        version: 2,
         authority: "miner-wallet-1",
         fundedLamports: "5600000000",
         lockedLamports: "0",
@@ -3794,6 +3801,7 @@ describe("sat-mining plugin config persistence", () => {
       const rpcRead = await import("./src/rpc-read.js");
       vi.mocked(rpcRead.inspectSatMinerCapital).mockImplementation(async () => ({
         address: "miner-capital-1",
+        version: 2,
         authority: "miner-wallet-1",
         fundedLamports: "500000000",
         lockedLamports: "0",
@@ -3812,6 +3820,7 @@ describe("sat-mining plugin config persistence", () => {
       const rpcRead = await import("./src/rpc-read.js");
       vi.mocked(rpcRead.inspectSatMinerCapital).mockResolvedValueOnce({
         address: "capital",
+        version: 2,
         authority: "miner-wallet-1",
         fundedLamports: "5600000000",
         lockedLamports: "3050000000",
@@ -4683,6 +4692,7 @@ describe("sat-mining plugin config persistence", () => {
           (async () =>
             ({
               address: "miner-capital-1",
+              version: 2,
               authority: "miner-wallet-1",
               fundedLamports: "500000000",
               lockedLamports: "0",
@@ -6717,6 +6727,90 @@ describe("sat-mining durable history startup", () => {
       });
     } finally {
       await mainService?.stop?.({});
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps legacy capital drainable while blocking deposits and fresh cycle entry before submission", async () => {
+    const rpcRead = await import("./src/rpc-read.js");
+    const solanaSubmit = await import("./src/solana-submit.js");
+    const walletRegistry = await import("../../src/wallet/wallet-provider-registry.js");
+    const inspectCapitalMock = vi.mocked(rpcRead.inspectSatMinerCapital);
+    const registryMock = vi.mocked(walletRegistry.readWalletProviderRegistry);
+    const originalInspectCapitalImpl = inspectCapitalMock.getMockImplementation();
+    const originalRegistryImpl = registryMock.getMockImplementation();
+    await registerTransitionWallets();
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "sat-legacy-drain-only-"));
+    const { gatewayMethods, mainService } = await registerMiningPlugin("wallet-a");
+    const legacyCapital = {
+      address: "legacy-miner-capital-1",
+      version: 1,
+      authority: "miner-wallet-1",
+      fundedLamports: "500000000",
+      lockedLamports: "0",
+      freeLamports: "500000000",
+      activeCommitLamports: "250000000",
+      firstPendingCycleId: 0,
+      lastPendingCycleId: 0,
+    };
+    inspectCapitalMock.mockResolvedValue(legacyCapital);
+    vi.mocked(solanaSubmit.submitSatDepositMinerCapital).mockClear();
+    vi.mocked(solanaSubmit.submitSatSetActiveCommit).mockClear();
+    vi.mocked(solanaSubmit.submitSatCommitCycle).mockClear();
+    vi.mocked(solanaSubmit.submitSatWithdrawMinerCapital).mockClear();
+    const invoke = async (method: string, params: Record<string, unknown>) => {
+      let response: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
+      await gatewayMethods.get(method)!.handler({
+        params,
+        respond: (ok, payload, error) => {
+          response = { ok, payload, error };
+        },
+      });
+      return response;
+    };
+    try {
+      await mainService?.start?.({
+        config: {},
+        stateDir,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      });
+
+      await expect(invoke("sat.depositMinerCapital", { lamports: 1 })).resolves.toMatchObject({
+        ok: false,
+        error: { message: expect.stringMatching(/blocked for legacy generation 1/u) },
+      });
+      await expect(
+        invoke("sat.setActiveCommit", { lamports: 250_000_000, persistConfig: false }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { message: expect.stringMatching(/blocked for legacy generation 1/u) },
+      });
+      await expect(
+        invoke("sat.commitCycle", { cycleId: 7, commitmentHex: "ab".repeat(32) }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { message: expect.stringMatching(/blocked for legacy generation 1/u) },
+      });
+      await expect(invoke("sat.withdrawMinerCapital", { lamports: 1 })).resolves.toMatchObject({
+        ok: true,
+      });
+
+      expect(vi.mocked(solanaSubmit.submitSatDepositMinerCapital)).not.toHaveBeenCalled();
+      expect(vi.mocked(solanaSubmit.submitSatSetActiveCommit)).not.toHaveBeenCalled();
+      expect(vi.mocked(solanaSubmit.submitSatCommitCycle)).not.toHaveBeenCalled();
+      expect(vi.mocked(solanaSubmit.submitSatWithdrawMinerCapital)).toHaveBeenCalledOnce();
+    } finally {
+      if (originalInspectCapitalImpl) {
+        inspectCapitalMock.mockImplementation(originalInspectCapitalImpl);
+      } else {
+        inspectCapitalMock.mockReset();
+      }
+      if (originalRegistryImpl) {
+        registryMock.mockImplementation(originalRegistryImpl);
+      } else {
+        registryMock.mockReset();
+      }
+      await mainService?.stop?.({}).catch(() => {});
       await fs.rm(stateDir, { recursive: true, force: true });
     }
   });
