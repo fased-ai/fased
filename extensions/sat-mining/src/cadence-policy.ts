@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
 
-export const SAT_SUPPORTED_CADENCES = [1, 2, 6, 12] as const;
+export const SAT_SUPPORTED_CADENCES = [1, 2, 6, 12, 24, 48, 96, 288] as const;
 export type SatCycleCadence = (typeof SAT_SUPPORTED_CADENCES)[number];
 
 export type SatCadencePolicyInput = {
   activeCapitalLamports: bigint | null;
+  activeCommitLamports: bigint | null;
   feeReserveLamports: bigint | null;
+  cycleErosionPpm: bigint | null;
   measuredEnteredCycleFeeLamports: readonly bigint[];
+  measuredMinerPaidCycleFeeLamports: readonly bigint[];
   measuredClaimFeeLamports: readonly bigint[];
-  annualFeeExposureBps: number;
+  annualOperationsBudgetBps: number;
+  annualMiningExposureBps: number | null;
   claimBacklogCount: number;
   claimBacklogRetryCount: number;
   requestedCadence: SatCycleCadence;
@@ -21,7 +25,13 @@ export type SatCadenceCandidate = {
   annualizedFeeLamports: string;
   annualizedFeeSol: number;
   annualizedCapitalExposureBps: number | null;
-  exposureSafe: boolean;
+  annualizedMinerPaidFeeLamports: string;
+  annualizedMinerPaidFeeSol: number;
+  annualizedGrossErosionLamports: string | null;
+  annualizedGrossErosionSol: number | null;
+  annualizedMiningExposureBps: number | null;
+  operationsBudgetSafe: boolean;
+  miningExposureSafe: boolean;
   reserveSafe: boolean;
   recommended: boolean;
 };
@@ -32,13 +42,18 @@ export type SatCadencePolicyResult = {
   requestedCadence: SatCycleCadence;
   recommendedCadence: SatCycleCadence | null;
   effectiveCadence: SatCycleCadence | null;
-  annualFeeExposureBps: number;
+  annualOperationsBudgetBps: number;
+  annualMiningExposureBps: number | null;
   activeCapitalLamports: string | null;
+  activeCommitLamports: string | null;
   feeReserveLamports: string | null;
+  cycleErosionPpm: string | null;
   spendableFeeReserveLamports: string | null;
   claimBacklogReserveLamports: string;
   enteredCycleFeeLamports: string;
+  minerPaidCycleFeeLamports: string;
   measuredFeeSampleCount: number;
+  measuredMinerPaidFeeSampleCount: number;
   feeSource: "bootstrap-floor" | "measured-p90";
   requestedCadenceReserveSafe: boolean;
   fasterCadenceAcknowledged: boolean;
@@ -49,8 +64,11 @@ export type SatCadencePolicyResult = {
 
 export type SatCadenceOperationalStateInput = {
   activeCapitalLamports: string | number | bigint | null | undefined;
+  activeCommitLamports: string | number | bigint | null | undefined;
   feeReserveLamports: string | number | bigint | null | undefined;
-  annualFeeExposureBps?: number;
+  cycleErosionPpm: string | number | bigint | null | undefined;
+  annualOperationsBudgetBps?: number;
+  annualMiningExposureBps?: number | null;
   requestedCadence?: SatCycleCadence;
   fasterCadenceAcknowledgement?: string | null;
   plannerHistory: ReadonlyArray<{
@@ -73,9 +91,14 @@ function normalizedNonNegativeInteger(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-function normalizedExposureBps(value: number): number {
+function normalizedOperationsBudgetBps(value: number): number {
   if (!Number.isFinite(value)) return 500;
   return Math.min(10_000, Math.max(1, Math.floor(value)));
+}
+
+function normalizedMiningExposureBps(value: number | null): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.min(1_000_000, Math.max(1, Math.floor(value)));
 }
 
 function optionalLamports(value: string | number | bigint | null | undefined): bigint | null {
@@ -117,12 +140,26 @@ function annualizedFeeLamports(cadence: SatCycleCadence, enteredCycleFeeLamports
   return addRetryAllowance(enteredCycleFeeLamports) * BigInt(enteredCyclesPerYear);
 }
 
+function annualizedGrossErosionLamports(
+  cadence: SatCycleCadence,
+  activeCommitLamports: bigint,
+  cycleErosionPpm: bigint,
+): bigint {
+  const enteredCyclesPerYear = Math.floor(SAT_SECONDS_PER_YEAR / SAT_CYCLE_SECONDS / cadence);
+  return (activeCommitLamports * cycleErosionPpm * BigInt(enteredCyclesPerYear)) / 1_000_000n;
+}
+
 function acknowledgementDigest(params: {
   requestedCadence: SatCycleCadence;
   recommendedCadence: SatCycleCadence | null;
   enteredCycleFeeLamports: bigint;
-  annualFeeExposureBps: number;
+  minerPaidCycleFeeLamports: bigint;
+  cycleErosionPpm: bigint;
+  annualOperationsBudgetBps: number;
+  annualMiningExposureBps: number;
   requestedAnnualizedFeeLamports: bigint;
+  requestedAnnualizedMinerPaidFeeLamports: bigint;
+  requestedAnnualizedGrossErosionLamports: bigint;
 }): string {
   const digest = createHash("sha256")
     .update(
@@ -131,8 +168,13 @@ function acknowledgementDigest(params: {
         params.requestedCadence,
         params.recommendedCadence,
         params.enteredCycleFeeLamports.toString(),
-        params.annualFeeExposureBps,
+        params.minerPaidCycleFeeLamports.toString(),
+        params.cycleErosionPpm.toString(),
+        params.annualOperationsBudgetBps,
+        params.annualMiningExposureBps,
         params.requestedAnnualizedFeeLamports.toString(),
+        params.requestedAnnualizedMinerPaidFeeLamports.toString(),
+        params.requestedAnnualizedGrossErosionLamports.toString(),
       ]),
     )
     .digest("hex");
@@ -140,10 +182,16 @@ function acknowledgementDigest(params: {
 }
 
 export function deriveSatCadencePolicy(input: SatCadencePolicyInput): SatCadencePolicyResult {
-  const annualFeeExposureBps = normalizedExposureBps(input.annualFeeExposureBps);
+  const annualOperationsBudgetBps = normalizedOperationsBudgetBps(input.annualOperationsBudgetBps);
+  const annualMiningExposureBps = normalizedMiningExposureBps(input.annualMiningExposureBps);
   const measuredSamples = positiveSamples(input.measuredEnteredCycleFeeLamports);
   const enteredCycleFeeLamports = percentile90(
     measuredSamples,
+    SAT_BOOTSTRAP_ENTERED_CYCLE_FEE_LAMPORTS,
+  );
+  const measuredMinerPaidSamples = positiveSamples(input.measuredMinerPaidCycleFeeLamports);
+  const minerPaidCycleFeeLamports = percentile90(
+    measuredMinerPaidSamples,
     SAT_BOOTSTRAP_ENTERED_CYCLE_FEE_LAMPORTS,
   );
   const claimFeeLamports = percentile90(
@@ -159,13 +207,25 @@ export function deriveSatCadencePolicy(input: SatCadencePolicyInput): SatCadence
     input.activeCapitalLamports != null && input.activeCapitalLamports >= 0n
       ? input.activeCapitalLamports
       : null;
+  const activeCommitLamports =
+    input.activeCommitLamports != null && input.activeCommitLamports >= 0n
+      ? input.activeCommitLamports
+      : null;
   const feeReserveLamports =
     input.feeReserveLamports != null && input.feeReserveLamports >= 0n
       ? input.feeReserveLamports
       : null;
+  const cycleErosionPpm =
+    input.cycleErosionPpm != null && input.cycleErosionPpm > 0n ? input.cycleErosionPpm : null;
   if (activeCapitalLamports == null) blockedReasons.push("active capital is unavailable");
   else if (activeCapitalLamports === 0n) blockedReasons.push("active capital is empty");
+  if (activeCommitLamports == null) blockedReasons.push("active commit is unavailable");
+  else if (activeCommitLamports === 0n) blockedReasons.push("active commit is empty");
   if (feeReserveLamports == null) blockedReasons.push("fee reserve is unavailable");
+  if (cycleErosionPpm == null) blockedReasons.push("cycle erosion PPM is unavailable");
+  if (annualMiningExposureBps == null) {
+    blockedReasons.push("owner mining exposure budget is unpublished");
+  }
   const spendableFeeReserveLamports =
     feeReserveLamports == null
       ? null
@@ -175,14 +235,28 @@ export function deriveSatCadencePolicy(input: SatCadencePolicyInput): SatCadence
   const exposureLimitLamports =
     activeCapitalLamports == null
       ? null
-      : (activeCapitalLamports * BigInt(annualFeeExposureBps)) / SAT_BPS_DENOMINATOR;
+      : (activeCapitalLamports * BigInt(annualOperationsBudgetBps)) / SAT_BPS_DENOMINATOR;
 
   const candidates = SAT_SUPPORTED_CADENCES.map((cadence): SatCadenceCandidate => {
     const enteredCyclesPerYear = Math.floor(SAT_SECONDS_PER_YEAR / SAT_CYCLE_SECONDS / cadence);
     const annualized = annualizedFeeLamports(cadence, enteredCycleFeeLamports);
-    const exposureSafe = exposureLimitLamports != null && annualized <= exposureLimitLamports;
+    const annualizedMinerPaid = annualizedFeeLamports(cadence, minerPaidCycleFeeLamports);
+    const annualizedErosion =
+      activeCommitLamports != null && cycleErosionPpm != null
+        ? annualizedGrossErosionLamports(cadence, activeCommitLamports, cycleErosionPpm)
+        : null;
+    const annualizedMiningExposureBps =
+      annualizedErosion != null && activeCommitLamports != null && activeCommitLamports > 0n
+        ? Number((annualizedErosion * SAT_BPS_DENOMINATOR) / activeCommitLamports)
+        : null;
+    const operationsBudgetSafe =
+      exposureLimitLamports != null && annualized <= exposureLimitLamports;
+    const miningExposureSafe =
+      annualMiningExposureBps != null &&
+      annualizedMiningExposureBps != null &&
+      annualizedMiningExposureBps <= annualMiningExposureBps;
     const reserveSafe =
-      spendableFeeReserveLamports != null && annualized <= spendableFeeReserveLamports;
+      spendableFeeReserveLamports != null && annualizedMinerPaid <= spendableFeeReserveLamports;
     return {
       cadence,
       enteredCyclesPerYear,
@@ -192,18 +266,28 @@ export function deriveSatCadencePolicy(input: SatCadencePolicyInput): SatCadence
         activeCapitalLamports == null
           ? null
           : Number((annualized * SAT_BPS_DENOMINATOR) / activeCapitalLamports),
-      exposureSafe,
+      annualizedMinerPaidFeeLamports: annualizedMinerPaid.toString(),
+      annualizedMinerPaidFeeSol: Number(annualizedMinerPaid) / 1_000_000_000,
+      annualizedGrossErosionLamports: annualizedErosion?.toString() ?? null,
+      annualizedGrossErosionSol:
+        annualizedErosion == null ? null : Number(annualizedErosion) / 1_000_000_000,
+      annualizedMiningExposureBps,
+      operationsBudgetSafe,
+      miningExposureSafe,
       reserveSafe,
       recommended: false,
     };
   });
   const recommendedCandidate = candidates.find(
-    (candidate) => candidate.exposureSafe && candidate.reserveSafe,
+    (candidate) =>
+      candidate.operationsBudgetSafe && candidate.miningExposureSafe && candidate.reserveSafe,
   );
   const recommendedCadence = recommendedCandidate?.cadence ?? null;
   if (recommendedCandidate) recommendedCandidate.recommended = true;
   if (blockedReasons.length === 0 && recommendedCadence == null) {
-    blockedReasons.push("no supported cadence fits the annual exposure and funded fee reserve");
+    blockedReasons.push(
+      "no supported cadence fits the operations budget, mining exposure budget and funded fee reserve",
+    );
   }
 
   const requestedCandidate = candidates.find(
@@ -214,14 +298,26 @@ export function deriveSatCadencePolicy(input: SatCadencePolicyInput): SatCadence
   const requiredAcknowledgement =
     fasterThanRecommended &&
     activeCapitalLamports != null &&
+    activeCommitLamports != null &&
     feeReserveLamports != null &&
+    cycleErosionPpm != null &&
+    annualMiningExposureBps != null &&
     requestedCandidate != null
       ? acknowledgementDigest({
           requestedCadence: input.requestedCadence,
           recommendedCadence,
           enteredCycleFeeLamports,
-          annualFeeExposureBps,
+          minerPaidCycleFeeLamports,
+          cycleErosionPpm,
+          annualOperationsBudgetBps,
+          annualMiningExposureBps,
           requestedAnnualizedFeeLamports: BigInt(requestedCandidate.annualizedFeeLamports),
+          requestedAnnualizedMinerPaidFeeLamports: BigInt(
+            requestedCandidate.annualizedMinerPaidFeeLamports,
+          ),
+          requestedAnnualizedGrossErosionLamports: BigInt(
+            requestedCandidate.annualizedGrossErosionLamports ?? "0",
+          ),
         })
       : null;
   const fasterCadenceAcknowledged =
@@ -241,13 +337,18 @@ export function deriveSatCadencePolicy(input: SatCadencePolicyInput): SatCadence
     requestedCadence: input.requestedCadence,
     recommendedCadence,
     effectiveCadence,
-    annualFeeExposureBps,
+    annualOperationsBudgetBps,
+    annualMiningExposureBps,
     activeCapitalLamports: activeCapitalLamports?.toString() ?? null,
+    activeCommitLamports: activeCommitLamports?.toString() ?? null,
     feeReserveLamports: feeReserveLamports?.toString() ?? null,
+    cycleErosionPpm: cycleErosionPpm?.toString() ?? null,
     spendableFeeReserveLamports: spendableFeeReserveLamports?.toString() ?? null,
     claimBacklogReserveLamports: claimBacklogReserveLamports.toString(),
     enteredCycleFeeLamports: enteredCycleFeeLamports.toString(),
+    minerPaidCycleFeeLamports: minerPaidCycleFeeLamports.toString(),
     measuredFeeSampleCount: measuredSamples.length,
+    measuredMinerPaidFeeSampleCount: measuredMinerPaidSamples.length,
     feeSource: measuredSamples.length > 0 ? "measured-p90" : "bootstrap-floor",
     requestedCadenceReserveSafe: requestedCandidate?.reserveSafe ?? false,
     fasterCadenceAcknowledged,
@@ -263,6 +364,10 @@ export function deriveSatCadencePolicyFromOperationalState(
   const history = input.plannerHistory.slice(0, 24);
   const measuredEnteredCycleFeeLamports = history.flatMap((entry) => {
     const total = optionalLamports(entry.txFeeLamports);
+    return total != null && total > 0n ? [total] : [];
+  });
+  const measuredMinerPaidCycleFeeLamports = history.flatMap((entry) => {
+    const total = optionalLamports(entry.txFeeLamports);
     const keeper = optionalLamports(entry.keeperFeeLamports) ?? 0n;
     if (total == null || total <= keeper) return [];
     return [total - keeper];
@@ -273,10 +378,14 @@ export function deriveSatCadencePolicyFromOperationalState(
   });
   return deriveSatCadencePolicy({
     activeCapitalLamports: optionalLamports(input.activeCapitalLamports),
+    activeCommitLamports: optionalLamports(input.activeCommitLamports),
     feeReserveLamports: optionalLamports(input.feeReserveLamports),
+    cycleErosionPpm: optionalLamports(input.cycleErosionPpm),
     measuredEnteredCycleFeeLamports,
+    measuredMinerPaidCycleFeeLamports,
     measuredClaimFeeLamports,
-    annualFeeExposureBps: input.annualFeeExposureBps ?? 500,
+    annualOperationsBudgetBps: input.annualOperationsBudgetBps ?? 500,
+    annualMiningExposureBps: input.annualMiningExposureBps ?? null,
     claimBacklogCount: input.claimBacklog.length,
     claimBacklogRetryCount: input.claimBacklog.reduce(
       (sum, entry) => sum + normalizedNonNegativeInteger(entry.retryCount),

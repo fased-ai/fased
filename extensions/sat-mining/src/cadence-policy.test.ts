@@ -11,10 +11,14 @@ const SOL = 1_000_000_000n;
 function policyInput(overrides: Partial<SatCadencePolicyInput> = {}): SatCadencePolicyInput {
   return {
     activeCapitalLamports: 10n * SOL,
+    activeCommitLamports: 10n * SOL,
     feeReserveLamports: SOL,
+    cycleErosionPpm: 14n,
     measuredEnteredCycleFeeLamports: [],
+    measuredMinerPaidCycleFeeLamports: [],
     measuredClaimFeeLamports: [],
-    annualFeeExposureBps: 500,
+    annualOperationsBudgetBps: 500,
+    annualMiningExposureBps: 15_000,
     claimBacklogCount: 0,
     claimBacklogRetryCount: 0,
     requestedCadence: 1,
@@ -25,7 +29,7 @@ function policyInput(overrides: Partial<SatCadencePolicyInput> = {}): SatCadence
 
 describe("SAT capital-aware cadence policy", () => {
   it.each([
-    [1, null],
+    [1, 48],
     [2.5, 12],
     [10, 6],
     [25, 2],
@@ -35,13 +39,16 @@ describe("SAT capital-aware cadence policy", () => {
       const result = deriveSatCadencePolicy(
         policyInput({
           activeCapitalLamports: BigInt(capitalSol * 1_000_000_000),
+          activeCommitLamports: BigInt(capitalSol * 1_000_000_000),
           feeReserveLamports: 2n * SOL,
         }),
       );
 
       expect(result.recommendedCadence).toBe(expectedCadence);
       expect(result.feeSource).toBe("bootstrap-floor");
-      expect(result.candidates.map((candidate) => candidate.cadence)).toEqual([1, 2, 6, 12]);
+      expect(result.candidates.map((candidate) => candidate.cadence)).toEqual([
+        1, 2, 6, 12, 24, 48, 96, 288,
+      ]);
     },
   );
 
@@ -49,6 +56,7 @@ describe("SAT capital-aware cadence policy", () => {
     const result = deriveSatCadencePolicy(
       policyInput({
         measuredEnteredCycleFeeLamports: [10_000n, 12_000n, 15_000n, 20_000n],
+        measuredMinerPaidCycleFeeLamports: [10_000n, 12_000n, 15_000n, 20_000n],
       }),
     );
 
@@ -67,7 +75,43 @@ describe("SAT capital-aware cadence policy", () => {
       [2, "657000000"],
       [6, "219000000"],
       [12, "109500000"],
+      [24, "54750000"],
+      [48, "27375000"],
+      [96, "13687500"],
+      [288, "4562500"],
     ]);
+  });
+
+  it("publishes gross erosion separately and applies the owner mining exposure budget", () => {
+    const result = deriveSatCadencePolicy(
+      policyInput({ annualMiningExposureBps: 1_000, feeReserveLamports: 2n * SOL }),
+    );
+
+    expect(result.recommendedCadence).toBe(24);
+    expect(
+      result.candidates.map((candidate) => [
+        candidate.cadence,
+        candidate.annualizedMiningExposureBps,
+      ]),
+    ).toEqual([
+      [1, 14_716],
+      [2, 7_358],
+      [6, 2_452],
+      [12, 1_226],
+      [24, 613],
+      [48, 306],
+      [96, 153],
+      [288, 51],
+    ]);
+    expect(result.candidates[0]?.annualizedGrossErosionLamports).toBe("14716800000");
+  });
+
+  it("fails closed until the owner publishes a mining exposure budget", () => {
+    const result = deriveSatCadencePolicy(policyInput({ annualMiningExposureBps: null }));
+
+    expect(result.recommendedCadence).toBeNull();
+    expect(result.effectiveCadence).toBeNull();
+    expect(result.blockedReasons).toContain("owner mining exposure budget is unpublished");
   });
 
   it("reserves claim backlog and retry costs before admitting cadence", () => {
@@ -131,6 +175,16 @@ describe("SAT capital-aware cadence policy", () => {
         feeReserveLamports: 2n * SOL,
         requestedCadence: 1,
         measuredEnteredCycleFeeLamports: [25_000n],
+        measuredMinerPaidCycleFeeLamports: [25_000n],
+        fasterCadenceAcknowledgement: initial.requiredAcknowledgement,
+      }),
+    );
+    const erosionChanged = deriveSatCadencePolicy(
+      policyInput({
+        activeCapitalLamports: 2_500_000_000n,
+        feeReserveLamports: 2n * SOL,
+        requestedCadence: 1,
+        cycleErosionPpm: 15n,
         fasterCadenceAcknowledgement: initial.requiredAcknowledgement,
       }),
     );
@@ -141,6 +195,8 @@ describe("SAT capital-aware cadence policy", () => {
     expect(acknowledged.fasterCadenceAcknowledged).toBe(true);
     expect(feeChanged.effectiveCadence).not.toBe(1);
     expect(feeChanged.fasterCadenceAcknowledged).toBe(false);
+    expect(erosionChanged.effectiveCadence).not.toBe(1);
+    expect(erosionChanged.fasterCadenceAcknowledged).toBe(false);
   });
 
   it("fails closed when capital or fee reserve is unavailable", () => {
@@ -156,12 +212,15 @@ describe("SAT capital-aware cadence policy", () => {
     ]);
   });
 
-  it("derives miner-paid observations and claim retries from durable operational state", () => {
+  it("separates total operations from miner-paid reserve use and derives claim retries", () => {
     const result = deriveSatCadencePolicyFromOperationalState({
       activeCapitalLamports: "10000000000",
+      activeCommitLamports: "10000000000",
       feeReserveLamports: "1000000000",
+      cycleErosionPpm: "14",
       requestedCadence: 6,
-      annualFeeExposureBps: 500,
+      annualOperationsBudgetBps: 500,
+      annualMiningExposureBps: 15_000,
       plannerHistory: [
         {
           txFeeLamports: "30000",
@@ -172,15 +231,22 @@ describe("SAT capital-aware cadence policy", () => {
       claimBacklog: [{ retryCount: 2 }, { retryCount: 0 }],
     });
 
-    expect(result.enteredCycleFeeLamports).toBe("25000");
+    expect(result.enteredCycleFeeLamports).toBe("30000");
+    expect(result.minerPaidCycleFeeLamports).toBe("25000");
     expect(result.claimBacklogReserveLamports).toBe("28000");
     expect(result.measuredFeeSampleCount).toBe(1);
+    expect(result.measuredMinerPaidFeeSampleCount).toBe(1);
+    expect(result.candidates[0]?.annualizedFeeLamports).toBe("3942000000");
+    expect(result.candidates[0]?.annualizedMinerPaidFeeLamports).toBe("3285000000");
   });
 
   it("preserves static cadence until a vNext release generation is active", () => {
     const operational = {
       activeCapitalLamports: "10000000000",
+      activeCommitLamports: "10000000000",
       feeReserveLamports: "1000000000",
+      cycleErosionPpm: "14",
+      annualMiningExposureBps: 15_000,
       plannerHistory: [],
       claimBacklog: [],
     };

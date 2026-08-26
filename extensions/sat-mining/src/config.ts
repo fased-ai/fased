@@ -25,8 +25,11 @@ export type SatMiningConfig = {
     | "safe_fallback";
   strategyExecution?: "deterministic" | "auto";
   strategyMode?: "base" | "skill";
-  cycleCadence?: 1 | 2 | 6 | 12;
+  cycleCadence?: 1 | 2 | 6 | 12 | 24 | 48 | 96 | 288;
   cadencePolicy?: {
+    annualOperationsBudgetBps?: number;
+    annualMiningExposureBps?: number;
+    /** Transitional alias accepted from the first P5-008 candidate. */
     annualFeeExposureBps?: number;
     fasterCadenceAcknowledgement?: string;
   };
@@ -109,11 +112,22 @@ export const satMiningConfigJsonSchema = Type.Object(
     ),
     strategyMode: Type.Optional(Type.Union([Type.Literal("base"), Type.Literal("skill")])),
     cycleCadence: Type.Optional(
-      Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(6), Type.Literal(12)]),
+      Type.Union([
+        Type.Literal(1),
+        Type.Literal(2),
+        Type.Literal(6),
+        Type.Literal(12),
+        Type.Literal(24),
+        Type.Literal(48),
+        Type.Literal(96),
+        Type.Literal(288),
+      ]),
     ),
     cadencePolicy: Type.Optional(
       Type.Object(
         {
+          annualOperationsBudgetBps: Type.Optional(Type.Number({ minimum: 1, maximum: 10_000 })),
+          annualMiningExposureBps: Type.Optional(Type.Number({ minimum: 1, maximum: 1_000_000 })),
           annualFeeExposureBps: Type.Optional(Type.Number({ minimum: 1, maximum: 10_000 })),
           fasterCadenceAcknowledgement: Type.Optional(Type.String()),
         },
@@ -344,19 +358,31 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
         ? "skill"
         : "base";
   const cycleCadence =
-    raw.cycleCadence === 2 || raw.cycleCadence === 6 || raw.cycleCadence === 12
+    raw.cycleCadence === 2 ||
+    raw.cycleCadence === 6 ||
+    raw.cycleCadence === 12 ||
+    raw.cycleCadence === 24 ||
+    raw.cycleCadence === 48 ||
+    raw.cycleCadence === 96 ||
+    raw.cycleCadence === 288
       ? raw.cycleCadence
       : 1;
   const cadencePolicyRaw =
     raw.cadencePolicy && typeof raw.cadencePolicy === "object" && !Array.isArray(raw.cadencePolicy)
       ? (raw.cadencePolicy as Record<string, unknown>)
       : {};
+  const operationsBudgetRaw =
+    cadencePolicyRaw.annualOperationsBudgetBps ?? cadencePolicyRaw.annualFeeExposureBps;
   const cadencePolicy = {
-    annualFeeExposureBps:
-      typeof cadencePolicyRaw.annualFeeExposureBps === "number" &&
-      Number.isFinite(cadencePolicyRaw.annualFeeExposureBps)
-        ? Math.min(10_000, Math.max(1, Math.floor(cadencePolicyRaw.annualFeeExposureBps)))
+    annualOperationsBudgetBps:
+      typeof operationsBudgetRaw === "number" && Number.isFinite(operationsBudgetRaw)
+        ? Math.min(10_000, Math.max(1, Math.floor(operationsBudgetRaw)))
         : 500,
+    annualMiningExposureBps:
+      typeof cadencePolicyRaw.annualMiningExposureBps === "number" &&
+      Number.isFinite(cadencePolicyRaw.annualMiningExposureBps)
+        ? Math.min(1_000_000, Math.max(1, Math.floor(cadencePolicyRaw.annualMiningExposureBps)))
+        : undefined,
     fasterCadenceAcknowledgement:
       typeof cadencePolicyRaw.fasterCadenceAcknowledgement === "string" &&
       cadencePolicyRaw.fasterCadenceAcknowledgement.trim()

@@ -1,6 +1,6 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { computeAutoPlannerDecision } from "./auto-planner.js";
-import { deriveSatRuntimeCadencePolicy } from "./cadence-policy.js";
+import { deriveSatRuntimeCadencePolicy, type SatCycleCadence } from "./cadence-policy.js";
 import { refreshSatChainTime } from "./chain-time.js";
 import {
   allocateSignerOwnedSatCommitment,
@@ -272,7 +272,7 @@ function cycleCommitCollateralLamports(committedLamports: bigint, cycleErosionPp
 export function shouldParticipateInSatCycle(params: {
   cycleId: number;
   launchCycleId: number;
-  cadence: 1 | 2 | 6 | 12;
+  cadence: SatCycleCadence;
 }): boolean {
   if (params.cycleId < params.launchCycleId) return false;
   return (params.cycleId - params.launchCycleId) % params.cadence === 0;
@@ -665,7 +665,7 @@ export function createSatRoundWatcherService(params: {
 
       let cycleCadence = state.activeConfig.cycleCadence ?? 1;
       if (execution.commitSubmitted !== true && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
-        const [cadenceCapital, cadenceFeeReserve] = await Promise.all([
+        const [cadenceCapital, cadenceFeeReserve, cadenceGlobalState] = await Promise.all([
           authority
             ? withRoundWatcherTimeout("cadence miner capital", () =>
                 inspectSatMinerCapital(state.activeConfig, { authority }),
@@ -676,6 +676,9 @@ export function createSatRoundWatcherService(params: {
                 inspectSatLamportBalance(state.activeConfig, { address: authority }),
               ).catch(() => null)
             : Promise.resolve(null),
+          withRoundWatcherTimeout("cadence global state", () =>
+            inspectSatGlobalState(state.activeConfig),
+          ).catch(() => null),
         ]);
         const claimBacklog = buildSatClaimBacklogSummary(state, { maxEntries: 512 });
         const cadencePolicy = deriveSatRuntimeCadencePolicy(SAT_RUNTIME_PROTOCOL_GENERATION, {
@@ -683,8 +686,16 @@ export function createSatRoundWatcherService(params: {
             cadenceCapital?.fundedLamports ??
             state.lastKnownStatus?.currentCapitalFundedLamports ??
             null,
+          activeCommitLamports:
+            cadenceCapital?.activeCommitLamports ?? state.activeConfig.commitLamports ?? null,
           feeReserveLamports: cadenceFeeReserve,
-          annualFeeExposureBps: state.activeConfig.cadencePolicy?.annualFeeExposureBps ?? 500,
+          cycleErosionPpm: cadenceGlobalState?.cycleErosionPpm ?? null,
+          annualOperationsBudgetBps:
+            state.activeConfig.cadencePolicy?.annualOperationsBudgetBps ??
+            state.activeConfig.cadencePolicy?.annualFeeExposureBps ??
+            500,
+          annualMiningExposureBps:
+            state.activeConfig.cadencePolicy?.annualMiningExposureBps ?? null,
           requestedCadence: cycleCadence,
           fasterCadenceAcknowledgement:
             state.activeConfig.cadencePolicy?.fasterCadenceAcknowledgement,
