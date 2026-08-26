@@ -187,6 +187,17 @@ vi.mock("./src/solana-submit.js", () => ({
   resolveSatValidatorAuthority: vi.fn(async () => "validator-auto-1"),
 }));
 
+vi.mock("./src/commitment-custody.js", () => ({
+  readSignerOwnedSatCommitmentBinding: vi.fn(async ({ cycleId }: { cycleId: number }) => ({
+    reference: `sha256:${"ab".repeat(32)}`,
+    commitmentHex: "11".repeat(32),
+    cycleId: String(cycleId),
+    committedLamports: "250000000",
+    allocationCount: 25,
+    protocolGeneration: "sat-v2",
+  })),
+}));
+
 vi.mock("./src/rpc-read.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./src/rpc-read.js")>();
   return {
@@ -5198,7 +5209,11 @@ describe("sat-mining plugin config persistence", () => {
         respond: () => {},
       });
       await gatewayMethods.get("sat.commitCycle")!.handler({
-        params: { cycleId: 123, commitmentHex: "11".repeat(32) },
+        params: {
+          cycleId: 123,
+          commitmentHex: "11".repeat(32),
+          commitmentReference: `sha256:${"ab".repeat(32)}`,
+        },
         respond: () => {},
       });
 
@@ -5299,7 +5314,11 @@ describe("sat-mining plugin config persistence", () => {
 
       let response: { ok: boolean; payload: unknown; error?: unknown } | null = null;
       await gatewayMethods.get("sat.commitCycle")!.handler({
-        params: { cycleId: 123, commitmentHex: "11".repeat(32) },
+        params: {
+          cycleId: 123,
+          commitmentHex: "11".repeat(32),
+          commitmentReference: `sha256:${"ab".repeat(32)}`,
+        },
         respond: (ok, payload, error) => {
           response = { ok, payload, error };
         },
@@ -7686,9 +7705,9 @@ describe("sat-mining durable history startup", () => {
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
       });
       vi.setSystemTime(new Date("2030-01-01T00:10:00.000Z"));
-      vi.mocked(rpcRead.inspectSatChainUnixTime)
-        .mockRejectedValueOnce(new Error("target worker readiness failed"))
-        .mockRejectedValueOnce(new Error("rollback worker readiness failed"));
+      vi.mocked(rpcRead.inspectSatChainUnixTime).mockRejectedValue(
+        new Error("target and rollback worker readiness failed"),
+      );
       let failedSwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
       await gatewayMethods.get("sat.setMinerProfile")!.handler({
         params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },

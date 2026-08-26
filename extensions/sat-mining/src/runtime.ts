@@ -26,6 +26,7 @@ export type SatRoundExecutionState = {
   openRoundSubmitted: boolean;
   commitSubmitted?: boolean;
   commitmentHex?: string | null;
+  commitmentReference?: string | null;
   revealNonceBase64?: string | null;
   allocationFp?: number[] | null;
   commitLamports?: number | null;
@@ -480,6 +481,7 @@ export function getOrCreateRoundExecutionState(
     openRoundSubmitted: false,
     commitSubmitted: false,
     commitmentHex: null,
+    commitmentReference: null,
     revealNonceBase64: null,
     allocationFp: null,
     commitLamports: null,

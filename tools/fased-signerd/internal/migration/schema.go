@@ -13,7 +13,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const SignerStateSchemaVersion uint64 = 7
+const SignerStateSchemaVersion uint64 = 8
 
 // Contract provides main-owned schema bytes. NewContract clones all inputs so a
 // caller cannot alter a migration after passing its contract to this package.
@@ -117,7 +117,7 @@ func Migrate(db *signerstore.DB, fromVersion uint64, contract Contract) error {
 	if fromVersion == SignerStateSchemaVersion {
 		return ValidateBuckets(db, contract)
 	}
-	if fromVersion != 0 && fromVersion != 1 && fromVersion != 2 && fromVersion != 3 && fromVersion != 4 && fromVersion != 5 && fromVersion != 6 {
+	if fromVersion != 0 && fromVersion != 1 && fromVersion != 2 && fromVersion != 3 && fromVersion != 4 && fromVersion != 5 && fromVersion != 6 && fromVersion != 7 {
 		return fmt.Errorf("unsupported signer state migration from schema %d", fromVersion)
 	}
 	err := db.Update(func(tx *bolt.Tx) error {

@@ -70,6 +70,7 @@ function typedCapabilities() {
         "atomicIdempotency",
         "ambiguousBroadcastReconciliation",
         "signerOwnedKeys",
+        "signerOwnedEncryptedSATCommitments",
         "typedSolanaTransactions",
         "typedSATActions",
       ],

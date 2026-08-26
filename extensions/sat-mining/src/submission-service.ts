@@ -50,6 +50,11 @@ export type SatSubmissionInstruction = {
   action: SatSignerAction;
   programId: string;
   dataBase64: string;
+  satCommitment?: {
+    reference: string;
+    cluster: "local" | "devnet" | "mainnet-beta";
+    protocolGeneration: string;
+  };
   keys: Array<{
     pubkey: string;
     isSigner: boolean;
@@ -89,6 +94,7 @@ const REQUIRED_SAT_SIGNER_FEATURES = [
   "atomicIdempotency",
   "ambiguousBroadcastReconciliation",
   "signerOwnedKeys",
+  "signerOwnedEncryptedSATCommitments",
   "typedSolanaTransactions",
   "typedSATActions",
 ] as const;
@@ -279,6 +285,13 @@ export async function executeTypedSatIntent(params: {
     >,
   ) => waitForUnboundSatSubmissionLease({ ...stateIdentity, ...request });
   const isLookupTable = params.lookupTable != null;
+  const satCommitment = params.instruction?.satCommitment;
+  if (
+    satCommitment &&
+    (params.action !== "revealCycle" || params.instructions != null || params.lookupTable != null)
+  ) {
+    throw new Error("signer-owned SAT commitment references are valid only for one revealCycle");
+  }
   const isVaultBond =
     !isLookupTable &&
     params.action !== "cleanupBatch" &&

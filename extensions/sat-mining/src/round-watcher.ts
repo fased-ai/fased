@@ -1,7 +1,10 @@
-import { randomBytes } from "node:crypto";
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { computeAutoPlannerDecision } from "./auto-planner.js";
 import { refreshSatChainTime } from "./chain-time.js";
+import {
+  allocateSignerOwnedSatCommitment,
+  readSignerOwnedSatCommitmentBinding,
+} from "./commitment-custody.js";
 import type { SatMiningConfig } from "./config.js";
 import { strategyModeToExecution } from "./config.js";
 import {
@@ -39,7 +42,6 @@ import {
   scheduleWorkerNextRun,
   type SatMiningRuntimeState,
 } from "./runtime.js";
-import { buildSatCycleCommitment } from "./solana-submit.js";
 import { computeMiningStrategy } from "./strategy-engine.js";
 import type { SatSkillLiveContext } from "./strategy-skill.js";
 
@@ -1349,11 +1351,11 @@ export function createSatRoundWatcherService(params: {
           SAT_MIN_ENTRY_LAMPORTS,
           Math.floor(effectiveConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS),
         );
+        const hasSignerOwnedCommitPlan =
+          typeof execution.commitmentReference === "string" &&
+          /^sha256:[0-9a-f]{64}$/u.test(execution.commitmentReference);
         const hasDurableCommitPlan =
-          Array.isArray(execution.allocationFp) &&
-          execution.allocationFp.length === SAT_PROTOCOL_CONSTANTS.allocationBuckets &&
-          typeof execution.revealNonceBase64 === "string" &&
-          Buffer.from(execution.revealNonceBase64, "base64").length === 32 &&
+          hasSignerOwnedCommitPlan &&
           typeof execution.commitmentHex === "string" &&
           /^[0-9a-f]{64}$/i.test(execution.commitmentHex) &&
           typeof execution.commitLamports === "number" &&
@@ -1362,18 +1364,16 @@ export function createSatRoundWatcherService(params: {
           if (!authority) {
             throw new Error("SAT mining wallet authority is unavailable before cycle commit");
           }
-          const nonce = randomBytes(32);
           const allocationFp = [...strategyDecision.allocationFp];
-          execution.revealNonceBase64 = nonce.toString("base64");
-          execution.allocationFp = allocationFp;
-          execution.commitLamports = plannedCommitLamports;
-          execution.commitmentHex = buildSatCycleCommitment({
-            authority,
+          const allocated = await allocateSignerOwnedSatCommitment({
+            config: state.activeConfig,
             cycleId,
             committedLamports: plannedCommitLamports,
-            nonce,
             allocationFp,
-          }).toString("hex");
+          });
+          execution.commitmentReference = allocated.reference;
+          execution.commitLamports = plannedCommitLamports;
+          execution.commitmentHex = allocated.commitmentHex;
           await persistRuntimeState?.();
         }
         const commitLamports = execution.commitLamports ?? plannedCommitLamports;
@@ -1394,6 +1394,7 @@ export function createSatRoundWatcherService(params: {
           payload: {
             cycleId,
             commitmentHex: execution.commitmentHex,
+            commitmentReference: execution.commitmentReference,
           },
         });
         execution.openRoundSubmitted = true;
@@ -1477,13 +1478,25 @@ export function createSatRoundWatcherService(params: {
           scheduleWorkerNextRun(state, "roundWatcher", 1_000);
           return;
         }
-        if (
-          !authority ||
-          !execution.commitmentHex ||
-          !execution.revealNonceBase64 ||
-          !execution.allocationFp ||
-          execution.commitLamports == null
-        ) {
+        const hasLegacyRevealMaterial =
+          typeof execution.revealNonceBase64 === "string" && Array.isArray(execution.allocationFp);
+        if (!execution.commitmentReference && !hasLegacyRevealMaterial) {
+          try {
+            const recovered = await readSignerOwnedSatCommitmentBinding({
+              config: state.activeConfig,
+              cycleId,
+            });
+            execution.commitmentReference = recovered.reference;
+            execution.commitmentHex = recovered.commitmentHex;
+            execution.commitLamports = Number(recovered.committedLamports);
+            await persistRuntimeState?.();
+          } catch (error) {
+            if (!(error instanceof Error) || !error.message.includes("was not found")) {
+              throw error;
+            }
+          }
+        }
+        if (!authority || !execution.commitmentHex || execution.commitLamports == null) {
           markWorkerFailure(
             state,
             "roundWatcher",
@@ -1501,11 +1514,13 @@ export function createSatRoundWatcherService(params: {
         await runSatGatewayMethod({
           api,
           method: "sat.revealCycle",
-          payload: {
-            cycleId,
-            nonceBase64: execution.revealNonceBase64,
-            allocationFp: execution.allocationFp,
-          },
+          payload: execution.commitmentReference
+            ? { cycleId, commitmentReference: execution.commitmentReference }
+            : {
+                cycleId,
+                nonceBase64: execution.revealNonceBase64!,
+                allocationFp: execution.allocationFp!,
+              },
         });
         execution.participationSubmitted = true;
         await persistRuntimeState?.();

@@ -11,6 +11,9 @@ const inspectSatMinerCycle = vi.fn(async (..._args: unknown[]): Promise<unknown>
 const inspectSatCycleSettlementProgressV2 = vi.fn(
   async (..._args: unknown[]): Promise<unknown> => null,
 );
+const readSignerOwnedSatCommitmentBinding = vi.fn(async () => {
+  throw new Error("SAT commitment binding was not found");
+});
 
 vi.mock("./gateway-runner.js", () => ({
   runSatGatewayMethod: (args: unknown) => runSatGatewayMethod(args),
@@ -24,6 +27,11 @@ vi.mock("./rpc-read.js", () => ({
   inspectSatMinerCycle: (...args: unknown[]) => inspectSatMinerCycle(...args),
   inspectSatCycleSettlementProgressV2: (...args: unknown[]) =>
     inspectSatCycleSettlementProgressV2(...args),
+}));
+
+vi.mock("./commitment-custody.js", () => ({
+  readSignerOwnedSatCommitmentBinding: (params: unknown) =>
+    readSignerOwnedSatCommitmentBinding(params as never),
 }));
 
 describe("createSatRecoveryService", () => {
@@ -44,6 +52,7 @@ describe("createSatRecoveryService", () => {
     inspectSatMinerCycle.mockResolvedValue(null);
     inspectSatCycleSettlementProgressV2.mockReset();
     inspectSatCycleSettlementProgressV2.mockResolvedValue(null);
+    readSignerOwnedSatCommitmentBinding.mockClear();
   });
 
   afterEach(() => {
@@ -457,7 +466,7 @@ describe("createSatRecoveryService", () => {
     await service.stop?.();
   });
 
-  it("submits a durable reveal before persisting the recovered participation state", async () => {
+  it("recovers a signer-owned binding and reveals before persisting participation", async () => {
     const config = {
       enabled: true,
       network: "devnet" as const,
@@ -470,8 +479,14 @@ describe("createSatRecoveryService", () => {
     const cycleId = Math.floor(nowSec / 300) - 1;
     const execution = getOrCreateRoundExecutionState(state, cycleId, 0);
     execution.commitSubmitted = true;
-    execution.revealNonceBase64 = "durable-nonce";
-    execution.allocationFp = [500_000, 500_000];
+    readSignerOwnedSatCommitmentBinding.mockResolvedValueOnce({
+      reference: `sha256:${"ab".repeat(32)}`,
+      commitmentHex: "cd".repeat(32),
+      cycleId: String(cycleId),
+      committedLamports: "250000000",
+      allocationCount: 25,
+      protocolGeneration: "sat-v2",
+    });
     inspectSatMinerCapital.mockResolvedValue({
       lockedLamports: "300000000",
       firstPendingCycleId: cycleId,
@@ -520,16 +535,17 @@ describe("createSatRecoveryService", () => {
         method: "sat.revealCycle",
         payload: {
           cycleId,
-          nonceBase64: "durable-nonce",
-          allocationFp: [500_000, 500_000],
+          commitmentReference: `sha256:${"ab".repeat(32)}`,
         },
       }),
     );
-    expect(events.slice(0, 3)).toEqual([
+    expect(events.slice(0, 4)).toEqual([
+      "persist:false",
       "persist:false",
       "gateway:sat.revealCycle:false",
       "persist:true",
     ]);
+    expect(execution.commitmentReference).toBe(`sha256:${"ab".repeat(32)}`);
     expect(execution.participationSubmitted).toBe(true);
 
     await service.stop?.();

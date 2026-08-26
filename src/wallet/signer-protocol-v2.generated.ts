@@ -63,6 +63,7 @@ export const SIGNER_PROTOCOL_V2 = {
     "signerOwnedJupiterTriggerHistory",
     "jupiterTriggerSecretsNeverCrossSocket",
     "jupiterTriggerDurablePhases",
+    "signerOwnedEncryptedSATCommitments",
   ],
 } as const;
 export const SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES = [
@@ -90,4 +91,5 @@ export const SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES = [
   "signerOwnedReviewPrepareExecute",
   "exactPreparedTransactions",
   "legacyOnlyJupiterTransactions",
+  "signerOwnedEncryptedSATCommitments",
 ] as const;

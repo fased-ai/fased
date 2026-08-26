@@ -32,6 +32,7 @@ var (
 	bucketSignerJupiterTriggerV2      = []byte("jupiter-trigger-workflows")
 	bucketSignerRotationsV2           = []byte("wallet-rotations")
 	bucketSignerOperatorNoncesV2      = []byte("operator-nonces")
+	bucketSignerSATCommitmentsV2      = []byte("sat-commitments")
 )
 
 const signerExecutionLeaseV2 = 5 * time.Minute

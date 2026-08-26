@@ -74,6 +74,7 @@ type signerIntentV2 struct {
 	DataBase64          string                                 `json:"dataBase64,omitempty"`
 	Keys                []signerSATAccountV2                   `json:"keys,omitempty"`
 	Context             *signerSATContextV2                    `json:"context,omitempty"`
+	SATCommitment       *signerSATCommitmentIntentV1           `json:"satCommitment,omitempty"`
 	Instructions        []signerSATInstructionV2               `json:"instructions,omitempty"`
 	AddressLookupTables []string                               `json:"addressLookupTables,omitempty"`
 	LookupTable         *signerSATLookupTableIntentV2          `json:"lookupTable,omitempty"`
@@ -287,6 +288,9 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 		return normalizeJupiterIntentV2(input)
 	}
 	intent := signerIntentV2{Type: strings.TrimSpace(input.Type)}
+	if input.SATCommitment != nil && intent.Type != intentSolanaSATAction {
+		return normalizedIntentV2{}, errors.New("signer-owned SAT commitment reference requires a typed SAT action")
+	}
 	var program string
 	var asset string
 	var destination string

@@ -1,4 +1,6 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
+import { readSignerOwnedSatCommitmentBinding } from "./commitment-custody.js";
+import type { SatMiningConfig } from "./config.js";
 import { runSatGatewayMethod } from "./gateway-runner.js";
 import { SAT_PROTOCOL_CONSTANTS } from "./protocol-contract.js";
 import {
@@ -12,6 +14,7 @@ import {
   markWorkerSuccess,
   markWorkerWaiting,
   scheduleWorkerNextRun,
+  getOrCreateRoundExecutionState,
   type SatMiningRuntimeState,
   type SatRoundExecutionState,
 } from "./runtime.js";
@@ -61,12 +64,17 @@ function isEntropyUnavailable(cycle: {
 }
 
 function hasDurableRevealMaterial(execution: SatRoundExecutionState): boolean {
-  return (
+  const signerOwned =
+    typeof execution.commitmentReference === "string" &&
+    /^sha256:[0-9a-f]{64}$/u.test(execution.commitmentReference) &&
+    typeof execution.commitLamports === "number" &&
+    execution.commitLamports > 0;
+  const legacyDrain =
     typeof execution.revealNonceBase64 === "string" &&
-    execution.revealNonceBase64.length > 0 &&
+    Buffer.from(execution.revealNonceBase64, "base64").length === 32 &&
     Array.isArray(execution.allocationFp) &&
-    execution.allocationFp.length > 0
-  );
+    execution.allocationFp.length > 0;
+  return signerOwned || legacyDrain;
 }
 
 function isFullyResolvedEmptyCycle(
@@ -155,10 +163,11 @@ function isResolvedForClose(params: {
 
 export function createSatRecoveryOrchestrator(params: {
   api: FasedAgentPluginApi;
+  config: SatMiningConfig;
   state: SatMiningRuntimeState;
   persistRuntimeState?: () => Promise<void>;
 }) {
-  const { api, state, persistRuntimeState } = params;
+  const { api, config, state, persistRuntimeState } = params;
   let lastPendingRangeCompactAt = 0;
 
   const recoverPendingCommit = async (request: {
@@ -169,7 +178,7 @@ export function createSatRecoveryOrchestrator(params: {
     anchor: string;
     backlogDetail: string;
   }): Promise<boolean> => {
-    const execution = state.roundExecution.get(`${request.cycleId}:0`) ?? null;
+    let execution = state.roundExecution.get(`${request.cycleId}:0`) ?? null;
     const [cycle, minerCycle] = await Promise.all([
       withRecoveryReadTimeout("commit/reveal cycle", () =>
         inspectSatCycle(state.activeConfig, { cycleId: request.cycleId }),
@@ -286,6 +295,25 @@ export function createSatRecoveryOrchestrator(params: {
         return true;
       }
       if (!execution || !hasDurableRevealMaterial(execution)) {
+        try {
+          const binding = await readSignerOwnedSatCommitmentBinding({
+            config,
+            cycleId: request.cycleId,
+          });
+          execution = getOrCreateRoundExecutionState(state, request.cycleId, 0);
+          execution.commitmentReference = binding.reference;
+          execution.commitmentHex = binding.commitmentHex;
+          execution.commitLamports = Number(binding.committedLamports);
+          await persistRuntimeState?.();
+        } catch (error) {
+          // Old-generation/manual commitments without signer custody remain
+          // blocked unless their legacy reveal material is still present.
+          if (!(error instanceof Error) || !error.message.includes("was not found")) {
+            throw error;
+          }
+        }
+      }
+      if (!execution || !hasDurableRevealMaterial(execution)) {
         markWorkerWaiting(
           state,
           "recovery",
@@ -297,11 +325,13 @@ export function createSatRecoveryOrchestrator(params: {
       await runSatGatewayMethod({
         api,
         method: "sat.revealCycle",
-        payload: {
-          cycleId: request.cycleId,
-          nonceBase64: execution.revealNonceBase64,
-          allocationFp: execution.allocationFp,
-        },
+        payload: execution.commitmentReference
+          ? { cycleId: request.cycleId, commitmentReference: execution.commitmentReference }
+          : {
+              cycleId: request.cycleId,
+              nonceBase64: execution.revealNonceBase64!,
+              allocationFp: execution.allocationFp!,
+            },
       });
       execution.participationSubmitted = true;
       await persistRuntimeState?.();
