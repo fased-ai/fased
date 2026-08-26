@@ -274,9 +274,10 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          mapfile -t format_files < <(git diff --name-only "$BASE" HEAD | grep -E '\.(cjs|css|html|js|json|json5|jsx|md|mdx|mjs|scss|ts|tsx|yaml|yml)$' || true)
+          mapfile -d '' -t changed_files < <(git diff --name-only -z "$BASE" HEAD)
+          mapfile -d '' -t format_files < <(node scripts/pre-commit/filter-staged-files.mjs format -- "${changed_files[@]}")
           if [ "${#format_files[@]}" -gt 0 ]; then pnpm exec oxfmt --check "${format_files[@]}"; fi
-          mapfile -t lint_files < <(git diff --name-only "$BASE" HEAD | grep -E '\.(cjs|js|jsx|mjs|ts|tsx)$' || true)
+          mapfile -d '' -t lint_files < <(node scripts/pre-commit/filter-staged-files.mjs lint -- "${changed_files[@]}")
           if [ "${#lint_files[@]}" -gt 0 ]; then pnpm exec oxlint "${lint_files[@]}"; fi
 
   security:

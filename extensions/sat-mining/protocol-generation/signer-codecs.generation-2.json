@@ -1,0 +1,25 @@
+{
+  "$schema": "sat.signer-codecs.generation-2",
+  "accountOrderSchema": "sat.account-order.v2",
+  "codecs": [
+    {
+      "accountOrderKey": "SatRevealCycleV2",
+      "action": "revealCycleV2",
+      "active": false,
+      "allocationChannels": 16,
+      "contractKey": "revealCycleV2",
+      "dataLength": 105,
+      "discriminator": 114
+    }
+  ],
+  "generation": 2,
+  "legacy": {
+    "revealCycle": {
+      "allocationChannels": 25,
+      "dataLength": 145,
+      "discriminator": 92,
+      "mode": "read-settle-claim-drain-only"
+    }
+  },
+  "state": "FROZEN_NOT_ACTIVE"
+}

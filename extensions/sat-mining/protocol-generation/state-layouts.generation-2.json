@@ -1,0 +1,65 @@
+{
+  "$schema": "sat.state-layouts.generation-2",
+  "activation": {
+    "legacyDrainEnabled": true,
+    "programDispatchBound": false,
+    "publicEntryEnabled": false
+  },
+  "generation": 2,
+  "legacy": {
+    "minerCycleAllocationStorage": {
+      "head": "u32[16]",
+      "tail": "u32[10]",
+      "usedTailElements": 9
+    },
+    "readSettleClaimDrain": {
+      "decodeAs": "generation-1-only",
+      "enabled": true
+    },
+    "reinterpretAsGeneration2": false,
+    "reveal": {
+      "allocationType": "u32[25]",
+      "discriminant": 92,
+      "wireBytes": 145
+    },
+    "strategyChannels": 25
+  },
+  "state": "FROZEN_NOT_ACTIVE",
+  "vnext": {
+    "accountDiscriminants": {
+      "satCycleSettlementProgressV3": 151,
+      "satCycleStateV2": 149,
+      "satMinerCycleStateV2": 150
+    },
+    "accountSeeds": {
+      "satCycleSettlementProgressV3": "sat_cycle_settlement_progress_v3",
+      "satCycleStateV2": "sat_cycle_state_v2",
+      "satMinerCycleStateV2": "sat_miner_cycle_state_v2"
+    },
+    "allocationVector": {
+      "bytes": 64,
+      "channels": 16,
+      "elementType": "u32-le",
+      "normalization": 1000000
+    },
+    "minerCycleAllocationStorage": {
+      "bytes": 64,
+      "legacyTailPresent": false,
+      "type": "u32[16]"
+    },
+    "reveal": {
+      "allocationType": "u32[16]",
+      "discriminant": 114,
+      "wireBytes": 105
+    },
+    "settlementVector": {
+      "bytesPerVector": 256,
+      "channels": 16,
+      "elementType": "u128-le",
+      "vectors": [
+        "crowdRaw",
+        "payoffFp"
+      ]
+    }
+  }
+}

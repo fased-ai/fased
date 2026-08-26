@@ -1,0 +1,1591 @@
+{
+  "description": "SAT protocol interface manifest for the custom Steel-based Solana programs. This is not an Anchor IDL.",
+  "generations": {
+    "active": 1,
+    "crossGenerationDecode": "reject",
+    "frozenNotActive": 2,
+    "legacyReadSettleClaimDrain": true
+  },
+  "mint": {
+    "address": "F8CaU1D7njV9BgK8XNKpHVQChWdCCmXbyx86SYvZJpM3",
+    "decimals": 11,
+    "hardCapSat": 21000000
+  },
+  "name": "sat",
+  "programs": {
+    "satBond": {
+      "crate": "sat-bond-program",
+      "programId": "66pQjRgCB19xRQMgqepqRaHQMNnoTzKm7x2Thr7WcgRu"
+    },
+    "satMining": {
+      "crate": "sat-program",
+      "programId": "A6gjo9bDxeRyZBknnXGRwp3ByHjAuvbTJYGaytznKUHr"
+    },
+    "satMint": {
+      "crate": "sat-mint-program",
+      "programId": "6tXTgkLuVU9JRTU8K48HLTm1rBZjrFvJEwA92NYNxgXy"
+    }
+  },
+  "publicLayouts": [
+    "api/sat-bond-position-layout.json",
+    "bond-api/bond-position-layout.json",
+    "bond-api/bond-tier-policy-layout.json",
+    "bond-api/bond-staking-distributor-layout.json",
+    "bond-api/bond-staking-position-layout.json"
+  ],
+  "satBondInstructions": [
+    {
+      "accountOrder": [
+        "genesis_authority:readonly+signer",
+        "payer:writable+signer",
+        "bond_tier_policy:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "genesis_config_hash",
+          "type": "u8[32]"
+        },
+        {
+          "name": "scheduled_effective_slot",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 0,
+      "name": "InitBondTierPolicy"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "bond_tier_policy:writable",
+        "bond_staking_distributor:writable"
+      ],
+      "args": [
+        {
+          "name": "update_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "basic_min_raw",
+          "type": "u64"
+        },
+        {
+          "name": "operator_min_raw",
+          "type": "u64"
+        },
+        {
+          "name": "unlock_delay_slots",
+          "type": "u64"
+        },
+        {
+          "name": "scheduled_effective_slot",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 1,
+      "name": "UpdateBondTierPolicy"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "authority_sat_account:writable",
+        "bond_vault:writable",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "amount_raw",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 2,
+      "name": "OpenBondPosition"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "authority_sat_account:writable",
+        "bond_vault:writable",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "amount_raw",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 3,
+      "name": "IncreaseBondPosition"
+    },
+    {
+      "accountOrder": [
+        "authority:writable+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "bond_staking_distributor:writable",
+        "bond_staking_position:writable"
+      ],
+      "args": [],
+      "discriminant": 4,
+      "name": "RequestBondUnlock"
+    },
+    {
+      "accountOrder": [
+        "authority:writable+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "bond_staking_distributor:writable",
+        "bond_staking_position:writable"
+      ],
+      "args": [],
+      "discriminant": 5,
+      "name": "CancelBondUnlock"
+    },
+    {
+      "accountOrder": [
+        "authority:writable+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "bond_staking_distributor:writable",
+        "bond_staking_position:writable",
+        "bond_vault:writable",
+        "authority_sat_account:writable",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 6,
+      "name": "FinalizeBondUnlock"
+    },
+    {
+      "accountOrder": [
+        "genesis_authority:readonly+signer",
+        "payer:writable+signer",
+        "bond_staking_distributor:writable",
+        "bond_staking_reward_vault:writable",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "genesis_config_hash",
+          "type": "u8[32]"
+        },
+        {
+          "name": "reserved",
+          "requiredValue": "all-zero",
+          "type": "u8[8]"
+        }
+      ],
+      "discriminant": 7,
+      "name": "InitBondStakingDistributor"
+    },
+    {
+      "accountOrder": [
+        "bond_staking_distributor:writable",
+        "bond_staking_reward_vault:readonly",
+        "sat_mint:readonly"
+      ],
+      "args": [],
+      "description": "Quarantines unsolicited token-vault balance increases for the fixed genesis treasury. It never allocates generic transfers to stakers.",
+      "discriminant": 8,
+      "name": "SyncBondStakingRewards"
+    },
+    {
+      "accountOrder": [
+        "authority:writable+signer",
+        "bond_tier_policy:readonly",
+        "bond_staking_distributor:writable",
+        "bond_staking_position:writable",
+        "bond_position:readonly",
+        "system_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 9,
+      "name": "SyncBondStakingPosition"
+    },
+    {
+      "accountOrder": [
+        "authority:writable+signer",
+        "bond_tier_policy:readonly",
+        "bond_staking_distributor:writable",
+        "bond_staking_position:writable",
+        "bond_position:readonly",
+        "bond_staking_reward_vault:writable",
+        "authority_sat_account:writable",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 10,
+      "name": "ClaimBondStakingRewards"
+    },
+    {
+      "accountOrder": [
+        "payer:writable+signer",
+        "bond_staking_distributor:writable",
+        "bond_staking_reward_vault:writable",
+        "treasury_recipient_token_account:writable",
+        "genesis_treasury_recipient:readonly",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 11,
+      "name": "ClaimUnallocatedStakingRewards"
+    },
+    {
+      "accountOrder": [
+        "generated_mining_treasury:readonly+signer",
+        "bond_staking_distributor:writable",
+        "bond_staking_reward_vault:writable",
+        "sat_mint:readonly"
+      ],
+      "args": [
+        {
+          "minimum": "1",
+          "name": "amount_raw",
+          "type": "u64"
+        }
+      ],
+      "description": "Records an exact protocol distributor reward after the mining program mints it. Only the generated mining treasury PDA may sign this instruction through CPI.",
+      "discriminant": 12,
+      "name": "RecordProtocolStakingRewards"
+    }
+  ],
+  "satMiningInstructions": [
+    {
+      "accountOrder": [
+        "genesis_authority:readonly+signer",
+        "payer:writable+signer",
+        "sat_global_state:writable",
+        "treasury:writable",
+        "sat_treasury_state:writable",
+        "sat_registry_reserve:writable",
+        "system_program:readonly",
+        "mint_authority_pda:readonly",
+        "sat_mint:readonly",
+        "sat_rebate_vault:writable",
+        "sat_treasury_vault:writable"
+      ],
+      "args": [
+        {
+          "name": "genesis_config_hash",
+          "type": "u8[32]"
+        },
+        {
+          "name": "reserved",
+          "requiredValue": "all-zero",
+          "type": "u8[8]"
+        }
+      ],
+      "discriminant": 34,
+      "name": "SatBootstrap"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 35,
+      "name": "SatReservedInitMinerSlots",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:readonly",
+        "sat_miner_capital_state:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "authority",
+          "type": "pubkey"
+        }
+      ],
+      "discriminant": 36,
+      "name": "SatInitMinerCapital"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_miner_capital_state:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "lamports",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 37,
+      "name": "SatDepositMinerCapital"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state:writable",
+        "sat_cycle_state:writable",
+        "sat_cycle_registry_meta:writable",
+        "sat_treasury_state:writable",
+        "sat_registry_reserve:writable",
+        "system_program:readonly",
+        "sat_treasury_vault:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 56,
+      "name": "SatOpenCycle"
+    },
+    {
+      "accountOrder": [],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "allocation_fp",
+          "type": "u32[25]"
+        }
+      ],
+      "discriminant": 57,
+      "name": "SatSubmitCycle",
+      "status": "retired-rejected"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 58,
+      "name": "SatSettleCycle",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state:writable",
+        "sat_cycle_state:writable",
+        "sat_miner_cycle_state:writable",
+        "sat_miner_capital_state:writable",
+        "treasury:writable",
+        "sat_treasury_state:writable",
+        "mint_authority:writable",
+        "sat_mint:writable",
+        "recipient_sat_account:writable",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly",
+        "sat_mint_program:readonly",
+        "sat_rebate_vault:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 59,
+      "name": "SatClaimCycleRewards"
+    },
+    {
+      "accountOrder": [
+        "signer:readonly+signer",
+        "sat_global_state:writable",
+        "sat_cycle_state:readonly",
+        "sat_unlock_interval_state:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 60,
+      "name": "SatRetargetUnlock"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 61,
+      "name": "SatSettleAndRetarget",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state:writable",
+        "treasury:writable",
+        "sat_treasury_state:writable",
+        "sat_miner_capital_state:writable",
+        "mint_authority:writable",
+        "sat_mint:writable",
+        "recipient_sat_account:writable",
+        "sat_cycle_state[]:writable",
+        "sat_miner_cycle_state[]:writable",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly",
+        "sat_mint_program:readonly",
+        "sat_rebate_vault:writable"
+      ],
+      "args": [
+        {
+          "name": "count",
+          "type": "u8"
+        }
+      ],
+      "discriminant": 62,
+      "name": "SatClaimCycleRewardsBatch"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state:readonly",
+        "sat_cycle_state:writable",
+        "sat_cycle_registry_meta:readonly",
+        "sat_cycle_registry_page:readonly",
+        "sat_cycle_settlement_progress:writable",
+        "sat_registry_reserve:writable",
+        "sat_treasury_state:writable",
+        "system_program:readonly",
+        "signer_miner_cycle_state:readonly",
+        "signer_miner_capital_state:writable",
+        "sat_rebate_vault:writable",
+        "sat_miner_cycle_state[]:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "page_index",
+          "type": "u64"
+        },
+        {
+          "name": "chunk_index",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 63,
+      "name": "SatSettleCyclePage"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state:writable",
+        "sat_cycle_state:writable",
+        "sat_cycle_settlement_progress:writable",
+        "sat_cycle_registry_meta:writable",
+        "sat_treasury_state:writable",
+        "signer_miner_cycle_state:readonly",
+        "signer_miner_capital_state:writable",
+        "sat_rebate_vault:writable",
+        "sat_cycle_registry_page[]:readonly"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 64,
+      "name": "SatFinalizeCycleSettlement"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state:readonly",
+        "sat_cycle_state:readonly",
+        "sat_cycle_registry_page:readonly",
+        "sat_cycle_settlement_progress:writable",
+        "sat_treasury_state:writable",
+        "signer_miner_cycle_state:readonly",
+        "signer_miner_capital_state:writable",
+        "sat_rebate_vault:writable",
+        "sat_miner_cycle_state[]:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "page_index",
+          "type": "u64"
+        },
+        {
+          "name": "chunk_index",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 65,
+      "name": "SatScoreCyclePage"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_cycle_state:writable",
+        "sat_cycle_registry_page:writable",
+        "sat_cycle_settlement_progress:writable",
+        "sat_global_state:readonly",
+        "sat_treasury_state:writable",
+        "signer_miner_cycle_state:readonly",
+        "signer_miner_capital_state:writable",
+        "sat_rebate_vault:writable",
+        "sat_treasury_vault:writable",
+        "sat_miner_cycle_state[]:writable",
+        "sat_miner_capital_state[]:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "page_index",
+          "type": "u64"
+        },
+        {
+          "name": "chunk_index",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 66,
+      "name": "SatDistributeCyclePage"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_miner_capital_state:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "lamports",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 67,
+      "name": "SatWithdrawMinerCapital"
+    },
+    {
+      "accountOrder": [
+        "signer:readonly+signer",
+        "sat_miner_capital_state:writable"
+      ],
+      "args": [
+        {
+          "name": "lamports",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 68,
+      "name": "SatSetActiveCommit"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_cycle_state:writable",
+        "authority:writable",
+        "sat_miner_cycle_state:writable",
+        "sat_miner_capital_state:writable",
+        "sat_cycle_registry_meta:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 69,
+      "name": "SatCloseResolvedMinerCycleState"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_cycle_state:writable",
+        "sat_cycle_registry_meta:writable",
+        "sat_cycle_registry_page:writable",
+        "sat_registry_reserve:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "page_index",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 70,
+      "name": "SatCloseResolvedCycleRegistryPage"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_cycle_state:writable",
+        "sat_cycle_settlement_progress:writable",
+        "sat_cycle_registry_meta:writable",
+        "sat_registry_reserve:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 71,
+      "name": "SatCloseResolvedCycleArtifacts"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 72,
+      "name": "SatMigrateLegacyCyclePage",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 73,
+      "name": "SatMigrateLegacyMinerCycleState",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 74,
+      "name": "SatLegacyRescueLockedCapital",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_miner_capital_state:writable",
+        "front_sat_miner_cycle_state[]:readonly",
+        "back_sat_miner_cycle_state[]:readonly"
+      ],
+      "args": [
+        {
+          "name": "expected_first_pending_cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "expected_last_pending_cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "front_count",
+          "type": "u8"
+        },
+        {
+          "name": "back_count",
+          "type": "u8"
+        }
+      ],
+      "discriminant": 75,
+      "name": "SatCompactPendingCycleRange"
+    },
+    {
+      "accountOrder": [],
+      "args": [
+        {
+          "name": "treasury_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "distributor_recipient",
+          "type": "pubkey"
+        }
+      ],
+      "discriminant": 76,
+      "name": "SatSetProtocolRecipients",
+      "status": "retired-rejected"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state:readonly",
+        "treasury:readonly",
+        "sat_treasury_state:writable",
+        "sat_treasury_vault:writable",
+        "sat_registry_reserve:writable",
+        "recipient_owner:writable",
+        "mint_authority:writable",
+        "sat_mint:writable",
+        "recipient_sat_account:writable",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly",
+        "sat_mint_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 77,
+      "name": "SatClaimProtocolTreasury"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 78,
+      "name": "SatReservedLegacyClaimProtocolCombined",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 79,
+      "name": "SatLegacyOpenBondPosition",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 80,
+      "name": "SatLegacyIncreaseBondPosition",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 81,
+      "name": "SatLegacyRequestBondUnlock",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 82,
+      "name": "SatLegacyCancelBondUnlock",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 83,
+      "name": "SatLegacyFinalizeBondUnlock",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_registry_reserve:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "maximum": "active genesis profile registryReserve.maxLamports",
+          "name": "target_balance_lamports",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 84,
+      "name": "SatTopUpRegistryReserve"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state:readonly",
+        "treasury:readonly",
+        "sat_treasury_state:writable",
+        "bond_staking_distributor:writable",
+        "mint_authority:writable",
+        "sat_mint:writable",
+        "bond_staking_reward_vault:writable",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly",
+        "sat_mint_program:readonly",
+        "sat_bond_program:readonly"
+      ],
+      "args": [],
+      "description": "Mints one bounded distributor claim chunk and records that exact protocol reward in the bond distributor atomically. Any bond CPI failure rolls back the mint and pending-lane debit.",
+      "discriminant": 85,
+      "name": "SatClaimProtocolDistributorSat"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 86,
+      "name": "SatReservedProtocolRouteClaim",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [],
+      "discriminant": 87,
+      "name": "SatReservedProtocolRouteRecipient",
+      "status": "reserved"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_treasury_state:writable",
+        "sat_treasury_vault:writable",
+        "sat_registry_reserve:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "maximum": "active genesis profile registryReserve.maxLamports",
+          "name": "target_balance_lamports",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 88,
+      "name": "SatRefillRegistryReserveFromTreasury"
+    },
+    {
+      "accountOrder": [
+        "miner_authority:writable+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:readonly",
+        "sat_cycle_state:writable",
+        "sat_miner_cycle_state:writable",
+        "sat_miner_capital_state:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "commitment",
+          "type": "u8[32]"
+        }
+      ],
+      "discriminant": 89,
+      "name": "SatCommitCycle"
+    },
+    {
+      "accountOrder": [
+        "keeper:readonly+signer",
+        "sat_cycle_state:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 90,
+      "name": "SatCloseCommitPhase"
+    },
+    {
+      "accountOrder": [
+        "keeper:readonly+signer",
+        "sat_cycle_state:writable",
+        "sat_unlock_interval_state:writable",
+        "slot_hashes_sysvar:readonly"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 91,
+      "name": "SatSealCycleEntropy"
+    },
+    {
+      "accountOrder": [
+        "miner_authority:writable+signer",
+        "sat_cycle_state:writable",
+        "sat_cycle_registry_meta:writable",
+        "sat_cycle_registry_page:writable",
+        "sat_cycle_settlement_progress:writable",
+        "sat_miner_cycle_state:writable",
+        "sat_miner_capital_state:writable",
+        "sat_unlock_interval_state:writable",
+        "sat_registry_reserve:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "nonce",
+          "type": "u8[32]"
+        },
+        {
+          "name": "allocation_fp",
+          "type": "u32[25]"
+        }
+      ],
+      "discriminant": 92,
+      "name": "SatRevealCycle",
+      "status": "legacy-drain-only"
+    },
+    {
+      "accountOrder": [
+        "miner_authority:writable+signer",
+        "sat_cycle_state:writable",
+        "sat_cycle_registry_meta:writable",
+        "sat_cycle_registry_page:writable",
+        "sat_cycle_settlement_progress:writable",
+        "sat_miner_cycle_state:writable",
+        "sat_miner_capital_state:writable",
+        "sat_unlock_interval_state:writable",
+        "sat_registry_reserve:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "nonce",
+          "type": "u8[32]"
+        },
+        {
+          "name": "allocation_fp",
+          "type": "u32[16]"
+        }
+      ],
+      "discriminant": 114,
+      "generation": 2,
+      "name": "SatRevealCycleV2",
+      "status": "frozen-not-active"
+    },
+    {
+      "accountOrder": [
+        "keeper:readonly+signer",
+        "sat_cycle_state:writable",
+        "sat_miner_cycle_state:writable",
+        "sat_miner_capital_state:writable",
+        "sat_treasury_state:writable",
+        "sat_treasury_vault:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "miner_authority",
+          "type": "pubkey"
+        }
+      ],
+      "discriminant": 93,
+      "name": "SatReleaseUnrevealedCommit"
+    },
+    {
+      "accountOrder": [
+        "keeper:readonly+signer",
+        "sat_cycle_state:writable",
+        "sat_cycle_registry_meta:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 94,
+      "name": "SatAbortEmptyCycle"
+    },
+    {
+      "accountOrder": [
+        "signer:readonly+signer",
+        "sat_miner_capital_state:writable",
+        "sat_treasury_state:writable",
+        "sat_rebate_vault:writable"
+      ],
+      "args": [],
+      "discriminant": 95,
+      "name": "SatClaimKeeperDebt"
+    },
+    {
+      "accountOrder": [
+        "permanent_mining_id:readonly+signer",
+        "controller:writable+signer",
+        "active_miner_authority:readonly+signer",
+        "sat_agent_record:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "permanent_mining_id",
+          "type": "pubkey"
+        },
+        {
+          "name": "controller",
+          "type": "pubkey"
+        },
+        {
+          "name": "recovery_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "active_miner_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "runtime_executor",
+          "type": "pubkey"
+        },
+        {
+          "name": "keeper_fee_payer",
+          "type": "pubkey"
+        }
+      ],
+      "discriminant": 96,
+      "name": "SatInitAgentRecord"
+    },
+    {
+      "accountOrder": [
+        "controller:readonly+signer",
+        "permanent_mining_id:readonly",
+        "active_miner_authority:readonly+signer",
+        "sat_agent_record:writable"
+      ],
+      "args": [
+        {
+          "name": "expected_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "active_miner_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "runtime_executor",
+          "type": "pubkey"
+        },
+        {
+          "name": "keeper_fee_payer",
+          "type": "pubkey"
+        }
+      ],
+      "discriminant": 97,
+      "name": "SatRotateAgentOperationalAuthorities"
+    },
+    {
+      "accountOrder": [
+        "controller:readonly+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:writable"
+      ],
+      "args": [
+        {
+          "name": "expected_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "proposed_controller",
+          "type": "pubkey"
+        }
+      ],
+      "discriminant": 98,
+      "name": "SatProposeAgentController"
+    },
+    {
+      "accountOrder": [
+        "proposed_controller:readonly+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:writable"
+      ],
+      "args": [
+        {
+          "name": "expected_authority_generation",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 99,
+      "name": "SatAcceptAgentController"
+    },
+    {
+      "accountOrder": [
+        "recovery_authority:readonly+signer",
+        "permanent_mining_id:readonly",
+        "active_miner_authority:readonly+signer",
+        "sat_agent_record:writable"
+      ],
+      "args": [
+        {
+          "name": "expected_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "controller",
+          "type": "pubkey"
+        },
+        {
+          "name": "recovery_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "active_miner_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "runtime_executor",
+          "type": "pubkey"
+        },
+        {
+          "name": "keeper_fee_payer",
+          "type": "pubkey"
+        }
+      ],
+      "discriminant": 100,
+      "name": "SatRecoverAgentAuthorities"
+    },
+    {
+      "accountOrder": [
+        "recorder:readonly+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:writable",
+        "sat_cycle_state:readonly",
+        "sat_miner_cycle_state:readonly",
+        "sat_cycle_settlement_progress_v2:readonly"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "expected_receipt_sequence",
+          "type": "u64"
+        },
+        {
+          "name": "expected_season_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 101,
+      "name": "SatRecordAgentCycleReceipt"
+    },
+    {
+      "accountOrder": [
+        "controller:writable+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:writable",
+        "sat_agent_season_summary:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "expected_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "expected_receipt_sequence",
+          "type": "u64"
+        },
+        {
+          "name": "expected_season_id",
+          "type": "u64"
+        },
+        {
+          "name": "expected_last_cycle_id",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 102,
+      "name": "SatCloseAgentSeason"
+    },
+    {
+      "accountOrder": [
+        "program_admin:writable+signer",
+        "sat_global_state:readonly",
+        "vault_program:readonly",
+        "sat_agent_vault_program_allowlist:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "expected_generation",
+          "type": "u64"
+        },
+        {
+          "name": "enabled",
+          "type": "u8"
+        },
+        {
+          "name": "padding0",
+          "requiredValue": "all-zero",
+          "type": "u8[7]"
+        }
+      ],
+      "discriminant": 103,
+      "name": "SatSetAgentVaultProgramAllowlist"
+    },
+    {
+      "accountOrder": [
+        "controller:readonly+signer",
+        "current_miner_authority:readonly+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:writable",
+        "current_miner_capital:readonly",
+        "vault_program:readonly",
+        "sat_agent_vault_program_allowlist:readonly",
+        "vault_authority:readonly+signer"
+      ],
+      "args": [
+        {
+          "name": "expected_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "vault_authority",
+          "type": "pubkey"
+        }
+      ],
+      "discriminant": 104,
+      "name": "SatBindAgentVaultAuthority"
+    },
+    {
+      "accountOrder": [
+        "authority:readonly+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:writable"
+      ],
+      "args": [
+        {
+          "name": "expected_policy_generation",
+          "type": "u16"
+        },
+        {
+          "name": "paused",
+          "type": "u8"
+        },
+        {
+          "name": "padding0",
+          "requiredValue": "all-zero",
+          "type": "u8[5]"
+        }
+      ],
+      "discriminant": 105,
+      "name": "SatSetAgentEntryPause"
+    },
+    {
+      "accountOrder": [
+        "miner_authority:readonly+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:readonly",
+        "sat_miner_capital_state:writable"
+      ],
+      "args": [
+        {
+          "name": "expected_from_version",
+          "requiredValue": 1,
+          "type": "u8"
+        },
+        {
+          "name": "target_version",
+          "requiredValue": 2,
+          "type": "u8"
+        },
+        {
+          "name": "padding0",
+          "requiredValue": "all-zero",
+          "type": "u8[6]"
+        }
+      ],
+      "discriminant": 106,
+      "name": "SatMigrateMinerCapitalGeneration"
+    },
+    {
+      "accountOrder": [
+        "controller:writable+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:writable",
+        "sat_keeper_capability:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "expected_agent_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "expected_capability_generation",
+          "type": "u64"
+        },
+        {
+          "name": "payout_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "capability_mask",
+          "type": "u64"
+        },
+        {
+          "name": "declared_fee_budget_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "capability_version",
+          "requiredValue": 1,
+          "type": "u16"
+        },
+        {
+          "name": "padding0",
+          "requiredValue": "all-zero",
+          "type": "u8[6]"
+        }
+      ],
+      "discriminant": 107,
+      "name": "SatCreateKeeperCapability"
+    },
+    {
+      "accountOrder": [
+        "controller:writable+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:readonly",
+        "sat_keeper_capability:readonly",
+        "sat_keeper_registry:writable",
+        "system_program:readonly",
+        "sat_keeper_operating_reserve:readonly"
+      ],
+      "args": [
+        {
+          "name": "expected_registry_revision",
+          "type": "u64"
+        },
+        {
+          "name": "capability_generation",
+          "type": "u64"
+        },
+        {
+          "name": "enabled",
+          "type": "u8"
+        },
+        {
+          "name": "padding0",
+          "requiredValue": "all-zero",
+          "type": "u8[7]"
+        }
+      ],
+      "discriminant": 108,
+      "name": "SatSetKeeperCapabilityActive"
+    },
+    {
+      "accountOrder": [
+        "payer:writable+signer",
+        "sat_cycle_state:readonly",
+        "sat_keeper_registry:readonly",
+        "sat_keeper_snapshot:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "expected_registry_revision",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 109,
+      "name": "SatSnapshotKeeperCapabilities"
+    },
+    {
+      "accountOrder": [
+        "controller:writable+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:readonly",
+        "sat_keeper_operating_reserve:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "expected_agent_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "initial_spendable_lamports",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 110,
+      "name": "SatInitKeeperOperatingReserve"
+    },
+    {
+      "accountOrder": [
+        "funder:writable+signer",
+        "permanent_mining_id:readonly",
+        "sat_keeper_operating_reserve:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "lamports",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 111,
+      "name": "SatFundKeeperOperatingReserve"
+    },
+    {
+      "accountOrder": [
+        "controller:writable+signer",
+        "permanent_mining_id:readonly",
+        "sat_agent_record:readonly",
+        "sat_cycle_state:readonly",
+        "sat_keeper_operating_reserve:writable",
+        "sat_keeper_work_receipt:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "expected_agent_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "page_index",
+          "type": "u64"
+        },
+        {
+          "name": "chunk_index",
+          "type": "u64"
+        },
+        {
+          "name": "maximum_charge_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "phase",
+          "type": "u8"
+        },
+        {
+          "name": "padding0",
+          "requiredValue": "all-zero",
+          "type": "u8[7]"
+        }
+      ],
+      "discriminant": 112,
+      "name": "SatReserveKeeperWork"
+    },
+    {
+      "accountOrder": [
+        "payer:readonly+signer",
+        "permanent_mining_id:readonly",
+        "sat_cycle_state:readonly",
+        "sat_keeper_operating_reserve:writable",
+        "sat_keeper_work_receipt:writable"
+      ],
+      "args": [
+        {
+          "name": "cycle_id",
+          "type": "u64"
+        },
+        {
+          "name": "page_index",
+          "type": "u64"
+        },
+        {
+          "name": "chunk_index",
+          "type": "u64"
+        },
+        {
+          "name": "phase",
+          "type": "u8"
+        },
+        {
+          "name": "padding0",
+          "requiredValue": "all-zero",
+          "type": "u8[7]"
+        }
+      ],
+      "discriminant": 113,
+      "name": "SatRefundKeeperWork"
+    }
+  ],
+  "satMintInstructions": [
+    {
+      "accountOrder": [
+        "genesis_authority:readonly+signer",
+        "payer:writable+signer",
+        "authority_pda:writable",
+        "system_program:readonly",
+        "sat_mint:readonly",
+        "token_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "genesis_config_hash",
+          "type": "u8[32]"
+        },
+        {
+          "name": "reserved",
+          "requiredValue": "all-zero",
+          "type": "u8[32]"
+        }
+      ],
+      "discriminant": 0,
+      "name": "Init"
+    },
+    {
+      "accountOrder": [
+        "treasury:writable+signer",
+        "authority_pda:writable",
+        "sat_mint:writable",
+        "treasury_sat_account:writable",
+        "token_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 1,
+      "name": "MintSAT"
+    }
+  ],
+  "schema": "sat.steel.interface.v2",
+  "sourceOfTruth": {
+    "accountOrder": [
+      "tools/generate_interface_generation_v2.mjs",
+      "api/account-order.generation-2.json"
+    ],
+    "accounts": [
+      "api/src/sdk.rs",
+      "mint-api/src/sdk.rs",
+      "bond-api/src/sdk.rs"
+    ],
+    "genesis": [
+      "genesis/sat-genesis.json",
+      "genesis/generated/sat-genesis.devnet.json",
+      "genesis/generated/sat-genesis.mainnet.json"
+    ],
+    "instructions": [
+      "api/src/instruction.rs",
+      "mint-api/src/instruction.rs",
+      "bond-api/src/instruction.rs"
+    ],
+    "interfaceGeneration": [
+      "api/interface-generation.v2.json",
+      "api/account-order.generation-2.json",
+      "api/state-layouts.generation-2.json",
+      "api/signer-codecs.generation-2.json"
+    ],
+    "stateLayouts": [
+      "api/src/state/",
+      "mint-api/src/state/",
+      "bond-api/src/state/"
+    ]
+  },
+  "status": "frozen-not-active",
+  "version": "4.0.0-generation-2-frozen"
+}

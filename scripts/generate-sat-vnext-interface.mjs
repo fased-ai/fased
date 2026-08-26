@@ -1,0 +1,150 @@
+#!/usr/bin/env node
+
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const bundleDir = path.join(root, "extensions", "sat-mining", "protocol-generation");
+const importMode = process.argv.includes("--import");
+const checkMode = process.argv.includes("--check");
+const satRootIndex = process.argv.indexOf("--sat-root");
+const satRoot = satRootIndex >= 0 ? path.resolve(process.argv[satRootIndex + 1] ?? "") : null;
+if ((importMode || satRootIndex >= 0) && !satRoot) {
+  throw new Error("--sat-root requires the canonical SAT checkout path");
+}
+if (importMode === checkMode) {
+  throw new Error(
+    "use exactly one mode: --import --sat-root <path> or --check [--sat-root <path>]",
+  );
+}
+
+const artifacts = [
+  "interface-generation.v2.json",
+  "idl.generation-2.json",
+  "account-order.generation-2.json",
+  "state-layouts.generation-2.json",
+  "signer-codecs.generation-2.json",
+];
+const tsPath = path.join(root, "extensions", "sat-mining", "src", "vnext-interface-manifest.ts");
+const goPath = path.join(root, "tools", "fased-signerd", "sat_vnext_manifest_generated.go");
+
+function fail(message) {
+  throw new Error(`Fased SAT vNext interface: ${message}`);
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function sourcePath(name) {
+  return path.join(satRoot, "api", name);
+}
+
+function bundledPath(name) {
+  return path.join(bundleDir, name);
+}
+
+function update(filePath, expected) {
+  const actual = fs.existsSync(filePath) ? fs.readFileSync(filePath) : null;
+  if (actual?.equals(expected)) {
+    return;
+  }
+  if (checkMode) {
+    fail(`${path.relative(root, filePath)} is stale`);
+  }
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, expected);
+}
+
+if (importMode) {
+  for (const artifact of artifacts) {
+    update(bundledPath(artifact), fs.readFileSync(sourcePath(artifact)));
+  }
+} else if (satRoot) {
+  for (const artifact of artifacts) {
+    const canonical = fs.readFileSync(sourcePath(artifact));
+    const bundled = fs.readFileSync(bundledPath(artifact));
+    if (!canonical.equals(bundled)) {
+      fail(`${artifact} differs from canonical SAT bytes`);
+    }
+  }
+}
+
+const bytesByArtifact = Object.fromEntries(
+  artifacts.map((artifact) => [artifact, fs.readFileSync(bundledPath(artifact))]),
+);
+const parsed = Object.fromEntries(
+  Object.entries(bytesByArtifact).map(([artifact, bytes]) => [artifact, JSON.parse(bytes)]),
+);
+const contract = parsed["interface-generation.v2.json"];
+const idl = parsed["idl.generation-2.json"];
+const accountOrder = parsed["account-order.generation-2.json"];
+const layouts = parsed["state-layouts.generation-2.json"];
+const signer = parsed["signer-codecs.generation-2.json"];
+
+if (
+  contract?.state !== "FROZEN_NOT_ACTIVE" ||
+  contract?.strategyChannels !== 16 ||
+  contract?.legacyDrain?.strategyChannels !== 25 ||
+  contract?.activation?.fasedRuntimeSelected !== false
+) {
+  fail("interface contract is not the inactive 16-channel generation");
+}
+const idlReveal = idl?.satMiningInstructions?.find(
+  (instruction) => instruction.name === "SatRevealCycleV2",
+);
+const orderReveal = accountOrder?.programs?.satMining?.find(
+  (instruction) => instruction.name === "SatRevealCycleV2",
+);
+const codec = signer?.codecs?.find((candidate) => candidate.action === "revealCycleV2");
+if (
+  idlReveal?.args?.at(-1)?.type !== "u32[16]" ||
+  idlReveal?.discriminant !== 114 ||
+  orderReveal?.discriminant !== 114 ||
+  codec?.dataLength !== 105 ||
+  codec?.allocationChannels !== 16 ||
+  codec?.active !== false ||
+  layouts?.vnext?.allocationVector?.channels !== 16
+) {
+  fail("generated IDL/account/layout/signer surfaces disagree");
+}
+const legacyReveal = idl.satMiningInstructions.find(
+  (instruction) => instruction.name === "SatRevealCycle",
+);
+if (
+  legacyReveal?.args?.at(-1)?.type !== "u32[25]" ||
+  legacyReveal?.status !== "legacy-drain-only" ||
+  layouts?.legacy?.reinterpretAsGeneration2 !== false
+) {
+  fail("legacy drain decoder is not preserved distinctly");
+}
+
+const digests = Object.fromEntries(
+  Object.entries(bytesByArtifact).map(([artifact, bytes]) => [artifact, sha256(bytes)]),
+);
+const accountFlags = orderReveal.accountOrder.map((entry) => {
+  const match = /:(readonly|writable)(\+signer)?$/u.exec(entry);
+  if (!match) {
+    fail(`invalid account-order entry ${entry}`);
+  }
+  return `${match[2] ? "S" : "-"}${match[1] === "writable" ? "W" : "-"}`;
+});
+
+const typescript = `// Generated from the exact SAT generation-2 interface bundle; do not edit.\n\nexport const SAT_VNEXT_INTERFACE = {\n  state: "FROZEN_NOT_ACTIVE",\n  active: false,\n  schemaGeneration: 2,\n  signerCapabilityGeneration: 2,\n  strategyChannels: 16,\n  legacyStrategyChannels: 25,\n  revealDiscriminator: 114,\n  revealDataLength: 105,\n  revealAccountShape: ${JSON.stringify(accountFlags.join(","))},\n  contractSha256: ${JSON.stringify(digests["interface-generation.v2.json"])},\n  idlSha256: ${JSON.stringify(digests["idl.generation-2.json"])},\n  accountOrderSha256: ${JSON.stringify(digests["account-order.generation-2.json"])},\n  stateLayoutsSha256: ${JSON.stringify(digests["state-layouts.generation-2.json"])},\n  signerCodecsSha256: ${JSON.stringify(digests["signer-codecs.generation-2.json"])},\n} as const;\n\nexport function encodeSatVNextRevealData(params: {\n  cycleId: bigint;\n  nonce: Buffer;\n  allocationFp: readonly number[];\n}): Buffer {\n  if (params.nonce.length !== 32) throw new Error("SAT vNext reveal nonce must contain 32 bytes");\n  if (params.allocationFp.length !== SAT_VNEXT_INTERFACE.strategyChannels) {\n    throw new Error("SAT vNext reveal must contain exactly 16 strategy channels");\n  }\n  const data = Buffer.alloc(SAT_VNEXT_INTERFACE.revealDataLength);\n  data[0] = SAT_VNEXT_INTERFACE.revealDiscriminator;\n  data.writeBigUInt64LE(params.cycleId, 1);\n  params.nonce.copy(data, 9);\n  params.allocationFp.forEach((value, index) => {\n    if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {\n      throw new Error(\`SAT vNext allocation[\${index}] is not a u32\`);\n    }\n    data.writeUInt32LE(value, 41 + index * 4);\n  });\n  return data;\n}\n`;
+
+const go = `package main\n\n// Code generated from the exact SAT generation-2 interface bundle; DO NOT EDIT.\n\ntype frozenSATCodecGeneration2 struct {\n\tAction             string\n\tDiscriminator      byte\n\tDataLength         int\n\tAllocationChannels int\n\tAccountShape       string\n\tActive             bool\n}\n\nconst (\n\tsatVNextInterfaceContractSHA256 = ${JSON.stringify(digests["interface-generation.v2.json"])} // pragma: allowlist secret\n\tsatVNextIDLContractSHA256       = ${JSON.stringify(digests["idl.generation-2.json"])} // pragma: allowlist secret\n\tsatVNextAccountOrderSHA256      = ${JSON.stringify(digests["account-order.generation-2.json"])} // pragma: allowlist secret\n)\n\nvar signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{\n\t"revealCycleV2": {\n\t\tAction:             "revealCycleV2",\n\t\tDiscriminator:      114,\n\t\tDataLength:         105,\n\t\tAllocationChannels: 16,\n\t\tAccountShape:       ${JSON.stringify(accountFlags.join(","))},\n\t\tActive:             false,\n\t},\n}\n\nfunc isCanonicalFrozenSATGeneration2Data(action string, data []byte) bool {\n\tcodec, ok := signerSATCodecsGeneration2[action]\n\treturn ok && !codec.Active && len(data) == codec.DataLength && data[0] == codec.Discriminator\n}\n`;
+
+const typescriptWithPublicIdentityAllowlist = typescript.replace(
+  /(\n  (?:contract|idl|accountOrder|stateLayouts|signerCodecs)Sha256: [^\n]+,)/gu,
+  "$1 // pragma: allowlist secret",
+);
+
+update(tsPath, Buffer.from(typescriptWithPublicIdentityAllowlist));
+update(goPath, Buffer.from(go));
+process.stdout.write(
+  importMode
+    ? "Imported exact SAT generation-2 interface and generated Fased codecs.\n"
+    : "Fased SAT generation-2 interface and codecs are synchronized.\n",
+);

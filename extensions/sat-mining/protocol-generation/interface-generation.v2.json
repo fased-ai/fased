@@ -1,0 +1,69 @@
+{
+  "$schema": "sat.interface-generation.v2",
+  "activation": {
+    "fasedRuntimeSelected": false,
+    "liveConstantsChanged": false,
+    "programDispatchBound": false,
+    "publicEntryEnabled": false
+  },
+  "artifacts": {
+    "accountOrder": "api/account-order.generation-2.json",
+    "idl": "api/idl.generation-2.json",
+    "rust": "api/src/interface_generation_v2.rs",
+    "signerCodecs": "api/signer-codecs.generation-2.json",
+    "stateLayouts": "api/state-layouts.generation-2.json"
+  },
+  "componentGenerations": {
+    "bond": "SAT-BOND-GEN-002",
+    "cycle": "SAT-CYCLE-GEN-002",
+    "economics": "SAT-ECON-GEN-002",
+    "penalty": "SAT-PENALTY-GEN-002",
+    "schema": "SAT-SCHEMA-GEN-002",
+    "signerCapability": "FSD-SIGNER-GEN-002"
+  },
+  "contractDigest": "sha256:9a8fb75294ea1c4f659d19cb866626f2553d3f2da19391dad1bd626e2ff4f939",
+  "contractVersion": 2,
+  "freezeId": "SAT-VNEXT-GATE-P5-001",
+  "legacyDrain": {
+    "allowed": [
+      "reveal",
+      "recovery",
+      "settlement",
+      "claim",
+      "drain"
+    ],
+    "decode": "generation-1-only",
+    "newEntry": false,
+    "reveal": {
+      "allocationType": "u32[25]",
+      "discriminant": 92,
+      "wireBytes": 145
+    },
+    "strategyChannels": 25
+  },
+  "source": {
+    "componentRegistryPath": "api/component-generations.v1.json",
+    "componentRegistrySha256": "sha256:ca236c58d0af5ececcca987bd025e8295eb6b0e95bdd330f3f0faea1a985ecdc",
+    "economicsPath": "api/economics-generation.v2.json",
+    "economicsSha256": "sha256:f5c8cdb751225d418cf1e816ce712af872f20ab4386d96670cbb997619833ca5",
+    "legacyAccountOrderPath": "api/account-order.v1.json",
+    "legacyAccountOrderSha256": "sha256:3bf82fda78a2040d27edcb33f90472de46098cfee7ef57acd2758a26ea6a1c6c",
+    "legacyIdlPath": "api/idl.json",
+    "legacyIdlSha256": "sha256:d580d2a6d705968ff377f8bc0d12bce8ec17d760abdf1588839c1e576e5f8245"
+  },
+  "state": "FROZEN_NOT_ACTIVE",
+  "strategyChannels": 16,
+  "vnext": {
+    "accountDiscriminants": [
+      149,
+      150,
+      151
+    ],
+    "commitmentDomain": "sat-allocation-v2",
+    "reveal": {
+      "allocationType": "u32[16]",
+      "discriminant": 114,
+      "wireBytes": 105
+    }
+  }
+}
