@@ -131,6 +131,19 @@ export const LocalSocketSignerPolicyV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+export const LocalSocketSignerKeeperFeePayerCapabilityV2Schema = Type.Object(
+  {
+    miningWalletId: Type.String({ minLength: 1 }),
+    feePayerWalletId: Type.String({ minLength: 1 }),
+    feePayerPublicKey: Type.String({ minLength: 1 }),
+    policyHash: Type.String({ minLength: 1 }),
+    maxPerTransactionLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
+    maxDailyLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
+    state: Type.Literal("ready"),
+  },
+  { additionalProperties: false },
+);
+
 const SignerSatAccountV2Schema = Type.Object(
   {
     pubkey: Type.String(),
@@ -268,6 +281,19 @@ export const SignerIntentV2Schema = Type.Union([
       instructions: Type.Optional(
         Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
       ),
+      addressLookupTables: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 1 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      type: Type.Literal("solana.satKeeperAction"),
+      authorityWalletId: Type.String({ minLength: 1 }),
+      action: Type.String({ minLength: 1 }),
+      programId: Type.String(),
+      dataBase64: Type.String(),
+      keys: Type.Array(SignerSatAccountV2Schema),
+      context: Type.Optional(SignerSatContextV2Schema),
       addressLookupTables: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 1 })),
     },
     { additionalProperties: false },
@@ -539,6 +565,18 @@ export const LocalSocketSignerRequestSchema = Type.Union(
     ),
     Type.Object(
       { op: Type.Literal("v2.wallet.readiness"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      { op: Type.Literal("v2.keeperFeePayer.get"), walletId: Type.String({ minLength: 1 }) },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.keeperFeePayer.ensure"),
+        walletId: Type.String({ minLength: 1 }),
+        request: Type.Object({}, { additionalProperties: false }),
+      },
       { additionalProperties: false },
     ),
     Type.Object(
@@ -1193,6 +1231,9 @@ export function validateLocalSocketSignerResult(
       return Value.Check(LocalSocketSignerWalletV2Schema, result);
     case "v2.wallet.readiness":
       return Value.Check(LocalSocketSignerWalletReadinessV2Schema, result);
+    case "v2.keeperFeePayer.get":
+    case "v2.keeperFeePayer.ensure":
+      return Value.Check(LocalSocketSignerKeeperFeePayerCapabilityV2Schema, result);
     case "v2.wallet.create":
     case "v2.wallet.import":
     case "v2.wallet.importLegacy":

@@ -30,6 +30,7 @@ const (
 	intentSolanaNativeTransfer     = "solana.nativeTransfer"
 	intentSolanaSPLTransferChecked = "solana.splTransferChecked"
 	intentSolanaSATAction          = "solana.satAction"
+	intentSolanaSATKeeperAction    = "solana.satKeeperAction"
 	intentSolanaSATLookupTable     = "solana.satLookupTable"
 	intentSolanaVaultBondAction    = "solana.vaultBondAction"
 	intentFederationBondChallenge  = "federation.bondChallenge"
@@ -80,6 +81,7 @@ type signerIntentV2 struct {
 	LookupTable         *signerSATLookupTableIntentV2          `json:"lookupTable,omitempty"`
 	Jupiter             *signerJupiterIntentV2                 `json:"jupiter,omitempty"`
 	Cluster             string                                 `json:"cluster,omitempty"`
+	AuthorityWalletID   string                                 `json:"authorityWalletId,omitempty"`
 	Federation          *signerFederationBondChallengeIntentV2 `json:"federation,omitempty"`
 }
 
@@ -343,6 +345,8 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 			return normalizedIntentV2{}, errors.New("typed SAT intent requires signer wallet context")
 		}
 		return normalizeSATIntentV2(input, *wallet)
+	case intentSolanaSATKeeperAction:
+		return normalizedIntentV2{}, errors.New("typed SAT keeper intent requires signer-owned authority hydration")
 	case intentSolanaSATLookupTable:
 		if wallet == nil || wallet.IsZero() {
 			return normalizedIntentV2{}, errors.New("typed SAT lookup-table intent requires signer wallet context")
@@ -425,8 +429,9 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 }
 
 func isTypedSATIntentV2(policy signerPolicyV2, intent normalizedIntentV2) bool {
-	return policy.Role == "mining" &&
-		(intent.Intent.Type == intentSolanaSATAction || intent.Intent.Type == intentSolanaSATLookupTable)
+	return (policy.Role == "mining" &&
+		(intent.Intent.Type == intentSolanaSATAction || intent.Intent.Type == intentSolanaSATLookupTable)) ||
+		(policy.Role == "keeper" && intent.Intent.Type == intentSolanaSATKeeperAction)
 }
 
 func policyAssetForIntentModeV2(
@@ -542,7 +547,7 @@ func policyReservationsForIntentModeV2(
 	requirements := make([]signerReservationRequirementV2, 0, 2)
 	feeOnlyPrimary := false
 	switch intent.Intent.Type {
-	case intentSolanaTriggerAuth, intentSolanaTriggerCancel, intentSolanaTriggerWithdraw:
+	case intentSolanaTriggerAuth, intentSolanaTriggerCancel, intentSolanaTriggerWithdraw, intentSolanaSATKeeperAction:
 		// These operations historically expose maxFeeLamports as their primary
 		// semantic amount. It is not an additional principal transfer; the
 		// signer-owned fee reservation below replaces it for durable accounting.

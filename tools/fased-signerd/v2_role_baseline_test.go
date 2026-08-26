@@ -92,6 +92,37 @@ func TestSignerMiningRoleBaselineV1UsesReleaseRuntimeAndAllTypedActions(t *testi
 	}
 }
 
+func TestSignerKeeperFeePayerBaselineHasNoGeneralWalletAuthority(t *testing.T) {
+	wallet := solana.NewWallet().PublicKey().String()
+	program := solana.NewWallet().PublicKey().String()
+	policy, err := compileSignerRoleBaselineV1(
+		"keeper",
+		wallet,
+		signerRoleBaselineRequestV1{Version: 1, Role: "keeper"},
+		signerRoleBaselineRuntimeV1{
+			SATProgramID: program, SATBondProgramID: solana.NewWallet().PublicKey().String(),
+			SATMintAddress: solana.NewWallet().PublicKey().String(), SATMintProgramID: solana.TokenProgramID.String(), Verified: true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("compile Keeper fee-payer baseline: %v", err)
+	}
+	if policy.Role != "keeper" || !policy.TypedSATPrograms ||
+		containsStringV2(policy.Operations, intentSolanaNativeTransfer) ||
+		containsStringV2(policy.Operations, intentSolanaSATAction) {
+		t.Fatalf("Keeper baseline exposed general wallet or Mining authority: %#v", policy)
+	}
+	for _, action := range sortedKeeperFeePayerActionsV2() {
+		if !containsStringV2(policy.Operations, "satKeeperFee."+action+"@"+program) {
+			t.Fatalf("Keeper baseline omitted %s", action)
+		}
+	}
+	asset, err := policyAssetByNameV2(policy, "solana:native")
+	if err != nil || asset.MaxPerTx != "500000" || asset.MaxDaily != "50000000" {
+		t.Fatalf("Keeper baseline limits drifted: asset=%#v err=%v", asset, err)
+	}
+}
+
 func TestSignerMiningPrelaunchBaselineIsWalletReadyWithoutSATAuthority(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	wallet, policy, err := keys.CreateWithRoleBaseline(

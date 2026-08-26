@@ -442,6 +442,24 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(readiness)
+	case "v2.keeperFeePayer.get":
+		capability, err := s.keeperFeePayerCapabilityV2(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(capability)
+	case "v2.keeperFeePayer.ensure":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		capability, err := s.ensureKeeperFeePayerCapabilityV2(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(capability)
 	case "v2.wallet.create":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")
@@ -452,6 +470,9 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		}
 		body.WalletID = req.WalletID
 		if body.Baseline != nil {
+			if strings.EqualFold(strings.TrimSpace(body.Baseline.Role), "keeper") {
+				return nil, errors.New("Keeper fee-payer keys are created only through v2.keeperFeePayer.ensure")
+			}
 			if body.Policy.Role != "" || body.Policy.Version != 0 || body.Policy.BaselineVersion != 0 ||
 				len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
 				return nil, errors.New("wallet creation must select exactly one policy or signer-owned role baseline")
@@ -788,7 +809,35 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if err != nil {
 		return signerOperationV2{}, err
 	}
-	intent, err := normalizeSignerIntentForWalletV2(hydratedIntent, &walletPublicKey)
+	var authorityWalletID string
+	var authorityPublicKey solana.PublicKey
+	var authorityPolicy signerPolicyV2
+	if strings.TrimSpace(hydratedIntent.Type) == intentSolanaSATKeeperAction {
+		authorityWalletID = normalizeWalletID(hydratedIntent.AuthorityWalletID)
+		authorityRecord, authorityErr := s.keys.PublicRecord(authorityWalletID)
+		if authorityErr != nil {
+			return signerOperationV2{}, errors.New("typed SAT keeper authority wallet is unavailable")
+		}
+		authorityPublicKey, authorityErr = solana.PublicKeyFromBase58(authorityRecord.PublicKey)
+		if authorityErr != nil {
+			return signerOperationV2{}, errors.New("typed SAT keeper authority has an invalid public key")
+		}
+		authorityPolicy, authorityErr = s.store.getPolicy(authorityWalletID)
+		if authorityErr != nil || authorityPolicy.Role != "mining" {
+			return signerOperationV2{}, errors.New("typed SAT keeper authority must be a Mining wallet")
+		}
+	}
+	var intent normalizedIntentV2
+	if strings.TrimSpace(hydratedIntent.Type) == intentSolanaSATKeeperAction {
+		intent, err = normalizeKeeperFeePayerIntentV2(
+			hydratedIntent,
+			walletPublicKey,
+			authorityWalletID,
+			authorityPublicKey,
+		)
+	} else {
+		intent, err = normalizeSignerIntentForWalletV2(hydratedIntent, &walletPublicKey)
+	}
 	if err != nil {
 		return signerOperationV2{}, err
 	}
@@ -800,15 +849,24 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		return signerOperationV2{}, errors.New("signer policy hash mismatch")
 	}
 	if intent.ParentIntent != nil {
-		if roleErr := requireAutonomousRoleV2(policy, *intent.ParentIntent); roleErr != nil {
-			return signerOperationV2{}, fmt.Errorf("SAT lookup-table parent distribution is not authorized: %w", roleErr)
+		parentPolicy := policy
+		parentLabel := "SAT lookup-table parent distribution"
+		if intent.Intent.Type == intentSolanaSATKeeperAction {
+			parentPolicy = authorityPolicy
+			parentLabel = "SAT keeper operational authority"
 		}
-		if policyErr := s.store.preflightPolicyForIntentV2(req, *intent.ParentIntent); policyErr != nil {
-			return signerOperationV2{}, fmt.Errorf("SAT lookup-table parent distribution is not authorized: %w", policyErr)
+		if roleErr := requireAutonomousRoleV2(parentPolicy, *intent.ParentIntent); roleErr != nil {
+			return signerOperationV2{}, fmt.Errorf("%s is not authorized: %w", parentLabel, roleErr)
+		}
+		if _, policyErr := policyAssetForIntentV2(parentPolicy, *intent.ParentIntent); policyErr != nil {
+			return signerOperationV2{}, fmt.Errorf("%s is not authorized: %w", parentLabel, policyErr)
 		}
 	}
 	if policy.Role == "vault" {
 		return signerOperationV2{}, errors.New("Vault direct execution requires signer-reviewed authorization through review.prepare, signer-owned WebAuthn, and review.execute")
+	}
+	if policy.Role == "keeper" && intent.Intent.Type != intentSolanaSATKeeperAction {
+		return signerOperationV2{}, errors.New("Keeper fee-payer keys cannot execute as general wallets")
 	}
 	operation, lookupErr := s.store.getOperation(req.RequestID)
 	existing := lookupErr == nil
@@ -835,7 +893,11 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if isSignerOwnedTriggerIntentV2(intent) {
 		return s.executeAutonomousJupiterTriggerV2(req, intent, policy, walletPublicKey)
 	}
-	network, err := s.keys.SolanaNetworkV2(req.IntentWalletID())
+	networkWalletID := req.IntentWalletID()
+	if intent.Intent.Type == intentSolanaSATKeeperAction {
+		networkWalletID = authorityWalletID
+	}
+	network, err := s.keys.SolanaNetworkV2(networkWalletID)
 	if err != nil {
 		return signerOperationV2{}, errSignerNetworkPendingV2
 	}
@@ -881,7 +943,17 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		return signerOperationV2{}, err
 	}
 	defer zeroBytes(privateKey)
-	tx, err := buildTypedTransactionV2(rpcURLs, verificationRPCURLs, privateKey, intent)
+	operationalPrivateKeys := []solana.PrivateKey(nil)
+	if intent.Intent.Type == intentSolanaSATKeeperAction {
+		authorityPrivateKey, _, authorityErr := s.keys.privateKey(authorityWalletID)
+		if authorityErr != nil {
+			_, _ = s.store.markFailedClaim(operation.RequestID, executionAttempt, authorityErr)
+			return signerOperationV2{}, errors.New("typed SAT keeper operational key is unavailable")
+		}
+		defer zeroBytes(authorityPrivateKey)
+		operationalPrivateKeys = []solana.PrivateKey{authorityPrivateKey}
+	}
+	tx, err := buildTypedTransactionV2(rpcURLs, verificationRPCURLs, privateKey, operationalPrivateKeys, intent)
 	if err != nil {
 		safeErr := errors.New("signer-owned Solana RPC transaction preparation failed")
 		failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, safeErr)
@@ -993,6 +1065,7 @@ func buildTypedTransactionV2(
 	rpcURLs []string,
 	verificationRPCURLs []string,
 	privateKey solana.PrivateKey,
+	operationalPrivateKeys []solana.PrivateKey,
 	intent normalizedIntentV2,
 ) (*solana.Transaction, error) {
 	from := privateKey.PublicKey()
@@ -1032,6 +1105,15 @@ func buildTypedTransactionV2(
 	blockhash, err := signerLatestBlockhashWithFallbackV2(rpcURLs)
 	if err != nil {
 		return nil, err
+	}
+	if intent.Intent.Type == intentSolanaSATKeeperAction {
+		return execution.NewSignedTypedTransactionWithFeePayer(
+			instructions,
+			blockhash,
+			privateKey,
+			operationalPrivateKeys,
+			addressTables,
+		)
 	}
 	return newSignedTypedTransactionV2(instructions, blockhash, privateKey, addressTables)
 }
@@ -1132,7 +1214,7 @@ func buildTypedInstructionsV2(
 			transferData,
 		)
 		return appendMemo([]solana.Instruction{createDestinationATA, transfer}), nil
-	case intentSolanaSATAction, intentSolanaSATLookupTable, intentSolanaVaultBondAction:
+	case intentSolanaSATAction, intentSolanaSATKeeperAction, intentSolanaSATLookupTable, intentSolanaVaultBondAction:
 		if len(intent.Instructions) == 0 || len(intent.Instructions) > 6 {
 			return nil, errors.New("typed SAT action has an invalid instruction count")
 		}
@@ -1343,7 +1425,7 @@ func validateSignerNativeSpendV2(
 		return err
 	}
 	principal := big.NewInt(0)
-	if intent.Asset == "solana:native" {
+	if intent.Asset == "solana:native" && intent.Intent.Type != intentSolanaSATKeeperAction {
 		principal.Set(intent.Amount)
 	}
 	maximum := new(big.Int).Add(principal, feeCeiling)

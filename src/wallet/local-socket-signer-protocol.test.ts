@@ -253,6 +253,35 @@ describe("local socket signer protocol", () => {
       "v2.wallet.readiness",
     );
     expect(
+      parseLocalSocketSignerRequest({ op: "v2.keeperFeePayer.get", walletId: "mining" }).op,
+    ).toBe("v2.keeperFeePayer.get");
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.keeperFeePayer.ensure",
+        walletId: "mining",
+        request: {},
+      }).op,
+    ).toBe("v2.keeperFeePayer.ensure");
+    const keeperCapability = {
+      miningWalletId: "mining",
+      feePayerWalletId: `sat_kfp_${"a".repeat(56)}`,
+      feePayerPublicKey: "11111111111111111111111111111111",
+      policyHash: `sha256:${"e".repeat(64)}`,
+      maxPerTransactionLamports: "500000",
+      maxDailyLamports: "50000000",
+      state: "ready",
+    };
+    expect(validateLocalSocketSignerResult("v2.keeperFeePayer.get", keeperCapability)).toBe(true);
+    expect(validateLocalSocketSignerResult("v2.keeperFeePayer.ensure", keeperCapability)).toBe(
+      true,
+    );
+    expect(
+      validateLocalSocketSignerResult("v2.keeperFeePayer.get", {
+        ...keeperCapability,
+        feePayerWalletId: "",
+      }),
+    ).toBe(false);
+    expect(
       validateLocalSocketSignerResult("v2.wallet.readiness", {
         walletId: "agent",
         publicKey: "11111111111111111111111111111111",

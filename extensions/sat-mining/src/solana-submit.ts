@@ -291,6 +291,7 @@ export async function resolveSatValidatorAuthority(_config: SatMiningConfig) {
 
 type SatInstructionSubmitSpec = {
   data: Buffer;
+  keeperFeePayer?: boolean;
   satCommitment?: {
     reference: string;
     cluster: "local" | "devnet" | "mainnet-beta";
@@ -831,6 +832,8 @@ async function submitInstructionViaLocalSigner(
     instruction: request,
     cluster: resolveSatCluster(params.cfg),
     env: context.effectiveEnv,
+    useKeeperFeePayer:
+      params.keeperFeePayer === true && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2",
   });
   return {
     txHash: submitted.signature,
@@ -2182,6 +2185,7 @@ async function submitSatCyclePhaseInstruction(
   return submitInstruction({
     cfg,
     env: process.env,
+    keeperFeePayer: true,
     data:
       params.phase === "close"
         ? buildCloseCommitPhaseData(params)
@@ -2255,6 +2259,7 @@ export async function submitSatReleaseUnrevealedCommit(
   return submitInstruction({
     cfg,
     env: process.env,
+    keeperFeePayer: true,
     data: buildReleaseUnrevealedCommitData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
@@ -2303,6 +2308,7 @@ export async function submitSatAbortEmptyCycle(
   return submitInstruction({
     cfg,
     env: process.env,
+    keeperFeePayer: true,
     data: buildAbortEmptyCycleData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
@@ -2432,6 +2438,7 @@ export async function submitSatSettleCyclePage(
   return submitInstruction({
     cfg,
     env: process.env,
+    keeperFeePayer: true,
     data: buildSettleCyclePageData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
@@ -2535,6 +2542,7 @@ export async function submitSatFinalizeCycleSettlement(
   return submitInstruction({
     cfg,
     env: process.env,
+    keeperFeePayer: true,
     data: buildFinalizeCycleSettlementData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
@@ -2605,6 +2613,7 @@ export async function submitSatScoreCyclePage(
   return submitInstruction({
     cfg,
     env: process.env,
+    keeperFeePayer: true,
     data: buildScoreCyclePageData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
@@ -2707,6 +2716,7 @@ export async function submitSatDistributeCyclePage(
   return submitInstruction({
     cfg,
     env: process.env,
+    keeperFeePayer: true,
     data: buildDistributeCyclePageData(params),
     ...(lookupTableAddress || requiresLookupTable
       ? {

@@ -250,6 +250,58 @@ func NewSignedTypedTransaction(instructions []solana.Instruction, blockhash sola
 	return tx, nil
 }
 
+// NewSignedTypedTransactionWithFeePayer builds one transaction whose fee payer
+// is intentionally distinct from every operational instruction signer. The
+// caller supplies only signer-owned keys; no caller-provided signature or
+// partially signed transaction is accepted at this boundary.
+func NewSignedTypedTransactionWithFeePayer(
+	instructions []solana.Instruction,
+	blockhash solana.Hash,
+	feePayer solana.PrivateKey,
+	operationalSigners []solana.PrivateKey,
+	addressTables map[solana.PublicKey]solana.PublicKeySlice,
+) (*solana.Transaction, error) {
+	feePayerPublicKey := feePayer.PublicKey()
+	if len(operationalSigners) == 0 {
+		return nil, errors.New("keeper transaction requires an operational signer")
+	}
+	keys := make(map[solana.PublicKey]solana.PrivateKey, len(operationalSigners)+1)
+	keys[feePayerPublicKey] = feePayer
+	for _, signer := range operationalSigners {
+		publicKey := signer.PublicKey()
+		if publicKey.Equals(feePayerPublicKey) {
+			return nil, errors.New("keeper fee payer must be distinct from operational authority")
+		}
+		if _, exists := keys[publicKey]; exists {
+			return nil, errors.New("keeper transaction contains a duplicate operational signer")
+		}
+		keys[publicKey] = signer
+	}
+	options := []solana.TransactionOption{solana.TransactionPayer(feePayerPublicKey)}
+	if len(addressTables) > 0 {
+		options = append(options, solana.TransactionAddressTables(addressTables))
+	}
+	tx, err := solana.NewTransaction(instructions, blockhash, options...)
+	if err != nil {
+		return nil, err
+	}
+	if len(addressTables) > 0 && (tx.Message.GetVersion() != solana.MessageVersionV0 || len(tx.Message.GetAddressTableLookups()) != 1 || tx.Message.NumLookups() == 0) {
+		return nil, errors.New("typed SAT keeper transaction did not compile to the required single-table v0 transaction")
+	}
+	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		privateKey, ok := keys[key]
+		if !ok {
+			return nil
+		}
+		copy := privateKey
+		return &copy
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
 func SignValidatedJupiterTransaction(tx *solana.Transaction, walletSignerIndex int, privateKey solana.PrivateKey) ([]byte, solana.Signature, error) {
 	if tx == nil {
 		return nil, solana.Signature{}, errors.New("validated transaction is missing")

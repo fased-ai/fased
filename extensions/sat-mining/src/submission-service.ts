@@ -101,7 +101,11 @@ const REQUIRED_SAT_SIGNER_FEATURES = [
 
 export async function requireTypedSatSignerCapabilities(
   socketPath: string,
-  intentType: "solana.satAction" | "solana.satLookupTable" | "solana.vaultBondAction",
+  intentType:
+    | "solana.satAction"
+    | "solana.satKeeperAction"
+    | "solana.satLookupTable"
+    | "solana.vaultBondAction",
 ): Promise<void> {
   const result = await callLocalSocketSigner<{
     ready?: boolean;
@@ -134,6 +138,10 @@ export async function requireTypedSatSignerCapabilities(
     intentType === "solana.satLookupTable" && !features.has("typedSATAddressLookupTables")
       ? ["typedSATAddressLookupTables"]
       : [];
+  const missingKeeperFeatures =
+    intentType === "solana.satKeeperAction" && !features.has("signerOwnedKeeperFeePayer")
+      ? ["signerOwnedKeeperFeePayer"]
+      : [];
   if (
     result.ready !== true ||
     protocol?.current !== 2 ||
@@ -143,6 +151,7 @@ export async function requireTypedSatSignerCapabilities(
     protocol.max < 2 ||
     !capabilities?.intentTypes?.includes(intentType) ||
     missingFeatures.length > 0 ||
+    missingKeeperFeatures.length > 0 ||
     missingLookupFeatures.length > 0 ||
     (intentType === "solana.vaultBondAction" && !features.has("typedVaultBondActions")) ||
     missingVaultReviewFeatures.length > 0 ||
@@ -155,7 +164,9 @@ export async function requireTypedSatSignerCapabilities(
         missingLookupFeatures.length > 0
           ? `; missing SAT lookup features: ${missingLookupFeatures.join(", ")}`
           : ""
-      }${missingStates.length > 0 ? `; missing states: ${missingStates.join(", ")}` : ""}`,
+      }${missingKeeperFeatures.length > 0 ? `; missing keeper features: ${missingKeeperFeatures.join(", ")}` : ""}${
+        missingStates.length > 0 ? `; missing states: ${missingStates.join(", ")}` : ""
+      }`,
     );
   }
 }
@@ -256,6 +267,7 @@ export async function executeTypedSatIntent(params: {
   };
   cluster: "local" | "devnet" | "mainnet-beta";
   env: NodeJS.ProcessEnv;
+  useKeeperFeePayer?: boolean;
 }): Promise<SatSubmissionOutcome> {
   if (!params.stateProgramId.trim()) {
     throw new Error("typed SAT execution requires its canonical Mining program ID");
@@ -296,11 +308,34 @@ export async function executeTypedSatIntent(params: {
     !isLookupTable &&
     params.action !== "cleanupBatch" &&
     VAULT_BOND_ACTIONS.has(params.action as SatSignerAction);
+  const keeperCapability = params.useKeeperFeePayer
+    ? await callLocalSocketSigner<{
+        miningWalletId?: string;
+        feePayerWalletId?: string;
+        feePayerPublicKey?: string;
+        state?: string;
+      }>(params.socketPath, {
+        op: "v2.keeperFeePayer.get",
+        walletId: params.walletId,
+      })
+    : null;
+  if (
+    keeperCapability &&
+    (keeperCapability.state !== "ready" ||
+      keeperCapability.miningWalletId !== params.walletId ||
+      !keeperCapability.feePayerWalletId?.trim() ||
+      !keeperCapability.feePayerPublicKey?.trim())
+  ) {
+    throw new Error("native signer returned an invalid SAT keeper fee-payer capability");
+  }
+  const signerWalletId = keeperCapability?.feePayerWalletId?.trim() || params.walletId;
   const intentType = isLookupTable
     ? "solana.satLookupTable"
     : isVaultBond
       ? "solana.vaultBondAction"
-      : "solana.satAction";
+      : keeperCapability
+        ? "solana.satKeeperAction"
+        : "solana.satAction";
   await requireTypedSatSignerCapabilities(params.socketPath, intentType);
   const intent = isLookupTable
     ? (() => {
@@ -326,18 +361,34 @@ export async function executeTypedSatIntent(params: {
             ...params.instruction,
           };
         })()
-      : {
-          type: "solana.satAction" as const,
-          action: params.action,
-          ...(params.instruction ?? {}),
-          ...(params.instructions ? { instructions: params.instructions } : {}),
-        };
+      : keeperCapability
+        ? (() => {
+            if (!params.instruction || params.instructions) {
+              throw new Error(
+                "typed SAT keeper execution requires exactly one semantic instruction",
+              );
+            }
+            if (params.instruction.action !== params.action) {
+              throw new Error("typed SAT keeper action does not match its semantic instruction");
+            }
+            return {
+              type: "solana.satKeeperAction" as const,
+              authorityWalletId: params.walletId,
+              ...params.instruction,
+            };
+          })()
+        : {
+            type: "solana.satAction" as const,
+            action: params.action,
+            ...(params.instruction ?? {}),
+            ...(params.instructions ? { instructions: params.instructions } : {}),
+          };
   const policy = await callLocalSocketSigner<{ hash: string }>(params.socketPath, {
     op: "v2.policy.get",
-    walletId: params.walletId,
+    walletId: signerWalletId,
   });
   const intentDigest = digestSatSubmissionIntent({
-    walletId: params.walletId,
+    walletId: signerWalletId,
     policyHash: policy.hash,
     intent,
   });
@@ -463,7 +514,7 @@ export async function executeTypedSatIntent(params: {
     try {
       return await callLocalSocketSigner<SatSubmissionSignerOperation>(params.socketPath, {
         op: "v2.execute",
-        walletId: params.walletId,
+        walletId: signerWalletId,
         request: {
           requestId,
           policyHash: policy.hash,
@@ -474,7 +525,7 @@ export async function executeTypedSatIntent(params: {
       try {
         return await callLocalSocketSigner<SatSubmissionSignerOperation>(params.socketPath, {
           op: "v2.operation.get",
-          walletId: params.walletId,
+          walletId: signerWalletId,
           request: { requestId },
         });
       } catch (lookupError) {
@@ -527,7 +578,7 @@ export async function executeTypedSatIntent(params: {
       operation = assertSatSignerOperationIdentity(
         await callLocalSocketSigner<SatSubmissionSignerOperation>(params.socketPath, {
           op: "v2.operation.get",
-          walletId: params.walletId,
+          walletId: signerWalletId,
           request: { requestId },
         }),
         requestId,
@@ -535,7 +586,7 @@ export async function executeTypedSatIntent(params: {
       operation = assertSatSignerOperationIdentity(
         await reconcileTypedSatOperation({
           socketPath: params.socketPath,
-          walletId: params.walletId,
+          walletId: signerWalletId,
           requestId,
           operation,
         }),
@@ -615,7 +666,7 @@ export async function executeTypedSatIntent(params: {
     operation = assertSatSignerOperationIdentity(
       await reconcileTypedSatOperation({
         socketPath: params.socketPath,
-        walletId: params.walletId,
+        walletId: signerWalletId,
         requestId,
         operation,
       }),
