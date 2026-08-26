@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync } from "node:fs";
+import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +18,14 @@ describe("git-hooks/pre-commit (integration)", () => {
         "package.json",
       ]),
     ).toEqual(["package.json"]);
+
+    const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/pr.yml"), "utf8");
+    expect(workflow).toContain("scripts/pre-commit/filter-staged-files.mjs format");
+
+    const preCommit = readFileSync(path.join(process.cwd(), ".pre-commit-config.yaml"), "utf8");
+    expect(preCommit).toContain(
+      "extensions/sat-mining/protocol-generation/idl\\.generation-2\\.json$",
+    );
   });
 
   it("does not treat staged filenames as git-add flags (e.g. --all)", async () => {

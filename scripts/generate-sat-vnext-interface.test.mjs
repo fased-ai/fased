@@ -27,6 +27,7 @@ void test("Fased binds inactive 16-channel codecs while active legacy mining sta
   assert.match(generated, /strategyChannels: 16/u);
   assert.match(generated, /legacyStrategyChannels: 25/u);
   assert.match(generated, /revealDataLength: 105/u);
+  assert.equal(generated.match(/pragma: allowlist secret/gu)?.length, 5);
 
   const active = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/protocol-contract.ts"),

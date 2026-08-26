@@ -136,7 +136,12 @@ const typescript = `// Generated from the exact SAT generation-2 interface bundl
 
 const go = `package main\n\n// Code generated from the exact SAT generation-2 interface bundle; DO NOT EDIT.\n\ntype frozenSATCodecGeneration2 struct {\n\tAction             string\n\tDiscriminator      byte\n\tDataLength         int\n\tAllocationChannels int\n\tAccountShape       string\n\tActive             bool\n}\n\nconst (\n\tsatVNextInterfaceContractSHA256 = ${JSON.stringify(digests["interface-generation.v2.json"])} // pragma: allowlist secret\n\tsatVNextIDLContractSHA256       = ${JSON.stringify(digests["idl.generation-2.json"])} // pragma: allowlist secret\n\tsatVNextAccountOrderSHA256      = ${JSON.stringify(digests["account-order.generation-2.json"])} // pragma: allowlist secret\n)\n\nvar signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{\n\t"revealCycleV2": {\n\t\tAction:             "revealCycleV2",\n\t\tDiscriminator:      114,\n\t\tDataLength:         105,\n\t\tAllocationChannels: 16,\n\t\tAccountShape:       ${JSON.stringify(accountFlags.join(","))},\n\t\tActive:             false,\n\t},\n}\n\nfunc isCanonicalFrozenSATGeneration2Data(action string, data []byte) bool {\n\tcodec, ok := signerSATCodecsGeneration2[action]\n\treturn ok && !codec.Active && len(data) == codec.DataLength && data[0] == codec.Discriminator\n}\n`;
 
-update(tsPath, Buffer.from(typescript));
+const typescriptWithPublicIdentityAllowlist = typescript.replace(
+  /(\n  (?:contract|idl|accountOrder|stateLayouts|signerCodecs)Sha256: [^\n]+,)/gu,
+  "$1 // pragma: allowlist secret",
+);
+
+update(tsPath, Buffer.from(typescriptWithPublicIdentityAllowlist));
 update(goPath, Buffer.from(go));
 process.stdout.write(
   importMode
