@@ -17,6 +17,10 @@ import type {
   SatPlannerOutcomeMemory,
 } from "./audit-store.js";
 import {
+  classifySatHistoryGenerationAccess,
+  type SatHistoryGenerationAccess,
+} from "./generation-policy.js";
+import {
   assertSatMiningStateIdentity,
   normalizeSatMiningStateIdentity,
   type SatMiningStateIdentity,
@@ -2884,6 +2888,21 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
     ).map((row) => ({
       scopeKey: String(row.scope_key),
       scope: readScope(this.db, Number(row.id)),
+    }));
+  }
+
+  listGenerationScopes(activeProtocolVersion: string): Array<{
+    scopeKey: string;
+    scope: SatMiningHistoryScope;
+    access: SatHistoryGenerationAccess;
+  }> {
+    return this.listScopes().map((entry) => ({
+      ...entry,
+      access: classifySatHistoryGenerationAccess({
+        network: entry.scope.network,
+        protocolVersion: entry.scope.protocolVersion,
+        activeProtocolVersion,
+      }),
     }));
   }
 

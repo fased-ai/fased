@@ -293,6 +293,7 @@ export type SatMinerCycleView = {
 
 export type SatMinerCapitalView = {
   address: string;
+  version: number;
   authority: string;
   fundedLamports: string;
   lockedLamports: string;
@@ -920,7 +921,7 @@ export function decodeSatMinerCycle(data: Buffer, address: string): SatMinerCycl
   };
 }
 
-function decodeSatMinerCapital(data: Buffer, address: string): SatMinerCapitalView {
+export function decodeSatMinerCapital(data: Buffer, address: string): SatMinerCapitalView {
   const body = expectAccountData(
     data,
     ACCOUNT_DISCRIMINATOR.satMinerCapitalState,
@@ -930,6 +931,7 @@ function decodeSatMinerCapital(data: Buffer, address: string): SatMinerCapitalVi
   const lockedLamports = readU64String(body, 48);
   return {
     address,
+    version: body.readUInt8(0),
     authority: readPubkey(body, 8),
     fundedLamports,
     lockedLamports,

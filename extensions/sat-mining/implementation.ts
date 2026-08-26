@@ -63,6 +63,11 @@ import {
 import { buildSatDisputeReview } from "./src/dispute-review.js";
 import { createSatEpochService } from "./src/epoch-service.js";
 import {
+  assertSatCapitalMutationAllowed,
+  classifySatCapitalGeneration,
+  type SatCapitalMutationClass,
+} from "./src/generation-policy.js";
+import {
   summarizeSatMaintenanceCleanupResults,
   type SatMaintenanceCleanupResultSummary,
 } from "./src/maintenance-output.js";
@@ -3256,6 +3261,25 @@ const satMiningPlugin = {
       }
       return "";
     };
+    const assertSatCapitalGenerationForAction = async (input: {
+      authority?: string;
+      mutation: SatCapitalMutationClass;
+      action: string;
+    }) => {
+      const authority = String(
+        input.authority ?? (await resolveSatCapitalActionAuthority()),
+      ).trim();
+      if (!authority) {
+        throw new Error(`SAT ${input.action} requires a resolved mining authority`);
+      }
+      const capital = await satOps.inspectSatMinerCapital(state.activeConfig, { authority });
+      assertSatCapitalMutationAllowed({
+        version: capital ? capital.version : null,
+        mutation: input.mutation,
+        action: input.action,
+      });
+      return capital;
+    };
     const maybePrimeSatMinerCapitalAccount = async (authority: string) => {
       if (!authority) {
         return null;
@@ -4483,6 +4507,9 @@ const satMiningPlugin = {
         minerCapitalAccountStatus.owner !== minerCapitalAccountStatus.expectedOwner,
       );
       const minerCapitalInitialized = Boolean(minerCapital);
+      const minerCapitalGeneration = classifySatCapitalGeneration(
+        minerCapital ? minerCapital.version : null,
+      );
       const minerCapitalDetail = minerCapitalInitialized
         ? "SAT miner capital account is initialized"
         : minerCapitalOwnerMismatch
@@ -4557,9 +4584,9 @@ const satMiningPlugin = {
         },
         {
           key: "cycleEntryReady",
-          ok: minerCapitalInitialized && capitalFreeLamports >= capitalEntryThreshold,
+          ok: minerCapitalGeneration === "current" && capitalFreeLamports >= capitalEntryThreshold,
           level:
-            minerCapitalInitialized && capitalFreeLamports >= capitalEntryThreshold
+            minerCapitalGeneration === "current" && capitalFreeLamports >= capitalEntryThreshold
               ? "info"
               : "warning",
           label: "Mining capital",
@@ -4567,14 +4594,22 @@ const satMiningPlugin = {
             ? minerCapitalOwnerMismatch
               ? "SAT miner capital account has an invalid owner"
               : "Fund Mining capital first"
-            : capitalFreeLamports >= capitalEntryThreshold
-              ? "Meets 0.25 SOL minimum eligibility capital"
-              : "Below 0.25 SOL minimum eligibility capital",
+            : minerCapitalGeneration === "legacy"
+              ? "Legacy generation is drain-only; new cycle entry is blocked"
+              : minerCapitalGeneration === "unknown"
+                ? "Unknown capital generation; all mutations are blocked"
+                : capitalFreeLamports >= capitalEntryThreshold
+                  ? "Meets 0.25 SOL minimum eligibility capital"
+                  : "Below 0.25 SOL minimum eligibility capital",
           remediation: !minerCapitalInitialized
             ? minerCapitalRemediation
-            : capitalFreeLamports >= capitalEntryThreshold
-              ? undefined
-              : "Deposit at least 0.25 SOL plus reveal collateral into miner capital to participate in SAT cycles.",
+            : minerCapitalGeneration === "legacy"
+              ? "Reveal, recover, claim, clean up, or withdraw legacy capital; do not deposit or start new cycles."
+              : minerCapitalGeneration === "unknown"
+                ? "Use a supported Fased/protocol generation before mutating this account."
+                : capitalFreeLamports >= capitalEntryThreshold
+                  ? undefined
+                  : "Deposit at least 0.25 SOL plus reveal collateral into miner capital to participate in SAT cycles.",
         },
         {
           key: "ataReady",
@@ -4605,6 +4640,8 @@ const satMiningPlugin = {
           satBalanceRaw: payoutReadiness?.recipientBalanceRaw,
           treasurySatBalanceRaw: payoutReadiness?.treasuryBalanceRaw,
           minerCapitalAddress: minerCapital?.address,
+          minerCapitalVersion: minerCapital?.version,
+          minerCapitalGeneration,
           minerCapitalFundedLamports: minerCapital?.fundedLamports,
           minerCapitalLockedLamports: minerCapital?.lockedLamports,
           minerCapitalFreeLamports: minerCapital?.freeLamports,
@@ -7675,6 +7712,11 @@ const satMiningPlugin = {
           typeof (params as { authority?: string })?.authority === "string"
             ? String((params as { authority?: string }).authority).trim()
             : (state.activeWalletAddress ?? "");
+        await assertSatCapitalGenerationForAction({
+          authority,
+          mutation: "new-entry",
+          action: "capital initialization",
+        });
         const submitted = await submitSatInitMinerCapital(state.activeConfig, { authority });
         markActionSuccess("initMinerCapital", submitted.txHash, null);
         respond(true, jsonOk({ submitted, status: await getMiningStatus() }));
@@ -7689,6 +7731,11 @@ const satMiningPlugin = {
         await ensureSatCapitalActionSignerReady();
         const lamports = Number((params as { lamports?: number })?.lamports ?? 0);
         const authority = await resolveSatCapitalActionAuthority();
+        await assertSatCapitalGenerationForAction({
+          authority,
+          mutation: "new-entry",
+          action: "capital deposit",
+        });
         await maybePrimeSatMinerCapitalAccount(authority);
         await ensureMiningDiskCapacityForOptionalCommitment();
         const submitted = await submitSatDepositMinerCapital(state.activeConfig, { lamports });
@@ -7706,6 +7753,10 @@ const satMiningPlugin = {
       try {
         await ensureSatCapitalActionSignerReady();
         const lamports = Number((params as { lamports?: number })?.lamports ?? 0);
+        await assertSatCapitalGenerationForAction({
+          mutation: "drain",
+          action: "capital withdrawal",
+        });
         const submitted = await submitSatWithdrawMinerCapital(state.activeConfig, { lamports });
         markActionSuccess("withdrawMinerCapital", submitted.txHash, null);
         respond(true, jsonOk({ submitted, status: await getMiningStatus() }));
@@ -7726,6 +7777,11 @@ const satMiningPlugin = {
             ? Boolean((params as { persistConfig?: boolean }).persistConfig)
             : true;
         const authority = await resolveSatCapitalActionAuthority();
+        await assertSatCapitalGenerationForAction({
+          authority,
+          mutation: "new-entry",
+          action: "active commit configuration",
+        });
         await maybePrimeSatMinerCapitalAccount(authority);
         await ensureMiningDiskCapacityForOptionalCommitment();
         const submitted = await submitSatSetActiveCommit(state.activeConfig, { lamports });
@@ -7746,6 +7802,10 @@ const satMiningPlugin = {
     registerSatSubmissionMethod("sat.commitCycle", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
+        await assertSatCapitalGenerationForAction({
+          mutation: "new-entry",
+          action: "cycle commit",
+        });
         const commitmentHex = String(
           (params as { commitmentHex?: string })?.commitmentHex ?? "",
         ).trim();
@@ -7816,6 +7876,10 @@ const satMiningPlugin = {
     registerSatSubmissionMethod("sat.revealCycle", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
+        await assertSatCapitalGenerationForAction({
+          mutation: "drain",
+          action: "cycle reveal",
+        });
         const nonceBase64 = String((params as { nonceBase64?: string })?.nonceBase64 ?? "").trim();
         const allocationFp = Array.isArray((params as { allocationFp?: number[] })?.allocationFp)
           ? ((params as { allocationFp?: number[] }).allocationFp ?? [])
@@ -7855,6 +7919,11 @@ const satMiningPlugin = {
         const minerAuthority = String(
           (params as { minerAuthority?: string })?.minerAuthority ?? "",
         ).trim();
+        await assertSatCapitalGenerationForAction({
+          authority: minerAuthority,
+          mutation: "drain",
+          action: "unrevealed commit recovery",
+        });
         const submitted = await submitSatReleaseUnrevealedCommit(state.activeConfig, {
           cycleId,
           minerAuthority,
@@ -8094,6 +8163,10 @@ const satMiningPlugin = {
     registerSatSubmissionMethod("sat.claimCycleRewards", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
+        await assertSatCapitalGenerationForAction({
+          mutation: "drain",
+          action: "cycle reward claim",
+        });
         const request = state.client.buildClaimCycleRewardsRequest({ cycleId });
         const submitted = await submitSatClaimCycleRewards(state.activeConfig, request.params);
         const completion = await resolveClaimCompletion([cycleId]);
@@ -8121,6 +8194,10 @@ const satMiningPlugin = {
         : [];
       const request = state.client.buildClaimCycleRewardsBatchRequest({ cycleIds });
       try {
+        await assertSatCapitalGenerationForAction({
+          mutation: "drain",
+          action: "cycle reward batch claim",
+        });
         markSatClaimBacklogReady(state, cycleIds, "manual claim batch action");
         const submitted = await submitSatClaimCycleRewardsBatch(state.activeConfig, request.params);
         const completion = await resolveClaimCompletion(cycleIds);
@@ -8184,6 +8261,10 @@ const satMiningPlugin = {
       const cycleIds = collectReadySatClaimBacklogCycleIds(state, batchCycles);
       const request = state.client.buildClaimCycleRewardsBatchRequest({ cycleIds });
       try {
+        await assertSatCapitalGenerationForAction({
+          mutation: "drain",
+          action: "claim backlog",
+        });
         if (cycleIds.length === 0) {
           respond(
             true,
@@ -8271,6 +8352,10 @@ const satMiningPlugin = {
 
     registerSatSubmissionMethod("sat.compactPendingCycleRange", async ({ params, respond }) => {
       try {
+        await assertSatCapitalGenerationForAction({
+          mutation: "drain",
+          action: "pending-cycle cleanup",
+        });
         const maxFrontCycles =
           typeof (params as { maxFrontCycles?: number })?.maxFrontCycles === "number"
             ? Number((params as { maxFrontCycles?: number }).maxFrontCycles)
@@ -9029,6 +9114,13 @@ const satMiningPlugin = {
         const walletFeeReserveLamports =
           BigInt(state.activeConfig.minSolBalanceLamports ?? 150_000_000) + 250_000n;
         state.activeWalletAddress = activeWallet?.address ?? null;
+        if (activeWallet?.address) {
+          await assertSatCapitalGenerationForAction({
+            authority: activeWallet.address,
+            mutation: "new-entry",
+            action: "mining start",
+          });
+        }
         let startupWalletLamports = walletLamports;
         if (
           startupWalletLamports !== null &&

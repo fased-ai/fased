@@ -327,6 +327,32 @@ describe("per-wallet Mining history ledger", () => {
       .listScopes()
       .find((entry) => entry.scope.network === "legacy-unknown");
     expect(legacyScope).toBeDefined();
+    expect(store.listGenerationScopes("sat-v2")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: expect.objectContaining({ network: "devnet" }),
+          access: "active",
+        }),
+        expect.objectContaining({
+          scope: expect.objectContaining({ network: "legacy-unknown" }),
+          access: "view-only",
+        }),
+      ]),
+    );
+
+    await store.rebindScope({ ...scope(), protocolVersion: "sat-v3" });
+    expect(store.listGenerationScopes("sat-v3")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: expect.objectContaining({ protocolVersion: "sat-v2" }),
+          access: "drain-only",
+        }),
+        expect.objectContaining({
+          scope: expect.objectContaining({ protocolVersion: "sat-v3" }),
+          access: "active",
+        }),
+      ]),
+    );
 
     const active = await SatMiningHistoryStore.openReadOnly({
       databasePath: store.databasePath,
