@@ -5545,6 +5545,20 @@ const satMiningPlugin = {
           updatedAt: new Date().toISOString(),
         };
       }
+      const retirementEvidence =
+        !capitalProbeMissingWhileActive &&
+        !state.activeConfig.enabled &&
+        state.activeConfig.drainOnly !== true &&
+        !state.running &&
+        currentCapitalLockedLamports === "0" &&
+        currentCapitalPendingCycleCount === 0 &&
+        claimBacklogSummary.total === 0 &&
+        (missingCycleRange?.count ?? 0) === 0
+          ? await (async () => {
+              await persistRecentActions();
+              return await requireMiningHistoryStore().buildRetirementSnapshot();
+            })()
+          : null;
       const claimBatchCycles = resolveSatClaimBatchCycles(state.activeConfig);
       const statusResult = {
         running: state.running,
@@ -5675,6 +5689,7 @@ const satMiningPlugin = {
         currentCapitalPendingCycleCount,
         claimBatchCycles,
         claimBacklog: claimBacklogSummary,
+        retirementEvidence,
         activeCommitLamports,
         runStartSolBalanceLamports: state.runStartSolBalanceLamports,
         runStartSatBalanceRaw: state.runStartSatBalanceRaw,

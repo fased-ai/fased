@@ -119,6 +119,26 @@ export type SatMiningHistoryDeletionReceipt = {
   deletedAt: string;
 };
 
+export type SatMiningRetirementSnapshot = {
+  version: 1;
+  walletId: string;
+  scopeKey: string;
+  protocolGeneration: string;
+  observedAt: string;
+  newJobsStopped: boolean;
+  workersDrained: boolean;
+  clearingDrained: boolean;
+  submissionsReconciled: boolean;
+  pendingCommits: number;
+  pendingReveals: number;
+  pendingSettlements: number;
+  pendingClaims: number;
+  pendingCleanup: number;
+  pendingAltMutations: number;
+  runtimeStateHash: string;
+  submissionLedgerHash: string;
+};
+
 /** Conservative rolling limits. They deliberately retain several years of
  * normal cycle activity and never evict records tied to live recovery. */
 export type SatMiningHistoryRetentionPolicy = {
@@ -287,6 +307,33 @@ function canonicalJson(value: unknown): string {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function pendingSubmissionKind(
+  actionValue: string,
+): keyof Pick<
+  SatMiningRetirementSnapshot,
+  | "pendingCommits"
+  | "pendingReveals"
+  | "pendingSettlements"
+  | "pendingClaims"
+  | "pendingCleanup"
+  | "pendingAltMutations"
+> {
+  const action = actionValue.toLowerCase();
+  if (action.includes("commit")) return "pendingCommits";
+  if (action.includes("reveal") || action.includes("submit")) return "pendingReveals";
+  if (
+    action.includes("settle") ||
+    action.includes("score") ||
+    action.includes("distribute") ||
+    action.includes("finalize")
+  ) {
+    return "pendingSettlements";
+  }
+  if (action.includes("claim")) return "pendingClaims";
+  if (action.includes("lookup") || action.includes("alt")) return "pendingAltMutations";
+  return "pendingCleanup";
 }
 
 function normalizeScope(scope: SatMiningHistoryScope): SatMiningHistoryScope {
@@ -3440,6 +3487,84 @@ export class SatMiningHistoryStore implements SatSubmissionLedgerAdapter {
       lastActionTxHash:
         (runtimeMeta.lastActionTxHash as SatRuntimeSummary["lastActionTxHash"]) ?? null,
       lastFailure: (runtimeMeta.lastFailure as SatRuntimeSummary["lastFailure"]) ?? null,
+    };
+  }
+
+  async buildRetirementSnapshot(): Promise<SatMiningRetirementSnapshot> {
+    await this.flush();
+    const operational = this.readOperationalState();
+    const runtimeMeta = operational.runtimeMeta ?? {};
+    const lastKnownStatus =
+      runtimeMeta.lastKnownStatus &&
+      typeof runtimeMeta.lastKnownStatus === "object" &&
+      !Array.isArray(runtimeMeta.lastKnownStatus)
+        ? (runtimeMeta.lastKnownStatus as Record<string, unknown>)
+        : null;
+    const records = (
+      this.db
+        .prepare(
+          `SELECT request_id, payload_json
+             FROM submission_record
+            WHERE scope_id=?
+            ORDER BY request_id ASC`,
+        )
+        .all(this.scopeId) as SqlRow[]
+    ).map((row) => {
+      const record = readSubmissionRecordRow(row);
+      if (!record) {
+        throw new Error(`Corrupt Mining submission record ${String(row.request_id)}`);
+      }
+      return record;
+    });
+    if (records.length > 10_000) {
+      throw new Error(
+        `Mining submission ledger contains ${records.length} records; retirement proof is bounded to 10000`,
+      );
+    }
+    const pending = {
+      pendingCommits: 0,
+      pendingReveals: 0,
+      pendingSettlements: 0,
+      pendingClaims: 0,
+      pendingCleanup: 0,
+      pendingAltMutations: 0,
+    };
+    for (const record of records) {
+      if (!["prepared", "reserved", "broadcast", "unknown"].includes(record.state)) continue;
+      pending[pendingSubmissionKind(record.action)] += 1;
+    }
+    const workersDrained = Object.values(operational.workers ?? {}).every(
+      (worker) =>
+        !worker ||
+        typeof worker !== "object" ||
+        Array.isArray(worker) ||
+        (worker as Record<string, unknown>).running !== true,
+    );
+    const lastKnownWalletId = String(lastKnownStatus?.walletId ?? "").trim();
+    const observedAt = String(lastKnownStatus?.updatedAt ?? "").trim();
+    const clearingDrained =
+      (operational.pendingPlannerCycles?.length ?? 0) === 0 &&
+      (operational.claimBacklog?.length ?? 0) === 0 &&
+      (lastKnownWalletId === this.scope.walletId ||
+        lastKnownWalletId === this.stateIdentity.walletId) &&
+      String(lastKnownStatus?.currentCapitalLockedLamports ?? "") === "0" &&
+      Number(lastKnownStatus?.currentCapitalPendingCycleCount ?? -1) === 0 &&
+      lastKnownStatus?.exactPendingCycleId == null;
+    const submissionsReconciled = Object.values(pending).every((count) => count === 0);
+    const scopeKeyValue = this.getScopeKey();
+    return {
+      version: 1,
+      walletId: this.scope.walletId,
+      scopeKey: scopeKeyValue,
+      protocolGeneration: this.stateIdentity.protocolGeneration,
+      observedAt,
+      newJobsStopped: runtimeMeta.enabledWanted !== true,
+      workersDrained,
+      clearingDrained,
+      submissionsReconciled,
+      ...pending,
+      runtimeStateHash: `sha256:${sha256(canonicalJson({ scopeKey: scopeKeyValue, operational }))}`,
+      submissionLedgerHash: `sha256:${sha256(canonicalJson({ scopeKey: scopeKeyValue, records }))}`,
     };
   }
 
