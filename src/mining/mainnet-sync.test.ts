@@ -11,10 +11,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function jsonDataUrl(value: unknown): string {
-  return `data:application/json,${encodeURIComponent(JSON.stringify(value))}`;
-}
-
 function sha256(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
 }
@@ -186,20 +182,104 @@ async function withManifestServer(
 }
 
 describe("SAT mainnet sync", () => {
-  it("reports pre-launch not_live manifest without requiring signature", async () => {
-    const status = await getSatMainnetSyncStatus({
-      env: {},
-      manifestUrl: jsonDataUrl({
-        schema: "sat-mainnet-addresses.v1",
-        network: "mainnet-beta",
-        status: "not_live",
-      }),
-    });
+  it("authenticates manifest bytes before attempting to parse them", async () => {
+    const malformedManifest = "{ this is not JSON";
 
-    expect(status.ok).toBe(true);
-    expect(status.state).toBe("not_live");
-    expect(status.verification).toEqual({ hash: "not_required", signature: "not_required" });
-    expect(status.trustKeySource).toBe("not_required");
+    await withManifestServer(
+      {
+        "/sat-mainnet-addresses.json": malformedManifest,
+        "/sat-mainnet-addresses.json.sha256": "0".repeat(64),
+        "/sat-mainnet-addresses.json.sig": "not-a-signature",
+      },
+      async (baseUrl) => {
+        const status = await getSatMainnetSyncStatus({
+          env: {},
+          manifestUrl: `${baseUrl}/sat-mainnet-addresses.json`,
+        });
+
+        expect(status).toMatchObject({
+          ok: false,
+          state: "failed",
+          verification: { hash: "invalid", signature: "missing" },
+          error: "Signed manifest verification failed.",
+        });
+      },
+    );
+  });
+
+  it("reports pre-launch not_live only after authenticating the manifest", async () => {
+    const signer = generateKeyPairSync("ed25519");
+    const signerJwk = signer.publicKey.export({ format: "jwk" }) as JsonWebKey;
+    const manifest = JSON.stringify({
+      schema: "sat-mainnet-addresses.v1",
+      network: "mainnet-beta",
+      status: "not_live",
+    });
+    const signature = sign(null, Buffer.from(manifest), signer.privateKey).toString("base64");
+
+    await withManifestServer(
+      {
+        "/sat-mainnet-addresses.json": manifest,
+        "/sat-mainnet-addresses.json.sha256": sha256(manifest),
+        "/sat-mainnet-addresses.json.sig": signature,
+      },
+      async (baseUrl) => {
+        const status = await getSatMainnetSyncStatus({
+          env: { FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY: String(signerJwk.x) },
+          manifestUrl: `${baseUrl}/sat-mainnet-addresses.json`,
+        });
+
+        expect(status.ok).toBe(true);
+        expect(status.state).toBe("not_live");
+        expect(status.verification).toEqual({ hash: "valid", signature: "valid" });
+        expect(status.trustKeySource).toBe("environment");
+      },
+    );
+  });
+
+  it("independently bounds hash, signature, and manifest response bodies", async () => {
+    const manifest = JSON.stringify({
+      schema: "sat-mainnet-addresses.v1",
+      network: "mainnet-beta",
+      status: "not_live",
+    });
+    const cases = [
+      {
+        path: "/sat-mainnet-addresses.json.sha256",
+        body: "a".repeat(1025),
+        expectedLimit: 1024,
+      },
+      {
+        path: "/sat-mainnet-addresses.json.sig",
+        body: "a".repeat(1025),
+        expectedLimit: 1024,
+      },
+      {
+        path: "/sat-mainnet-addresses.json",
+        body: "a".repeat(512 * 1024 + 1),
+        expectedLimit: 512 * 1024,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const files = {
+        "/sat-mainnet-addresses.json": manifest,
+        "/sat-mainnet-addresses.json.sha256": sha256(manifest),
+        "/sat-mainnet-addresses.json.sig": "present",
+        [testCase.path]: testCase.body,
+      };
+      if (testCase.path === "/sat-mainnet-addresses.json") {
+        files["/sat-mainnet-addresses.json.sha256"] = sha256(testCase.body);
+      }
+      await withManifestServer(files, async (baseUrl) => {
+        const status = await getSatMainnetSyncStatus({
+          env: {},
+          manifestUrl: `${baseUrl}/sat-mainnet-addresses.json`,
+        });
+        expect(status).toMatchObject({ ok: false, state: "failed" });
+        expect(status.error).toContain(`${testCase.expectedLimit}-byte limit`);
+      });
+    }
   });
 
   it("rejects a live manifest signed by an untrusted key", async () => {
@@ -335,6 +415,17 @@ describe("SAT mainnet sync", () => {
         expect(env.FASED_SAT_MINT_ADDRESS).toBe(COMPLETE_IDS.mint);
         expect(status.installedDescriptorDigest).toBe(status.releaseDescriptorDigest);
         expect(status.message).toContain("remains inactive");
+        expect(
+          vi
+            .mocked(fetch)
+            .mock.calls.map(
+              ([input]) => new URL(input instanceof Request ? input.url : input).pathname,
+            ),
+        ).toEqual([
+          "/sat-mainnet-addresses.json.sha256",
+          "/sat-mainnet-addresses.json.sig",
+          "/sat-mainnet-addresses.json",
+        ]);
       },
     );
   });
