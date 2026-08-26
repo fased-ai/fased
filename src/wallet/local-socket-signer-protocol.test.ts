@@ -402,13 +402,13 @@ describe("local socket signer protocol", () => {
           type: "solana.satLookupTable" as const,
           action: "extend" as const,
           lookupTable: {
-            address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+            address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB", // pragma: allowlist secret
             cycleId: "7",
             pageIndex: "2",
             addresses: ["So11111111111111111111111111111111111111112"],
             parent: {
               action: "distributeCyclePage",
-              programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+              programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75", // pragma: allowlist secret
               dataBase64: "Qg==",
               keys: [],
             },
