@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../mining/sat-vnext-release-contract.generated.js";
 
 const WalletChainSchema = Type.Literal("solana");
 
@@ -30,6 +31,38 @@ export const LocalSocketSignerCapabilitiesV2Schema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const LocalSocketSignerSatReleaseAcknowledgementSchema = Type.Object(
+  {
+    schema: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.schema),
+    state: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.state),
+    componentGenerations: Type.Object(
+      {
+        bond: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.bond),
+        cycle: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.cycle),
+        economics: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.economics),
+        penalty: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.penalty),
+        schema: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.schema),
+        signerCapability: Type.Literal(
+          SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.signerCapability,
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    interfaceContractSha256: Type.Literal(
+      SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.interfaceContractSha256,
+    ),
+    idlSha256: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.idlSha256),
+    accountOrderSha256: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.accountOrderSha256),
+    stateLayoutsSha256: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.stateLayoutsSha256),
+    signerCodecsSha256: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.signerCodecsSha256),
+  },
+  { additionalProperties: false },
+);
+
+export type LocalSocketSignerSatReleaseAcknowledgement = Static<
+  typeof LocalSocketSignerSatReleaseAcknowledgementSchema
+>;
 
 export const LocalSocketSignerReleaseIdentityV2Schema = Type.Union([
   Type.Object(
@@ -747,6 +780,7 @@ export const LocalSocketSignerHealthResultSchema = Type.Object(
       ),
     ),
     capabilities: Type.Optional(LocalSocketSignerCapabilitiesV2Schema),
+    satRelease: Type.Optional(LocalSocketSignerSatReleaseAcknowledgementSchema),
     policies: Type.Optional(
       Type.Array(
         Type.Object(

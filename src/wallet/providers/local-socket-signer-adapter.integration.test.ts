@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../../mining/sat-vnext-release-contract.generated.js";
 import { invokeNativeSignerOperatorCapabilities } from "../native-signer-operator-client.js";
 import { SIGNER_PROTOCOL_V2 } from "../signer-protocol-v2.generated.js";
 import {
@@ -103,9 +104,11 @@ describe("compiled fased-signerd protocol-v2 compatibility", () => {
     const result = await callLocalSocketSigner<{
       ready: boolean;
       capabilities: typeof SIGNER_PROTOCOL_V2;
+      satRelease: typeof SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT;
     }>(socketPath, { op: "v2.capabilities" });
     expect(result.ready).toBe(true);
     expect(result.capabilities).toEqual(SIGNER_PROTOCOL_V2);
+    expect(result.satRelease).toEqual(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT);
 
     const operatorResult = invokeNativeSignerOperatorCapabilities({
       signerBinPath: binary,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../mining/sat-vnext-release-contract.generated.js";
 import {
   parseLocalSocketSignerRequest,
   validateLocalSocketSignerResult,
@@ -27,6 +28,7 @@ describe("local socket signer protocol", () => {
         operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
         features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
       },
+      satRelease: SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT,
       policies: [],
       webAuthn: {
         configured: false,
@@ -64,6 +66,15 @@ describe("local socket signer protocol", () => {
           capacities: {
             operations: { ...health.state.capacities.operations, maximum: 0 },
           },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      validateLocalSocketSignerResult("v2.capabilities", {
+        ...health,
+        satRelease: {
+          ...SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT,
+          idlSha256: `sha256:${"f".repeat(64)}`,
         },
       }),
     ).toBe(false);

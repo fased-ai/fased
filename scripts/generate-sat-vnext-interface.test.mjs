@@ -29,6 +29,20 @@ void test("Fased binds inactive 16-channel codecs while active legacy mining sta
   assert.match(generated, /revealDataLength: 105/u);
   assert.equal(generated.match(/pragma: allowlist secret/gu)?.length, 5);
 
+  const releaseContract = fs.readFileSync(
+    path.join(root, "src", "mining", "sat-vnext-release-contract.generated.ts"),
+    "utf8",
+  );
+  assert.match(releaseContract, /fased\.sat-release-acknowledgement\.v1/u);
+  assert.match(releaseContract, /schema: "SAT-SCHEMA-GEN-002"/u);
+  assert.match(releaseContract, /signerCapability: "FSD-SIGNER-GEN-002"/u);
+
+  const signerReleaseContract = fs.readFileSync(
+    path.join(root, "tools", "fased-signerd", "sat_release_ack_generated.go"),
+    "utf8",
+  );
+  assert.match(signerReleaseContract, /signerSATReleaseAcknowledgementGeneration2/u);
+
   const active = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/protocol-contract.ts"),
     "utf8",
