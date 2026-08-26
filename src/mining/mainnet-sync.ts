@@ -39,8 +39,8 @@ type ResolvedTrustedManifestKey = TrustedManifestKey & {
 const EMBEDDED_TRUSTED_KEYS: EmbeddedTrustedManifestKey[] = [
   {
     id: "sat-mainnet-2026-01",
-    publicKeyBase64Url: "F-Kv6SBcZHvs1LQ0LNHwYQ6VuKidpkv1nkgRqggn1kk",
-    fingerprintSha256: "7fc6f335e13fbba3cee2f833e4ab656a19fd8c0715b9d9097a3e196f0e3a0ebd",
+    publicKeyBase64Url: "F-Kv6SBcZHvs1LQ0LNHwYQ6VuKidpkv1nkgRqggn1kk", // pragma: allowlist secret
+    fingerprintSha256: "7fc6f335e13fbba3cee2f833e4ab656a19fd8c0715b9d9097a3e196f0e3a0ebd", // pragma: allowlist secret
   },
 ];
 

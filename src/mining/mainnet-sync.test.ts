@@ -20,10 +20,10 @@ function sha256(raw: string): string {
 }
 
 const COMPLETE_IDS = {
-  mint: "SATbcgGdy8DiE9T2y3GuCHDiQdt9623ptqVuMAybgRg",
-  programId: "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT",
-  mintProgramId: "dv8wQtfGhHcxXtAPb7ds9nhJxR3PuLBmAxcJfsxy6VU",
-  bondProgramId: "5VfyRReAeFQLetD7zxQgf5kL7UQHKyk6Tat6VUxzMPeQ",
+  mint: "SATbcgGdy8DiE9T2y3GuCHDiQdt9623ptqVuMAybgRg", // pragma: allowlist secret
+  programId: "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT", // pragma: allowlist secret
+  mintProgramId: "dv8wQtfGhHcxXtAPb7ds9nhJxR3PuLBmAxcJfsxy6VU", // pragma: allowlist secret
+  bondProgramId: "5VfyRReAeFQLetD7zxQgf5kL7UQHKyk6Tat6VUxzMPeQ", // pragma: allowlist secret
 } as const;
 const SOURCE_COMMIT = "a".repeat(40);
 
