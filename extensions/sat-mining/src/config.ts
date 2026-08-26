@@ -26,6 +26,10 @@ export type SatMiningConfig = {
   strategyExecution?: "deterministic" | "auto";
   strategyMode?: "base" | "skill";
   cycleCadence?: 1 | 2 | 6 | 12;
+  cadencePolicy?: {
+    annualFeeExposureBps?: number;
+    fasterCadenceAcknowledgement?: string;
+  };
   commitLamports?: number;
   minSolBalanceLamports?: number;
   walletId?: string;
@@ -106,6 +110,15 @@ export const satMiningConfigJsonSchema = Type.Object(
     strategyMode: Type.Optional(Type.Union([Type.Literal("base"), Type.Literal("skill")])),
     cycleCadence: Type.Optional(
       Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(6), Type.Literal(12)]),
+    ),
+    cadencePolicy: Type.Optional(
+      Type.Object(
+        {
+          annualFeeExposureBps: Type.Optional(Type.Number({ minimum: 1, maximum: 10_000 })),
+          fasterCadenceAcknowledgement: Type.Optional(Type.String()),
+        },
+        { additionalProperties: false },
+      ),
     ),
     commitLamports: Type.Optional(Type.Number()),
     minSolBalanceLamports: Type.Optional(Type.Number()),
@@ -334,6 +347,22 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
     raw.cycleCadence === 2 || raw.cycleCadence === 6 || raw.cycleCadence === 12
       ? raw.cycleCadence
       : 1;
+  const cadencePolicyRaw =
+    raw.cadencePolicy && typeof raw.cadencePolicy === "object" && !Array.isArray(raw.cadencePolicy)
+      ? (raw.cadencePolicy as Record<string, unknown>)
+      : {};
+  const cadencePolicy = {
+    annualFeeExposureBps:
+      typeof cadencePolicyRaw.annualFeeExposureBps === "number" &&
+      Number.isFinite(cadencePolicyRaw.annualFeeExposureBps)
+        ? Math.min(10_000, Math.max(1, Math.floor(cadencePolicyRaw.annualFeeExposureBps)))
+        : 500,
+    fasterCadenceAcknowledgement:
+      typeof cadencePolicyRaw.fasterCadenceAcknowledgement === "string" &&
+      cadencePolicyRaw.fasterCadenceAcknowledgement.trim()
+        ? cadencePolicyRaw.fasterCadenceAcknowledgement.trim()
+        : undefined,
+  };
   const commitLamports =
     typeof raw.commitLamports === "number" &&
     Number.isFinite(raw.commitLamports) &&
@@ -495,6 +524,7 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
     strategyExecution: strategyExecution ?? strategyModeToExecution(strategyMode),
     strategyMode,
     cycleCadence,
+    cadencePolicy,
     commitLamports,
     minSolBalanceLamports,
     walletId,

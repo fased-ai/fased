@@ -3696,6 +3696,12 @@ describe("sat-mining plugin config persistence", () => {
             latestSettledCycleId: previousCycleId,
             latestSubmittedCycleId: currentCycleId,
             pendingCycleIds: [],
+            cadencePolicy: {
+              policyVersion: "static-generation-1",
+              requestedCadence: 1,
+              effectiveCadence: 1,
+              active: false,
+            },
             settledHistory: [
               expect.objectContaining({
                 cycleId: previousCycleId,
