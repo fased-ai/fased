@@ -218,6 +218,7 @@
     "sat:bond:runtime:local": "bash scripts/set-sat-bond-runtime-env.sh",
     "sat:signer-codecs:check": "node scripts/generate-sat-signer-codecs.mjs --check",
     "sat:signer-codecs:generate": "node scripts/generate-sat-signer-codecs.mjs",
+    "sat:vnext-interface:check": "node scripts/generate-sat-vnext-interface.mjs --check",
     "signer:protocol:check": "node scripts/generate-signer-protocol-v2.mjs --check",
     "signer:protocol:generate": "node scripts/generate-signer-protocol-v2.mjs",
     "start": "node scripts/run-node.mjs",
