@@ -7705,9 +7705,9 @@ describe("sat-mining durable history startup", () => {
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
       });
       vi.setSystemTime(new Date("2030-01-01T00:10:00.000Z"));
-      vi.mocked(rpcRead.inspectSatChainUnixTime)
-        .mockRejectedValueOnce(new Error("target worker readiness failed"))
-        .mockRejectedValueOnce(new Error("rollback worker readiness failed"));
+      vi.mocked(rpcRead.inspectSatChainUnixTime).mockRejectedValue(
+        new Error("target and rollback worker readiness failed"),
+      );
       let failedSwitch: { ok: boolean; payload?: unknown; error?: unknown } | null = null;
       await gatewayMethods.get("sat.setMinerProfile")!.handler({
         params: { profile: { walletId: "wallet-b" }, syncActiveCommit: false },

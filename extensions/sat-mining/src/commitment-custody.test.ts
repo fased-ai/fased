@@ -8,9 +8,9 @@ const callLocalSocketSigner = vi.fn();
 const resolveSatCommitmentSignerContext = vi.fn(async () => ({
   socketPath: "/run/fased-signerd/signer.sock",
   walletId: "mining",
-  authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+  authority: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW", // pragma: allowlist secret
   cluster: "devnet" as const,
-  programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+  programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75", // pragma: allowlist secret
 }));
 
 vi.mock("fased/plugin-sdk/sat-runtime", () => ({
