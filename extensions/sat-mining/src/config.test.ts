@@ -33,9 +33,10 @@ const persistedSatMiningConfig = {
   strategyPreset: "adaptive",
   strategyExecution: "deterministic",
   strategyMode: "base",
-  cycleCadence: 6,
+  cycleCadence: 48,
   cadencePolicy: {
-    annualFeeExposureBps: 500,
+    annualOperationsBudgetBps: 500,
+    annualMiningExposureBps: 15_000,
     fasterCadenceAcknowledgement: "sat-cadence-cost-v1:test-only",
   },
   commitLamports: 6_000_000_000,
@@ -111,13 +112,15 @@ describe("sat mining config schemas", () => {
   it("normalizes the owner fee budget and trims a cost acknowledgement", () => {
     const parsed = parseSatMiningConfig({
       cadencePolicy: {
-        annualFeeExposureBps: 25_000,
+        annualOperationsBudgetBps: 25_000,
+        annualMiningExposureBps: 2_000_000,
         fasterCadenceAcknowledgement: "  sat-cadence-cost-v1:abc  ",
       },
     });
 
     expect(parsed.cadencePolicy).toEqual({
-      annualFeeExposureBps: 10_000,
+      annualOperationsBudgetBps: 10_000,
+      annualMiningExposureBps: 1_000_000,
       fasterCadenceAcknowledgement: "sat-cadence-cost-v1:abc",
     });
   });

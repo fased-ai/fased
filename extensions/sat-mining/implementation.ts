@@ -3585,7 +3585,11 @@ const satMiningPlugin = {
           strategyModeToExecution(state.activeConfig.strategyMode),
         cycleCadence: state.activeConfig.cycleCadence ?? 1,
         cadencePolicy: {
-          annualFeeExposureBps: state.activeConfig.cadencePolicy?.annualFeeExposureBps ?? 500,
+          annualOperationsBudgetBps:
+            state.activeConfig.cadencePolicy?.annualOperationsBudgetBps ??
+            state.activeConfig.cadencePolicy?.annualFeeExposureBps ??
+            500,
+          annualMiningExposureBps: state.activeConfig.cadencePolicy?.annualMiningExposureBps,
           fasterCadenceAcknowledgement:
             state.activeConfig.cadencePolicy?.fasterCadenceAcknowledgement,
         },
@@ -3697,7 +3701,13 @@ const satMiningPlugin = {
         state.activeConfig.strategyMode,
       );
       state.activeConfig.cycleCadence =
-        profile.cycleCadence === 2 || profile.cycleCadence === 6 || profile.cycleCadence === 12
+        profile.cycleCadence === 2 ||
+        profile.cycleCadence === 6 ||
+        profile.cycleCadence === 12 ||
+        profile.cycleCadence === 24 ||
+        profile.cycleCadence === 48 ||
+        profile.cycleCadence === 96 ||
+        profile.cycleCadence === 288
           ? profile.cycleCadence
           : 1;
       const cadencePolicy =
@@ -3706,12 +3716,19 @@ const satMiningPlugin = {
         !Array.isArray(profile.cadencePolicy)
           ? (profile.cadencePolicy as Record<string, unknown>)
           : {};
-      const annualFeeExposureBps = Number(cadencePolicy.annualFeeExposureBps ?? 500);
+      const annualOperationsBudgetBps = Number(
+        cadencePolicy.annualOperationsBudgetBps ?? cadencePolicy.annualFeeExposureBps ?? 500,
+      );
+      const annualMiningExposureBps = Number(cadencePolicy.annualMiningExposureBps);
       state.activeConfig.cadencePolicy = {
-        annualFeeExposureBps:
-          Number.isFinite(annualFeeExposureBps) && annualFeeExposureBps >= 1
-            ? Math.min(10_000, Math.floor(annualFeeExposureBps))
+        annualOperationsBudgetBps:
+          Number.isFinite(annualOperationsBudgetBps) && annualOperationsBudgetBps >= 1
+            ? Math.min(10_000, Math.floor(annualOperationsBudgetBps))
             : 500,
+        annualMiningExposureBps:
+          Number.isFinite(annualMiningExposureBps) && annualMiningExposureBps >= 1
+            ? Math.min(1_000_000, Math.floor(annualMiningExposureBps))
+            : undefined,
         fasterCadenceAcknowledgement:
           typeof cadencePolicy.fasterCadenceAcknowledgement === "string" &&
           cadencePolicy.fasterCadenceAcknowledgement.trim()
@@ -5068,8 +5085,14 @@ const satMiningPlugin = {
       const claimBacklogSummary = buildSatClaimBacklogSummary(state);
       const cadencePolicy = deriveSatRuntimeCadencePolicy(SAT_RUNTIME_PROTOCOL_GENERATION, {
         activeCapitalLamports: currentCapitalFundedLamports,
+        activeCommitLamports,
         feeReserveLamports: currentSolBalanceLamports,
-        annualFeeExposureBps: state.activeConfig.cadencePolicy?.annualFeeExposureBps ?? 500,
+        cycleErosionPpm: globalState?.cycleErosionPpm ?? null,
+        annualOperationsBudgetBps:
+          state.activeConfig.cadencePolicy?.annualOperationsBudgetBps ??
+          state.activeConfig.cadencePolicy?.annualFeeExposureBps ??
+          500,
+        annualMiningExposureBps: state.activeConfig.cadencePolicy?.annualMiningExposureBps ?? null,
         requestedCadence: cycleCadence,
         fasterCadenceAcknowledgement:
           state.activeConfig.cadencePolicy?.fasterCadenceAcknowledgement,

@@ -45,12 +45,22 @@
       },
       "cycleCadence": {
         "type": "number",
-        "enum": [1, 2, 6, 12]
+        "enum": [1, 2, 6, 12, 24, 48, 96, 288]
       },
       "cadencePolicy": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "annualOperationsBudgetBps": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "annualMiningExposureBps": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000000
+          },
           "annualFeeExposureBps": {
             "type": "number",
             "minimum": 1,
