@@ -9,6 +9,7 @@ import {
   resolveSatMintAddress,
   resolveSatMintProgramId,
   resolveSatProgramId,
+  parseSatMiningConfig,
   satMiningConfigJsonSchema,
 } from "./config.js";
 
@@ -32,6 +33,11 @@ const persistedSatMiningConfig = {
   strategyPreset: "adaptive",
   strategyExecution: "deterministic",
   strategyMode: "base",
+  cycleCadence: 6,
+  cadencePolicy: {
+    annualFeeExposureBps: 500,
+    fasterCadenceAcknowledgement: "sat-cadence-cost-v1:test-only",
+  },
   commitLamports: 6_000_000_000,
   minSolBalanceLamports: 1_000_000_000,
   walletId: "wallet-a",
@@ -100,5 +106,19 @@ describe("sat mining config schemas", () => {
     expect(resolveSatBondProgramId(persistedSatMiningConfig)).toBe("sat-bond-program");
     expect(resolveSatMintAddress(persistedSatMiningConfig)).toBe("sat-mint");
     expect(resolveSatMintProgramId(persistedSatMiningConfig)).toBe("sat-mint-program");
+  });
+
+  it("normalizes the owner fee budget and trims a cost acknowledgement", () => {
+    const parsed = parseSatMiningConfig({
+      cadencePolicy: {
+        annualFeeExposureBps: 25_000,
+        fasterCadenceAcknowledgement: "  sat-cadence-cost-v1:abc  ",
+      },
+    });
+
+    expect(parsed.cadencePolicy).toEqual({
+      annualFeeExposureBps: 10_000,
+      fasterCadenceAcknowledgement: "sat-cadence-cost-v1:abc",
+    });
   });
 });

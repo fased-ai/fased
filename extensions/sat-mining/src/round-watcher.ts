@@ -1,5 +1,6 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { computeAutoPlannerDecision } from "./auto-planner.js";
+import { deriveSatRuntimeCadencePolicy } from "./cadence-policy.js";
 import { refreshSatChainTime } from "./chain-time.js";
 import {
   allocateSignerOwnedSatCommitment,
@@ -38,10 +39,12 @@ import {
   markWorkerSuccess,
   markWorkerTarget,
   markWorkerWaiting,
+  buildSatClaimBacklogSummary,
   satRateLimitBackoffMs,
   scheduleWorkerNextRun,
   type SatMiningRuntimeState,
 } from "./runtime.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
 import { computeMiningStrategy } from "./strategy-engine.js";
 import type { SatSkillLiveContext } from "./strategy-skill.js";
 
@@ -660,7 +663,48 @@ export function createSatRoundWatcherService(params: {
         }
       }
 
-      const cycleCadence = state.activeConfig.cycleCadence ?? 1;
+      let cycleCadence = state.activeConfig.cycleCadence ?? 1;
+      if (execution.commitSubmitted !== true && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+        const [cadenceCapital, cadenceFeeReserve] = await Promise.all([
+          authority
+            ? withRoundWatcherTimeout("cadence miner capital", () =>
+                inspectSatMinerCapital(state.activeConfig, { authority }),
+              ).catch(() => null)
+            : Promise.resolve(null),
+          authority
+            ? withRoundWatcherTimeout("cadence fee reserve", () =>
+                inspectSatLamportBalance(state.activeConfig, { address: authority }),
+              ).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        const claimBacklog = buildSatClaimBacklogSummary(state, { maxEntries: 512 });
+        const cadencePolicy = deriveSatRuntimeCadencePolicy(SAT_RUNTIME_PROTOCOL_GENERATION, {
+          activeCapitalLamports:
+            cadenceCapital?.fundedLamports ??
+            state.lastKnownStatus?.currentCapitalFundedLamports ??
+            null,
+          feeReserveLamports: cadenceFeeReserve,
+          annualFeeExposureBps: state.activeConfig.cadencePolicy?.annualFeeExposureBps ?? 500,
+          requestedCadence: cycleCadence,
+          fasterCadenceAcknowledgement:
+            state.activeConfig.cadencePolicy?.fasterCadenceAcknowledgement,
+          plannerHistory: state.plannerHistory,
+          claimBacklog: claimBacklog.entries,
+        });
+        if (cadencePolicy == null) {
+          throw new Error("vNext cadence policy unexpectedly resolved as inactive");
+        }
+        if (cadencePolicy.effectiveCadence == null) {
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${activeCycleId} waiting: cadence policy cannot fund a supported schedule (${cadencePolicy.blockedReasons.join("; ")})`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", SAT_ROUND_WATCHER_APPROACH_DELAY_MS);
+          return;
+        }
+        cycleCadence = cadencePolicy.effectiveCadence;
+      }
       if (execution.commitSubmitted !== true && cycleCadence > 1) {
         const cadenceGlobalState = await withRoundWatcherTimeout("cadence launch cycle", () =>
           inspectSatGlobalState(state.activeConfig),

@@ -38,6 +38,7 @@ import {
   SAT_SQLITE_ARCHIVED_FAILURE_LIMIT,
   SAT_PLANNER_HISTORY_CHART_POINT_LIMIT,
 } from "./src/audit-store.js";
+import { deriveSatRuntimeCadencePolicy } from "./src/cadence-policy.js";
 import { refreshSatChainTime, resolveStatusSatChainTime } from "./src/chain-time.js";
 import { createSatClaimService } from "./src/claim-service.js";
 import { SatMiningClient } from "./src/client.js";
@@ -3583,6 +3584,11 @@ const satMiningPlugin = {
           state.activeConfig.strategyExecution ??
           strategyModeToExecution(state.activeConfig.strategyMode),
         cycleCadence: state.activeConfig.cycleCadence ?? 1,
+        cadencePolicy: {
+          annualFeeExposureBps: state.activeConfig.cadencePolicy?.annualFeeExposureBps ?? 500,
+          fasterCadenceAcknowledgement:
+            state.activeConfig.cadencePolicy?.fasterCadenceAcknowledgement,
+        },
         claimMode: "auto",
         payout: state.activeConfig.payout ?? true,
         strategyMode: state.activeConfig.strategyMode ?? "base",
@@ -3694,6 +3700,24 @@ const satMiningPlugin = {
         profile.cycleCadence === 2 || profile.cycleCadence === 6 || profile.cycleCadence === 12
           ? profile.cycleCadence
           : 1;
+      const cadencePolicy =
+        profile.cadencePolicy &&
+        typeof profile.cadencePolicy === "object" &&
+        !Array.isArray(profile.cadencePolicy)
+          ? (profile.cadencePolicy as Record<string, unknown>)
+          : {};
+      const annualFeeExposureBps = Number(cadencePolicy.annualFeeExposureBps ?? 500);
+      state.activeConfig.cadencePolicy = {
+        annualFeeExposureBps:
+          Number.isFinite(annualFeeExposureBps) && annualFeeExposureBps >= 1
+            ? Math.min(10_000, Math.floor(annualFeeExposureBps))
+            : 500,
+        fasterCadenceAcknowledgement:
+          typeof cadencePolicy.fasterCadenceAcknowledgement === "string" &&
+          cadencePolicy.fasterCadenceAcknowledgement.trim()
+            ? cadencePolicy.fasterCadenceAcknowledgement.trim()
+            : undefined,
+      };
       state.activeConfig.claimMode = "auto";
       state.activeConfig.payout =
         typeof profile.payout === "boolean" ? profile.payout : state.activeConfig.payout;
@@ -5041,6 +5065,19 @@ const satMiningPlugin = {
         "250000000";
       const cycleErosionPpm = resolveSatEffectiveCycleErosionPpm(globalState);
       const cycleCadence = state.activeConfig.cycleCadence ?? 1;
+      const claimBacklogSummary = buildSatClaimBacklogSummary(state);
+      const cadencePolicy = deriveSatRuntimeCadencePolicy(SAT_RUNTIME_PROTOCOL_GENERATION, {
+        activeCapitalLamports: currentCapitalFundedLamports,
+        feeReserveLamports: currentSolBalanceLamports,
+        annualFeeExposureBps: state.activeConfig.cadencePolicy?.annualFeeExposureBps ?? 500,
+        requestedCadence: cycleCadence,
+        fasterCadenceAcknowledgement:
+          state.activeConfig.cadencePolicy?.fasterCadenceAcknowledgement,
+        plannerHistory: state.plannerHistory,
+        claimBacklog: [...state.claimBacklog.values()].filter(
+          (entry) => entry.stage !== "claimed" && entry.stage !== "resolved",
+        ),
+      });
       const runway = (() => {
         try {
           const funded = BigInt(currentCapitalFundedLamports);
@@ -5486,7 +5523,6 @@ const satMiningPlugin = {
         };
       }
       const claimBatchCycles = resolveSatClaimBatchCycles(state.activeConfig);
-      const claimBacklogSummary = buildSatClaimBacklogSummary(state);
       const statusResult = {
         running: state.running,
         statusFresh: capitalProbeMissingWhileActive ? false : true,
@@ -5502,6 +5538,13 @@ const satMiningPlugin = {
           state.activeConfig.strategyExecution ??
           strategyModeToExecution(state.activeConfig.strategyMode),
         cycleCadence,
+        cadencePolicy: cadencePolicy ?? {
+          policyVersion: "static-generation-1",
+          requestedCadence: cycleCadence,
+          recommendedCadence: null,
+          effectiveCadence: cycleCadence,
+          active: false,
+        },
         runway,
         strategyMode: state.activeConfig.strategyMode ?? "base",
         network: state.activeConfig.network,
