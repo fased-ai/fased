@@ -4,12 +4,22 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { selectStagedFiles } from "../scripts/pre-commit/filter-staged-files.mjs";
 
 const run = (cwd: string, cmd: string, args: string[] = []) => {
   return execFileSync(cmd, args, { cwd, encoding: "utf8" }).trim();
 };
 
 describe("git-hooks/pre-commit (integration)", () => {
+  it("keeps byte-exact SAT protocol artifacts out of the formatter", () => {
+    expect(
+      selectStagedFiles("format", [
+        "extensions/sat-mining/protocol-generation/idl.generation-2.json",
+        "package.json",
+      ]),
+    ).toEqual(["package.json"]);
+  });
+
   it("does not treat staged filenames as git-add flags (e.g. --all)", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "fased-pre-commit-"));
     run(dir, "git", ["init", "-q"]);

@@ -8,9 +8,6 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 void test("Fased binds inactive 16-channel codecs while active legacy mining stays 25-channel", () => {
-  const formatterConfig = fs.readFileSync(path.join(root, ".oxfmtrc.jsonc"), "utf8");
-  assert.match(formatterConfig, /"extensions\/sat-mining\/protocol-generation\/"/u);
-
   const result = spawnSync(
     process.execPath,
     ["scripts/generate-sat-vnext-interface.mjs", "--check"],

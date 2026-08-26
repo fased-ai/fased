@@ -14,7 +14,6 @@
     "docker-compose.yml",
     "dist/",
     "docs/_layouts/",
-    "extensions/sat-mining/protocol-generation/",
     "extensions/sat-mining/sat-account-order.v1.json",
     "node_modules/",
     "patches/",
