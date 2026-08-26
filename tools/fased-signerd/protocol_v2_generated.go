@@ -68,5 +68,6 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"signerOwnedJupiterTriggerHistory",
 		"jupiterTriggerSecretsNeverCrossSocket",
 		"jupiterTriggerDurablePhases",
+		"signerOwnedEncryptedSATCommitments",
 	},
 }

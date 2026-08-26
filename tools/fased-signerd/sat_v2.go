@@ -68,6 +68,9 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 	if action == "" {
 		return normalizedIntentV2{}, errors.New("typed SAT action is required")
 	}
+	if input.SATCommitment != nil && (input.Type != intentSolanaSATAction || action != "revealCycle" || len(input.Instructions) != 0) {
+		return normalizedIntentV2{}, errors.New("signer-owned SAT commitment references are valid only for one revealCycle")
+	}
 	addressLookupTables := []string(nil)
 	if len(input.AddressLookupTables) > 0 {
 		if action != "distributeCyclePage" || isVaultBond || len(input.AddressLookupTables) != 1 {
@@ -132,7 +135,7 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 		return normalizedIntentV2{}, errors.New("SAT cleanupBatch instructions must use one program")
 	}
 
-	canonical := signerIntentV2{Type: input.Type, Action: action, Cluster: cluster, AddressLookupTables: addressLookupTables}
+	canonical := signerIntentV2{Type: input.Type, Action: action, Cluster: cluster, AddressLookupTables: addressLookupTables, SATCommitment: input.SATCommitment}
 	if action == "cleanupBatch" {
 		canonical.Instructions = make([]signerSATInstructionV2, 0, len(normalized))
 		for _, instruction := range normalized {

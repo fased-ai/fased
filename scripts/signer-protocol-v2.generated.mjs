@@ -63,6 +63,7 @@ export const SIGNER_PROTOCOL_V2 = Object.freeze({
     "signerOwnedJupiterTriggerHistory",
     "jupiterTriggerSecretsNeverCrossSocket",
     "jupiterTriggerDurablePhases",
+    "signerOwnedEncryptedSATCommitments",
   ],
 });
 export const SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES = Object.freeze([
@@ -90,4 +91,5 @@ export const SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES = Object.freeze([
   "signerOwnedReviewPrepareExecute",
   "exactPreparedTransactions",
   "legacyOnlyJupiterTransactions",
+  "signerOwnedEncryptedSATCommitments",
 ]);

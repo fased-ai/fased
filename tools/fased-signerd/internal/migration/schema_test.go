@@ -205,7 +205,7 @@ func TestBackupIsExclusiveDurableAndCleansUpAfterSnapshotFailure(t *testing.T) {
 	if _, err := BackupBeforeMigration(db, path); err == nil || !strings.Contains(err.Error(), "write pre-migration signer state backup") {
 		t.Fatalf("closed-store backup error = %v", err)
 	}
-	backups, err := filepath.Glob(path + ".pre-v7-*.bak")
+	backups, err := filepath.Glob(fmt.Sprintf("%s.pre-v%d-*.bak", path, SignerStateSchemaVersion))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -41,6 +41,7 @@ import {
 import { refreshSatChainTime, resolveStatusSatChainTime } from "./src/chain-time.js";
 import { createSatClaimService } from "./src/claim-service.js";
 import { SatMiningClient } from "./src/client.js";
+import { readSignerOwnedSatCommitmentBinding } from "./src/commitment-custody.js";
 import {
   createSatMiningPluginConfigSchema,
   parseSatMiningConfig,
@@ -7812,6 +7813,22 @@ const satMiningPlugin = {
         if (!/^[0-9a-f]{64}$/i.test(commitmentHex)) {
           throw new Error("cycle commitment must be a 32-byte hexadecimal digest");
         }
+        const commitmentReference = String(
+          (params as { commitmentReference?: string })?.commitmentReference ?? "",
+        ).trim();
+        if (!/^sha256:[0-9a-f]{64}$/u.test(commitmentReference)) {
+          throw new Error("cycle commit requires its signer-owned durable commitment reference");
+        }
+        const binding = await readSignerOwnedSatCommitmentBinding({
+          config: state.activeConfig,
+          cycleId,
+        });
+        if (
+          binding.reference !== commitmentReference ||
+          binding.commitmentHex !== commitmentHex.toLowerCase()
+        ) {
+          throw new Error("cycle commit does not match its signer-owned durable binding");
+        }
         await ensureMiningDiskCapacityForOptionalCommitment();
         const submitted = await submitSatCommitCycle(state.activeConfig, {
           cycleId,
@@ -7822,6 +7839,7 @@ const satMiningPlugin = {
           execution.openRoundSubmitted = true;
           execution.commitSubmitted = true;
           execution.commitmentHex = commitmentHex.toLowerCase();
+          execution.commitmentReference = commitmentReference;
         }
         markActionSuccess("commitCycle", submitted.txHash, cycleId);
         await persistRecentActions();
@@ -7876,14 +7894,28 @@ const satMiningPlugin = {
     registerSatSubmissionMethod("sat.revealCycle", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
-        await assertSatCapitalGenerationForAction({
+        const capital = await assertSatCapitalGenerationForAction({
           mutation: "drain",
           action: "cycle reveal",
         });
-        const nonceBase64 = String((params as { nonceBase64?: string })?.nonceBase64 ?? "").trim();
-        const allocationFp = Array.isArray((params as { allocationFp?: number[] })?.allocationFp)
-          ? ((params as { allocationFp?: number[] }).allocationFp ?? [])
-          : [];
+        const commitmentReference = String(
+          (params as { commitmentReference?: string })?.commitmentReference ?? "",
+        ).trim();
+        const signerOwned = /^sha256:[0-9a-f]{64}$/u.test(commitmentReference);
+        const legacyGeneration =
+          classifySatCapitalGeneration(capital ? capital.version : null) === "legacy";
+        if (!signerOwned && !legacyGeneration) {
+          throw new Error(
+            "current-generation cycle reveal requires its signer-owned durable commitment reference",
+          );
+        }
+        const nonceBase64 = signerOwned
+          ? ""
+          : String((params as { nonceBase64?: string })?.nonceBase64 ?? "").trim();
+        const allocationFp =
+          !signerOwned && Array.isArray((params as { allocationFp?: number[] })?.allocationFp)
+            ? ((params as { allocationFp?: number[] }).allocationFp ?? [])
+            : [];
         const cycle = await inspectSatCycle(state.activeConfig, { cycleId });
         if (!cycle) {
           throw new Error(`cycle ${cycleId} was not found`);
@@ -7891,12 +7923,21 @@ const satMiningPlugin = {
         if (cycle.unlockIntervalStartCycleId == null) {
           throw new Error(`cycle ${cycleId} does not expose its unlock interval start`);
         }
-        const submitted = await submitSatRevealCycle(state.activeConfig, {
-          cycleId,
-          intervalStartCycleId: cycle.unlockIntervalStartCycleId,
-          nonceBase64,
-          allocationFp,
-        });
+        const submitted = await submitSatRevealCycle(
+          state.activeConfig,
+          signerOwned
+            ? {
+                cycleId,
+                intervalStartCycleId: cycle.unlockIntervalStartCycleId,
+                commitmentReference,
+              }
+            : {
+                cycleId,
+                intervalStartCycleId: cycle.unlockIntervalStartCycleId,
+                nonceBase64,
+                allocationFp,
+              },
+        );
         invalidateMiningReadCaches();
         await capturePendingPlannerCycle(cycleId);
         const execution = getOrCreateRoundExecutionState(state, cycleId, 0);

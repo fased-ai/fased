@@ -30,6 +30,7 @@ import {
   inspectSatMinerCyclesByAddress,
 } from "./rpc-read.js";
 import { resolveSatSignerCodec } from "./signer-codec-manifest.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
 import {
   assertSatSignerOperationIdentity,
   executeTypedSatIntent,
@@ -290,6 +291,11 @@ export async function resolveSatValidatorAuthority(_config: SatMiningConfig) {
 
 type SatInstructionSubmitSpec = {
   data: Buffer;
+  satCommitment?: {
+    reference: string;
+    cluster: "local" | "devnet" | "mainnet-beta";
+    protocolGeneration: string;
+  };
   programId?: string;
   addressLookupTables?: string[];
   manageAddressLookupTable?: {
@@ -332,6 +338,29 @@ async function prepareLocalSignerSubmitContext(cfg: FasedAgentConfig, env: NodeJ
   return { effectiveEnv, solana, walletId, socketPath, signerAddress, signer };
 }
 
+export async function resolveSatCommitmentSignerContext(activeConfig: SatMiningConfig) {
+  const cfg = loadConfigForSatRuntime(activeConfig);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  if (resolveSatProviderId(cfg, effectiveEnv) !== "local-socket-signer") {
+    throw new Error("SAT commitment custody requires the native local-socket signer");
+  }
+  await requireTypedSatSignerCapabilities(
+    requireLocalSocketSignerPath(effectiveEnv),
+    "solana.satAction",
+  );
+  const context = await prepareLocalSignerSubmitContext(cfg, effectiveEnv);
+  if (!context.walletId) {
+    throw new Error("SAT commitment custody requires an explicit Mining walletId");
+  }
+  return {
+    socketPath: context.socketPath,
+    walletId: context.walletId,
+    authority: context.signerAddress,
+    cluster: resolveSatCluster(cfg),
+    programId: resolveSatProgramIdFromEnv(effectiveEnv),
+  };
+}
+
 async function buildLocalSignerInstructionRequest(params: {
   solana: SolanaModuleLike;
   signer: import("@solana/web3.js").PublicKey;
@@ -357,6 +386,7 @@ async function buildLocalSignerInstructionRequest(params: {
     action: codec.action,
     programId,
     dataBase64: params.spec.data.toString("base64"),
+    ...(params.spec.satCommitment ? { satCommitment: params.spec.satCommitment } : {}),
     keys: keys.map((key) => ({
       pubkey: key.pubkey.toBase58(),
       isSigner: key.isSigner,
@@ -838,6 +868,7 @@ async function submitInstruction(
     cfg: params.cfg,
     env: effectiveEnv,
     data: params.data,
+    satCommitment: params.satCommitment,
     programId: params.programId,
     addressLookupTables: params.addressLookupTables,
     manageAddressLookupTable: params.manageAddressLookupTable,
@@ -2294,19 +2325,36 @@ export async function submitSatAbortEmptyCycle(
 
 export async function submitSatRevealCycle(
   _config: SatMiningConfig,
-  params: {
-    cycleId: number;
-    intervalStartCycleId?: number;
-    nonceBase64: string;
-    allocationFp: number[];
-  },
+  params:
+    | {
+        cycleId: number;
+        intervalStartCycleId?: number;
+        commitmentReference: string;
+      }
+    | {
+        cycleId: number;
+        intervalStartCycleId?: number;
+        nonceBase64: string;
+        allocationFp: number[];
+      },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
-  const nonce = Buffer.from(params.nonceBase64, "base64");
+  const signerOwned = "commitmentReference" in params;
+  const nonce = signerOwned ? Buffer.alloc(32) : Buffer.from(params.nonceBase64, "base64");
+  const allocationFp = signerOwned ? new Array(25).fill(0) : params.allocationFp;
   return submitInstruction({
     cfg,
     env: process.env,
-    data: buildRevealCycleData({ ...params, nonce }),
+    data: buildRevealCycleData({ cycleId: params.cycleId, nonce, allocationFp }),
+    ...(signerOwned
+      ? {
+          satCommitment: {
+            reference: params.commitmentReference,
+            cluster: resolveSatCluster(cfg),
+            protocolGeneration: SAT_RUNTIME_PROTOCOL_GENERATION,
+          },
+        }
+      : {}),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const pageIndex = await resolveSatCycleRegistryPageIndex(_config, params.cycleId);

@@ -87,7 +87,7 @@ export function createSatRecoveryService(params: {
   let stopping = false;
   let activeTick: Promise<void> | null = null;
 
-  const recovery = createSatRecoveryOrchestrator({ api, state, persistRuntimeState });
+  const recovery = createSatRecoveryOrchestrator({ api, config, state, persistRuntimeState });
   const tick = async () => {
     if (stopping) {
       return;

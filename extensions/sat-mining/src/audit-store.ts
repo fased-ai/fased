@@ -742,6 +742,11 @@ function normalizeSatRoundExecutionState(
     typeof execution.commitmentHex === "string" && /^[0-9a-f]{64}$/i.test(execution.commitmentHex)
       ? execution.commitmentHex.toLowerCase()
       : null;
+  const commitmentReference =
+    typeof execution.commitmentReference === "string" &&
+    /^sha256:[0-9a-f]{64}$/u.test(execution.commitmentReference)
+      ? execution.commitmentReference
+      : null;
   const revealNonceBase64 = (() => {
     if (typeof execution.revealNonceBase64 !== "string") {
       return null;
@@ -773,6 +778,7 @@ function normalizeSatRoundExecutionState(
     openRoundSubmitted: execution.openRoundSubmitted === true,
     commitSubmitted: execution.commitSubmitted === true,
     commitmentHex,
+    commitmentReference,
     revealNonceBase64,
     allocationFp,
     commitLamports,

@@ -21,12 +21,9 @@ describe("Mining Wallet and recovery boundaries", () => {
     expect(pluginSdk).toContain('from "../wallet/wallet-readiness-facade.js"');
     expect(pluginSdk).toContain('from "../wallet/wallet-registry-facade.js"');
 
-    const mining = source("../index.ts");
-    const sdkImport = mining.slice(
-      mining.indexOf('from "fased/plugin-sdk";') + 'from "fased/plugin-sdk";'.length,
-      mining.indexOf('from "fased/plugin-sdk/sat-runtime";') +
-        'from "fased/plugin-sdk/sat-runtime";'.length,
-    );
+    const mining = source("../implementation.ts");
+    const sdkImport =
+      mining.match(/import \{[\s\S]*?\} from "fased\/plugin-sdk\/sat-runtime";/u)?.[0] ?? "";
     expect(sdkImport).toContain("walletProviderFacade");
     expect(sdkImport).toContain("walletReadinessFacade");
     expect(sdkImport).toContain("walletRegistryFacade");

@@ -144,6 +144,19 @@ const computeMiningStrategy = vi.fn(
     rationale: `risk=${config.riskMode}`,
   }),
 );
+const allocateSignerOwnedSatCommitment = vi.fn(
+  async (params: { cycleId: number; committedLamports: number; allocationFp: number[] }) => ({
+    reference: `sha256:${"ab".repeat(32)}`,
+    commitmentHex: "cd".repeat(32),
+    cycleId: String(params.cycleId),
+    committedLamports: String(params.committedLamports),
+    allocationCount: params.allocationFp.length,
+    protocolGeneration: "sat-v2",
+  }),
+);
+const readSignerOwnedSatCommitmentBinding = vi.fn(async () => {
+  throw new Error("SAT commitment binding was not found");
+});
 
 vi.mock("./gateway-runner.js", () => ({
   runSatGatewayMethod: (args: GatewayMethodArgs) => runSatGatewayMethod(args),
@@ -179,6 +192,13 @@ vi.mock("./rpc-read.js", () => ({
 
 vi.mock("./strategy-engine.js", () => ({
   computeMiningStrategy: (args: unknown) => computeMiningStrategy(args as never),
+}));
+
+vi.mock("./commitment-custody.js", () => ({
+  allocateSignerOwnedSatCommitment: (params: unknown) =>
+    allocateSignerOwnedSatCommitment(params as never),
+  readSignerOwnedSatCommitmentBinding: (params: unknown) =>
+    readSignerOwnedSatCommitmentBinding(params as never),
 }));
 
 describe("SAT economy cadence", () => {
@@ -275,6 +295,8 @@ describe("createSatRoundWatcherService", () => {
         : null,
     );
     computeMiningStrategy.mockClear();
+    allocateSignerOwnedSatCommitment.mockClear();
+    readSignerOwnedSatCommitmentBinding.mockClear();
   });
 
   afterEach(() => {
@@ -435,7 +457,10 @@ describe("createSatRoundWatcherService", () => {
     });
     const cycleId = (participationCall?.[0]?.payload as { cycleId?: number } | undefined)?.cycleId;
     expect(cycleId).toEqual(expect.any(Number));
-    expect(getOrCreateRoundExecutionState(state, cycleId!, 0).allocationFp).toHaveLength(25);
+    const execution = getOrCreateRoundExecutionState(state, cycleId!, 0);
+    expect(execution.commitmentReference).toBe(`sha256:${"ab".repeat(32)}`);
+    expect(execution.revealNonceBase64).toBeNull();
+    expect(execution.allocationFp).toBeNull();
 
     await service.stop?.();
   });
@@ -556,8 +581,7 @@ describe("createSatRoundWatcherService", () => {
     execution.openRoundSubmitted = true;
     execution.commitSubmitted = true;
     execution.commitmentHex = "11".repeat(32);
-    execution.revealNonceBase64 = Buffer.alloc(32, 7).toString("base64");
-    execution.allocationFp = new Array(25).fill(40_000);
+    execution.commitmentReference = `sha256:${"ab".repeat(32)}`;
     execution.commitLamports = 250_000_000;
     state.recentActions.push({
       action: "commitCycle",
@@ -631,8 +655,7 @@ describe("createSatRoundWatcherService", () => {
     execution.openRoundSubmitted = true;
     execution.commitSubmitted = true;
     execution.commitmentHex = "11".repeat(32);
-    execution.revealNonceBase64 = Buffer.alloc(32, 7).toString("base64");
-    execution.allocationFp = new Array(25).fill(40_000);
+    execution.commitmentReference = `sha256:${"ab".repeat(32)}`;
     execution.commitLamports = 250_000_000;
     state.recentActions.push({
       action: "commitCycle",

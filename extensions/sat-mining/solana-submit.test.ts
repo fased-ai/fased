@@ -51,7 +51,8 @@ vi.mock("../../src/wallet/providers/local-socket-signer-adapter.js", () => ({
   requireLocalSocketSignerPath,
 }));
 
-vi.mock("../../src/wallet/wallet-provider-registry.js", () => ({
+vi.mock("../../src/wallet/wallet-provider-registry.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/wallet/wallet-provider-registry.js")>()),
   readWalletProviderRegistry,
   resolveWalletUserRole: (wallet?: { metadata?: { purpose?: string; role?: string } }) => {
     const role = wallet?.metadata?.purpose ?? wallet?.metadata?.role;
@@ -59,7 +60,8 @@ vi.mock("../../src/wallet/wallet-provider-registry.js", () => ({
   },
 }));
 
-vi.mock("../../src/wallet/wallet-provider-resolver.js", () => ({
+vi.mock("../../src/wallet/wallet-provider-resolver.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/wallet/wallet-provider-resolver.js")>()),
   resolveWalletProviderId,
 }));
 
@@ -166,6 +168,7 @@ function configureLocalSignerMock(addresses: { solana?: string } = { solana: SIG
                 "atomicIdempotency",
                 "ambiguousBroadcastReconciliation",
                 "signerOwnedKeys",
+                "signerOwnedEncryptedSATCommitments",
                 "typedSolanaTransactions",
                 "typedSATActions",
                 "typedSATAddressLookupTables",
@@ -709,6 +712,39 @@ describe("SAT cycle transaction builders", () => {
         isWritable: false,
       },
     ]);
+  });
+
+  it("sends only a sealed reference for signer-owned reveal material", async () => {
+    const cycleId = 9_859_137;
+    const intervalStartCycleId = 9_859_128;
+    const commitmentReference = `sha256:${"cd".repeat(32)}`;
+    await submitSatRevealCycle({ network: "devnet" } as never, {
+      cycleId,
+      intervalStartCycleId,
+      commitmentReference,
+    });
+
+    const executeEnvelope = callLocalSocketSigner.mock.calls[3]?.[1];
+    const intent = executeEnvelope?.request?.intent as
+      | {
+          dataBase64?: string;
+          satCommitment?: {
+            reference?: string;
+            cluster?: string;
+            protocolGeneration?: string;
+          };
+        }
+      | undefined;
+    expect(intent?.satCommitment).toEqual({
+      reference: commitmentReference,
+      cluster: "devnet",
+      protocolGeneration: "sat-v2",
+    });
+    const placeholder = Buffer.from(intent?.dataBase64 ?? "", "base64");
+    expect(placeholder).toHaveLength(145);
+    expect(placeholder[0]).toBe(92);
+    expect(placeholder.readBigUInt64LE(1)).toBe(BigInt(cycleId));
+    expect([...placeholder.subarray(9)]).toEqual(new Array(136).fill(0));
   });
 
   it("passes the canonical SlotHashes sysvar when sealing cycle entropy", async () => {

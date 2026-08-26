@@ -26,6 +26,7 @@ var signerStateBucketsV2 = [][]byte{
 	bucketSignerJupiterTriggerV2,
 	bucketSignerRotationsV2,
 	bucketSignerOperatorNoncesV2,
+	bucketSignerSATCommitmentsV2,
 }
 
 var signerStateSchemaContractV2 = migration.NewContract(

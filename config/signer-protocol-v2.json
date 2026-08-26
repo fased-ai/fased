@@ -57,7 +57,8 @@
     "signerOwnedJupiterTriggerV2",
     "signerOwnedJupiterTriggerHistory",
     "jupiterTriggerSecretsNeverCrossSocket",
-    "jupiterTriggerDurablePhases"
+    "jupiterTriggerDurablePhases",
+    "signerOwnedEncryptedSATCommitments"
   ],
   "clientRequiredFeatures": [
     "failClosedPolicies",
@@ -83,6 +84,7 @@
     "signerOwnedJupiterTriggerHistory",
     "signerOwnedReviewPrepareExecute",
     "exactPreparedTransactions",
-    "legacyOnlyJupiterTransactions"
+    "legacyOnlyJupiterTransactions",
+    "signerOwnedEncryptedSATCommitments"
   ]
 }

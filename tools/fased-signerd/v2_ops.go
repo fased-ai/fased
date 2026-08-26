@@ -729,6 +729,29 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(binding)
+	case "v2.satCommitment.allocate":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerSATCommitmentAllocateRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		commitment, err := s.keys.allocateSATCommitmentV1(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(commitment)
+	case "v2.satCommitment.binding.get":
+		var body signerSATCommitmentBindingRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		commitment, err := s.keys.getSATCommitmentBindingV1(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(commitment)
 	case "v2.operation.reconcile":
 		var body signerOperationLookupV2
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
@@ -757,7 +780,11 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if err != nil {
 		return signerOperationV2{}, errors.New("signer-owned wallet record has an invalid public key")
 	}
-	hydratedIntent, err := s.hydrateTypedTransferIntentV2(req.Intent, req.IntentWalletID())
+	hydratedIntent, err := s.hydrateSATCommitmentIntentV1(req.Intent, req.IntentWalletID())
+	if err != nil {
+		return signerOperationV2{}, err
+	}
+	hydratedIntent, err = s.hydrateTypedTransferIntentV2(hydratedIntent, req.IntentWalletID())
 	if err != nil {
 		return signerOperationV2{}, err
 	}
