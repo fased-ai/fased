@@ -143,6 +143,25 @@ func decodeSignerAdminTestBody(t *testing.T, req request, out any) {
 	}
 }
 
+func TestSignerAdminKeeperFeePayerUsesParentMiningBindingAndControlSocket(t *testing.T) {
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"miningWalletId":"mining","feePayerWalletId":"sat_kfp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","feePayerPublicKey":"public","policyHash":"sha256:test","maxPerTransactionLamports":"500000","maxDailyLamports":"50000000","state":"ready"}`))
+	if err := runSignerAdminCLI([]string{
+		"keeper", "ensure-fee-payer", "--control-socket", server.path, "--wallet-id", "mining",
+	}, strings.NewReader(""), io.Discard, nil); err != nil {
+		t.Fatalf("ensure keeper fee payer: %v", err)
+	}
+	req := waitSignerAdminTestServer(t, server)
+	if req.Op != "v2.keeperFeePayer.ensure" || req.WalletID != "mining" || string(req.Request) != "{}" {
+		t.Fatalf("unexpected keeper fee-payer envelope: %#v", req)
+	}
+
+	if err := runSignerAdminCLI([]string{
+		"keeper", "fee-payer-status", "--operator-socket", "/tmp/operator.sock", "--wallet-id", "mining",
+	}, strings.NewReader(""), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "control socket") {
+		t.Fatalf("keeper fee-payer management accepted operator authority: %v", err)
+	}
+}
+
 func TestSignerAdminWalletCreateLockedPolicy(t *testing.T) {
 	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"wallet":{"walletId":"mining","publicKey":"public"},"policy":{"walletId":"mining","role":"mining","version":1,"operations":[],"programs":[],"assets":[],"hash":"sha256:test"}}`))
 	var stdout bytes.Buffer

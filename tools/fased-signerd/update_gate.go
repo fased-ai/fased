@@ -19,6 +19,7 @@ var applicationUpdateGateReadOperations = map[string]bool{
 	"v2.operation.get":             true,
 	"v2.satLookup.binding.get":     true,
 	"v2.satCommitment.binding.get": true,
+	"v2.keeperFeePayer.get":        true,
 	"v2.review.get":                true,
 	"v2.webauthn.credentials.list": true,
 	"v2.jupiter.trigger.history":   true,

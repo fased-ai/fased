@@ -80,8 +80,12 @@ func requireAutonomousRoleV2(policy signerPolicyV2, intent normalizedIntentV2) e
 		if intent.Intent.Type != intentSolanaSATAction && intent.Intent.Type != intentSolanaSATLookupTable {
 			return errors.New("Mining autonomous execution is restricted to typed SAT operations")
 		}
+	case "keeper":
+		if intent.Intent.Type != intentSolanaSATKeeperAction {
+			return errors.New("Keeper autonomous execution is restricted to typed SAT keeper fee payment")
+		}
 	case "agent":
-		if intent.Intent.Type == intentSolanaSATAction || intent.Intent.Type == intentSolanaSATLookupTable {
+		if intent.Intent.Type == intentSolanaSATAction || intent.Intent.Type == intentSolanaSATLookupTable || intent.Intent.Type == intentSolanaSATKeeperAction {
 			return errors.New("typed SAT mining operations require a Mining wallet")
 		}
 	default:

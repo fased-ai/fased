@@ -115,6 +115,15 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		default:
 			return errors.New("unknown signer admin wallet command")
 		}
+	case "keeper":
+		switch args[1] {
+		case "ensure-fee-payer":
+			return runSignerAdminKeeperFeePayerV2(args[2:], true, stdout)
+		case "fee-payer-status":
+			return runSignerAdminKeeperFeePayerV2(args[2:], false, stdout)
+		default:
+			return errors.New("unknown signer admin keeper command")
+		}
 	case "policy":
 		switch args[1] {
 		case "get":
@@ -179,7 +188,37 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 }
 
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {service|wallet|policy|network|jupiter|webauthn|migration} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {service|wallet|keeper|policy|network|jupiter|webauthn|migration} <command> [flags]")
+}
+
+func runSignerAdminKeeperFeePayerV2(args []string, ensure bool, stdout io.Writer) error {
+	command := "keeper fee-payer-status"
+	if ensure {
+		command = "keeper ensure-fee-payer"
+	}
+	fs, common := newSignerAdminFlagSet(command)
+	var walletID string
+	fs.StringVar(&walletID, "wallet-id", "", "parent Mining wallet identifier")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(common.operatorSocket) != "" {
+		return errors.New("keeper fee-payer management requires the signer control socket")
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	var err error
+	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
+		return err
+	}
+	op := "v2.keeperFeePayer.get"
+	body := any(nil)
+	if ensure {
+		op = "v2.keeperFeePayer.ensure"
+		body = struct{}{}
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, op, walletID, body, stdout)
 }
 
 func rejectSignerAdminNetworkEnvironmentV2(environ []string) error {
@@ -397,6 +436,9 @@ func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 		})
 		if baselineErr != nil {
 			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
+		}
+		if baseline.Role == "keeper" {
+			return errors.New("use 'keeper ensure-fee-payer --wallet-id <Mining wallet>' for a bound Keeper fee payer")
 		}
 		if operator {
 			return callAndWriteSignerOperatorV1(

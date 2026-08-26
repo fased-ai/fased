@@ -107,7 +107,7 @@ func TestNormalizeFailures(t *testing.T) {
 		want string
 	}{
 		{"wallet required", func(p *Policy) { p.WalletID = " " }, "walletId is required"},
-		{"role", func(p *Policy) { p.Role = "operator" }, "policy role must be agent, mining, or vault"},
+		{"role", func(p *Policy) { p.Role = "operator" }, "policy role must be agent, mining, vault, or keeper"},
 		{"operation", func(p *Policy) { p.Operations = []string{" "} }, "policy operation cannot be empty"},
 		{"program required", func(p *Policy) { p.Programs = []string{" "} }, "policy program is required"},
 		{"program invalid", func(p *Policy) { p.Programs = []string{"not-a-key"} }, "invalid policy program"},

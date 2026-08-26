@@ -17,7 +17,7 @@ import (
 
 const signerRoleBaselineVersionV1 = uint64(1)
 
-const signerSATMainnetManifestPublicKeyV1 = "F-Kv6SBcZHvs1LQ0LNHwYQ6VuKidpkv1nkgRqggn1kk"
+const signerSATMainnetManifestPublicKeyV1 = "F-Kv6SBcZHvs1LQ0LNHwYQ6VuKidpkv1nkgRqggn1kk" // pragma: allowlist secret
 
 const (
 	roleBaselineNativeMaxPerTxV1     = "1000000000"
@@ -26,6 +26,8 @@ const (
 	roleBaselineMiningActionsDailyV1 = "4096"
 	roleBaselineSATMaxPerTxV1        = "1000000000000"
 	roleBaselineSATMaxDailyV1        = "5000000000000"
+	roleBaselineKeeperMaxPerTxV1     = "500000"
+	roleBaselineKeeperMaxDailyV1     = "50000000"
 )
 
 type signerRoleBaselineRequestV1 struct {
@@ -189,10 +191,10 @@ func normalizeRoleBaselineRequestV1(input signerRoleBaselineRequestV1) (signerRo
 		)
 	}
 	switch input.Role {
-	case "agent", "mining", "vault":
+	case "agent", "mining", "vault", "keeper":
 		return input, nil
 	default:
-		return signerRoleBaselineRequestV1{}, errors.New("role baseline must be agent, mining, or vault")
+		return signerRoleBaselineRequestV1{}, errors.New("role baseline must be agent, mining, vault, or keeper")
 	}
 }
 
@@ -238,6 +240,27 @@ func compileSignerRoleBaselineV1(
 				ReviewedDestinations: true,
 			},
 		},
+	}
+	if request.Role == "keeper" {
+		if !runtime.Verified {
+			return signerPolicyV2{}, errors.New("Keeper fee-payer baseline requires the verified release-bound SAT runtime")
+		}
+		programID, programErr := normalizePublicKeyV2(runtime.SATProgramID, "signed SAT runtime program ID")
+		if programErr != nil {
+			return signerPolicyV2{}, errors.New("Keeper fee-payer baseline contains an invalid release-bound SAT runtime")
+		}
+		policy.TypedSATPrograms = true
+		policy.Operations = policy.Operations[:0]
+		policy.Programs = []string{programID}
+		policy.Assets = []signerPolicyAssetV2{{
+			Asset: "solana:native", Destinations: []string{walletPublicKey},
+			MaxPerTx: roleBaselineKeeperMaxPerTxV1, MaxDaily: roleBaselineKeeperMaxDailyV1,
+			ReviewedDestinations: true,
+		}}
+		for _, action := range sortedKeeperFeePayerActionsV2() {
+			policy.Operations = append(policy.Operations, "satKeeperFee."+action+"@"+programID)
+		}
+		return normalizeSignerPolicyV2(policy)
 	}
 
 	if request.Role == "mining" {
@@ -449,6 +472,8 @@ func (s *signerServiceV2) walletReadinessV2(walletID string) (signerWalletReadin
 			}
 		case "vault":
 			operationLane = "vault-reviewed-only"
+		case "keeper":
+			operationLane = "keeper-fee-payer-only"
 		}
 	}
 	result := signerWalletReadinessV2{

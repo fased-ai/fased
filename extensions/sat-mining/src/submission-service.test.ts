@@ -193,6 +193,73 @@ describe("SAT submission service boundary", () => {
     );
   });
 
+  it("uses the signer-owned keeper capability while keeping the Mining ledger identity", async () => {
+    callLocalSocketSigner.mockImplementation(
+      async (
+        _socketPath: string,
+        payload: {
+          op?: string;
+          walletId?: string;
+          request?: { requestId?: string; intent?: unknown };
+        },
+      ) => {
+        if (payload.op === "v2.keeperFeePayer.get") {
+          return {
+            miningWalletId: "wallet-mining",
+            feePayerWalletId: `sat_kfp_${"a".repeat(56)}`,
+            feePayerPublicKey: "keeper-public-key",
+            state: "ready",
+          };
+        }
+        if (payload.op === "v2.capabilities") {
+          const capabilities = typedCapabilities();
+          capabilities.capabilities.intentTypes.push("solana.satKeeperAction");
+          capabilities.capabilities.features.push("signerOwnedKeeperFeePayer");
+          return capabilities;
+        }
+        if (payload.op === "v2.policy.get") {
+          expect(payload.walletId).toBe(`sat_kfp_${"a".repeat(56)}`);
+          return { hash: `sha256:${"ef".repeat(32)}` };
+        }
+        if (payload.op === "v2.execute") {
+          expect(payload.walletId).toBe(`sat_kfp_${"a".repeat(56)}`);
+          expect(payload.request?.intent).toMatchObject({
+            type: "solana.satKeeperAction",
+            authorityWalletId: "wallet-mining",
+            action: "closeCommitPhase",
+          });
+          return {
+            requestId: payload.request?.requestId,
+            state: "confirmed",
+            signature: "keeper-signature",
+          };
+        }
+        throw new Error(`unexpected signer operation ${payload.op}`);
+      },
+    );
+
+    await expect(
+      executeTypedSatIntent({
+        socketPath: "/run/fased-signerd.sock",
+        walletId: "wallet-mining",
+        stateProgramId: "program-id",
+        action: "closeCommitPhase",
+        instruction: { ...instruction, action: "closeCommitPhase" },
+        cluster: "devnet",
+        env: {},
+        useKeeperFeePayer: true,
+      }),
+    ).resolves.toMatchObject({ state: "confirmed", signature: "keeper-signature" });
+
+    expect(updateSatSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletId: "wallet-mining",
+        state: "confirmed",
+        signature: "keeper-signature",
+      }),
+    );
+  });
+
   it("reconciles an ambiguous broadcast without issuing a second execute", async () => {
     callLocalSocketSigner.mockImplementation(
       async (_socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {
