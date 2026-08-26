@@ -535,6 +535,68 @@ describe("per-wallet Mining history ledger", () => {
     expect(store.integrityCheck()).toBe("ok");
   });
 
+  it("builds retirement proof only from the active SQLite scope", async () => {
+    const stateDir = await tempState();
+    const { store } = await openStore({ stateDir, walletId: "mining" });
+    await store.replaceOperationalState({
+      pendingPlannerCycles: [],
+      claimBacklog: [],
+      workers: {
+        roundWatcher: { running: false },
+        epoch: { running: false },
+        claim: { running: false },
+        recovery: { running: false },
+      },
+      runtimeMeta: {
+        enabledWanted: false,
+        lastKnownStatus: {
+          walletId: "mining",
+          currentCapitalFundedLamports: "0",
+          currentCapitalLockedLamports: "0",
+          currentCapitalFreeLamports: "0",
+          currentCapitalPendingCycleCount: 0,
+          exactPendingCycleId: null,
+          updatedAt: "2026-08-26T14:00:00.000Z",
+        },
+      },
+    });
+
+    const clear = await store.buildRetirementSnapshot();
+
+    expect(clear).toMatchObject({
+      walletId: "mining",
+      protocolGeneration: "sat-v2",
+      observedAt: "2026-08-26T14:00:00.000Z",
+      newJobsStopped: true,
+      workersDrained: true,
+      clearingDrained: true,
+      submissionsReconciled: true,
+      pendingCommits: 0,
+    });
+    expect(clear.runtimeStateHash).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(clear.submissionLedgerHash).toMatch(/^sha256:[0-9a-f]{64}$/u);
+
+    await store.upsertSubmissionRecords([
+      {
+        requestId: "pending-commit",
+        workflowId: "cycle:42:commit",
+        operationKey: "commitCycle:42",
+        intentDigest: `sha256:${"a".repeat(64)}`,
+        walletId: "mining",
+        action: "commitCycle",
+        state: "unknown",
+        attempts: 1,
+        createdAt: "2026-08-26T14:00:00.000Z",
+        updatedAt: "2026-08-26T14:00:00.000Z",
+      },
+    ]);
+
+    expect(await store.buildRetirementSnapshot()).toMatchObject({
+      submissionsReconciled: false,
+      pendingCommits: 1,
+    });
+  });
+
   it("isolates unprovable legacy history instead of relabeling it to the active deployment", async () => {
     const stateDir = await tempState();
     const primary = path.join(stateDir, "legacy-actions.ndjson");

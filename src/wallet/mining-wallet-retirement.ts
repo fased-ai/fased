@@ -49,6 +49,20 @@ function nonNegativeCount(value: unknown): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
+function requiredNonNegativeCount(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`SQLite-bound Mining retirement snapshot has invalid ${field}`);
+  }
+  return value;
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`SQLite-bound Mining retirement snapshot has invalid ${field}`);
+  }
+  return value.trim();
+}
+
 function sha256(raw: Buffer | string): string {
   return `sha256:${createHash("sha256").update(raw).digest("hex")}`;
 }
@@ -162,7 +176,6 @@ export function buildMiningRetirementEvidence(params: {
   liveStatus: unknown;
   env?: NodeJS.ProcessEnv;
 }): MiningRetirementEvidenceV1 {
-  const env = params.env ?? process.env;
   const status = unwrapMiningGatewayPayload(params.liveStatus);
   if (typeof status.retirementGatewayError === "string") {
     throw new Error(`Could not stop and inspect Mining: ${status.retirementGatewayError}`);
@@ -207,111 +220,53 @@ export function buildMiningRetirementEvidence(params: {
     throw new Error("Mining still has pending cycles, claims, or reconciliation gaps");
   }
 
-  const walletStateDir = path.join(
-    resolveStateDir(env),
-    "sat-mining",
-    "wallets",
-    normalizedWalletStateKey(params.walletId),
-  );
-  const runtime = readStrictJSONFile(
-    path.join(walletStateDir, "runtime-store.json"),
-    16 * 1024 * 1024,
-  );
-  if (runtime.value.enabledWanted === true) {
-    throw new Error("Durable Mining state still permits new jobs");
-  }
-  const durableWorkers = record(runtime.value.workers) ?? {};
-  if (Object.values(durableWorkers).some((worker) => record(worker)?.running === true)) {
-    throw new Error("Durable Mining state still records a running worker");
-  }
+  const durable = record(status.retirementEvidence);
   if (
-    Array.isArray(runtime.value.pendingPlannerCycles) &&
-    runtime.value.pendingPlannerCycles.length
+    durable?.version !== 1 ||
+    (durable.walletId !== params.walletId && durable.walletId !== params.signerWalletId) ||
+    typeof durable.scopeKey !== "string" ||
+    !durable.scopeKey.trim() ||
+    typeof durable.protocolGeneration !== "string" ||
+    !durable.protocolGeneration.trim() ||
+    durable.newJobsStopped !== true ||
+    durable.workersDrained !== true ||
+    durable.clearingDrained !== true ||
+    durable.submissionsReconciled !== true
   ) {
-    throw new Error("Durable Mining planner work remains pending");
-  }
-  if (Array.isArray(runtime.value.claimBacklog) && runtime.value.claimBacklog.length) {
-    throw new Error("Durable Mining claim backlog remains pending");
-  }
-  const lastKnown = record(runtime.value.lastKnownStatus);
-  if (
-    !lastKnown ||
-    (lastKnown.walletId !== params.walletId && lastKnown.walletId !== params.signerWalletId)
-  ) {
-    throw new Error("Durable Mining balance state is missing or belongs to another wallet");
-  }
-  if (
-    decimal(lastKnown.currentCapitalFundedLamports, "durable funded capital") !== "0" ||
-    decimal(lastKnown.currentCapitalLockedLamports, "durable locked capital") !== "0" ||
-    decimal(lastKnown.currentCapitalFreeLamports, "durable free capital") !== "0" ||
-    nonNegativeCount(lastKnown.currentCapitalPendingCycleCount) !== 0 ||
-    lastKnown.exactPendingCycleId != null
-  ) {
-    throw new Error("Durable Mining state still contains pending capital or protocol work");
-  }
-
-  const ledgerPath = path.join(walletStateDir, "submission-ledger.json");
-  let ledgerRaw: Buffer = Buffer.from('{"version":1,"records":{}}\n', "utf8");
-  let ledger: JsonRecord = { version: 1, records: {} };
-  if (fs.existsSync(ledgerPath)) {
-    const loaded = readStrictJSONFile(ledgerPath, 16 * 1024 * 1024);
-    ledgerRaw = loaded.raw;
-    ledger = loaded.value;
-  }
-  if (ledger.version !== 1 || !record(ledger.records)) {
-    throw new Error("Durable Mining submission ledger is invalid");
+    throw new Error("Live Mining status lacks a complete SQLite-bound retirement snapshot");
   }
   const pendingByKind = {
-    commit: 0,
-    reveal: 0,
-    settlement: 0,
-    claim: 0,
-    cleanup: 0,
-    alt: 0,
+    commit: requiredNonNegativeCount(durable.pendingCommits, "pending commit count"),
+    reveal: requiredNonNegativeCount(durable.pendingReveals, "pending reveal count"),
+    settlement: requiredNonNegativeCount(durable.pendingSettlements, "pending settlement count"),
+    claim: requiredNonNegativeCount(durable.pendingClaims, "pending claim count"),
+    cleanup: requiredNonNegativeCount(durable.pendingCleanup, "pending cleanup count"),
+    alt: requiredNonNegativeCount(durable.pendingAltMutations, "pending ALT mutation count"),
   };
-  for (const rawEntry of Object.values(record(ledger.records)!)) {
-    const entry = record(rawEntry);
-    if (!entry) {
-      throw new Error("Durable Mining submission ledger contains an invalid record");
-    }
-    const state = typeof entry.state === "string" ? entry.state : "";
-    if (!["prepared", "reserved", "broadcast", "unknown"].includes(state)) {
-      continue;
-    }
-    const action = typeof entry.action === "string" ? entry.action.toLowerCase() : "";
-    if (action.includes("commit")) {
-      pendingByKind.commit += 1;
-    } else if (action.includes("reveal") || action.includes("submit")) {
-      pendingByKind.reveal += 1;
-    } else if (
-      action.includes("settle") ||
-      action.includes("score") ||
-      action.includes("distribute") ||
-      action.includes("finalize")
-    ) {
-      pendingByKind.settlement += 1;
-    } else if (action.includes("claim")) {
-      pendingByKind.claim += 1;
-    } else if (action.includes("lookup") || action.includes("alt")) {
-      pendingByKind.alt += 1;
-    } else {
-      pendingByKind.cleanup += 1;
-    }
+  const runtimeStateHash = requiredString(durable.runtimeStateHash, "runtime state hash");
+  const submissionLedgerHash = requiredString(
+    durable.submissionLedgerHash,
+    "submission ledger hash",
+  );
+  if (
+    Object.values(pendingByKind).some((count) => count > 0) ||
+    !/^sha256:[0-9a-f]{64}$/u.test(runtimeStateHash) ||
+    !/^sha256:[0-9a-f]{64}$/u.test(submissionLedgerHash)
+  ) {
+    throw new Error("SQLite-bound Mining retirement state still has unresolved work");
   }
-  if (Object.values(pendingByKind).some((count) => count > 0)) {
-    throw new Error("Reserved, broadcast, or unknown Mining submissions must be reconciled first");
-  }
-
-  const observedAt =
-    typeof status.updatedAt === "string"
-      ? status.updatedAt
-      : typeof status.snapshotAt === "string"
-        ? status.snapshotAt
-        : typeof lastKnown.updatedAt === "string"
-          ? lastKnown.updatedAt
-          : "";
-  if (!observedAt || !Number.isFinite(Date.parse(observedAt))) {
-    throw new Error("Live Mining balance observation has no verifiable timestamp");
+  const observedAt = requiredString(durable.observedAt, "observation timestamp");
+  const liveObservedAt = requiredString(
+    typeof status.updatedAt === "string" ? status.updatedAt : status.snapshotAt,
+    "live observation timestamp",
+  );
+  if (
+    !observedAt ||
+    !Number.isFinite(Date.parse(observedAt)) ||
+    !liveObservedAt ||
+    new Date(observedAt).toISOString() !== new Date(liveObservedAt).toISOString()
+  ) {
+    throw new Error("Live and durable Mining retirement observations do not match");
   }
   return {
     version: 1,
@@ -330,8 +285,8 @@ export function buildMiningRetirementEvidence(params: {
     pendingAltMutations: pendingByKind.alt,
     solBalanceLamports,
     satBalanceRaw,
-    runtimeStateHash: sha256(runtime.raw),
-    submissionLedgerHash: sha256(ledgerRaw),
+    runtimeStateHash,
+    submissionLedgerHash,
   };
 }
 

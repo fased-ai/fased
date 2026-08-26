@@ -61,6 +61,25 @@ function createFixture() {
     missingCycleCount: 0,
     claimBacklog: { total: 0 },
     updatedAt: "2026-07-20T14:00:00.000Z",
+    retirementEvidence: {
+      version: 1,
+      walletId: "mining",
+      scopeKey: "devnet:program:generation:mining",
+      protocolGeneration: "sha256:generation-2",
+      observedAt: "2026-07-20T14:00:00.000Z",
+      newJobsStopped: true,
+      workersDrained: true,
+      clearingDrained: true,
+      submissionsReconciled: true,
+      pendingCommits: 0,
+      pendingReveals: 0,
+      pendingSettlements: 0,
+      pendingClaims: 0,
+      pendingCleanup: 0,
+      pendingAltMutations: 0,
+      runtimeStateHash: `sha256:${"a".repeat(64)}`,
+      submissionLedgerHash: `sha256:${"b".repeat(64)}`,
+    },
   };
   return { root, env, walletDir, runtime, status };
 }
@@ -74,6 +93,16 @@ afterEach(() => {
 describe("Mining wallet retirement evidence", () => {
   it("proves stopped workers, zero Clearing state, balances, and reconciled submissions", () => {
     const fixture = createFixture();
+    fs.writeFileSync(
+      path.join(fixture.walletDir, "runtime-store.json"),
+      '{"enabledWanted":true,"claimBacklog":[{"cycleId":1}]}\n',
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(fixture.walletDir, "submission-ledger.json"),
+      '{"version":1,"records":{"stale":{"state":"unknown","action":"commitCycle"}}}\n',
+      { mode: 0o600 },
+    );
     const evidence = buildMiningRetirementEvidence({
       walletId: "mining",
       signerWalletId: "mining",
@@ -100,29 +129,41 @@ describe("Mining wallet retirement evidence", () => {
     expect(evidence.submissionLedgerHash).toMatch(/^sha256:[0-9a-f]{64}$/u);
   });
 
-  it("refuses reserved or ambiguous submissions and degraded balance evidence", () => {
+  it("refuses unresolved SQLite state and degraded balance evidence", () => {
     const fixture = createFixture();
-    fs.writeFileSync(
-      path.join(fixture.walletDir, "submission-ledger.json"),
-      `${JSON.stringify({
-        version: 1,
-        records: {
-          pending: { state: "unknown", action: "extendLookupTable" },
-        },
-      })}\n`,
-      { mode: 0o600 },
-    );
     expect(() =>
       buildMiningRetirementEvidence({
         walletId: "mining",
         signerWalletId: "mining",
         publicKey: "source-public-key",
         signerSolBalanceLamports: "42",
-        liveStatus: fixture.status,
+        liveStatus: {
+          ...fixture.status,
+          retirementEvidence: {
+            ...fixture.status.retirementEvidence,
+            submissionsReconciled: false,
+            pendingAltMutations: 1,
+          },
+        },
         env: fixture.env,
       }),
-    ).toThrow(/must be reconciled/u);
-    fs.rmSync(path.join(fixture.walletDir, "submission-ledger.json"));
+    ).toThrow(/snapshot/u);
+    expect(() =>
+      buildMiningRetirementEvidence({
+        walletId: "mining",
+        signerWalletId: "mining",
+        publicKey: "source-public-key",
+        signerSolBalanceLamports: "42",
+        liveStatus: {
+          ...fixture.status,
+          retirementEvidence: {
+            ...fixture.status.retirementEvidence,
+            pendingCommits: "0",
+          },
+        },
+        env: fixture.env,
+      }),
+    ).toThrow(/invalid pending commit count/u);
     expect(() =>
       buildMiningRetirementEvidence({
         walletId: "mining",
