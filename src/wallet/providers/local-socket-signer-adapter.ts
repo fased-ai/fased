@@ -9,6 +9,7 @@ import {
   validateLocalSocketSignerResult,
   type LocalSocketSignerBalanceResult,
   type LocalSocketSignerJupiterTriggerHistoryV2,
+  type LocalSocketSignerSatReleaseAcknowledgement,
   type LocalSocketSignerRequest,
   type LocalSocketSignerOperationV2,
   type LocalSocketSignerPolicyV2,
@@ -101,6 +102,7 @@ export type LocalSocketSignerHealthProbe = {
     operationStates: string[];
     features: string[];
   };
+  satRelease?: LocalSocketSignerSatReleaseAcknowledgement;
   policies?: Array<{
     walletId: string;
     role: "agent" | "mining" | "vault";
@@ -325,6 +327,7 @@ export async function probeLocalSocketSignerHealth(
       schema?: LocalSocketSignerHealthProbe["schema"];
       network?: LocalSocketSignerHealthProbe["network"];
       capabilities?: LocalSocketSignerHealthProbe["capabilities"];
+      satRelease?: LocalSocketSignerHealthProbe["satRelease"];
       policies?: LocalSocketSignerHealthProbe["policies"];
       webAuthn?: LocalSocketSignerHealthProbe["webAuthn"];
       jupiter?: LocalSocketSignerHealthProbe["jupiter"];

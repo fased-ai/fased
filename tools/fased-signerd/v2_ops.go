@@ -41,20 +41,21 @@ type signerPolicySummaryV2 struct {
 }
 
 type signerHealthResultV2 struct {
-	Details      string                  `json:"details"`
-	ReadOnly     bool                    `json:"readOnly"`
-	KeystoreType string                  `json:"keystoreType"`
-	Chains       []string                `json:"chains"`
-	Ready        bool                    `json:"ready"`
-	Release      signerReleaseIdentityV2 `json:"release"`
-	Schema       signerSchemaHealthV2    `json:"schema"`
-	Network      signerNetworkHealthV2   `json:"network"`
-	Capabilities signerCapabilitiesV2    `json:"capabilities"`
-	Policies     []signerPolicySummaryV2 `json:"policies"`
-	WebAuthn     signerWebAuthnHealthV2  `json:"webAuthn"`
-	Jupiter      signerJupiterHealthV2   `json:"jupiter"`
-	Audit        signerAuditHealthV2     `json:"audit"`
-	State        signerStateHealthV2     `json:"state"`
+	Details      string                            `json:"details"`
+	ReadOnly     bool                              `json:"readOnly"`
+	KeystoreType string                            `json:"keystoreType"`
+	Chains       []string                          `json:"chains"`
+	Ready        bool                              `json:"ready"`
+	Release      signerReleaseIdentityV2           `json:"release"`
+	Schema       signerSchemaHealthV2              `json:"schema"`
+	Network      signerNetworkHealthV2             `json:"network"`
+	Capabilities signerCapabilitiesV2              `json:"capabilities"`
+	SATRelease   frozenSATReleaseAcknowledgementV2 `json:"satRelease"`
+	Policies     []signerPolicySummaryV2           `json:"policies"`
+	WebAuthn     signerWebAuthnHealthV2            `json:"webAuthn"`
+	Jupiter      signerJupiterHealthV2             `json:"jupiter"`
+	Audit        signerAuditHealthV2               `json:"audit"`
+	State        signerStateHealthV2               `json:"state"`
 }
 
 type signerJupiterHealthV2 struct {
@@ -126,6 +127,7 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 		Schema:       schemaHealth,
 		Network:      networkHealth,
 		Capabilities: signerV2Capabilities,
+		SATRelease:   signerSATReleaseAcknowledgementGeneration2,
 		Policies:     summaries,
 		WebAuthn:     webauthnHealth,
 		Jupiter:      signerJupiterHealthV2{TriggerConfigured: s.trigger != nil, LiveEnabled: cfg.jupiterLive},

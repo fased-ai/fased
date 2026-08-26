@@ -8,6 +8,12 @@ import {
   SAT_RUNTIME_TRUST_ENV_KEYS,
   type SatRuntimeIds,
 } from "../config/sat-runtime-ids.js";
+import { VERSION } from "../version.js";
+import { callLocalSocketSigner } from "../wallet/providers/local-socket-signer-adapter.js";
+import {
+  verifySatReleaseDescriptor,
+  type SatReleaseAcknowledgement,
+} from "./sat-release-descriptor.js";
 
 const DEFAULT_MANIFEST_URL = "https://satcoin.app/.well-known/sat-mainnet-addresses.json";
 const DEFAULT_TIMEOUT_MS = 12_000;
@@ -33,8 +39,8 @@ type ResolvedTrustedManifestKey = TrustedManifestKey & {
 const EMBEDDED_TRUSTED_KEYS: EmbeddedTrustedManifestKey[] = [
   {
     id: "sat-mainnet-2026-01",
-    publicKeyBase64Url: "F-Kv6SBcZHvs1LQ0LNHwYQ6VuKidpkv1nkgRqggn1kk",
-    fingerprintSha256: "7fc6f335e13fbba3cee2f833e4ab656a19fd8c0715b9d9097a3e196f0e3a0ebd",
+    publicKeyBase64Url: "F-Kv6SBcZHvs1LQ0LNHwYQ6VuKidpkv1nkgRqggn1kk", // pragma: allowlist secret
+    fingerprintSha256: "7fc6f335e13fbba3cee2f833e4ab656a19fd8c0715b9d9097a3e196f0e3a0ebd", // pragma: allowlist secret
   },
 ];
 
@@ -66,6 +72,8 @@ export type SatMainnetSyncStatus = {
   officialIds?: SatRuntimeIds | null;
   needsSync?: boolean;
   runtimeFile?: string;
+  releaseDescriptorDigest?: string;
+  installedDescriptorDigest?: string | null;
   verification: SatMainnetSyncVerification;
   trustKeySource?: "embedded" | "environment" | "missing" | "not_required";
   error?: string;
@@ -83,6 +91,13 @@ type RawManifest = {
     mintProgramId?: unknown;
     bondProgramId?: unknown;
   };
+  releaseDescriptor?: unknown;
+};
+
+type SatMainnetSyncOptions = {
+  env?: NodeJS.ProcessEnv;
+  manifestUrl?: string;
+  signerAcknowledgement?: SatReleaseAcknowledgement | null;
 };
 
 function trustedKeysFromEnv(env: NodeJS.ProcessEnv): ResolvedTrustedManifestKey[] {
@@ -277,6 +292,53 @@ function idsEqual(left: SatRuntimeIds | null, right: SatRuntimeIds | null): bool
   );
 }
 
+async function readSignerAcknowledgement(
+  env: NodeJS.ProcessEnv,
+  supplied: SatReleaseAcknowledgement | null | undefined,
+): Promise<SatReleaseAcknowledgement | null> {
+  if (supplied !== undefined) {
+    return supplied;
+  }
+  const socketPath = String(env.FASED_WALLET_LOCAL_SIGNER_SOCKET ?? "").trim();
+  if (!socketPath) {
+    return null;
+  }
+  try {
+    const result = await callLocalSocketSigner<{ satRelease?: SatReleaseAcknowledgement }>(
+      socketPath,
+      { op: "v2.capabilities" },
+    );
+    return result.satRelease ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function readInstalledDescriptorDigest(env: NodeJS.ProcessEnv): Promise<string | null> {
+  const manifestPath = String(env[SAT_RUNTIME_TRUST_ENV_KEYS.manifestPath] ?? "").trim();
+  const expectedSha256 = String(env[SAT_RUNTIME_TRUST_ENV_KEYS.manifestSha256] ?? "")
+    .trim()
+    .toLowerCase();
+  if (!manifestPath || !/^[0-9a-f]{64}$/u.test(expectedSha256)) {
+    return null;
+  }
+  try {
+    const raw = await fs.readFile(manifestPath, "utf8");
+    if (sha256Hex(raw) !== expectedSha256) {
+      return null;
+    }
+    const manifest = JSON.parse(raw) as RawManifest;
+    const descriptor = manifest.releaseDescriptor;
+    if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)) {
+      return null;
+    }
+    const digest = (descriptor as Record<string, unknown>).descriptorDigest;
+    return typeof digest === "string" && /^sha256:[0-9a-f]{64}$/u.test(digest) ? digest : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildEnvFile(
   ids: SatRuntimeIds,
   trust: { manifestPath: string; manifestSha256: string; manifestSignaturePath: string },
@@ -329,10 +391,9 @@ async function writeRuntimeIds(
   return runtimeFile;
 }
 
-export async function getSatMainnetSyncStatus(opts?: {
-  env?: NodeJS.ProcessEnv;
-  manifestUrl?: string;
-}): Promise<SatMainnetSyncStatus> {
+export async function getSatMainnetSyncStatus(
+  opts?: SatMainnetSyncOptions,
+): Promise<SatMainnetSyncStatus> {
   const env = opts?.env ?? process.env;
   const manifestUrl = opts?.manifestUrl?.trim() || resolveManifestUrl(env);
   const checkedAt = new Date().toISOString();
@@ -392,7 +453,39 @@ export async function getSatMainnetSyncStatus(opts?: {
             : "Signed manifest verification failed.",
       };
     }
-    const synced = idsEqual(localIds, officialIds);
+    const signerAcknowledgement = await readSignerAcknowledgement(env, opts?.signerAcknowledgement);
+    let releaseDescriptor;
+    try {
+      releaseDescriptor = verifySatReleaseDescriptor({
+        descriptor: manifest.releaseDescriptor,
+        officialIds,
+        manifestSourceCommit: readString(manifest.sourceCommit),
+        currentFasedVersion: VERSION,
+        signerAcknowledgement,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        state: "failed",
+        manifestUrl,
+        checkedAt,
+        manifestStatus,
+        releaseTag: readString(manifest.releaseTag) || undefined,
+        sourceCommit: readString(manifest.sourceCommit) || undefined,
+        message: "Signed SAT mainnet manifest lacks a complete compatible release binding.",
+        localIds,
+        officialIds,
+        needsSync: false,
+        verification,
+        trustKeySource,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const installedDescriptorDigest = await readInstalledDescriptorDigest(env);
+    const synced =
+      signerAcknowledgement?.state === "ACTIVE" &&
+      idsEqual(localIds, officialIds) &&
+      installedDescriptorDigest === releaseDescriptor.descriptorDigest;
     return {
       ok: true,
       state: synced ? "synced" : "available",
@@ -403,11 +496,16 @@ export async function getSatMainnetSyncStatus(opts?: {
       sourceCommit: readString(manifest.sourceCommit) || undefined,
       message: synced
         ? "Fased Agent is synced to the signed SAT mainnet manifest."
-        : "Signed SAT mainnet manifest is verified and ready to apply.",
+        : installedDescriptorDigest === releaseDescriptor.descriptorDigest &&
+            signerAcknowledgement?.state !== "ACTIVE"
+          ? "Signed SAT release is installed, but its generated Mining contract remains inactive."
+          : "Signed SAT mainnet manifest is verified and ready to apply.",
       localIds,
       officialIds,
       needsSync: !synced,
       runtimeFile: resolveWritableSatRuntimeDefaultsFile(env),
+      releaseDescriptorDigest: releaseDescriptor.descriptorDigest,
+      installedDescriptorDigest,
       verification,
       trustKeySource,
     };
@@ -427,12 +525,15 @@ export async function getSatMainnetSyncStatus(opts?: {
   }
 }
 
-export async function syncSatMainnetRuntimeIds(opts?: {
-  env?: NodeJS.ProcessEnv;
-  manifestUrl?: string;
-}): Promise<SatMainnetSyncStatus> {
+export async function syncSatMainnetRuntimeIds(
+  opts?: SatMainnetSyncOptions,
+): Promise<SatMainnetSyncStatus> {
   const env = opts?.env ?? process.env;
-  const before = await getSatMainnetSyncStatus({ env, manifestUrl: opts?.manifestUrl });
+  const before = await getSatMainnetSyncStatus({
+    env,
+    manifestUrl: opts?.manifestUrl,
+    signerAcknowledgement: opts?.signerAcknowledgement,
+  });
   if (before.state !== "available" || !before.officialIds) {
     return before.state === "synced"
       ? before
@@ -489,13 +590,17 @@ export async function syncSatMainnetRuntimeIds(opts?: {
     manifestSha256,
     signature,
   });
-  const after = await getSatMainnetSyncStatus({ env, manifestUrl: opts?.manifestUrl });
+  const after = await getSatMainnetSyncStatus({
+    env,
+    manifestUrl: opts?.manifestUrl,
+    signerAcknowledgement: opts?.signerAcknowledgement,
+  });
   return {
     ...after,
     runtimeFile,
     message:
       after.state === "synced"
         ? "SAT mainnet IDs synced."
-        : "SAT mainnet IDs were written, but status did not confirm synced state.",
+        : after.message || "SAT mainnet IDs were written, but status did not confirm synced state.",
   };
 }

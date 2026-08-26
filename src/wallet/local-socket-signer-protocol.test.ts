@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../mining/sat-vnext-release-contract.generated.js";
 import {
   parseLocalSocketSignerRequest,
   validateLocalSocketSignerResult,
@@ -27,6 +28,7 @@ describe("local socket signer protocol", () => {
         operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
         features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
       },
+      satRelease: SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT,
       policies: [],
       webAuthn: {
         configured: false,
@@ -70,7 +72,16 @@ describe("local socket signer protocol", () => {
     expect(
       validateLocalSocketSignerResult("v2.capabilities", {
         ...health,
-        jupiter: { ...health.jupiter, apiKey: "must-never-cross-the-socket" },
+        satRelease: {
+          ...SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT,
+          idlSha256: `sha256:${"f".repeat(64)}`,
+        },
+      }),
+    ).toBe(false);
+    expect(
+      validateLocalSocketSignerResult("v2.capabilities", {
+        ...health,
+        jupiter: { ...health.jupiter, apiKey: "must-never-cross-the-socket" }, // pragma: allowlist secret
       }),
     ).toBe(false);
   });
@@ -340,11 +351,11 @@ describe("local socket signer protocol", () => {
         intent: {
           type: "solana.satAction" as const,
           action: "depositMinerCapital",
-          programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+          programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75", // pragma: allowlist secret
           dataBase64: Buffer.from([37, 1, 0, 0, 0, 0, 0, 0, 0]).toString("base64"),
           keys: [
             {
-              pubkey: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+              pubkey: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW", // pragma: allowlist secret
               isSigner: true,
               isWritable: true,
             },
@@ -360,7 +371,9 @@ describe("local socket signer protocol", () => {
         intent: {
           ...request.request.intent,
           action: "distributeCyclePage",
-          addressLookupTables: ["4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB"],
+          addressLookupTables: [
+            "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB", // pragma: allowlist secret
+          ],
         },
       },
     };
@@ -389,13 +402,13 @@ describe("local socket signer protocol", () => {
           type: "solana.satLookupTable" as const,
           action: "extend" as const,
           lookupTable: {
-            address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+            address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB", // pragma: allowlist secret
             cycleId: "7",
             pageIndex: "2",
             addresses: ["So11111111111111111111111111111111111111112"],
             parent: {
               action: "distributeCyclePage",
-              programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
+              programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75", // pragma: allowlist secret
               dataBase64: "Qg==",
               keys: [],
             },
@@ -444,11 +457,11 @@ describe("local socket signer protocol", () => {
       type: "solana.vaultBondAction" as const,
       cluster: "devnet" as const,
       action: "requestBondUnlock",
-      programId: "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq",
+      programId: "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq", // pragma: allowlist secret
       dataBase64: "BA==",
       keys: [
         {
-          pubkey: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
+          pubkey: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW", // pragma: allowlist secret
           isSigner: true,
           isWritable: true,
         },
@@ -545,7 +558,7 @@ describe("local socket signer protocol", () => {
         maxFeeLamports: "5000",
         sourceTokenAccount: "Stake11111111111111111111111111111111111111",
         destinationTokenAccount: "Config1111111111111111111111111111111111111",
-        programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+        programs: ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"], // pragma: allowlist secret
       },
     };
     const policyHash = `sha256:${"a".repeat(64)}`;
