@@ -1,29 +1,61 @@
 {
   "$schema": "sat.interface-generation.v2",
   "activation": {
+    "agentReceiptDispatchBound": true,
+    "bondEpochAccountingBound": false,
     "fasedRuntimeSelected": false,
-    "liveConstantsChanged": false,
-    "programDispatchBound": false,
+    "keeperReimbursementBound": true,
+    "liveConstantsChanged": true,
+    "programDispatchBound": true,
+    "publicEntryEnableInstructionArmed": false,
     "publicEntryEnabled": false
   },
   "artifacts": {
     "accountOrder": "api/account-order.generation-2.json",
+    "genesisContract": "api/genesis-contract.generation-2.json",
     "idl": "api/idl.generation-2.json",
     "rust": "api/src/interface_generation_v2.rs",
+    "sdk": "api/src/sdk_generation_v2.rs",
     "signerCodecs": "api/signer-codecs.generation-2.json",
     "stateLayouts": "api/state-layouts.generation-2.json"
   },
   "componentGenerations": {
-    "bond": "SAT-BOND-GEN-002",
-    "cycle": "SAT-CYCLE-GEN-002",
-    "economics": "SAT-ECON-GEN-002",
-    "penalty": "SAT-PENALTY-GEN-002",
+    "bond": "SAT-BOND-GEN-003",
+    "cycle": "SAT-CYCLE-GEN-003",
+    "economics": "SAT-ECON-GEN-003",
+    "keeper": "SAT-KEEPER-GEN-002",
+    "penalty": "SAT-PENALTY-GEN-003",
+    "protocol": "SAT-PROTO-GEN-002",
+    "receipt": "SAT-RECEIPT-GEN-002",
     "schema": "SAT-SCHEMA-GEN-002",
     "signerCapability": "FSD-SIGNER-GEN-002"
   },
-  "contractDigest": "sha256:9a8fb75294ea1c4f659d19cb866626f2553d3f2da19391dad1bd626e2ff4f939",
+  "contractDigest": "sha256:03be34cc5a69f8f70069f293e5fc59fa7c3022af32ceb5f34464096ce66c828c",
   "contractVersion": 2,
-  "freezeId": "SAT-VNEXT-GATE-P5-001",
+  "economicsContractDigest": "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c",
+  "executableComponentTuple": {
+    "bond": 3,
+    "cycle": 3,
+    "economics": 3,
+    "keeper": 2,
+    "penalty": 3,
+    "protocol": 2,
+    "receipt": 2,
+    "schema": 2,
+    "signerCapability": 2,
+    "tupleFormat": 1
+  },
+  "freezeId": "SAT-VNEXT-GATE-P3-008",
+  "keeperAccounting": {
+    "commonWorkSource": "BOOTSTRAP_THEN_TREASURY",
+    "duplicatePaid": false,
+    "feeAllowanceLamports": 36000,
+    "identityWorkSource": "OPERATING_RESERVE",
+    "identityWorkUnitsPerCycle": 3,
+    "maximumChargePerWorkLamports": 40000,
+    "publicRescuePaid": false,
+    "serviceMarginLamports": 4000
+  },
   "legacyDrain": {
     "allowed": [
       "reveal",
@@ -42,28 +74,57 @@
     "strategyChannels": 25
   },
   "source": {
+    "componentRegistryExtensionPath": "api/component-generations.v2-extension.json",
+    "componentRegistryExtensionSha256": "sha256:7baf418697c7e8f441b8938d8b6b8232f2339dcd410e894e03951d66a9341af5",
     "componentRegistryPath": "api/component-generations.v1.json",
     "componentRegistrySha256": "sha256:ca236c58d0af5ececcca987bd025e8295eb6b0e95bdd330f3f0faea1a985ecdc",
-    "economicsPath": "api/economics-generation.v2.json",
-    "economicsSha256": "sha256:f5c8cdb751225d418cf1e816ce712af872f20ab4386d96670cbb997619833ca5",
+    "economicsPath": "api/economics-generation.v3.json",
+    "economicsSha256": "sha256:36ae4658a8f8d7355c4afe2d75483f03e4ae26d94864af6ce12fb6220f9a6956",
     "legacyAccountOrderPath": "api/account-order.v1.json",
     "legacyAccountOrderSha256": "sha256:3bf82fda78a2040d27edcb33f90472de46098cfee7ef57acd2758a26ea6a1c6c",
     "legacyIdlPath": "api/idl.json",
-    "legacyIdlSha256": "sha256:d580d2a6d705968ff377f8bc0d12bce8ec17d760abdf1588839c1e576e5f8245"
+    "legacyIdlSha256": "sha256:031e5e976f40a373a47222ae6484385c841132498d227b93d2e6ef6d2b4233c6"
   },
-  "state": "FROZEN_NOT_ACTIVE",
+  "state": "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED",
   "strategyChannels": 16,
   "vnext": {
     "accountDiscriminants": [
       149,
       150,
-      151
+      151,
+      152,
+      153
     ],
     "commitmentDomain": "sat-allocation-v2",
+    "instructionDiscriminants": {
+      "SatAbortEmptyCycleV2": 121,
+      "SatBootstrapV2": 115,
+      "SatClaimCycleRewardsBatchV2": 127,
+      "SatClaimCycleRewardsV2": 126,
+      "SatCloseCommitPhaseV2": 118,
+      "SatCloseResolvedCycleArtifactsV2": 130,
+      "SatCloseResolvedCycleRegistryPageV2": 129,
+      "SatCloseResolvedMinerCycleStateV2": 128,
+      "SatCommitCycleV2": 117,
+      "SatDistributeCyclePageV2": 125,
+      "SatFinalizeCycleSettlementV2": 123,
+      "SatMigrateAgentRecordV2": 132,
+      "SatOpenCycleV2": 116,
+      "SatRecordAgentCycleReceiptV2": 134,
+      "SatReleaseUnrevealedCommitV2": 120,
+      "SatRevealCycleV2": 114,
+      "SatScoreCyclePageV2": 124,
+      "SatSealCycleEntropyV2": 119,
+      "SatSetVnextEntryEnabled": 131,
+      "SatSettleCyclePageV2": 122,
+      "SatSnapshotKeeperCapabilitiesV2": 133
+    },
+    "protocolStateDiscriminant": 152,
     "reveal": {
       "allocationType": "u32[16]",
       "discriminant": 114,
       "wireBytes": 105
-    }
+    },
+    "rewardRemainderDiscriminant": 153
   }
 }

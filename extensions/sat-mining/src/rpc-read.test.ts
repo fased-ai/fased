@@ -9,10 +9,14 @@ import {
   decodeSatBondStakingDistributor,
   decodeSatCycle,
   decodeSatCycleSettlementProgressV2,
+  decodeSatCycleSettlementProgressV3,
   decodeSatRoundBucket,
   decodeSatCycleRegistryPage,
   decodeSatGlobalState,
+  decodeSatKeeperCapability,
+  decodeSatMinerCapital,
   decodeSatMinerCycle,
+  decodeSatMinerCycleV2,
   inspectSatCycleAccountExists,
   inspectSatChainUnixTime,
   inspectSatAddressLookupTable,
@@ -72,10 +76,10 @@ afterEach(async () => {
 
 describe("SAT RPC diagnostic redaction", () => {
   it("redacts credential-bearing primary and fallback URLs", () => {
-    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
-    process.env.FASED_SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
-    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
-    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75"; // pragma: allowlist secret
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7"; // pragma: allowlist secret
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C"; // pragma: allowlist secret
     process.env.FASED_WALLET_SOLANA_READ_RPC_URL =
       "https://primary.example/rpc?api-key=primary-secret";
     process.env.FASED_WALLET_SOLANA_READ_RPC_FALLBACK_URL =
@@ -92,22 +96,22 @@ describe("SAT RPC diagnostic redaction", () => {
 
 describe("decodeSatBondStakingDistributor", () => {
   it("exposes rewards quarantined while no stake was active", () => {
-    const bondProgram = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq");
-    const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa");
+    const bondProgram = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq"); // pragma: allowlist secret
+    const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"); // pragma: allowlist secret
     const [distributor] = PublicKey.findProgramAddressSync(
       [Buffer.from("sat_bond_staking_distributor")],
       bondProgram,
     );
-    const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-    const associatedTokenProgram = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"); // pragma: allowlist secret
+    const associatedTokenProgram = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"); // pragma: allowlist secret
     const [rewardVault] = PublicKey.findProgramAddressSync(
       [distributor.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()],
       associatedTokenProgram,
     );
-    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75"; // pragma: allowlist secret
     process.env.FASED_SAT_BOND_PROGRAM_ID = bondProgram.toBase58();
     process.env.FASED_SAT_MINT_ADDRESS = mint.toBase58();
-    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C"; // pragma: allowlist secret
 
     const data = Buffer.alloc(232);
     data[0] = 142;
@@ -117,7 +121,9 @@ describe("decodeSatBondStakingDistributor", () => {
     body.writeBigUInt64LE(1n, 8);
     mint.toBuffer().copy(body, 16);
     rewardVault.toBuffer().copy(body, 48);
-    new PublicKey("AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene").toBuffer().copy(body, 80);
+    new PublicKey("AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene") // pragma: allowlist secret
+      .toBuffer()
+      .copy(body, 80);
     body.writeBigUInt64LE(500_000_000_000n, 112);
     body.writeBigUInt64LE(0n, 120);
     body.writeBigUInt64LE(900_000_000_000n, 144);
@@ -165,6 +171,71 @@ describe("decodeSatCycleSettlementProgressV2", () => {
       cycleId: 77,
       keeperBountyPaidLamports: "11000",
       keeperBountyUnpaidLamports: "22000",
+    });
+  });
+});
+
+describe("decodeSatCycleSettlementProgressV3", () => {
+  it("decodes generation-2 cursors, windows, and unpaid duplicate accounting", () => {
+    const data = Buffer.alloc(936);
+    data[0] = 151;
+    const body = data.subarray(8);
+    body.writeBigUInt64LE(88n, 0);
+    body.writeUInt16LE(4, 128);
+    body.writeUInt16LE(2, 130);
+    body.writeUInt16LE(1, 132);
+    body.writeUInt16LE(1, 134);
+    body.writeUInt16LE(3, 136);
+    body.writeUInt16LE(0, 138);
+    body.writeUInt16LE(2, 140);
+    body[142] = 1;
+    body.writeBigUInt64LE(1_020n, 856);
+    body.writeBigUInt64LE(1_040n, 864);
+    body.writeBigUInt64LE(1_060n, 872);
+    body.writeBigUInt64LE(1_080n, 880);
+    body.writeBigUInt64LE(50_000n, 888);
+    body.writeBigUInt64LE(7_000n, 912);
+
+    expect(decodeSatCycleSettlementProgressV3(data, "progress-v3")).toMatchObject({
+      address: "progress-v3",
+      cycleId: 88,
+      expectedPageCount: 4,
+      processedPageCount: 2,
+      settleChunkIndex: 1,
+      scoredPageCount: 1,
+      scoreChunkIndex: 3,
+      distributeChunkIndex: 2,
+      finalized: true,
+      settleExclusiveUntilSlot: 1020,
+      finalizeExclusiveUntilSlot: 1040,
+      scoreExclusiveUntilSlot: 1060,
+      distributeExclusiveUntilSlot: 1080,
+      keeperBountyPaidLamports: "50000",
+      keeperBountyUnpaidLamports: "7000",
+    });
+  });
+});
+
+describe("decodeSatKeeperCapability", () => {
+  it("keeps the keeper fee payer and payout authority separate", () => {
+    const feePayer = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9"); // pragma: allowlist secret
+    const payoutAuthority = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2"); // pragma: allowlist secret
+    const data = Buffer.alloc(200);
+    data[0] = 145;
+    const body = data.subarray(8);
+    body[1] = 1;
+    body.writeUInt16LE(2, 4);
+    body.writeBigUInt64LE(15n, 32);
+    feePayer.toBuffer().copy(body, 96);
+    payoutAuthority.toBuffer().copy(body, 128);
+
+    expect(decodeSatKeeperCapability(data, "capability")).toMatchObject({
+      address: "capability",
+      status: 1,
+      keeperGeneration: 2,
+      capabilityMask: 15,
+      feePayerPublicKey: feePayer.toBase58(),
+      payoutAuthority: payoutAuthority.toBase58(),
     });
   });
 });
@@ -338,8 +409,26 @@ describe("decodeSatRoundBucket", () => {
 });
 
 describe("Solana pubkey decoding", () => {
+  it("decodes the generation-2 permanent identity from miner capital", () => {
+    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9"); // pragma: allowlist secret
+    const permanentMiningId = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2"); // pragma: allowlist secret
+    const data = Buffer.alloc(136);
+    data[0] = 138;
+    const body = data.subarray(8);
+    body[0] = 2;
+    authority.toBuffer().copy(body, 8);
+    body.writeBigUInt64LE(1_000_000_000n, 40);
+    permanentMiningId.toBuffer().copy(body, 88);
+
+    expect(decodeSatMinerCapital(data, "capital-v2")).toMatchObject({
+      version: 2,
+      authority: authority.toBase58(),
+      permanentMiningId: permanentMiningId.toBase58(),
+    });
+  });
+
   it("decodes miner cycle authority as base58", () => {
-    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
+    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9"); // pragma: allowlist secret
     const buffer = Buffer.concat([
       Buffer.from([132, 0, 0, 0, 0, 0, 0, 0]),
       encodeU128(1_100_000n),
@@ -373,9 +462,51 @@ describe("Solana pubkey decoding", () => {
     });
   });
 
+  it("decodes generation-2 miner authority and split rewards", () => {
+    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9"); // pragma: allowlist secret
+    const permanentMiningId = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2"); // pragma: allowlist secret
+    const data = Buffer.alloc(416);
+    data[0] = 150;
+    const body = data.subarray(8);
+    body.writeBigUInt64LE(1_100_000n, 0);
+    body.writeBigUInt64LE(1_000_000n, 16);
+    body.writeBigUInt64LE(100_000n, 32);
+    body.writeBigUInt64LE(1_250_000n, 48);
+    authority.toBuffer().copy(body, 64);
+    permanentMiningId.toBuffer().copy(body, 96);
+    body.writeBigUInt64LE(99n, 128);
+    body.writeBigUInt64LE(1_000_000_000n, 136);
+    body.writeBigUInt64LE(30n, 160);
+    body.writeBigUInt64LE(20n, 168);
+    body.writeBigUInt64LE(10n, 176);
+    body.writeBigUInt64LE(5n, 184);
+    body.writeBigUInt64LE(3n, 192);
+    body.writeBigUInt64LE(2n, 200);
+    body.writeBigUInt64LE(1n, 208);
+    body.writeBigUInt64LE(1n, 216);
+    body[224] = 1;
+    body.writeBigUInt64LE(900_000_000n, 280);
+
+    expect(decodeSatMinerCycleV2(data, "miner-v2")).toMatchObject({
+      address: "miner-v2",
+      authority: authority.toBase58(),
+      permanentMiningId: permanentMiningId.toBase58(),
+      cycleId: 99,
+      committedLamports: "1000000000",
+      claimableSatRaw: "50",
+      claimableDetRebateLamports: "10",
+      claimablePerfRebateLamports: "5",
+      claimedSatRaw: "5",
+      claimedDetRebateLamports: "1",
+      claimedPerfRebateLamports: "1",
+      validParticipation: true,
+      lockedCollateralLamports: "900000000",
+    });
+  });
+
   it("decodes registry page participants as base58", () => {
-    const participantA = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
-    const participantB = new PublicKey("AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt");
+    const participantA = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2"); // pragma: allowlist secret
+    const participantB = new PublicKey("AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt"); // pragma: allowlist secret
     const buffer = Buffer.concat([
       Buffer.from([135, 0, 0, 0, 0, 0, 0, 0]),
       encodeU64(9862902),
@@ -441,14 +572,14 @@ describe("decodeSatGlobalState", () => {
 
 describe("decodeSatBondPosition", () => {
   it("reads the canonical SAT bond position layout", () => {
-    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
-    const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa");
-    const bondVault = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
-    const bondPosition = new PublicKey("AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt");
-    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
-    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
+    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9"); // pragma: allowlist secret
+    const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"); // pragma: allowlist secret
+    const bondVault = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2"); // pragma: allowlist secret
+    const bondPosition = new PublicKey("AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt"); // pragma: allowlist secret
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75"; // pragma: allowlist secret
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq"; // pragma: allowlist secret
     process.env.FASED_SAT_MINT_ADDRESS = mint.toBase58();
-    process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"; // pragma: allowlist secret
     const buffer = Buffer.concat([
       Buffer.from([140, 0, 0, 0, 0, 0, 0, 0]),
       Buffer.from([1, 1, 2, 7, 1, 0, 0, 0]),
@@ -487,8 +618,8 @@ describe("decodeSatBondPosition", () => {
 describe("secondary read rpc fallback", () => {
   it("decodes a confirmed signer-owned address lookup table", async () => {
     const methods: string[] = [];
-    const authority = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW");
-    const entry = new PublicKey("So11111111111111111111111111111111111111112");
+    const authority = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW"); // pragma: allowlist secret
+    const entry = new PublicKey("So11111111111111111111111111111111111111112"); // pragma: allowlist secret
     const data = Buffer.alloc(88);
     data.writeUInt32LE(1, 0);
     data.writeBigUInt64LE(18_446_744_073_709_551_615n, 4);
@@ -507,7 +638,7 @@ describe("secondary read rpc fallback", () => {
               data: [data.toString("base64"), "base64"],
               executable: false,
               lamports: 1,
-              owner: "AddressLookupTab1e1111111111111111111111111",
+              owner: "AddressLookupTab1e1111111111111111111111111", // pragma: allowlist secret
               rentEpoch: 0,
               space: data.length,
             },
@@ -517,17 +648,17 @@ describe("secondary read rpc fallback", () => {
       return { error: { message: `unexpected ${payload.method}` } };
     });
     configureReadRpc(rpcUrl);
-    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
-    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
-    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
-    process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75"; // pragma: allowlist secret
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq"; // pragma: allowlist secret
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"; // pragma: allowlist secret
 
     const result = await inspectSatAddressLookupTable({ network: "devnet" } as never, {
-      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB", // pragma: allowlist secret
     });
     expect(methods).toEqual(["getAccountInfo"]);
     expect(result).toEqual({
-      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB", // pragma: allowlist secret
       authority: authority.toBase58(),
       addresses: [entry.toBase58()],
       active: true,
@@ -716,10 +847,10 @@ describe("secondary read rpc fallback", () => {
       return { error: { message: `unexpected ${payload.method}` } };
     });
     process.env.FASED_SAT_RPC_REQUEST_TIMEOUT_MS = "50";
-    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
-    process.env.FASED_SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
-    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
-    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75"; // pragma: allowlist secret
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7"; // pragma: allowlist secret
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C"; // pragma: allowlist secret
     configureReadRpc(`${primaryUrl}?api-key=raw-timeout-secret`, fallbackUrl);
 
     const startedAt = Date.now();
@@ -824,7 +955,7 @@ describe("secondary read rpc fallback", () => {
     const startedAt = Date.now();
     await expect(connection.getMinimumBalanceForRentExemption(0)).resolves.toBe(456);
     expect(Date.now() - startedAt).toBeLessThan(1_000);
-    expect(primaryAborted).toBe(true);
+    await vi.waitFor(() => expect(primaryAborted).toBe(true), { timeout: 1_000 });
   });
 
   it("redacts credentials from a timed-out web3 read", async () => {
@@ -861,10 +992,10 @@ describe("secondary read rpc fallback", () => {
       return { error: { message: `unexpected ${payload.method}` } };
     });
     configureReadRpc(rpcUrl);
-    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
-    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
-    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
-    process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75"; // pragma: allowlist secret
+    process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq"; // pragma: allowlist secret
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"; // pragma: allowlist secret
 
     await expect(
       inspectSatCycleAccountExists({ network: "devnet" } as never, { cycleId: 123 }),
@@ -877,10 +1008,10 @@ describe("secondary read rpc fallback", () => {
   });
 
   it("batches miner-cycle address reads and seeds decoded per-address cache", async () => {
-    const authorityA = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
-    const authorityB = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
-    const minerCycleA = "AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt";
-    const minerCycleB = "9VxFj9AFGoqyPG2L9Rk84cDs82geZDV36h4udJ2Brph";
+    const authorityA = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9"); // pragma: allowlist secret
+    const authorityB = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2"); // pragma: allowlist secret
+    const minerCycleA = "AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt"; // pragma: allowlist secret
+    const minerCycleB = "9VxFj9AFGoqyPG2L9Rk84cDs82geZDV36h4udJ2Brph"; // pragma: allowlist secret
     const accounts = new Map<string, string>([
       [minerCycleA, encodeMinerCycleAccount(authorityA, 5932940)],
       [minerCycleB, encodeMinerCycleAccount(authorityB, 5932940)],

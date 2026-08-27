@@ -2,7 +2,7 @@
   "$schema": "sat.state-layouts.generation-2",
   "activation": {
     "legacyDrainEnabled": true,
-    "programDispatchBound": false,
+    "programDispatchBound": true,
     "publicEntryEnabled": false
   },
   "generation": 2,
@@ -24,23 +24,60 @@
     },
     "strategyChannels": 25
   },
-  "state": "FROZEN_NOT_ACTIVE",
+  "state": "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED",
   "vnext": {
     "accountDiscriminants": {
+      "satAgentRewardRemainderV2": 153,
       "satCycleSettlementProgressV3": 151,
       "satCycleStateV2": 149,
-      "satMinerCycleStateV2": 150
+      "satMinerCycleStateV2": 150,
+      "satProtocolGenerationStateV2": 152
     },
     "accountSeeds": {
+      "satAgentRewardRemainderV2": "sat_agent_reward_remainder_v2",
       "satCycleSettlementProgressV3": "sat_cycle_settlement_progress_v3",
       "satCycleStateV2": "sat_cycle_state_v2",
-      "satMinerCycleStateV2": "sat_miner_cycle_state_v2"
+      "satMinerCycleStateV2": "sat_miner_cycle_state_v2",
+      "satProtocolGenerationStateV2": "sat_protocol_generation_state_v2"
     },
     "allocationVector": {
       "bytes": 64,
       "channels": 16,
       "elementType": "u32-le",
       "normalization": 1000000
+    },
+    "executionChunkWidths": {
+      "distribute": 8,
+      "reason": "distribution uses five accounts per identity after atomic Operating Reserve accounting and remains below the 64-account lock envelope",
+      "score": 16,
+      "settle": 16
+    },
+    "keeperAccounting": {
+      "commonWorkSource": "BOOTSTRAP_THEN_TREASURY",
+      "duplicatePaid": false,
+      "feeAllowanceLamports": 36000,
+      "identityWorkSource": "OPERATING_RESERVE",
+      "identityWorkUnitsPerCycle": 3,
+      "maximumChargePerWorkLamports": 40000,
+      "publicRescuePaid": false,
+      "serviceMarginLamports": 4000
+    },
+    "keeperAccountingState": {
+      "minerCycleStateV2": [
+        "permanent_mining_id:pubkey",
+        "keeper_reserved_lamports:u64-le",
+        "keeper_paid_lamports:u64-le",
+        "keeper_refunded_lamports:u64-le",
+        "keeper_completed_phase_mask:u8"
+      ],
+      "settlementProgressV3": [
+        "keeper_work_receipt_root:u8[32]",
+        "keeper_work_count:u64-le"
+      ],
+      "treasuryStateReservedBytes": {
+        "range": "0..8",
+        "value": "keeper_bootstrap_remaining_lamports:u64-le"
+      }
     },
     "minerCycleAllocationStorage": {
       "bytes": 64,

@@ -11,6 +11,8 @@ import {
 export type SatMiningConfig = {
   enabled: boolean;
   drainOnly?: boolean;
+  keeperMode?: "automatic" | "monitor-only" | "dedicated";
+  keeperWalletId?: string;
   network: "local" | "devnet" | "mainnet-beta";
   riskMode: "conservative" | "balanced" | "aggressive" | "swarm";
   strategyPreset?:
@@ -83,6 +85,14 @@ export const satMiningConfigJsonSchema = Type.Object(
   {
     enabled: Type.Optional(Type.Boolean()),
     drainOnly: Type.Optional(Type.Boolean()),
+    keeperMode: Type.Optional(
+      Type.Union([
+        Type.Literal("automatic"),
+        Type.Literal("monitor-only"),
+        Type.Literal("dedicated"),
+      ]),
+    ),
+    keeperWalletId: Type.Optional(Type.String({ minLength: 1 })),
     network: Type.Optional(
       Type.Union([Type.Literal("local"), Type.Literal("devnet"), Type.Literal("mainnet-beta")]),
     ),
@@ -320,6 +330,14 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
 
   const enabled = typeof raw.enabled === "boolean" ? raw.enabled : true;
   const drainOnly = typeof raw.drainOnly === "boolean" ? raw.drainOnly : false;
+  const keeperMode =
+    raw.keeperMode === "monitor-only" || raw.keeperMode === "dedicated"
+      ? raw.keeperMode
+      : "automatic";
+  const keeperWalletId =
+    typeof raw.keeperWalletId === "string" && raw.keeperWalletId.trim()
+      ? raw.keeperWalletId.trim()
+      : undefined;
   const network =
     raw.network === "devnet" || raw.network === "mainnet-beta" || raw.network === "local"
       ? raw.network
@@ -544,6 +562,8 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
   return {
     enabled,
     drainOnly,
+    keeperMode,
+    keeperWalletId,
     network,
     riskMode,
     strategyPreset: strategyPreset ?? riskModeToStrategyPreset(riskMode),

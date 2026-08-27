@@ -174,6 +174,28 @@ describe("createSatEpochService", () => {
     vi.useRealTimers();
   });
 
+  it("starts monitoring without mining when dedicated monitor mode is enabled", async () => {
+    const config = {
+      enabled: false,
+      keeperMode: "monitor-only" as const,
+      network: "devnet" as const,
+      riskMode: "balanced" as const,
+    };
+    const state = createSatMiningRuntimeState(config);
+    const info = vi.fn();
+    const service = createSatEpochService({
+      api: { config: {}, logger: { info, warn: vi.fn(), error: vi.fn() } } as never,
+      config,
+      state,
+      deferInitialActiveRunMs: 45_000,
+    });
+
+    await service.start();
+    expect(info).toHaveBeenCalledWith("[sat-mining] cycle settlement service start");
+    expect(runSatGatewayMethod).not.toHaveBeenCalled();
+    await service.stop?.();
+  });
+
   it("drives the four-phase chunked settlement path for the previous cycle", async () => {
     const config = {
       enabled: true,

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -28,6 +29,138 @@ func testKeeperCloseCommitIntentV2(t *testing.T, keeper, authority, program sola
 	}
 }
 
+func testKeeperSettleIntentGeneration2(
+	t *testing.T,
+	keeper, authority, program solana.PublicKey,
+) signerIntentV2 {
+	t.Helper()
+	const cycleID uint64 = 9
+	const pageIndex uint64 = 2
+	const chunkIndex uint64 = 3
+	cycle := make([]byte, 8)
+	page := make([]byte, 8)
+	binary.LittleEndian.PutUint64(cycle, cycleID)
+	binary.LittleEndian.PutUint64(page, pageIndex)
+	data := make([]byte, 25)
+	data[0] = 122
+	binary.LittleEndian.PutUint64(data[1:9], cycleID)
+	binary.LittleEndian.PutUint64(data[9:17], pageIndex)
+	binary.LittleEndian.PutUint64(data[17:25], chunkIndex)
+	payout := solana.NewWallet().PublicKey()
+	permanentMiningID := solana.NewWallet().PublicKey()
+	return signerIntentV2{
+		Type: intentSolanaSATKeeperAction, AuthorityWalletID: "mining", Action: "settleCyclePageV2",
+		ProgramID: program.String(), DataBase64: base64.StdEncoding.EncodeToString(data),
+		Keys: []signerSATAccountV2{
+			satTestAccount(keeper, true, true),
+			satTestAccount(payout, false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_state_v2"), cycle), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_meta"), cycle), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_page"), cycle, page), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_settlement_progress_v3"), cycle), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_keeper_snapshot"), cycle), false, false),
+			satTestAccount(solana.NewWallet().PublicKey(), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_miner_cycle_state_v2"), authority[:], cycle), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_keeper_operating_reserve"), permanentMiningID[:]), false, true),
+		},
+		Context: &signerSATContextV2{
+			MinerAuthorities:   []string{authority.String()},
+			PermanentMiningIDs: []string{permanentMiningID.String()},
+		},
+	}
+}
+
+func testKeeperDistributeIntentGeneration2(
+	t *testing.T,
+	keeper, authority, permanentMiningID, program solana.PublicKey,
+) signerIntentV2 {
+	t.Helper()
+	const cycleID uint64 = 10
+	const pageIndex uint64 = 1
+	cycle := make([]byte, 8)
+	page := make([]byte, 8)
+	binary.LittleEndian.PutUint64(cycle, cycleID)
+	binary.LittleEndian.PutUint64(page, pageIndex)
+	data := make([]byte, 25)
+	data[0] = 125
+	binary.LittleEndian.PutUint64(data[1:9], cycleID)
+	binary.LittleEndian.PutUint64(data[9:17], pageIndex)
+	return signerIntentV2{
+		Type: intentSolanaSATKeeperAction, AuthorityWalletID: "mining", Action: "distributeCyclePageV2",
+		ProgramID: program.String(), DataBase64: base64.StdEncoding.EncodeToString(data),
+		Keys: []signerSATAccountV2{
+			satTestAccount(keeper, true, true),
+			satTestAccount(solana.NewWallet().PublicKey(), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_state_v2"), cycle), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_page"), cycle, page), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_settlement_progress_v3"), cycle), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_treasury_state")), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_rebate_vault")), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_treasury_vault")), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_keeper_snapshot"), cycle), false, false),
+			satTestAccount(solana.NewWallet().PublicKey(), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_miner_cycle_state_v2"), authority[:], cycle), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_miner_capital_state"), authority[:]), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_agent_record"), permanentMiningID[:]), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_agent_reward_remainder_v2"), permanentMiningID[:]), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_keeper_operating_reserve"), permanentMiningID[:]), false, true),
+		},
+		Context: &signerSATContextV2{
+			MinerAuthorities:   []string{authority.String()},
+			PermanentMiningIDs: []string{permanentMiningID.String()},
+		},
+	}
+}
+
+func testKeeperScoreIntentGeneration2(
+	t *testing.T,
+	keeper, authority, program solana.PublicKey,
+) signerIntentV2 {
+	t.Helper()
+	intent := testKeeperSettleIntentGeneration2(t, keeper, authority, program)
+	intent.Action = "scoreCyclePageV2"
+	data, err := base64.StdEncoding.DecodeString(intent.DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[0] = 124
+	intent.DataBase64 = base64.StdEncoding.EncodeToString(data)
+	intent.Keys = append(intent.Keys[:3], intent.Keys[4:]...)
+	return intent
+}
+
+func testKeeperFinalizeIntentGeneration2(
+	t *testing.T,
+	keeper, program solana.PublicKey,
+) signerIntentV2 {
+	t.Helper()
+	const cycleID uint64 = 11
+	cycle := make([]byte, 8)
+	binary.LittleEndian.PutUint64(cycle, cycleID)
+	data := make([]byte, 9)
+	data[0] = 123
+	binary.LittleEndian.PutUint64(data[1:9], cycleID)
+	return signerIntentV2{
+		Type: intentSolanaSATKeeperAction, AuthorityWalletID: "mining", Action: "finalizeCycleSettlementV2",
+		ProgramID: program.String(), DataBase64: base64.StdEncoding.EncodeToString(data),
+		Keys: []signerSATAccountV2{
+			satTestAccount(keeper, true, true),
+			satTestAccount(solana.NewWallet().PublicKey(), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_global_state")), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_protocol_generation_state_v2")), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_state_v2"), cycle), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_settlement_progress_v3"), cycle), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_meta"), cycle), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_treasury_state")), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_rebate_vault")), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_treasury_vault")), false, true),
+			satTestAccount(solana.NewWallet().PublicKey(), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_keeper_snapshot"), cycle), false, false),
+			satTestAccount(solana.NewWallet().PublicKey(), false, false),
+		},
+	}
+}
+
 func testKeeperPrivateKeyV2(t *testing.T) solana.PrivateKey {
 	t.Helper()
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -47,6 +180,10 @@ func TestKeeperFeePayerActionBoundaryV2(t *testing.T) {
 		"finalizeCycleSettlement",
 		"scoreCyclePage",
 		"distributeCyclePage",
+		"settleCyclePageV2",
+		"finalizeCycleSettlementV2",
+		"scoreCyclePageV2",
+		"distributeCyclePageV2",
 	} {
 		if err := requireKeeperFeePayerActionV2(action); err != nil {
 			t.Fatalf("keeper action %s was rejected: %v", action, err)
@@ -118,6 +255,111 @@ func TestKeeperFeePayerTransactionRejectsPrincipalAuthorityReuseV2(t *testing.T)
 	)
 	if err == nil || !strings.Contains(err.Error(), "fee payer must be distinct") {
 		t.Fatalf("reused mining authority was not rejected: %v", err)
+	}
+}
+
+func TestGeneration2KeeperUsesOnlyTheKeeperSigner(t *testing.T) {
+	keeper := testKeeperPrivateKeyV2(t)
+	authority := testKeeperPrivateKeyV2(t)
+	program := solana.NewWallet().PublicKey()
+	intent := testKeeperSettleIntentGeneration2(t, keeper.PublicKey(), authority.PublicKey(), program)
+	normalized, err := normalizeKeeperFeePayerIntentV2(
+		intent,
+		keeper.PublicKey(),
+		"mining",
+		authority.PublicKey(),
+	)
+	if err != nil {
+		t.Fatalf("normalize generation-2 keeper intent: %v", err)
+	}
+	if normalized.ParentIntent != nil || normalized.RequiredRole != "keeper" {
+		t.Fatalf("generation-2 keeper retained Mining signing authority: %#v", normalized)
+	}
+	tx, err := execution.NewSignedTypedKeeperCapabilityTransaction(
+		normalized.Instructions,
+		solana.Hash{},
+		keeper,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("sign generation-2 keeper transaction: %v", err)
+	}
+	if len(tx.Signatures) != 1 || tx.Signatures[0].IsZero() ||
+		!tx.Message.AccountKeys[0].Equals(keeper.PublicKey()) {
+		t.Fatalf("generation-2 keeper transaction is not single-capability signed: %#v", tx)
+	}
+
+	wrongSigner := cloneSATTestIntent(t, intent)
+	wrongSigner.Keys[0] = satTestAccount(authority.PublicKey(), true, true)
+	if _, err := normalizeKeeperFeePayerIntentV2(
+		wrongSigner,
+		keeper.PublicKey(),
+		"mining",
+		authority.PublicKey(),
+	); err == nil || !strings.Contains(err.Error(), "signer account does not match") {
+		t.Fatalf("generation-2 keeper accepted Mining authority as instruction signer: %v", err)
+	}
+}
+
+func TestGeneration2StandaloneKeeperNeedsNoMiningParent(t *testing.T) {
+	keeper := testKeeperPrivateKeyV2(t)
+	minerIdentity := testKeeperPrivateKeyV2(t)
+	program := solana.NewWallet().PublicKey()
+	intent := testKeeperSettleIntentGeneration2(t, keeper.PublicKey(), minerIdentity.PublicKey(), program)
+	intent.AuthorityWalletID = "keeper"
+	normalized, err := normalizeKeeperFeePayerIntentV2(
+		intent,
+		keeper.PublicKey(),
+		"keeper",
+		keeper.PublicKey(),
+	)
+	if err != nil {
+		t.Fatalf("normalize standalone generation-2 keeper intent: %v", err)
+	}
+	if normalized.ParentIntent != nil || normalized.RequiredRole != "keeper" {
+		t.Fatalf("standalone generation-2 keeper retained a Mining parent: %#v", normalized)
+	}
+}
+
+func TestGeneration2DistributionBindsPermanentIdentityTuples(t *testing.T) {
+	keeper := solana.NewWallet().PublicKey()
+	authority := solana.NewWallet().PublicKey()
+	permanentMiningID := solana.NewWallet().PublicKey()
+	program := solana.NewWallet().PublicKey()
+	intent := testKeeperDistributeIntentGeneration2(
+		t,
+		keeper,
+		authority,
+		permanentMiningID,
+		program,
+	)
+	if _, err := normalizeKeeperFeePayerIntentV2(intent, keeper, "mining", authority); err != nil {
+		t.Fatalf("normalize generation-2 distribution tuple: %v", err)
+	}
+
+	tampered := cloneSATTestIntent(t, intent)
+	tampered.Keys[12] = satTestAccount(
+		satTestPDA(t, program, []byte("sat_agent_record"), authority[:]),
+		false,
+		false,
+	)
+	if _, err := normalizeKeeperFeePayerIntentV2(tampered, keeper, "mining", authority); err == nil ||
+		!strings.Contains(err.Error(), "distribution agent record") {
+		t.Fatalf("generation-2 distribution accepted a replaceable authority as AgentRecord: %v", err)
+	}
+}
+
+func TestGeneration2ScoreAndFinalizeUseAmendedKeeperAccountOrders(t *testing.T) {
+	keeper := solana.NewWallet().PublicKey()
+	authority := solana.NewWallet().PublicKey()
+	program := solana.NewWallet().PublicKey()
+	for _, intent := range []signerIntentV2{
+		testKeeperScoreIntentGeneration2(t, keeper, authority, program),
+		testKeeperFinalizeIntentGeneration2(t, keeper, program),
+	} {
+		if _, err := normalizeKeeperFeePayerIntentV2(intent, keeper, "mining", authority); err != nil {
+			t.Fatalf("normalize amended generation-2 %s account order: %v", intent.Action, err)
+		}
 	}
 }
 
@@ -204,5 +446,72 @@ func TestKeeperFeePayerCapabilityIsSignerOwnedBoundAndIdempotentV2(t *testing.T)
 	policy, err := store.getPolicy(first.FeePayerWalletID)
 	if err != nil || policy.Role != "keeper" || containsStringV2(policy.Operations, intentSolanaNativeTransfer) {
 		t.Fatalf("Keeper key exposed a general wallet policy: %#v err=%v", policy, err)
+	}
+}
+
+func TestStandaloneKeeperCapabilityUsesItsOwnBoundedWalletV2(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	program := solana.NewWallet().PublicKey().String()
+	keeper, _, err := keys.CreateWithRoleBaseline(
+		"dedicated-keeper",
+		0,
+		signerRoleBaselineRequestV1{Version: 1, Role: "keeper"},
+		signerRoleBaselineRuntimeV1{SATProgramID: program, Verified: true},
+	)
+	if err != nil {
+		t.Fatalf("create standalone Keeper: %v", err)
+	}
+	service := &signerServiceV2{store: store, keys: keys}
+	capability, err := service.keeperFeePayerCapabilityV2(keeper.WalletID)
+	if err != nil {
+		t.Fatalf("read standalone Keeper capability: %v", err)
+	}
+	if capability.MiningWalletID != keeper.WalletID ||
+		capability.FeePayerWalletID != keeper.WalletID ||
+		capability.FeePayerPublicKey != keeper.PublicKey ||
+		capability.MaxPerTransaction != roleBaselineKeeperMaxPerTxV1 ||
+		capability.MaxDaily != roleBaselineKeeperMaxDailyV1 {
+		t.Fatalf("standalone Keeper capability is not self-contained and capped: %#v", capability)
+	}
+}
+
+func TestStandaloneKeeperProvisioningIsReachableThroughControlOperationV2(t *testing.T) {
+	configureTestSignerMiningRuntimeV1(t)
+	store, keys := openTestSignerV2(t)
+	service := &signerServiceV2{store: store, keys: keys}
+	body, err := json.Marshal(signerKeeperFeePayerEnsureRequestV2{Standalone: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := request{Op: "v2.keeperFeePayer.ensure", WalletID: "dedicated-keeper", Request: body}
+	raw, err := service.handle(req, signerConfig{}, true)
+	if err != nil {
+		t.Fatalf("provision standalone Keeper through control operation: %v", err)
+	}
+	var firstEnvelope struct {
+		Result signerKeeperFeePayerCapabilityV2 `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &firstEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	secondRaw, err := service.handle(req, signerConfig{}, true)
+	if err != nil {
+		t.Fatalf("repeat standalone Keeper provisioning: %v", err)
+	}
+	var secondEnvelope struct {
+		Result signerKeeperFeePayerCapabilityV2 `json:"result"`
+	}
+	if err := json.Unmarshal(secondRaw, &secondEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	first := firstEnvelope.Result
+	second := secondEnvelope.Result
+	if first != second || first.MiningWalletID != "dedicated_keeper" ||
+		first.FeePayerWalletID != "dedicated_keeper" || first.State != "ready" {
+		t.Fatalf("standalone Keeper control operation is not bounded and idempotent: first=%#v second=%#v", first, second)
+	}
+	policy, err := store.getPolicy(first.FeePayerWalletID)
+	if err != nil || policy.Role != "keeper" || containsStringV2(policy.Operations, intentSolanaNativeTransfer) {
+		t.Fatalf("standalone Keeper control operation exposed a general wallet policy: %#v err=%v", policy, err)
 	}
 }

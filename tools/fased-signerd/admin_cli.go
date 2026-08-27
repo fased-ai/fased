@@ -198,7 +198,9 @@ func runSignerAdminKeeperFeePayerV2(args []string, ensure bool, stdout io.Writer
 	}
 	fs, common := newSignerAdminFlagSet(command)
 	var walletID string
-	fs.StringVar(&walletID, "wallet-id", "", "parent Mining wallet identifier")
+	var standalone bool
+	fs.StringVar(&walletID, "wallet-id", "", "parent Mining wallet or standalone Keeper identifier")
+	fs.BoolVar(&standalone, "standalone", false, "provision a generation-2 Keeper without a Mining parent")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
@@ -216,7 +218,9 @@ func runSignerAdminKeeperFeePayerV2(args []string, ensure bool, stdout io.Writer
 	body := any(nil)
 	if ensure {
 		op = "v2.keeperFeePayer.ensure"
-		body = struct{}{}
+		body = signerKeeperFeePayerEnsureRequestV2{Standalone: standalone}
+	} else if standalone {
+		return errors.New("--standalone is valid only with keeper ensure-fee-payer")
 	}
 	return callAndWriteSignerAdmin(common.controlSocket, op, walletID, body, stdout)
 }

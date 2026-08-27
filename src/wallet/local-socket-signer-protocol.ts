@@ -10,6 +10,7 @@ const SignerWalletRoleSchema = Type.Union([
   Type.Literal("agent"),
   Type.Literal("mining"),
   Type.Literal("vault"),
+  Type.Literal("keeper"),
 ]);
 
 const SignerProtocolRangeV2Schema = Type.Object(
@@ -42,6 +43,9 @@ export const LocalSocketSignerSatReleaseAcknowledgementSchema = Type.Object(
         cycle: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.cycle),
         economics: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.economics),
         penalty: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.penalty),
+        protocol: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.protocol),
+        keeper: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.keeper),
+        receipt: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.receipt),
         schema: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.schema),
         signerCapability: Type.Literal(
           SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.signerCapability,
