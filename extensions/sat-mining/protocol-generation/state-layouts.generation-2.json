@@ -46,6 +46,22 @@
       "elementType": "u32-le",
       "normalization": 1000000
     },
+    "bondEpochV3": {
+      "activation": "AUTOMATIC_AT_NEXT_COMPLETE_EPOCH_WITH_LAZY_POSITION_SYNC",
+      "basicThresholdSat": 25,
+      "distributorDiscriminant": 144,
+      "distributorSeed": "sat_bond_epoch_distributor_v3",
+      "emptyLane": "UNISSUED",
+      "epochSeconds": 604800,
+      "positionDiscriminant": 145,
+      "positionSeed": "sat_bond_epoch_position_v3",
+      "rewardThresholdSat": 500,
+      "snapshotDiscriminant": 146,
+      "snapshotSeed": "sat_bond_epoch_snapshot_v3",
+      "unbondingSlots": 1512000,
+      "weight": "LINEAR_UNCAPPED_MINIMUM_ACTIVE",
+      "withdrawal": "IMMEDIATE_CURRENT_EPOCH_EXCLUSION"
+    },
     "executionChunkWidths": {
       "distribute": 8,
       "reason": "distribution uses five accounts per identity after atomic Operating Reserve accounting and remains below the 64-account lock envelope",
