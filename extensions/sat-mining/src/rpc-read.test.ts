@@ -78,7 +78,7 @@ describe("SAT RPC diagnostic redaction", () => {
   it("redacts credential-bearing primary and fallback URLs", () => {
     process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
     process.env.FASED_SAT_BOND_PROGRAM_ID = "8RYKuGb2k8hBcGX34QdYJXdXZkNvD3fKy85s63Pph2j7";
-    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa";
+    process.env.FASED_SAT_MINT_ADDRESS = "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"; // pragma: allowlist secret
     process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C";
     process.env.FASED_WALLET_SOLANA_READ_RPC_URL =
       "https://primary.example/rpc?api-key=primary-secret";
@@ -96,14 +96,14 @@ describe("SAT RPC diagnostic redaction", () => {
 
 describe("decodeSatBondStakingDistributor", () => {
   it("exposes rewards quarantined while no stake was active", () => {
-    const bondProgram = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq");
+    const bondProgram = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq"); // pragma: allowlist secret
     const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa");
     const [distributor] = PublicKey.findProgramAddressSync(
       [Buffer.from("sat_bond_staking_distributor")],
       bondProgram,
     );
-    const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-    const associatedTokenProgram = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"); // pragma: allowlist secret
+    const associatedTokenProgram = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"); // pragma: allowlist secret
     const [rewardVault] = PublicKey.findProgramAddressSync(
       [distributor.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()],
       associatedTokenProgram,
@@ -121,7 +121,9 @@ describe("decodeSatBondStakingDistributor", () => {
     body.writeBigUInt64LE(1n, 8);
     mint.toBuffer().copy(body, 16);
     rewardVault.toBuffer().copy(body, 48);
-    new PublicKey("AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene").toBuffer().copy(body, 80);
+    new PublicKey("AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene") // pragma: allowlist secret
+      .toBuffer()
+      .copy(body, 80);
     body.writeBigUInt64LE(500_000_000_000n, 112);
     body.writeBigUInt64LE(0n, 120);
     body.writeBigUInt64LE(900_000_000_000n, 144);
@@ -216,8 +218,8 @@ describe("decodeSatCycleSettlementProgressV3", () => {
 
 describe("decodeSatKeeperCapability", () => {
   it("keeps the keeper fee payer and payout authority separate", () => {
-    const feePayer = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
-    const payoutAuthority = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
+    const feePayer = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9"); // pragma: allowlist secret
+    const payoutAuthority = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2"); // pragma: allowlist secret
     const data = Buffer.alloc(200);
     data[0] = 145;
     const body = data.subarray(8);
@@ -504,7 +506,7 @@ describe("Solana pubkey decoding", () => {
 
   it("decodes registry page participants as base58", () => {
     const participantA = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
-    const participantB = new PublicKey("AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt");
+    const participantB = new PublicKey("AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt"); // pragma: allowlist secret
     const buffer = Buffer.concat([
       Buffer.from([135, 0, 0, 0, 0, 0, 0, 0]),
       encodeU64(9862902),
@@ -616,7 +618,7 @@ describe("decodeSatBondPosition", () => {
 describe("secondary read rpc fallback", () => {
   it("decodes a confirmed signer-owned address lookup table", async () => {
     const methods: string[] = [];
-    const authority = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW");
+    const authority = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW"); // pragma: allowlist secret
     const entry = new PublicKey("So11111111111111111111111111111111111111112");
     const data = Buffer.alloc(88);
     data.writeUInt32LE(1, 0);
@@ -652,7 +654,7 @@ describe("secondary read rpc fallback", () => {
     process.env.FASED_SAT_MINT_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
     const result = await inspectSatAddressLookupTable({ network: "devnet" } as never, {
-      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB", // pragma: allowlist secret
     });
     expect(methods).toEqual(["getAccountInfo"]);
     expect(result).toEqual({
@@ -953,7 +955,7 @@ describe("secondary read rpc fallback", () => {
     const startedAt = Date.now();
     await expect(connection.getMinimumBalanceForRentExemption(0)).resolves.toBe(456);
     expect(Date.now() - startedAt).toBeLessThan(1_000);
-    expect(primaryAborted).toBe(true);
+    await vi.waitFor(() => expect(primaryAborted).toBe(true), { timeout: 1_000 });
   });
 
   it("redacts credentials from a timed-out web3 read", async () => {
@@ -1009,7 +1011,7 @@ describe("secondary read rpc fallback", () => {
     const authorityA = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
     const authorityB = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
     const minerCycleA = "AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt";
-    const minerCycleB = "9VxFj9AFGoqyPG2L9Rk84cDs82geZDV36h4udJ2Brph";
+    const minerCycleB = "9VxFj9AFGoqyPG2L9Rk84cDs82geZDV36h4udJ2Brph"; // pragma: allowlist secret
     const accounts = new Map<string, string>([
       [minerCycleA, encodeMinerCycleAccount(authorityA, 5932940)],
       [minerCycleB, encodeMinerCycleAccount(authorityB, 5932940)],
