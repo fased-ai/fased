@@ -857,16 +857,17 @@
         "accountOrder": [
           "genesis_authority:readonly+signer",
           "payer:writable+signer",
-          "sat_global_state:writable",
+          "legacy_sat_global_state:readonly",
+          "sat_global_state_v2:writable",
           "sat_protocol_generation_state_v2:writable",
-          "treasury:writable",
-          "sat_treasury_state:writable",
-          "sat_registry_reserve:writable",
+          "mint_caller_treasury:writable",
+          "sat_treasury_state_v2:writable",
+          "sat_registry_reserve_v2:writable",
           "system_program:readonly",
           "mint_authority_pda:readonly",
           "sat_mint:readonly",
-          "sat_rebate_vault:writable",
-          "sat_treasury_vault:writable"
+          "sat_rebate_vault_v2:writable",
+          "sat_treasury_vault_v2:writable"
         ],
         "discriminant": 115,
         "name": "SatBootstrapV2",
@@ -875,12 +876,12 @@
       {
         "accountOrder": [
           "payer:writable+signer",
-          "sat_global_state:readonly",
+          "sat_global_state_v2:readonly",
           "sat_protocol_generation_state_v2:readonly",
           "sat_cycle_state_v2:writable",
           "sat_cycle_registry_meta:writable",
-          "sat_treasury_state:readonly",
-          "sat_registry_reserve:writable",
+          "sat_treasury_state_v2:readonly",
+          "sat_registry_reserve_v2:writable",
           "system_program:readonly"
         ],
         "discriminant": 116,
@@ -934,7 +935,7 @@
           "sat_miner_cycle_state_v2:writable",
           "sat_miner_capital_state:writable",
           "sat_agent_record:writable",
-          "sat_registry_reserve:writable",
+          "sat_registry_reserve_v2:writable",
           "system_program:readonly"
         ],
         "discriminant": 114,
@@ -950,8 +951,8 @@
           "sat_miner_cycle_state_v2:writable",
           "sat_miner_capital_state:writable",
           "sat_keeper_operating_reserve:writable",
-          "sat_treasury_state:writable",
-          "sat_treasury_vault:writable"
+          "sat_treasury_state_v2:writable",
+          "sat_treasury_vault_v2:writable"
         ],
         "discriminant": 120,
         "name": "SatReleaseUnrevealedCommitV2",
@@ -992,14 +993,14 @@
         "accountOrder": [
           "keeper_fee_payer:writable+signer",
           "keeper_payout_authority:writable",
-          "sat_global_state:writable",
+          "sat_global_state_v2:writable",
           "sat_protocol_generation_state_v2:writable",
           "sat_cycle_state_v2:writable",
           "sat_cycle_settlement_progress_v3:writable",
           "sat_cycle_registry_meta:writable",
-          "sat_treasury_state:writable",
-          "sat_rebate_vault:writable",
-          "sat_treasury_vault:writable",
+          "sat_treasury_state_v2:writable",
+          "sat_rebate_vault_v2:writable",
+          "sat_treasury_vault_v2:writable",
           "bond_staking_distributor:readonly",
           "sat_keeper_snapshot:readonly",
           "sat_keeper_capability:readonly"
@@ -1035,9 +1036,9 @@
           "sat_cycle_state_v2:writable",
           "sat_cycle_registry_page:readonly",
           "sat_cycle_settlement_progress_v3:writable",
-          "sat_treasury_state:writable",
-          "sat_rebate_vault:writable",
-          "sat_treasury_vault:writable",
+          "sat_treasury_state_v2:writable",
+          "sat_rebate_vault_v2:writable",
+          "sat_treasury_vault_v2:writable",
           "sat_keeper_snapshot:readonly",
           "sat_keeper_capability:readonly",
           "sat_miner_cycle_state_v2[]:writable",
@@ -1061,14 +1062,14 @@
         "accountOrder": [
           "authorized_claimer:writable+signer",
           "active_miner_authority:readonly",
-          "sat_global_state:readonly",
+          "sat_global_state_v2:readonly",
           "sat_protocol_generation_state_v2:readonly",
           "sat_cycle_state_v2:readonly",
           "sat_miner_cycle_state_v2:writable",
           "sat_miner_capital_state:writable",
           "sat_agent_record:readonly",
-          "treasury:writable",
-          "sat_treasury_state:writable",
+          "mint_caller_treasury:writable",
+          "sat_treasury_state_v2:writable",
           "mint_authority:writable",
           "sat_mint:writable",
           "fixed_sat_reward_destination:writable",
@@ -1076,7 +1077,7 @@
           "token_program:readonly",
           "associated_token_program:readonly",
           "sat_mint_program:readonly",
-          "sat_rebate_vault:writable"
+          "sat_rebate_vault_v2:writable"
         ],
         "discriminant": 126,
         "name": "SatClaimCycleRewardsV2",
@@ -1086,10 +1087,10 @@
         "accountOrder": [
           "authorized_claimer:writable+signer",
           "active_miner_authority:readonly",
-          "sat_global_state:readonly",
+          "sat_global_state_v2:readonly",
           "sat_protocol_generation_state_v2:readonly",
-          "treasury:writable",
-          "sat_treasury_state:writable",
+          "mint_caller_treasury:writable",
+          "sat_treasury_state_v2:writable",
           "sat_miner_capital_state:writable",
           "sat_agent_record:readonly",
           "mint_authority:writable",
@@ -1101,7 +1102,7 @@
           "token_program:readonly",
           "associated_token_program:readonly",
           "sat_mint_program:readonly",
-          "sat_rebate_vault:writable"
+          "sat_rebate_vault_v2:writable"
         ],
         "discriminant": 127,
         "name": "SatClaimCycleRewardsBatchV2",
@@ -1127,7 +1128,7 @@
           "sat_cycle_state_v2:readonly",
           "sat_cycle_registry_meta:writable",
           "sat_cycle_registry_page:writable",
-          "sat_registry_reserve:writable"
+          "sat_registry_reserve_v2:writable"
         ],
         "discriminant": 129,
         "name": "SatCloseResolvedCycleRegistryPageV2",
@@ -1139,7 +1140,7 @@
           "sat_cycle_state_v2:writable",
           "sat_cycle_settlement_progress_v3:writable",
           "sat_cycle_registry_meta:writable",
-          "sat_registry_reserve:writable"
+          "sat_registry_reserve_v2:writable"
         ],
         "discriminant": 130,
         "name": "SatCloseResolvedCycleArtifactsV2",
@@ -1148,7 +1149,7 @@
       {
         "accountOrder": [
           "program_admin:readonly+signer",
-          "sat_global_state:readonly",
+          "sat_global_state_v2:readonly",
           "sat_protocol_generation_state_v2:writable"
         ],
         "discriminant": 131,
@@ -1226,26 +1227,30 @@
     "repeated": "A name ending in [] repeats in the declared adjacent group."
   },
   "sourceDigests": {
-    "api/src/instruction.rs": "sha256:0765c71662757ae54f3d9ca7c3667da7b6bc1ec79bc0f3aff0c674604d8db5db",
-    "api/src/sdk.rs": "sha256:224dd9bc9c49ff59883678448be5b6d90234e94c2ee967fa85986a5e515d44a0",
+    "api/src/instruction.rs": "sha256:71229cc8b27ddc2fb529a44b50dca7eb77ceaaa1d5e99a45e26e139c13cb3218",
+    "api/src/sdk.rs": "sha256:3fbce79af5f5fa2ec82fa6b8b2bbb08837fb5bbd44da3dfb51d55ac633a5a61a",
     "bond-api/src/instruction.rs": "sha256:667631f1cfbfd743a0d2cfd8f59665ecbee66d3e87b8ac11f16f2b1988a01c2a",
     "bond-api/src/sdk.rs": "sha256:78c1b21b3bf67eba53cc4bbc032ad3901228ed8dfee24db5e0ed4f24333b75e0",
     "bond-program/src/lib.rs": "sha256:200a187d252b3d499f53fd427a9933f4d2a4ffd7d5a4083f6ef6081efc4604e2",
     "mint-api/src/instruction.rs": "sha256:2f3800ecd972c8a92f794c44af33fe98118449906bd8b45c12d100180b44b4ca",
     "mint-api/src/sdk.rs": "sha256:b9ca777b4e1f677cc1eb2cc9c073ad58d42b901f490e9bc1fa87ab28a2031d01",
     "mint-program/src/lib.rs": "sha256:0249ced9293a45904200ce25213acdd38f6acf67a1443d5281c6d78372c8b930",
-    "program/src/lib.rs": "sha256:800c89cc5639cf31c7ecd88b26b93abae7345049b68d4f3d03488781d4a8909e",
+    "program/src/lib.rs": "sha256:4173d0e7615ba1f0be7ff9c2465a331826dbc11e7032d64cd106d621506bec6d",
     "program/src/sat_account.rs": "sha256:0a0ffd48cd9218db791737ee56041b78e946512c896114a10404b0866a388ae6",
-    "program/src/sat_agent_history.rs": "sha256:2b442e3465b3484d09c1d36e7892df49ab3ce9deb182e92dc3cd8604cbc10d19",
-    "program/src/sat_agent_record.rs": "sha256:45ea32d3fd619f4e16e7bdde68488b7eab23369d7fb50d56e8a1dde886485ae1",
-    "program/src/sat_bootstrap.rs": "sha256:c376dd12ebe70106e683c4ec4f459312a88c7464b796248a0858155024d87113",
+    "program/src/sat_agent_history.rs": "sha256:1a7069527fdde2bce5a00aa661cc80d183d9f81522fd295ffeffb1226843442b",
+    "program/src/sat_agent_record.rs": "sha256:b5e9cc5e1a046dd345d2dbf1e7cf102fb5cc8d75146a50a5757a5b0e675201c5",
+    "program/src/sat_bootstrap.rs": "sha256:e13a31b3a948345ce7781b819d6fcd5355ba059f95e4e976cb2bf07d45a3f9ab",
     "program/src/sat_claim_cycle_rewards.rs": "sha256:cb98cca048f87c04284ab88d829144cbe0c1e1579b0d3131434076c699f0f183",
-    "program/src/sat_cycle.rs": "sha256:55381dca3b433e494ba09f6a3a37d990230007674a2d868ad65dc91a7ad0b5b4",
+    "program/src/sat_claim_vnext.rs": "sha256:646619690595d05f0ca0d5ee9dcf4ed2913a7390d19418229b63451759025b7c",
+    "program/src/sat_cycle.rs": "sha256:126377c0b7c0ce0252113cdde7514709017f5b018785db9fc184e05e87eaebe6",
     "program/src/sat_cycle_maintenance.rs": "sha256:67fc496e16e87dbb5f7d2cddabcdbbeb1f5ce30b217907f283b001b9dede19fc",
-    "program/src/sat_keeper_capability.rs": "sha256:9d4d17dfacfdeff537be24813458d1274aeca690d572cf4292aeaaf6e0061930",
+    "program/src/sat_cycle_maintenance_vnext.rs": "sha256:07a934a72a1986077265715a389f1108ee2c519f602585dcfeaa6692297f8a00",
+    "program/src/sat_keeper_capability.rs": "sha256:8cf746d8b464fa179fe37150e0daf264dedd21c6c15873deef9b345fa71d0f49",
     "program/src/sat_miner_capital.rs": "sha256:bfdb30f6fa3a9b966eb06eeb59f2eeed73fb15b24efdaf3712b1718b41eac2f8",
-    "program/src/sat_protocol_treasury.rs": "sha256:e6093f3321e647608965d40c783026abf0e80dfce671eaf1ef345d957a7899e5",
+    "program/src/sat_protocol_treasury.rs": "sha256:444e7947319778ae0014613f3a142827b4fd8fd622815d8b9c84c61ea69c8e56",
     "program/src/sat_retarget_unlock.rs": "sha256:499073e420d7143599db446089a986730a3dba90c72c1258de86630d85929b18",
-    "program/src/sat_settle_cycle.rs": "sha256:7b16996ac71e8ade12df7c0a6b00b079c802e15547e93984019b41c37fbda339"
+    "program/src/sat_settle_cycle.rs": "sha256:7b16996ac71e8ade12df7c0a6b00b079c802e15547e93984019b41c37fbda339",
+    "program/src/sat_settle_vnext.rs": "sha256:8f96399887cfba268e486ee5ff84a6b4021e4a83e529e7b2ee6f101ea52258ed",
+    "program/src/sat_vnext.rs": "sha256:0866760e6fa6d36004732538691fd3b723c508fc812a97ccebd3119d4d930efd"
   }
 }
