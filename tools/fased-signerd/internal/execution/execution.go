@@ -302,6 +302,56 @@ func NewSignedTypedTransactionWithFeePayer(
 	return tx, nil
 }
 
+// NewSignedTypedKeeperCapabilityTransaction builds a transaction in which the
+// bounded keeper capability is both the transaction payer and the only allowed
+// instruction signer. Generation-2 SAT keeper instructions intentionally do
+// not involve the mining-principal authority.
+func NewSignedTypedKeeperCapabilityTransaction(
+	instructions []solana.Instruction,
+	blockhash solana.Hash,
+	feePayer solana.PrivateKey,
+	addressTables map[solana.PublicKey]solana.PublicKeySlice,
+) (*solana.Transaction, error) {
+	feePayerPublicKey := feePayer.PublicKey()
+	hasInstructionSignature := false
+	for _, instruction := range instructions {
+		for _, account := range instruction.Accounts() {
+			if !account.IsSigner {
+				continue
+			}
+			hasInstructionSignature = true
+			if !account.PublicKey.Equals(feePayerPublicKey) {
+				return nil, errors.New("keeper capability transaction rejects another instruction signer")
+			}
+		}
+	}
+	if !hasInstructionSignature {
+		return nil, errors.New("keeper capability transaction requires its instruction signer")
+	}
+	options := []solana.TransactionOption{solana.TransactionPayer(feePayerPublicKey)}
+	if len(addressTables) > 0 {
+		options = append(options, solana.TransactionAddressTables(addressTables))
+	}
+	tx, err := solana.NewTransaction(instructions, blockhash, options...)
+	if err != nil {
+		return nil, err
+	}
+	if len(addressTables) > 0 && (tx.Message.GetVersion() != solana.MessageVersionV0 || len(tx.Message.GetAddressTableLookups()) != 1 || tx.Message.NumLookups() == 0) {
+		return nil, errors.New("typed SAT keeper capability transaction did not compile to the required single-table v0 transaction")
+	}
+	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(feePayerPublicKey) {
+			copy := feePayer
+			return &copy
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
 func SignValidatedJupiterTransaction(tx *solana.Transaction, walletSignerIndex int, privateKey solana.PrivateKey) ([]byte, solana.Signature, error) {
 	if tx == nil {
 		return nil, solana.Signature{}, errors.New("validated transaction is missing")

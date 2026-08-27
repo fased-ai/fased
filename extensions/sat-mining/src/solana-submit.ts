@@ -27,7 +27,9 @@ import {
   inspectSatChainSlot,
   inspectSatCycle,
   inspectSatCycleRegistryMeta,
+  inspectSatMinerCapitalsByAuthority,
   inspectSatMinerCyclesByAddress,
+  inspectSatVNextKeeperChainContext,
 } from "./rpc-read.js";
 import { resolveSatSignerCodec } from "./signer-codec-manifest.js";
 import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
@@ -40,6 +42,7 @@ import {
   type SatSubmissionInstruction,
   type SatSubmissionSignerOperation,
 } from "./submission-service.js";
+import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
 export { runWithSatSubmissionWorkflow } from "./submission-service.js";
 
@@ -144,6 +147,15 @@ function loadConfigForSatRuntime(activeConfig?: SatMiningConfig): FasedAgentConf
 function resolveSatWalletId(cfg: FasedAgentConfig): string | undefined {
   const value = cfg.plugins?.entries?.["sat-mining"]?.config?.walletId;
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function resolveSatKeeperExecutionConfig(config: SatMiningConfig): SatMiningConfig {
+  if (config.keeperMode !== "dedicated") return config;
+  const keeperWalletId = config.keeperWalletId?.trim();
+  if (!keeperWalletId) {
+    throw new Error("dedicated SAT keeper mode requires one explicit Keeper walletId");
+  }
+  return { ...config, walletId: keeperWalletId };
 }
 
 function resolveSatCluster(cfg: FasedAgentConfig): "local" | "devnet" | "mainnet-beta" {
@@ -290,6 +302,7 @@ export async function resolveSatValidatorAuthority(_config: SatMiningConfig) {
 }
 
 type SatInstructionSubmitSpec = {
+  actionOverride?: keyof typeof SAT_VNEXT_INTERFACE.keeperCodecs;
   data: Buffer;
   keeperFeePayer?: boolean;
   satCommitment?: {
@@ -339,6 +352,47 @@ async function prepareLocalSignerSubmitContext(cfg: FasedAgentConfig, env: NodeJ
   return { effectiveEnv, solana, walletId, socketPath, signerAddress, signer };
 }
 
+export async function inspectSatKeeperFeePayerRuntime(_config: SatMiningConfig): Promise<{
+  miningWalletId: string;
+  feePayerWalletId: string;
+  feePayerPublicKey: string;
+  maxPerTransactionLamports: string;
+  state: string;
+} | null> {
+  const executionConfig = resolveSatKeeperExecutionConfig(_config);
+  const cfg = loadConfigForSatRuntime(executionConfig);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  if (resolveSatProviderId(cfg, effectiveEnv) !== "local-socket-signer") return null;
+  const walletId = resolveSatWalletId(cfg);
+  if (!walletId) return null;
+  const capability = await callLocalSocketSigner<{
+    miningWalletId?: string;
+    feePayerWalletId?: string;
+    feePayerPublicKey?: string;
+    maxPerTransactionLamports?: string;
+    state?: string;
+  }>(requireLocalSocketSignerPath(effectiveEnv), {
+    op: "v2.keeperFeePayer.get",
+    walletId,
+  });
+  if (
+    capability.state !== "ready" ||
+    capability.miningWalletId !== walletId ||
+    !capability.feePayerWalletId?.trim() ||
+    !capability.feePayerPublicKey?.trim() ||
+    !/^\d+$/u.test(capability.maxPerTransactionLamports ?? "")
+  ) {
+    return null;
+  }
+  return capability as {
+    miningWalletId: string;
+    feePayerWalletId: string;
+    feePayerPublicKey: string;
+    maxPerTransactionLamports: string;
+    state: string;
+  };
+}
+
 export async function resolveSatCommitmentSignerContext(activeConfig: SatMiningConfig) {
   const cfg = loadConfigForSatRuntime(activeConfig);
   const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
@@ -374,12 +428,25 @@ async function buildLocalSignerInstructionRequest(params: {
   const programId = params.spec.programId ?? resolveSatProgramIdFromEnv(params.env);
   const mainProgramId = resolveSatProgramIdFromEnv(params.env);
   const bondProgramId = resolveSatBondProgramIdFromEnv(params.env).trim() || undefined;
-  const codec = resolveSatSignerCodec({
-    programId,
-    mainProgramId,
-    bondProgramId,
-    data: params.spec.data,
-  });
+  const codec = params.spec.actionOverride
+    ? (() => {
+        const generated = SAT_VNEXT_INTERFACE.keeperCodecs[params.spec.actionOverride];
+        if (
+          params.spec.data[0] !== generated.discriminator ||
+          params.spec.data.length !== generated.dataLength
+        ) {
+          throw new Error(
+            `SAT vNext ${params.spec.actionOverride} payload disagrees with the generated codec`,
+          );
+        }
+        return { action: params.spec.actionOverride };
+      })()
+    : resolveSatSignerCodec({
+        programId,
+        mainProgramId,
+        bondProgramId,
+        data: params.spec.data,
+      });
   satSubmitDebug(
     `[sat-submit-debug] action=${codec.action} data_len=${params.spec.data.length} disc=${params.spec.data[0] ?? -1} keys=${keys.length}`,
   );
@@ -835,9 +902,13 @@ async function submitInstructionViaLocalSigner(
     useKeeperFeePayer:
       params.keeperFeePayer === true && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2",
   });
+  const submittedSigner =
+    params.keeperFeePayer === true && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2"
+      ? (request.keys.find((key) => key.isSigner)?.pubkey ?? context.signerAddress)
+      : context.signerAddress;
   return {
     txHash: submitted.signature,
-    signer: context.signerAddress,
+    signer: submittedSigner,
     signerState: submitted.state,
     requestId: submitted.requestId,
     ...(request.addressLookupTables?.length
@@ -1321,6 +1392,36 @@ function buildDistributeCyclePageData(params: {
     encodeU64(params.pageIndex),
     encodeU64(params.chunkIndex),
   ]);
+}
+
+function buildVNextKeeperData(
+  action: keyof typeof SAT_VNEXT_INTERFACE.keeperCodecs,
+  params: { cycleId: number; pageIndex?: number; chunkIndex?: number },
+) {
+  const codec = SAT_VNEXT_INTERFACE.keeperCodecs[action];
+  const values =
+    action === "finalizeCycleSettlementV2"
+      ? [params.cycleId]
+      : [params.cycleId, params.pageIndex ?? 0, params.chunkIndex ?? 0];
+  return Buffer.concat([Buffer.from([codec.discriminator]), ...values.map(encodeU64)]);
+}
+
+async function resolveVNextKeeperSubmitIdentity(config: SatMiningConfig, cycleId: number) {
+  const local = await inspectSatKeeperFeePayerRuntime(config);
+  if (!local) {
+    throw new Error("SAT vNext keeper broadcast requires one ready signer-owned keeper fee payer");
+  }
+  const chain = await inspectSatVNextKeeperChainContext(config, {
+    cycleId,
+    feePayerPublicKey: local.feePayerPublicKey,
+    minimumFeePayerLamports: local.maxPerTransactionLamports,
+  });
+  if (!chain) throw new Error(`SAT vNext keeper context for cycle ${cycleId} is unavailable`);
+  return {
+    feePayerPublicKey: local.feePayerPublicKey,
+    capabilityAddress: chain.capability?.capabilityAddress,
+    payoutAuthority: chain.capability?.payoutAuthority ?? local.feePayerPublicKey,
+  };
 }
 
 function buildCloseResolvedMinerCycleStateData(params: { cycleId: number }) {
@@ -2430,10 +2531,216 @@ export async function submitSatRevealCycle(
   });
 }
 
+async function submitSatVNextKeeperWork(
+  config: SatMiningConfig,
+  action: keyof typeof SAT_VNEXT_INTERFACE.keeperCodecs,
+  params: {
+    cycleId: number;
+    pageIndex?: number;
+    chunkIndex?: number;
+    pageCount?: number;
+    minerCycleAccounts?: string[];
+  },
+) {
+  const cfg = loadConfigForSatRuntime(resolveSatKeeperExecutionConfig(config));
+  const identity = await resolveVNextKeeperSubmitIdentity(config, params.cycleId);
+  return await submitInstruction({
+    cfg,
+    env: process.env,
+    keeperFeePayer: true,
+    actionOverride: action,
+    data: buildVNextKeeperData(action, params),
+    accountResolver: async (solana) => {
+      const programId = new solana.PublicKey(SAT_PROGRAM_ID());
+      const feePayer = new solana.PublicKey(identity.feePayerPublicKey);
+      const payoutAuthority = new solana.PublicKey(identity.payoutAuthority);
+      const cycle = encodeU64(params.cycleId);
+      const page = encodeU64(params.pageIndex ?? 0);
+      const derive = (seed: string, ...parts: Buffer[]) =>
+        solana.PublicKey.findProgramAddressSync([Buffer.from(seed), ...parts], programId)[0];
+      const cycleState = derive("sat_cycle_state_v2", cycle);
+      const registryMeta = derive(SAT_CYCLE_REGISTRY_META_SEED, cycle);
+      const registryPage = derive(SAT_CYCLE_REGISTRY_PAGE_SEED, cycle, page);
+      const progress = derive("sat_cycle_settlement_progress_v3", cycle);
+      const snapshot = derive("sat_keeper_snapshot", cycle);
+      const capability = identity.capabilityAddress
+        ? new solana.PublicKey(identity.capabilityAddress)
+        : snapshot;
+      const minerCycleAccounts = (params.minerCycleAccounts ?? []).map(
+        (address) => new solana.PublicKey(address),
+      );
+      const minerCycles =
+        minerCycleAccounts.length > 0
+          ? await inspectSatMinerCyclesByAddress(config, {
+              addresses: minerCycleAccounts.map((address) => address.toBase58()),
+            })
+          : [];
+      const minerAuthorities = minerCycles.map((entry, index) => {
+        const authority = String(entry?.authority ?? "").trim();
+        if (!authority) {
+          throw new Error(`SAT vNext keeper could not resolve miner authority ${index}`);
+        }
+        return authority;
+      });
+      const permanentMiningIds = minerCycles.map((entry, index) => {
+        const permanentMiningId = String(entry?.permanentMiningId ?? "").trim();
+        if (!permanentMiningId) {
+          throw new Error(`SAT vNext keeper could not resolve permanent mining identity ${index}`);
+        }
+        return new solana.PublicKey(permanentMiningId);
+      });
+      const keeperIdentityAccounts = minerCycleAccounts.flatMap((minerCycle, index) => {
+        const permanentMiningId = permanentMiningIds[index];
+        if (!permanentMiningId) {
+          throw new Error(`SAT vNext keeper operating identity ${index} is incomplete`);
+        }
+        return [
+          { pubkey: minerCycle, isSigner: false, isWritable: true },
+          {
+            pubkey: derive("sat_keeper_operating_reserve", permanentMiningId.toBuffer()),
+            isSigner: false,
+            isWritable: true,
+          },
+        ];
+      });
+      const context =
+        minerAuthorities.length > 0
+          ? {
+              minerAuthorities,
+              permanentMiningIds: permanentMiningIds.map((identity) => identity.toBase58()),
+            }
+          : undefined;
+      if (action === "settleCyclePageV2") {
+        return {
+          keys: [
+            { pubkey: feePayer, isSigner: true, isWritable: true },
+            { pubkey: payoutAuthority, isSigner: false, isWritable: true },
+            { pubkey: cycleState, isSigner: false, isWritable: false },
+            { pubkey: registryMeta, isSigner: false, isWritable: false },
+            { pubkey: registryPage, isSigner: false, isWritable: false },
+            { pubkey: progress, isSigner: false, isWritable: true },
+            { pubkey: snapshot, isSigner: false, isWritable: false },
+            { pubkey: capability, isSigner: false, isWritable: false },
+            ...keeperIdentityAccounts,
+          ],
+          context,
+        };
+      }
+      if (action === "scoreCyclePageV2") {
+        return {
+          keys: [
+            { pubkey: feePayer, isSigner: true, isWritable: true },
+            { pubkey: payoutAuthority, isSigner: false, isWritable: true },
+            { pubkey: cycleState, isSigner: false, isWritable: false },
+            { pubkey: registryPage, isSigner: false, isWritable: false },
+            { pubkey: progress, isSigner: false, isWritable: true },
+            { pubkey: snapshot, isSigner: false, isWritable: false },
+            { pubkey: capability, isSigner: false, isWritable: false },
+            ...keeperIdentityAccounts,
+          ],
+          context,
+        };
+      }
+      const treasuryState = derive(SAT_TREASURY_STATE_SEED);
+      if (action === "finalizeCycleSettlementV2") {
+        const globalState = derive(SAT_GLOBAL_STATE_SEED);
+        const protocolGeneration = derive("sat_protocol_generation_state_v2");
+        const bondProgramId = new solana.PublicKey(
+          resolveSatBondProgramIdFromEnv(resolveSatEffectiveEnv(cfg, process.env)),
+        );
+        const bondDistributor = solana.PublicKey.findProgramAddressSync(
+          [Buffer.from(SAT_BOND_STAKING_DISTRIBUTOR_SEED)],
+          bondProgramId,
+        )[0];
+        return [
+          { pubkey: feePayer, isSigner: true, isWritable: true },
+          { pubkey: payoutAuthority, isSigner: false, isWritable: true },
+          { pubkey: globalState, isSigner: false, isWritable: true },
+          { pubkey: protocolGeneration, isSigner: false, isWritable: true },
+          { pubkey: cycleState, isSigner: false, isWritable: true },
+          { pubkey: progress, isSigner: false, isWritable: true },
+          { pubkey: registryMeta, isSigner: false, isWritable: true },
+          { pubkey: treasuryState, isSigner: false, isWritable: true },
+          { pubkey: derive(SAT_REBATE_VAULT_SEED), isSigner: false, isWritable: true },
+          { pubkey: derive(SAT_TREASURY_VAULT_SEED), isSigner: false, isWritable: true },
+          { pubkey: bondDistributor, isSigner: false, isWritable: false },
+          { pubkey: snapshot, isSigner: false, isWritable: false },
+          { pubkey: capability, isSigner: false, isWritable: false },
+        ];
+      }
+      const rebateVault = derive(SAT_REBATE_VAULT_SEED);
+      const treasuryVault = derive(SAT_TREASURY_VAULT_SEED);
+      const authorities = minerAuthorities.map((authority) => new solana.PublicKey(authority));
+      const capitals = await inspectSatMinerCapitalsByAuthority(config, {
+        authorities: minerAuthorities,
+      });
+      const distributionPermanentMiningIds = capitals.map((capital, index) => {
+        const permanentMiningId = String(capital?.permanentMiningId ?? "").trim();
+        if (capital?.version !== 2 || !permanentMiningId) {
+          throw new Error(`SAT vNext keeper could not resolve permanent mining identity ${index}`);
+        }
+        return new solana.PublicKey(permanentMiningId);
+      });
+      const distributionAccounts = minerCycleAccounts.flatMap((minerCycle, index) => {
+        const authority = authorities[index];
+        const permanentMiningId = distributionPermanentMiningIds[index];
+        if (!authority || !permanentMiningId) {
+          throw new Error(`SAT vNext keeper distribution identity ${index} is incomplete`);
+        }
+        return [
+          { pubkey: minerCycle, isSigner: false, isWritable: true },
+          {
+            pubkey: derive(SAT_MINER_CAPITAL_STATE_SEED, authority.toBuffer()),
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: derive("sat_agent_record", permanentMiningId.toBuffer()),
+            isSigner: false,
+            isWritable: false,
+          },
+          {
+            pubkey: derive("sat_agent_reward_remainder_v2", permanentMiningId.toBuffer()),
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: derive("sat_keeper_operating_reserve", permanentMiningId.toBuffer()),
+            isSigner: false,
+            isWritable: true,
+          },
+        ];
+      });
+      return {
+        keys: [
+          { pubkey: feePayer, isSigner: true, isWritable: true },
+          { pubkey: payoutAuthority, isSigner: false, isWritable: true },
+          { pubkey: cycleState, isSigner: false, isWritable: true },
+          { pubkey: registryPage, isSigner: false, isWritable: false },
+          { pubkey: progress, isSigner: false, isWritable: true },
+          { pubkey: treasuryState, isSigner: false, isWritable: true },
+          { pubkey: rebateVault, isSigner: false, isWritable: true },
+          { pubkey: treasuryVault, isSigner: false, isWritable: true },
+          { pubkey: snapshot, isSigner: false, isWritable: false },
+          { pubkey: capability, isSigner: false, isWritable: false },
+          ...distributionAccounts,
+        ],
+        context: {
+          minerAuthorities,
+          permanentMiningIds: distributionPermanentMiningIds.map((identity) => identity.toBase58()),
+        },
+      };
+    },
+  });
+}
+
 export async function submitSatSettleCyclePage(
   _config: SatMiningConfig,
   params: { cycleId: number; pageIndex: number; chunkIndex: number; minerCycleAccounts?: string[] },
 ) {
+  if (SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+    return await submitSatVNextKeeperWork(_config, "settleCyclePageV2", params);
+  }
   const cfg = loadConfigForSatRuntime(_config);
   return submitInstruction({
     cfg,
@@ -2538,6 +2845,9 @@ export async function submitSatFinalizeCycleSettlement(
   _config: SatMiningConfig,
   params: { cycleId: number; pageCount: number },
 ) {
+  if (SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+    return await submitSatVNextKeeperWork(_config, "finalizeCycleSettlementV2", params);
+  }
   const cfg = loadConfigForSatRuntime(_config);
   return submitInstruction({
     cfg,
@@ -2609,6 +2919,9 @@ export async function submitSatScoreCyclePage(
   _config: SatMiningConfig,
   params: { cycleId: number; pageIndex: number; chunkIndex: number; minerCycleAccounts?: string[] },
 ) {
+  if (SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+    return await submitSatVNextKeeperWork(_config, "scoreCyclePageV2", params);
+  }
   const cfg = loadConfigForSatRuntime(_config);
   return submitInstruction({
     cfg,
@@ -2709,6 +3022,9 @@ export async function submitSatDistributeCyclePage(
     onLookupTableResolved?: (lookupTableAddress: string) => Promise<void>;
   },
 ) {
+  if (SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+    return await submitSatVNextKeeperWork(_config, "distributeCyclePageV2", params);
+  }
   const cfg = loadConfigForSatRuntime(_config);
   const lookupTableAddress = params.lookupTableAddress?.trim() ?? "";
   const requiresLookupTable =

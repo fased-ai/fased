@@ -226,7 +226,7 @@ describe("SAT submission service boundary", () => {
           expect(payload.request?.intent).toMatchObject({
             type: "solana.satKeeperAction",
             authorityWalletId: "wallet-mining",
-            action: "closeCommitPhase",
+            action: "settleCyclePageV2",
           });
           return {
             requestId: payload.request?.requestId,
@@ -243,8 +243,8 @@ describe("SAT submission service boundary", () => {
         socketPath: "/run/fased-signerd.sock",
         walletId: "wallet-mining",
         stateProgramId: "program-id",
-        action: "closeCommitPhase",
-        instruction: { ...instruction, action: "closeCommitPhase" },
+        action: "settleCyclePageV2",
+        instruction: { ...instruction, action: "settleCyclePageV2" },
         cluster: "devnet",
         env: {},
         useKeeperFeePayer: true,

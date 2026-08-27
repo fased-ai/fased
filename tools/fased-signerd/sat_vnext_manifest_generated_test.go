@@ -22,7 +22,7 @@ func TestFrozenSATGeneration2RevealCodecIsExactAndInactive(t *testing.T) {
 
 func TestFrozenSATGeneration2ReleaseAcknowledgementIsComplete(t *testing.T) {
 	ack := signerSATReleaseAcknowledgementGeneration2
-	if ack.Schema != "fased.sat-release-acknowledgement.v1" || ack.State != "FROZEN_NOT_ACTIVE" {
+	if ack.Schema != "fased.sat-release-acknowledgement.v1" || ack.State != "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED" {
 		t.Fatalf("unexpected SAT release acknowledgement: %+v", ack)
 	}
 	if ack.ComponentGenerations.Schema != "SAT-SCHEMA-GEN-002" || ack.ComponentGenerations.SignerCapability != "FSD-SIGNER-GEN-002" {

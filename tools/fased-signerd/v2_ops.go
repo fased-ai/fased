@@ -455,7 +455,17 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if err := requireControlSocketV2(control); err != nil {
 			return nil, err
 		}
-		capability, err := s.ensureKeeperFeePayerCapabilityV2(req.WalletID)
+		var body signerKeeperFeePayerEnsureRequestV2
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		var capability signerKeeperFeePayerCapabilityV2
+		var err error
+		if body.Standalone {
+			capability, err = s.ensureStandaloneKeeperCapabilityV2(req.WalletID)
+		} else {
+			capability, err = s.ensureKeeperFeePayerCapabilityV2(req.WalletID)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -814,6 +824,7 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	var authorityPolicy signerPolicyV2
 	if strings.TrimSpace(hydratedIntent.Type) == intentSolanaSATKeeperAction {
 		authorityWalletID = normalizeWalletID(hydratedIntent.AuthorityWalletID)
+		standaloneKeeper := strings.HasSuffix(strings.TrimSpace(hydratedIntent.Action), "V2") && authorityWalletID == normalizeWalletID(req.IntentWalletID())
 		authorityRecord, authorityErr := s.keys.PublicRecord(authorityWalletID)
 		if authorityErr != nil {
 			return signerOperationV2{}, errors.New("typed SAT keeper authority wallet is unavailable")
@@ -823,8 +834,8 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 			return signerOperationV2{}, errors.New("typed SAT keeper authority has an invalid public key")
 		}
 		authorityPolicy, authorityErr = s.store.getPolicy(authorityWalletID)
-		if authorityErr != nil || authorityPolicy.Role != "mining" {
-			return signerOperationV2{}, errors.New("typed SAT keeper authority must be a Mining wallet")
+		if authorityErr != nil || (!standaloneKeeper && authorityPolicy.Role != "mining") || (standaloneKeeper && authorityPolicy.Role != "keeper") {
+			return signerOperationV2{}, errors.New("typed SAT keeper authority has the wrong bounded role")
 		}
 	}
 	var intent normalizedIntentV2
@@ -944,7 +955,7 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	}
 	defer zeroBytes(privateKey)
 	operationalPrivateKeys := []solana.PrivateKey(nil)
-	if intent.Intent.Type == intentSolanaSATKeeperAction {
+	if intent.Intent.Type == intentSolanaSATKeeperAction && intent.ParentIntent != nil {
 		authorityPrivateKey, _, authorityErr := s.keys.privateKey(authorityWalletID)
 		if authorityErr != nil {
 			_, _ = s.store.markFailedClaim(operation.RequestID, executionAttempt, authorityErr)
@@ -1107,6 +1118,14 @@ func buildTypedTransactionV2(
 		return nil, err
 	}
 	if intent.Intent.Type == intentSolanaSATKeeperAction {
+		if intent.ParentIntent == nil {
+			return execution.NewSignedTypedKeeperCapabilityTransaction(
+				instructions,
+				blockhash,
+				privateKey,
+				addressTables,
+			)
+		}
 		return execution.NewSignedTypedTransactionWithFeePayer(
 			instructions,
 			blockhash,

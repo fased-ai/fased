@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-void test("Fased binds inactive 16-channel codecs while active legacy mining stays 25-channel", () => {
+void test("Fased binds executable generation-2 codecs while public entry stays disabled", () => {
   const result = spawnSync(
     process.execPath,
     ["scripts/generate-sat-vnext-interface.mjs", "--check"],
@@ -22,11 +22,23 @@ void test("Fased binds inactive 16-channel codecs while active legacy mining sta
     path.join(root, "extensions/sat-mining/src/vnext-interface-manifest.ts"),
     "utf8",
   );
-  assert.match(generated, /state: "FROZEN_NOT_ACTIVE"/u);
+  assert.match(generated, /state: "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED"/u);
   assert.match(generated, /active: false/u);
+  assert.match(generated, /executableDispatchBound: true/u);
+  assert.match(generated, /publicEntryEnabled: false/u);
+  assert.match(generated, /freezeId: "SAT-VNEXT-GATE-P3-008"/u);
   assert.match(generated, /strategyChannels: 16/u);
   assert.match(generated, /legacyStrategyChannels: 25/u);
   assert.match(generated, /revealDataLength: 105/u);
+  assert.match(generated, /settleCyclePageV2/u);
+  assert.match(generated, /distributeCyclePageV2/u);
+  assert.match(generated, /maximumChargePerWorkLamports: 40000/u);
+  assert.match(generated, /sat_keeper_operating_reserve:writable/u);
+  const accountOrder = fs.readFileSync(
+    path.join(root, "extensions/sat-mining/protocol-generation/account-order.generation-2.json"),
+    "utf8",
+  );
+  assert.match(accountOrder, /keeper_payout_authority:writable/u);
   assert.equal(generated.match(/pragma: allowlist secret/gu)?.length, 5);
 
   const releaseContract = fs.readFileSync(
@@ -35,6 +47,8 @@ void test("Fased binds inactive 16-channel codecs while active legacy mining sta
   );
   assert.match(releaseContract, /fased\.sat-release-acknowledgement\.v1/u);
   assert.match(releaseContract, /schema: "SAT-SCHEMA-GEN-002"/u);
+  assert.match(releaseContract, /keeper: "SAT-KEEPER-GEN-002"/u);
+  assert.match(releaseContract, /protocol: "SAT-PROTO-GEN-002"/u);
   assert.match(releaseContract, /signerCapability: "FSD-SIGNER-GEN-002"/u);
 
   const signerReleaseContract = fs.readFileSync(

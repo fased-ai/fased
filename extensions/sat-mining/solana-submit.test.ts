@@ -87,6 +87,7 @@ vi.mock("./src/rpc-read.js", async () => {
 
 import {
   buildSatCycleCommitment,
+  inspectSatKeeperFeePayerRuntime,
   submitSatAbortEmptyCycle,
   submitSatClaimBondStakingRewards,
   submitSatClaimProtocolDistributorSat,
@@ -356,6 +357,34 @@ describe("SAT cycle transaction builders", () => {
       },
       { pubkey: SystemProgram.programId.toBase58(), isSigner: false, isWritable: false },
     ]);
+  });
+
+  it("resolves a standalone Keeper wallet without a Mining wallet parent", async () => {
+    const keeper = new PublicKey(Buffer.alloc(32, 77)).toBase58();
+    callLocalSocketSigner.mockImplementation(async (_socketPath, payload) => {
+      expect(payload).toMatchObject({ op: "v2.keeperFeePayer.get", walletId: "keeper-only" });
+      return {
+        miningWalletId: "keeper-only",
+        feePayerWalletId: "keeper-only",
+        feePayerPublicKey: keeper,
+        maxPerTransactionLamports: "500000",
+        state: "ready",
+      };
+    });
+
+    await expect(
+      inspectSatKeeperFeePayerRuntime({
+        enabled: false,
+        keeperMode: "dedicated",
+        keeperWalletId: "keeper-only",
+        network: "devnet",
+        riskMode: "balanced",
+      }),
+    ).resolves.toMatchObject({
+      miningWalletId: "keeper-only",
+      feePayerWalletId: "keeper-only",
+      feePayerPublicKey: keeper,
+    });
   });
 
   it("fails closed before policy lookup when typed SAT capabilities are missing", async () => {

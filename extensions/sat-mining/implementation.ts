@@ -9710,6 +9710,18 @@ const satMiningPlugin = {
             !state.activeConfig.enabled &&
             !(await restoreDrainModeForLockedCapitalFromChain("service startup"))
           ) {
+            if (
+              state.activeConfig.keeperMode === "monitor-only" ||
+              state.activeConfig.keeperMode === "dedicated"
+            ) {
+              await epochService.start();
+              api.logger.info(
+                `[sat-mining] dedicated keeper monitoring ready (mode=${state.activeConfig.keeperMode})`,
+              );
+              state.running = false;
+              completeMiningHistoryRecovery();
+              return;
+            }
             api.logger.info("[sat-mining] SAT mining scaffold disabled by config");
             state.running = false;
             stopSatWorkerBootstrapLoop();

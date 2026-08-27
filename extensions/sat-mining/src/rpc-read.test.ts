@@ -9,10 +9,14 @@ import {
   decodeSatBondStakingDistributor,
   decodeSatCycle,
   decodeSatCycleSettlementProgressV2,
+  decodeSatCycleSettlementProgressV3,
   decodeSatRoundBucket,
   decodeSatCycleRegistryPage,
   decodeSatGlobalState,
+  decodeSatKeeperCapability,
+  decodeSatMinerCapital,
   decodeSatMinerCycle,
+  decodeSatMinerCycleV2,
   inspectSatCycleAccountExists,
   inspectSatChainUnixTime,
   inspectSatAddressLookupTable,
@@ -165,6 +169,71 @@ describe("decodeSatCycleSettlementProgressV2", () => {
       cycleId: 77,
       keeperBountyPaidLamports: "11000",
       keeperBountyUnpaidLamports: "22000",
+    });
+  });
+});
+
+describe("decodeSatCycleSettlementProgressV3", () => {
+  it("decodes generation-2 cursors, windows, and unpaid duplicate accounting", () => {
+    const data = Buffer.alloc(936);
+    data[0] = 151;
+    const body = data.subarray(8);
+    body.writeBigUInt64LE(88n, 0);
+    body.writeUInt16LE(4, 128);
+    body.writeUInt16LE(2, 130);
+    body.writeUInt16LE(1, 132);
+    body.writeUInt16LE(1, 134);
+    body.writeUInt16LE(3, 136);
+    body.writeUInt16LE(0, 138);
+    body.writeUInt16LE(2, 140);
+    body[142] = 1;
+    body.writeBigUInt64LE(1_020n, 856);
+    body.writeBigUInt64LE(1_040n, 864);
+    body.writeBigUInt64LE(1_060n, 872);
+    body.writeBigUInt64LE(1_080n, 880);
+    body.writeBigUInt64LE(50_000n, 888);
+    body.writeBigUInt64LE(7_000n, 912);
+
+    expect(decodeSatCycleSettlementProgressV3(data, "progress-v3")).toMatchObject({
+      address: "progress-v3",
+      cycleId: 88,
+      expectedPageCount: 4,
+      processedPageCount: 2,
+      settleChunkIndex: 1,
+      scoredPageCount: 1,
+      scoreChunkIndex: 3,
+      distributeChunkIndex: 2,
+      finalized: true,
+      settleExclusiveUntilSlot: 1020,
+      finalizeExclusiveUntilSlot: 1040,
+      scoreExclusiveUntilSlot: 1060,
+      distributeExclusiveUntilSlot: 1080,
+      keeperBountyPaidLamports: "50000",
+      keeperBountyUnpaidLamports: "7000",
+    });
+  });
+});
+
+describe("decodeSatKeeperCapability", () => {
+  it("keeps the keeper fee payer and payout authority separate", () => {
+    const feePayer = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
+    const payoutAuthority = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
+    const data = Buffer.alloc(200);
+    data[0] = 145;
+    const body = data.subarray(8);
+    body[1] = 1;
+    body.writeUInt16LE(2, 4);
+    body.writeBigUInt64LE(15n, 32);
+    feePayer.toBuffer().copy(body, 96);
+    payoutAuthority.toBuffer().copy(body, 128);
+
+    expect(decodeSatKeeperCapability(data, "capability")).toMatchObject({
+      address: "capability",
+      status: 1,
+      keeperGeneration: 2,
+      capabilityMask: 15,
+      feePayerPublicKey: feePayer.toBase58(),
+      payoutAuthority: payoutAuthority.toBase58(),
     });
   });
 });
@@ -338,6 +407,24 @@ describe("decodeSatRoundBucket", () => {
 });
 
 describe("Solana pubkey decoding", () => {
+  it("decodes the generation-2 permanent identity from miner capital", () => {
+    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
+    const permanentMiningId = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
+    const data = Buffer.alloc(136);
+    data[0] = 138;
+    const body = data.subarray(8);
+    body[0] = 2;
+    authority.toBuffer().copy(body, 8);
+    body.writeBigUInt64LE(1_000_000_000n, 40);
+    permanentMiningId.toBuffer().copy(body, 88);
+
+    expect(decodeSatMinerCapital(data, "capital-v2")).toMatchObject({
+      version: 2,
+      authority: authority.toBase58(),
+      permanentMiningId: permanentMiningId.toBase58(),
+    });
+  });
+
   it("decodes miner cycle authority as base58", () => {
     const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
     const buffer = Buffer.concat([
@@ -370,6 +457,48 @@ describe("Solana pubkey decoding", () => {
       rewardWeightFp: "1250000",
       validParticipation: true,
       capitalLockReleased: false,
+    });
+  });
+
+  it("decodes generation-2 miner authority and split rewards", () => {
+    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
+    const permanentMiningId = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
+    const data = Buffer.alloc(416);
+    data[0] = 150;
+    const body = data.subarray(8);
+    body.writeBigUInt64LE(1_100_000n, 0);
+    body.writeBigUInt64LE(1_000_000n, 16);
+    body.writeBigUInt64LE(100_000n, 32);
+    body.writeBigUInt64LE(1_250_000n, 48);
+    authority.toBuffer().copy(body, 64);
+    permanentMiningId.toBuffer().copy(body, 96);
+    body.writeBigUInt64LE(99n, 128);
+    body.writeBigUInt64LE(1_000_000_000n, 136);
+    body.writeBigUInt64LE(30n, 160);
+    body.writeBigUInt64LE(20n, 168);
+    body.writeBigUInt64LE(10n, 176);
+    body.writeBigUInt64LE(5n, 184);
+    body.writeBigUInt64LE(3n, 192);
+    body.writeBigUInt64LE(2n, 200);
+    body.writeBigUInt64LE(1n, 208);
+    body.writeBigUInt64LE(1n, 216);
+    body[224] = 1;
+    body.writeBigUInt64LE(900_000_000n, 280);
+
+    expect(decodeSatMinerCycleV2(data, "miner-v2")).toMatchObject({
+      address: "miner-v2",
+      authority: authority.toBase58(),
+      permanentMiningId: permanentMiningId.toBase58(),
+      cycleId: 99,
+      committedLamports: "1000000000",
+      claimableSatRaw: "50",
+      claimableDetRebateLamports: "10",
+      claimablePerfRebateLamports: "5",
+      claimedSatRaw: "5",
+      claimedDetRebateLamports: "1",
+      claimedPerfRebateLamports: "1",
+      validParticipation: true,
+      lockedCollateralLamports: "900000000",
     });
   });
 

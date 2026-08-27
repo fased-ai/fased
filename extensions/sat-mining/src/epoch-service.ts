@@ -1,6 +1,6 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { refreshSatChainTime } from "./chain-time.js";
-import type { SatMiningConfig } from "./config.js";
+import { resolveSatProgramId, type SatMiningConfig } from "./config.js";
 import {
   deriveExactPendingCycle,
   hasAuthoritativeCloseRecord,
@@ -8,9 +8,11 @@ import {
 } from "./cycle-progress.js";
 import {
   canAttemptKeeperStep,
+  decideKeeperBroadcast,
   preferredFinalizePageIndex,
   preferredKeeperMinerCycleAddress,
   SAT_KEEPER_PHASE,
+  shouldMonitorKeeper,
 } from "./epoch-keeper.js";
 import {
   advanceDistributionPage,
@@ -27,6 +29,8 @@ import {
   inspectSatCycleRegistryPage,
   inspectSatCycleRegistryMeta,
   inspectSatCycleSettlementProgressV2,
+  inspectSatCycleSettlementProgressV3,
+  inspectSatVNextKeeperChainContext,
   inspectSatMinerCapital,
   inspectSatMinerCycle,
   inspectSatMinerCycleAccountExists,
@@ -56,6 +60,8 @@ import {
   swallowSatReadErrorUnlessTimeout,
   withSatServiceReadTimeout,
 } from "./service-read-timeout.js";
+import { inspectSatKeeperFeePayerRuntime } from "./solana-submit.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
 
 const SAT_MINER_CYCLE_SLOT_COUNT = 8;
 const SAT_EPOCH_BACKLOG_WINDOW = SAT_MINER_CYCLE_SLOT_COUNT - 1;
@@ -63,6 +69,7 @@ const SAT_EXACT_PENDING_SCAN_LIMIT = 64;
 const SAT_CYCLE_REGISTRY_PAGE_CAPACITY = 64;
 const SAT_EPOCH_IDLE_INTERVAL_MS = 60_000;
 const SAT_EPOCH_ACTIVE_INTERVAL_MS = 10_000;
+const SAT_VNEXT_RUNTIME_SELECTED = SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2";
 
 function satEpochActiveIntervalMs() {
   return process.env.FASED_SAT_EPOCH_FAST_TEST_TICK === "1" ? 3_000 : SAT_EPOCH_ACTIVE_INTERVAL_MS;
@@ -285,6 +292,12 @@ function collectEpochCandidateCycleIds(params: {
   capital: SatMinerCapitalView | null;
 }): number[] {
   const prioritizedCycleIds = collectPrioritizedEpochCycleIds(params.state, params.current);
+  if (SAT_VNEXT_RUNTIME_SELECTED && !hasPendingCapitalRange(params.capital)) {
+    return Array.from(
+      { length: Math.min(SAT_EPOCH_BACKLOG_WINDOW, params.current) },
+      (_, index) => params.current - index - 1,
+    );
+  }
   const exactPendingCycle = deriveExactPendingCycle({
     state: params.state,
     currentCycleId: params.current,
@@ -547,7 +560,7 @@ async function selectEpochTargetCycle(params: {
         execution.commitSubmitted = true;
       }
     }
-    if (!execution.participationSubmitted) {
+    if (!execution.participationSubmitted && !SAT_VNEXT_RUNTIME_SELECTED) {
       continue;
     }
     const cachedTarget = params.targetCache?.get(cycleId);
@@ -568,9 +581,9 @@ async function selectEpochTargetCycle(params: {
       ? cachedTarget.progress
       : await Promise.resolve(
           withEpochReadTimeout("settlement progress", () =>
-            inspectSatCycleSettlementProgressV2(state.activeConfig, {
-              cycleId,
-            }),
+            SAT_VNEXT_RUNTIME_SELECTED
+              ? inspectSatCycleSettlementProgressV3(state.activeConfig, { cycleId })
+              : inspectSatCycleSettlementProgressV2(state.activeConfig, { cycleId }),
           ),
         ).catch(swallowSatReadErrorUnlessTimeout);
     const expectedPageCount = canUseCachedTarget
@@ -579,6 +592,14 @@ async function selectEpochTargetCycle(params: {
     const participantCount = canUseCachedTarget
       ? cachedTarget.participantCount
       : (registryMeta?.participantCount ?? 0);
+    if (
+      SAT_VNEXT_RUNTIME_SELECTED &&
+      !execution.participationSubmitted &&
+      registryMeta == null &&
+      progress == null
+    ) {
+      continue;
+    }
     if (!canUseCachedTarget && expectedPageCount > 0) {
       params.targetCache?.set(cycleId, {
         progress,
@@ -739,10 +760,52 @@ export function createSatEpochService(params: {
   const canAttempt = async (request: {
     authority: string | null;
     cycleId: number;
+    phase: (typeof SAT_KEEPER_PHASE)[keyof typeof SAT_KEEPER_PHASE];
+    pageIndex: number;
+    chunkIndex: number;
+    workAvailableSlot?: number;
     preferredMinerCycleAddress: string | null;
     exclusiveUntilSlot?: number;
-  }) =>
-    await canAttemptKeeperStep({
+  }) => {
+    if (SAT_VNEXT_RUNTIME_SELECTED) {
+      if (state.activeConfig.keeperMode === "monitor-only") return false;
+      const localCapability = await inspectSatKeeperFeePayerRuntime(state.activeConfig).catch(
+        swallowSatReadErrorUnlessTimeout,
+      );
+      if (!localCapability) return false;
+      const context = await withEpochReadTimeout("vNext keeper context", () =>
+        inspectSatVNextKeeperChainContext(state.activeConfig, {
+          cycleId: request.cycleId,
+          feePayerPublicKey: localCapability?.feePayerPublicKey,
+          minimumFeePayerLamports: localCapability?.maxPerTransactionLamports,
+        }),
+      ).catch(swallowSatReadErrorUnlessTimeout);
+      const currentSlot = await withEpochReadTimeout("chain slot", () =>
+        inspectSatChainSlot(state.activeConfig),
+      ).catch(swallowSatReadErrorUnlessTimeout);
+      if (!context || currentSlot == null) return false;
+      const workAvailableSlot =
+        request.phase === SAT_KEEPER_PHASE.settle &&
+        request.pageIndex === 0 &&
+        request.chunkIndex === 0
+          ? context.revealDeadlineSlot
+          : request.workAvailableSlot;
+      if (workAvailableSlot == null || workAvailableSlot <= 0) return false;
+      const decision = decideKeeperBroadcast({
+        programId: resolveSatProgramId(state.activeConfig),
+        snapshot: context.snapshot,
+        cycleSeedHex: context.cycleSeedHex,
+        phase: request.phase,
+        pageIndex: request.pageIndex,
+        chunkIndex: request.chunkIndex,
+        workAvailableSlot,
+        currentSlot,
+        workStillMissing: true,
+        capability: context.capability,
+      });
+      return decision.broadcast;
+    }
+    return await canAttemptKeeperStep({
       authority: request.authority,
       preferredMinerCycleAddress: request.preferredMinerCycleAddress,
       exclusiveUntilSlot: request.exclusiveUntilSlot,
@@ -758,6 +821,7 @@ export function createSatEpochService(params: {
           inspectSatChainSlot(state.activeConfig),
         ).catch(swallowSatReadErrorUnlessTimeout),
     });
+  };
   const rememberTargetProgress = (
     cycleId: number,
     progress: Awaited<ReturnType<typeof inspectSatCycleSettlementProgressV2>> | null,
@@ -902,17 +966,23 @@ export function createSatEpochService(params: {
           participantCount,
           persistRuntimeState,
         });
-        const preferredMinerCycleAddress = preferredKeeperMinerCycleAddress({
-          cycleId: targetCycleId,
-          phaseTag: SAT_KEEPER_PHASE.settle,
-          pageIndex,
-          chunkIndex,
-          participantAddresses: minerCycleAccounts,
-        });
+        const preferredMinerCycleAddress = SAT_VNEXT_RUNTIME_SELECTED
+          ? null
+          : preferredKeeperMinerCycleAddress({
+              cycleId: targetCycleId,
+              phaseTag: SAT_KEEPER_PHASE.settle,
+              pageIndex,
+              chunkIndex,
+              participantAddresses: minerCycleAccounts,
+            });
         if (
           !(await canAttempt({
             authority,
             cycleId: targetCycleId,
+            phase: SAT_KEEPER_PHASE.settle,
+            pageIndex,
+            chunkIndex,
+            workAvailableSlot: progress?.settleExclusiveUntilSlot,
             preferredMinerCycleAddress,
             exclusiveUntilSlot: progress?.settleExclusiveUntilSlot,
           }))
@@ -963,7 +1033,9 @@ export function createSatEpochService(params: {
       }
       if (epochPhase(progress, localExpectedPageCount) === "finalize") {
         const finalizePageCount = localExpectedPageCount;
-        const finalizePageIndex = preferredFinalizePageIndex(targetCycleId, finalizePageCount);
+        const finalizePageIndex = SAT_VNEXT_RUNTIME_SELECTED
+          ? 0
+          : preferredFinalizePageIndex(targetCycleId, finalizePageCount);
         const finalizeMinerCycleAccounts = await resolveSettlementMinerCycleAccounts({
           state,
           config: state.activeConfig,
@@ -973,17 +1045,23 @@ export function createSatEpochService(params: {
           participantCount,
           persistRuntimeState,
         });
-        const preferredMinerCycleAddress = preferredKeeperMinerCycleAddress({
-          cycleId: targetCycleId,
-          phaseTag: SAT_KEEPER_PHASE.finalize,
-          pageIndex: finalizePageIndex,
-          chunkIndex: 0,
-          participantAddresses: finalizeMinerCycleAccounts,
-        });
+        const preferredMinerCycleAddress = SAT_VNEXT_RUNTIME_SELECTED
+          ? null
+          : preferredKeeperMinerCycleAddress({
+              cycleId: targetCycleId,
+              phaseTag: SAT_KEEPER_PHASE.finalize,
+              pageIndex: finalizePageIndex,
+              chunkIndex: 0,
+              participantAddresses: finalizeMinerCycleAccounts,
+            });
         if (
           !(await canAttempt({
             authority,
             cycleId: targetCycleId,
+            phase: SAT_KEEPER_PHASE.finalize,
+            pageIndex: 0,
+            chunkIndex: 0,
+            workAvailableSlot: progress?.finalizeExclusiveUntilSlot,
             preferredMinerCycleAddress,
             exclusiveUntilSlot: progress?.finalizeExclusiveUntilSlot,
           }))
@@ -1054,17 +1132,23 @@ export function createSatEpochService(params: {
           participantCount,
           persistRuntimeState,
         });
-        const preferredMinerCycleAddress = preferredKeeperMinerCycleAddress({
-          cycleId: targetCycleId,
-          phaseTag: SAT_KEEPER_PHASE.score,
-          pageIndex,
-          chunkIndex,
-          participantAddresses: minerCycleAccounts,
-        });
+        const preferredMinerCycleAddress = SAT_VNEXT_RUNTIME_SELECTED
+          ? null
+          : preferredKeeperMinerCycleAddress({
+              cycleId: targetCycleId,
+              phaseTag: SAT_KEEPER_PHASE.score,
+              pageIndex,
+              chunkIndex,
+              participantAddresses: minerCycleAccounts,
+            });
         if (
           !(await canAttempt({
             authority,
             cycleId: targetCycleId,
+            phase: SAT_KEEPER_PHASE.score,
+            pageIndex,
+            chunkIndex,
+            workAvailableSlot: progress?.scoreExclusiveUntilSlot,
             preferredMinerCycleAddress,
             exclusiveUntilSlot: progress?.scoreExclusiveUntilSlot,
           }))
@@ -1145,17 +1229,23 @@ export function createSatEpochService(params: {
           participantCount,
           persistRuntimeState,
         });
-        const preferredMinerCycleAddress = preferredKeeperMinerCycleAddress({
-          cycleId: targetCycleId,
-          phaseTag: SAT_KEEPER_PHASE.distribute,
-          pageIndex,
-          chunkIndex,
-          participantAddresses: minerCycleAccounts,
-        });
+        const preferredMinerCycleAddress = SAT_VNEXT_RUNTIME_SELECTED
+          ? null
+          : preferredKeeperMinerCycleAddress({
+              cycleId: targetCycleId,
+              phaseTag: SAT_KEEPER_PHASE.distribute,
+              pageIndex,
+              chunkIndex,
+              participantAddresses: minerCycleAccounts,
+            });
         if (
           !(await canAttempt({
             authority,
             cycleId: targetCycleId,
+            phase: SAT_KEEPER_PHASE.distribute,
+            pageIndex,
+            chunkIndex,
+            workAvailableSlot: progress?.distributeExclusiveUntilSlot,
             preferredMinerCycleAddress,
             exclusiveUntilSlot: progress?.distributeExclusiveUntilSlot,
           }))
@@ -1351,7 +1441,18 @@ export function createSatEpochService(params: {
       await runTick();
     },
     start: async () => {
-      if (!state.activeConfig.enabled) return;
+      if (
+        !shouldMonitorKeeper({
+          miningEnabled: state.activeConfig.enabled,
+          miningWalletAttached: Boolean(state.activeConfig.walletId),
+          chainTimeHealthy: true,
+          dedicatedKeeperEnabled:
+            state.activeConfig.keeperMode === "monitor-only" ||
+            state.activeConfig.keeperMode === "dedicated",
+        })
+      ) {
+        return;
+      }
       if (timer) return;
       stopping = false;
       api.logger.info("[sat-mining] cycle settlement service start");

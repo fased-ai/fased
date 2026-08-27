@@ -3,13 +3,194 @@
   "accountOrderSchema": "sat.account-order.v2",
   "codecs": [
     {
+      "accountOrderKey": "SatBootstrapV2",
+      "action": "bootstrapV2",
+      "active": false,
+      "contractKey": "bootstrapV2",
+      "dataLength": 41,
+      "discriminator": 115,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatOpenCycleV2",
+      "action": "openCycleV2",
+      "active": false,
+      "contractKey": "openCycleV2",
+      "dataLength": 9,
+      "discriminator": 116,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatCommitCycleV2",
+      "action": "commitCycleV2",
+      "active": false,
+      "contractKey": "commitCycleV2",
+      "dataLength": 41,
+      "discriminator": 117,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatCloseCommitPhaseV2",
+      "action": "closeCommitPhaseV2",
+      "active": false,
+      "contractKey": "closeCommitPhaseV2",
+      "dataLength": 9,
+      "discriminator": 118,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatSealCycleEntropyV2",
+      "action": "sealCycleEntropyV2",
+      "active": false,
+      "contractKey": "sealCycleEntropyV2",
+      "dataLength": 9,
+      "discriminator": 119,
+      "executableDispatchBound": true
+    },
+    {
       "accountOrderKey": "SatRevealCycleV2",
       "action": "revealCycleV2",
       "active": false,
       "allocationChannels": 16,
       "contractKey": "revealCycleV2",
       "dataLength": 105,
-      "discriminator": 114
+      "discriminator": 114,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatReleaseUnrevealedCommitV2",
+      "action": "releaseUnrevealedCommitV2",
+      "active": false,
+      "contractKey": "releaseUnrevealedCommitV2",
+      "dataLength": 41,
+      "discriminator": 120,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatAbortEmptyCycleV2",
+      "action": "abortEmptyCycleV2",
+      "active": false,
+      "contractKey": "abortEmptyCycleV2",
+      "dataLength": 9,
+      "discriminator": 121,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatSettleCyclePageV2",
+      "action": "settleCyclePageV2",
+      "active": false,
+      "contractKey": "settleCyclePageV2",
+      "dataLength": 25,
+      "discriminator": 122,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatFinalizeCycleSettlementV2",
+      "action": "finalizeCycleSettlementV2",
+      "active": false,
+      "contractKey": "finalizeCycleSettlementV2",
+      "dataLength": 9,
+      "discriminator": 123,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatScoreCyclePageV2",
+      "action": "scoreCyclePageV2",
+      "active": false,
+      "contractKey": "scoreCyclePageV2",
+      "dataLength": 25,
+      "discriminator": 124,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatDistributeCyclePageV2",
+      "action": "distributeCyclePageV2",
+      "active": false,
+      "contractKey": "distributeCyclePageV2",
+      "dataLength": 25,
+      "discriminator": 125,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatClaimCycleRewardsV2",
+      "action": "claimCycleRewardsV2",
+      "active": false,
+      "contractKey": "claimCycleRewardsV2",
+      "dataLength": 9,
+      "discriminator": 126,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatClaimCycleRewardsBatchV2",
+      "action": "claimCycleRewardsBatchV2",
+      "active": false,
+      "contractKey": "claimCycleRewardsBatchV2",
+      "dataLength": "9+8*n",
+      "discriminator": 127,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatCloseResolvedMinerCycleStateV2",
+      "action": "closeResolvedMinerCycleStateV2",
+      "active": false,
+      "contractKey": "closeResolvedMinerCycleStateV2",
+      "dataLength": 9,
+      "discriminator": 128,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatCloseResolvedCycleRegistryPageV2",
+      "action": "closeResolvedCycleRegistryPageV2",
+      "active": false,
+      "contractKey": "closeResolvedCycleRegistryPageV2",
+      "dataLength": 17,
+      "discriminator": 129,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatCloseResolvedCycleArtifactsV2",
+      "action": "closeResolvedCycleArtifactsV2",
+      "active": false,
+      "contractKey": "closeResolvedCycleArtifactsV2",
+      "dataLength": 9,
+      "discriminator": 130,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatSetVnextEntryEnabled",
+      "action": "setVnextEntryEnabled",
+      "active": false,
+      "contractKey": "setVnextEntryEnabled",
+      "dataLength": 17,
+      "discriminator": 131,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatMigrateAgentRecordV2",
+      "action": "migrateAgentRecordV2",
+      "active": false,
+      "contractKey": "migrateAgentRecordV2",
+      "dataLength": 9,
+      "discriminator": 132,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatSnapshotKeeperCapabilitiesV2",
+      "action": "snapshotKeeperCapabilitiesV2",
+      "active": false,
+      "contractKey": "snapshotKeeperCapabilitiesV2",
+      "dataLength": 17,
+      "discriminator": 133,
+      "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatRecordAgentCycleReceiptV2",
+      "action": "recordAgentCycleReceiptV2",
+      "active": false,
+      "contractKey": "recordAgentCycleReceiptV2",
+      "dataLength": 25,
+      "discriminator": 134,
+      "executableDispatchBound": true
     }
   ],
   "generation": 2,
@@ -21,5 +202,5 @@
       "mode": "read-settle-claim-drain-only"
     }
   },
-  "state": "FROZEN_NOT_ACTIVE"
+  "state": "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED"
 }

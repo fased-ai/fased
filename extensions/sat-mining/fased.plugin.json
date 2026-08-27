@@ -13,6 +13,14 @@
       "drainOnly": {
         "type": "boolean"
       },
+      "keeperMode": {
+        "type": "string",
+        "enum": ["automatic", "monitor-only", "dedicated"]
+      },
+      "keeperWalletId": {
+        "type": "string",
+        "minLength": 1
+      },
       "network": {
         "type": "string",
         "enum": ["local", "devnet", "mainnet-beta"]

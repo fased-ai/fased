@@ -31,6 +31,7 @@ import {
   loadSatBondStakingDistributorLayout,
   loadSatBondStakingPositionLayout,
 } from "./sat-bond-layout.js";
+import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
 const require = createRequire(import.meta.url);
 
@@ -69,6 +70,11 @@ const ACCOUNT_DISCRIMINATOR = {
   satCycleRegistryPage: 135,
   satCycleSettlementProgressV2: 137,
   satMinerCapitalState: 138,
+  satKeeperCapability: 145,
+  satKeeperSnapshot: 146,
+  satCycleStateV2: 149,
+  satMinerCycleStateV2: 150,
+  satCycleSettlementProgressV3: 151,
 } as const;
 
 const ACCOUNT_OFFSET = {
@@ -273,6 +279,7 @@ export type SatMinerCycleView = {
   skillScoreFp?: string;
   rewardWeightFp?: string;
   authority: string;
+  permanentMiningId?: string;
   cycleId: number;
   committedLamports: string;
   submissionTs?: number;
@@ -299,6 +306,7 @@ export type SatMinerCapitalView = {
   lockedLamports: string;
   freeLamports: string;
   activeCommitLamports: string;
+  permanentMiningId?: string;
   firstPendingCycleId?: number;
   lastPendingCycleId?: number;
 };
@@ -412,6 +420,26 @@ export type SatCycleSettlementProgressV2View = {
   distributeExclusiveUntilSlot?: number | undefined;
   keeperBountyPaidLamports?: string | undefined;
   keeperBountyUnpaidLamports?: string | undefined;
+};
+
+export type SatVNextKeeperChainContext = {
+  cycleId: number;
+  cycleSeedHex: string;
+  revealDeadlineSlot: number;
+  snapshot: {
+    cycleId: number;
+    keeperGeneration: number;
+    registryRootHex: string;
+    capabilities: Array<{ address: string; mask: number }>;
+  };
+  capability: {
+    capabilityAddress: string;
+    feePayerPublicKey: string;
+    payoutAuthority: string;
+    registered: boolean;
+    synced: boolean;
+    funded: boolean;
+  } | null;
 };
 
 export type SatTreasuryStateView = {
@@ -921,6 +949,41 @@ export function decodeSatMinerCycle(data: Buffer, address: string): SatMinerCycl
   };
 }
 
+export function decodeSatMinerCycleV2(data: Buffer, address: string): SatMinerCycleView {
+  const body = expectAccountData(
+    data,
+    ACCOUNT_DISCRIMINATOR.satMinerCycleStateV2,
+    "SAT miner cycle state v2",
+  );
+  const baseSat = readU64String(body, 160);
+  const performanceSat = readU64String(body, 168);
+  return {
+    address,
+    placementReturnFp: readU128String(body, 0),
+    benchmarkReturnFp: readU128String(body, 16),
+    skillScoreFp: readU128String(body, 32),
+    rewardWeightFp: readU128String(body, 48),
+    authority: readPubkey(body, 64),
+    permanentMiningId: readPubkey(body, 96),
+    cycleId: readU64Number(body, 128),
+    committedLamports: readU64String(body, 136),
+    submissionTs: readI64Number(body, 144),
+    powerWeightFp: readU64String(body, 152),
+    claimableSatRaw: (BigInt(baseSat) + BigInt(performanceSat)).toString(),
+    claimableDetRebateLamports: readU64String(body, 176),
+    claimablePerfRebateLamports: readU64String(body, 184),
+    claimedSatRaw: (BigInt(readU64String(body, 192)) + BigInt(readU64String(body, 200))).toString(),
+    claimedDetRebateLamports: readU64String(body, 208),
+    claimedPerfRebateLamports: readU64String(body, 216),
+    validParticipation: body.readUInt8(224) === 1,
+    capitalLockReleased: body.readUInt8(225) === 1,
+    commitment: readHash32(body, 232),
+    commitSlot: readU64Number(body, 264),
+    revealSlot: readU64Number(body, 272),
+    lockedCollateralLamports: readU64String(body, 280),
+  };
+}
+
 export function decodeSatMinerCapital(data: Buffer, address: string): SatMinerCapitalView {
   const body = expectAccountData(
     data,
@@ -943,6 +1006,7 @@ export function decodeSatMinerCapital(data: Buffer, address: string): SatMinerCa
       }
     })(),
     activeCommitLamports: readU64String(body, 56),
+    ...(body.readUInt8(0) === 2 ? { permanentMiningId: readPubkey(body, 88) } : {}),
     firstPendingCycleId: readU64Number(body, 64),
     lastPendingCycleId: readU64Number(body, 72),
   };
@@ -1169,6 +1233,84 @@ export function decodeSatCycleSettlementProgressV2(
     distributeExclusiveUntilSlot: readU64Number(body, 1000),
     keeperBountyPaidLamports: readU64String(body, 1008),
     keeperBountyUnpaidLamports: readU64String(body, 1016),
+  };
+}
+
+export function decodeSatCycleSettlementProgressV3(
+  data: Buffer,
+  address: string,
+): SatCycleSettlementProgressV2View {
+  const body = expectAccountData(
+    data,
+    ACCOUNT_DISCRIMINATOR.satCycleSettlementProgressV3,
+    "SAT cycle settlement progress v3",
+  );
+  return {
+    address,
+    cycleId: readU64Number(body, 0),
+    expectedPageCount: body.readUInt16LE(128),
+    processedPageCount: body.readUInt16LE(130),
+    settleChunkIndex: body.readUInt16LE(132),
+    scoredPageCount: body.readUInt16LE(134),
+    scoreChunkIndex: body.readUInt16LE(136),
+    distributedPageCount: body.readUInt16LE(138),
+    distributeChunkIndex: body.readUInt16LE(140),
+    finalized: body.readUInt8(142) === 1,
+    scored: body.readUInt8(143) === 1,
+    settleExclusiveUntilSlot: readU64Number(body, 856),
+    finalizeExclusiveUntilSlot: readU64Number(body, 864),
+    scoreExclusiveUntilSlot: readU64Number(body, 872),
+    distributeExclusiveUntilSlot: readU64Number(body, 880),
+    keeperBountyPaidLamports: readU64String(body, 888),
+    keeperBountyUnpaidLamports: readU64String(body, 912),
+  };
+}
+
+function decodeSatVNextCycleKeeperFields(data: Buffer) {
+  const body = expectAccountData(data, ACCOUNT_DISCRIMINATOR.satCycleStateV2, "SAT cycle v2");
+  return {
+    cycleId: readU64Number(body, 0),
+    cycleSeedHex: readHash32(body, 40),
+    revealDeadlineSlot: readU64Number(body, 352),
+  };
+}
+
+function decodeSatKeeperSnapshot(data: Buffer, address: string) {
+  const body = expectAccountData(
+    data,
+    ACCOUNT_DISCRIMINATOR.satKeeperSnapshot,
+    "SAT keeper snapshot",
+  );
+  const eligibleCount = body.readUInt16LE(40);
+  if (eligibleCount > 256) {
+    throw new Error("SAT keeper snapshot exceeds its canonical capacity");
+  }
+  const capabilities = Array.from({ length: eligibleCount }, (_, index) => ({
+    address: readPubkey(body, 80 + index * 32),
+    mask: body.readUInt8(8_272 + index),
+  }));
+  return {
+    address,
+    cycleId: readU64Number(body, 8),
+    keeperGeneration: body.readUInt16LE(4),
+    registryRootHex: readHash32(body, 48),
+    capabilities,
+  };
+}
+
+export function decodeSatKeeperCapability(data: Buffer, address: string) {
+  const body = expectAccountData(
+    data,
+    ACCOUNT_DISCRIMINATOR.satKeeperCapability,
+    "SAT keeper capability",
+  );
+  return {
+    address,
+    status: body.readUInt8(1),
+    keeperGeneration: body.readUInt16LE(4),
+    capabilityMask: Number(body.readBigUInt64LE(32)),
+    feePayerPublicKey: readPubkey(body, 96),
+    payoutAuthority: readPubkey(body, 128),
   };
 }
 
@@ -2148,7 +2290,10 @@ export async function inspectSatMinerCyclesByAddress(
       let view: SatMinerCycleView | null = null;
       if (record?.data) {
         try {
-          view = decodeSatMinerCycle(record.data, address);
+          view =
+            record.data[0] === ACCOUNT_DISCRIMINATOR.satMinerCycleStateV2
+              ? decodeSatMinerCycleV2(record.data, address)
+              : decodeSatMinerCycle(record.data, address);
         } catch {
           view = null;
         }
@@ -2186,6 +2331,29 @@ export async function inspectSatMinerCapital(
       return account ? decodeSatMinerCapital(account, address.toBase58()) : null;
     },
   );
+}
+
+export async function inspectSatMinerCapitalsByAuthority(
+  _config: SatMiningConfig,
+  params: { authorities: string[] },
+): Promise<Array<SatMinerCapitalView | null>> {
+  const { solana, programId } = await resolveProgramContext(process.env);
+  const addresses = params.authorities.map((authority) =>
+    solana.PublicKey.findProgramAddressSync(
+      [Buffer.from("sat_miner_capital_state"), new solana.PublicKey(authority).toBuffer()],
+      programId,
+    )[0].toBase58(),
+  );
+  const rpc = resolveEffectiveReadRpcConfig();
+  const records = await fetchMultipleAccountRecordsRaw(rpc, addresses, "miner-capital-batch");
+  const expectedOwner = programId.toBase58();
+  return records.map((record, index) => {
+    if (!record?.data) return null;
+    if (record.owner !== expectedOwner) {
+      throw new Error("SAT miner capital has the wrong program owner");
+    }
+    return decodeSatMinerCapital(record.data, addresses[index] ?? "");
+  });
 }
 
 export async function inspectSatMiningStatusAccounts(
@@ -2605,6 +2773,89 @@ export async function inspectSatCycleSettlementProgressV2(
       return account ? decodeSatCycleSettlementProgressV2(account, address.toBase58()) : null;
     },
   );
+}
+
+export async function inspectSatCycleSettlementProgressV3(
+  _config: SatMiningConfig,
+  params: { cycleId: number },
+): Promise<SatCycleSettlementProgressV2View | null> {
+  const { solana, programId } = await resolveProgramContext(process.env);
+  const [address] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from("sat_cycle_settlement_progress_v3"), encodeU64(params.cycleId)],
+    programId,
+  );
+  const rpc = resolveEffectiveReadRpcConfig();
+  const account = await fetchAccountInfoRaw(rpc, address.toBase58(), "settlement-progress-v3");
+  return account ? decodeSatCycleSettlementProgressV3(account, address.toBase58()) : null;
+}
+
+export async function inspectSatVNextKeeperChainContext(
+  _config: SatMiningConfig,
+  params: { cycleId: number; feePayerPublicKey?: string; minimumFeePayerLamports?: string },
+): Promise<SatVNextKeeperChainContext | null> {
+  const { solana, programId } = await resolveProgramContext(process.env);
+  const [cycleAddress] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from("sat_cycle_state_v2"), encodeU64(params.cycleId)],
+    programId,
+  );
+  const [snapshotAddress] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from("sat_keeper_snapshot"), encodeU64(params.cycleId)],
+    programId,
+  );
+  const rpc = resolveEffectiveReadRpcConfig();
+  const [cycleRecord, snapshotRecord] = await fetchMultipleAccountRecordsRaw(
+    rpc,
+    [cycleAddress.toBase58(), snapshotAddress.toBase58()],
+    "vnext-keeper-context",
+  );
+  if (!cycleRecord?.data || !snapshotRecord?.data) return null;
+  const expectedOwner = programId.toBase58();
+  if (cycleRecord.owner !== expectedOwner || snapshotRecord.owner !== expectedOwner) {
+    throw new Error("SAT vNext keeper context has the wrong program owner");
+  }
+  const cycle = decodeSatVNextCycleKeeperFields(cycleRecord.data);
+  const snapshot = decodeSatKeeperSnapshot(snapshotRecord.data, snapshotAddress.toBase58());
+  if (cycle.cycleId !== params.cycleId || snapshot.cycleId !== params.cycleId) {
+    throw new Error("SAT vNext keeper context cycle identity mismatch");
+  }
+  if (snapshot.keeperGeneration !== SAT_VNEXT_INTERFACE.signerCapabilityGeneration) {
+    throw new Error("SAT vNext keeper snapshot generation mismatch");
+  }
+  const capabilityRecords = params.feePayerPublicKey
+    ? await fetchMultipleAccountRecordsRaw(
+        rpc,
+        snapshot.capabilities.map((entry) => entry.address),
+        "vnext-keeper-capability",
+      )
+    : [];
+  let capability: SatVNextKeeperChainContext["capability"] = null;
+  for (const [index, record] of capabilityRecords.entries()) {
+    if (!record?.data) continue;
+    if (record.owner !== expectedOwner) {
+      throw new Error("SAT vNext keeper capability has the wrong program owner");
+    }
+    const entry = snapshot.capabilities[index];
+    if (!entry) continue;
+    const decoded = decodeSatKeeperCapability(record.data, entry.address);
+    if (
+      decoded.feePayerPublicKey === params.feePayerPublicKey &&
+      decoded.status === 1 &&
+      decoded.keeperGeneration === snapshot.keeperGeneration &&
+      (decoded.capabilityMask & entry.mask) === entry.mask
+    ) {
+      const balance = await fetchLamportBalanceRaw(rpc, decoded.feePayerPublicKey);
+      capability = {
+        capabilityAddress: entry.address,
+        feePayerPublicKey: decoded.feePayerPublicKey,
+        payoutAuthority: decoded.payoutAuthority,
+        registered: true,
+        synced: true,
+        funded: balance != null && BigInt(balance) >= BigInt(params.minimumFeePayerLamports ?? "1"),
+      };
+      break;
+    }
+  }
+  return { ...cycle, snapshot, capability };
 }
 
 export async function inspectSatCycleRegistryPage(

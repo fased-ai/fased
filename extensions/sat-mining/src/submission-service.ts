@@ -42,12 +42,19 @@ export type SatSubmissionSemanticContext = {
   intervalStartCycleId?: string;
   registryPageIndex?: string;
   minerAuthorities?: string[];
+  permanentMiningIds?: string[];
   frontCycleIds?: string[];
   backCycleIds?: string[];
 };
 
+export type SatVNextKeeperAction =
+  | "settleCyclePageV2"
+  | "finalizeCycleSettlementV2"
+  | "scoreCyclePageV2"
+  | "distributeCyclePageV2";
+
 export type SatSubmissionInstruction = {
-  action: SatSignerAction;
+  action: SatSignerAction | SatVNextKeeperAction;
   programId: string;
   dataBase64: string;
   satCommitment?: {
@@ -66,6 +73,7 @@ export type SatSubmissionInstruction = {
 
 export type SatSubmissionAction =
   | SatSignerAction
+  | SatVNextKeeperAction
   | "cleanupBatch"
   | "create"
   | "extend"
