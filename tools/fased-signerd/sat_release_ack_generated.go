@@ -39,9 +39,9 @@ var signerSATReleaseAcknowledgementGeneration2 = frozenSATReleaseAcknowledgement
 		Schema:           "SAT-SCHEMA-GEN-002",
 		SignerCapability: "FSD-SIGNER-GEN-002",
 	},
-	InterfaceContractSHA256: "sha256:f3209004d5dd818c5487c2db52b7856a7650fc705c217520e6f1717d401eab80", // pragma: allowlist secret
+	InterfaceContractSHA256: "sha256:b112f2089486560a9e6f10955fda74d4f1771cc2e661329c901c6200a4257040", // pragma: allowlist secret
 	IDLSHA256:               "sha256:295bb24983fefae951c9ae2576d0805f54190a0048e8a3af24e1598f2e880ea5", // pragma: allowlist secret
-	AccountOrderSHA256:      "sha256:717c979224d7f08c3fff76946a9cda0a1d797d359fee28987790bfde12a65737", // pragma: allowlist secret
+	AccountOrderSHA256:      "sha256:28c46db739c523199d5d9b7af93d3513c756ce82ea425cb9656e85171be906a6", // pragma: allowlist secret
 	StateLayoutsSHA256:      "sha256:66b70c10e9522b230ba3bc15da49084215e18602b4f31524c2dd48d18fb7999d", // pragma: allowlist secret
 	SignerCodecsSHA256:      "sha256:66dc7de6cdccc67bd3a07994b24f50e1b7da63f58355ea981a6093d27db12452", // pragma: allowlist secret
 }
