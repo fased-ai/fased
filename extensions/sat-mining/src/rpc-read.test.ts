@@ -97,7 +97,7 @@ describe("SAT RPC diagnostic redaction", () => {
 describe("decodeSatBondStakingDistributor", () => {
   it("exposes rewards quarantined while no stake was active", () => {
     const bondProgram = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq"); // pragma: allowlist secret
-    const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa");
+    const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"); // pragma: allowlist secret
     const [distributor] = PublicKey.findProgramAddressSync(
       [Buffer.from("sat_bond_staking_distributor")],
       bondProgram,
@@ -410,8 +410,8 @@ describe("decodeSatRoundBucket", () => {
 
 describe("Solana pubkey decoding", () => {
   it("decodes the generation-2 permanent identity from miner capital", () => {
-    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
-    const permanentMiningId = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
+    const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9"); // pragma: allowlist secret
+    const permanentMiningId = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2"); // pragma: allowlist secret
     const data = Buffer.alloc(136);
     data[0] = 138;
     const body = data.subarray(8);
@@ -575,7 +575,7 @@ describe("decodeSatBondPosition", () => {
     const authority = new PublicKey("Cow9a67QyCQ1kpJRcq4cc8PDvfiosom7iu9A8U6W52T9");
     const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa");
     const bondVault = new PublicKey("8LvCPwWWBjdQpMX8wZYu2LAvjZmy3t8QKc6yR1Q2MJp2");
-    const bondPosition = new PublicKey("AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt");
+    const bondPosition = new PublicKey("AfHgXjQ4E26hU3hq835ipbteeEXVgxm5ZMfUqdHqFBSt"); // pragma: allowlist secret
     process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
     process.env.FASED_SAT_BOND_PROGRAM_ID = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
     process.env.FASED_SAT_MINT_ADDRESS = mint.toBase58();
@@ -658,7 +658,7 @@ describe("secondary read rpc fallback", () => {
     });
     expect(methods).toEqual(["getAccountInfo"]);
     expect(result).toEqual({
-      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB",
+      address: "4c8wadNoNVAJMpJtQnUAYbJgdE1YyfTpwBCNak1hBuPB", // pragma: allowlist secret
       authority: authority.toBase58(),
       addresses: [entry.toBase58()],
       active: true,
