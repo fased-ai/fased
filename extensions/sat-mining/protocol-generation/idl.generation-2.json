@@ -1497,16 +1497,17 @@
       "accountOrder": [
         "genesis_authority:readonly+signer",
         "payer:writable+signer",
-        "sat_global_state:writable",
+        "legacy_sat_global_state:readonly",
+        "sat_global_state_v2:writable",
         "sat_protocol_generation_state_v2:writable",
-        "treasury:writable",
-        "sat_treasury_state:writable",
-        "sat_registry_reserve:writable",
+        "mint_caller_treasury:writable",
+        "sat_treasury_state_v2:writable",
+        "sat_registry_reserve_v2:writable",
         "system_program:readonly",
         "mint_authority_pda:readonly",
         "sat_mint:readonly",
-        "sat_rebate_vault:writable",
-        "sat_treasury_vault:writable"
+        "sat_rebate_vault_v2:writable",
+        "sat_treasury_vault_v2:writable"
       ],
       "args": [
         {
@@ -1526,12 +1527,12 @@
     {
       "accountOrder": [
         "payer:writable+signer",
-        "sat_global_state:readonly",
+        "sat_global_state_v2:readonly",
         "sat_protocol_generation_state_v2:readonly",
         "sat_cycle_state_v2:writable",
         "sat_cycle_registry_meta:writable",
-        "sat_treasury_state:readonly",
-        "sat_registry_reserve:writable",
+        "sat_treasury_state_v2:readonly",
+        "sat_registry_reserve_v2:writable",
         "system_program:readonly"
       ],
       "args": [
@@ -1617,7 +1618,7 @@
         "sat_miner_cycle_state_v2:writable",
         "sat_miner_capital_state:writable",
         "sat_agent_record:writable",
-        "sat_registry_reserve:writable",
+        "sat_registry_reserve_v2:writable",
         "system_program:readonly"
       ],
       "args": [
@@ -1648,8 +1649,8 @@
         "sat_miner_cycle_state_v2:writable",
         "sat_miner_capital_state:writable",
         "sat_keeper_operating_reserve:writable",
-        "sat_treasury_state:writable",
-        "sat_treasury_vault:writable"
+        "sat_treasury_state_v2:writable",
+        "sat_treasury_vault_v2:writable"
       ],
       "args": [
         {
@@ -1723,14 +1724,14 @@
       "accountOrder": [
         "keeper_fee_payer:writable+signer",
         "keeper_payout_authority:writable",
-        "sat_global_state:writable",
+        "sat_global_state_v2:writable",
         "sat_protocol_generation_state_v2:writable",
         "sat_cycle_state_v2:writable",
         "sat_cycle_settlement_progress_v3:writable",
         "sat_cycle_registry_meta:writable",
-        "sat_treasury_state:writable",
-        "sat_rebate_vault:writable",
-        "sat_treasury_vault:writable",
+        "sat_treasury_state_v2:writable",
+        "sat_rebate_vault_v2:writable",
+        "sat_treasury_vault_v2:writable",
         "bond_staking_distributor:readonly",
         "sat_keeper_snapshot:readonly",
         "sat_keeper_capability:readonly"
@@ -1788,9 +1789,9 @@
         "sat_cycle_state_v2:writable",
         "sat_cycle_registry_page:readonly",
         "sat_cycle_settlement_progress_v3:writable",
-        "sat_treasury_state:writable",
-        "sat_rebate_vault:writable",
-        "sat_treasury_vault:writable",
+        "sat_treasury_state_v2:writable",
+        "sat_rebate_vault_v2:writable",
+        "sat_treasury_vault_v2:writable",
         "sat_keeper_snapshot:readonly",
         "sat_keeper_capability:readonly",
         "sat_miner_cycle_state_v2[]:writable",
@@ -1829,14 +1830,14 @@
       "accountOrder": [
         "authorized_claimer:writable+signer",
         "active_miner_authority:readonly",
-        "sat_global_state:readonly",
+        "sat_global_state_v2:readonly",
         "sat_protocol_generation_state_v2:readonly",
         "sat_cycle_state_v2:readonly",
         "sat_miner_cycle_state_v2:writable",
         "sat_miner_capital_state:writable",
         "sat_agent_record:readonly",
-        "treasury:writable",
-        "sat_treasury_state:writable",
+        "mint_caller_treasury:writable",
+        "sat_treasury_state_v2:writable",
         "mint_authority:writable",
         "sat_mint:writable",
         "fixed_sat_reward_destination:writable",
@@ -1844,7 +1845,7 @@
         "token_program:readonly",
         "associated_token_program:readonly",
         "sat_mint_program:readonly",
-        "sat_rebate_vault:writable"
+        "sat_rebate_vault_v2:writable"
       ],
       "args": [
         {
@@ -1861,10 +1862,10 @@
       "accountOrder": [
         "authorized_claimer:writable+signer",
         "active_miner_authority:readonly",
-        "sat_global_state:readonly",
+        "sat_global_state_v2:readonly",
         "sat_protocol_generation_state_v2:readonly",
-        "treasury:writable",
-        "sat_treasury_state:writable",
+        "mint_caller_treasury:writable",
+        "sat_treasury_state_v2:writable",
         "sat_miner_capital_state:writable",
         "sat_agent_record:readonly",
         "mint_authority:writable",
@@ -1876,7 +1877,7 @@
         "token_program:readonly",
         "associated_token_program:readonly",
         "sat_mint_program:readonly",
-        "sat_rebate_vault:writable"
+        "sat_rebate_vault_v2:writable"
       ],
       "args": [
         {
@@ -1924,7 +1925,7 @@
         "sat_cycle_state_v2:readonly",
         "sat_cycle_registry_meta:writable",
         "sat_cycle_registry_page:writable",
-        "sat_registry_reserve:writable"
+        "sat_registry_reserve_v2:writable"
       ],
       "args": [
         {
@@ -1947,7 +1948,7 @@
         "sat_cycle_state_v2:writable",
         "sat_cycle_settlement_progress_v3:writable",
         "sat_cycle_registry_meta:writable",
-        "sat_registry_reserve:writable"
+        "sat_registry_reserve_v2:writable"
       ],
       "args": [
         {
@@ -1963,7 +1964,7 @@
     {
       "accountOrder": [
         "program_admin:readonly+signer",
-        "sat_global_state:readonly",
+        "sat_global_state_v2:readonly",
         "sat_protocol_generation_state_v2:writable"
       ],
       "args": [
