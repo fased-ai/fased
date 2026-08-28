@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { verifySatVNextRuntimeActivationRecords, type SatRpcAccountRecord } from "./rpc-read.js";
 
-const MINING_PROGRAM = "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF";
+const MINING_PROGRAM = "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF"; // pragma: allowlist secret
+const ECONOMICS_DIGEST_HEX = "ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c"; // pragma: allowlist secret
 
 function protocolRecord(): NonNullable<SatRpcAccountRecord> {
   const data = Buffer.alloc(184);
@@ -11,10 +12,7 @@ function protocolRecord(): NonNullable<SatRpcAccountRecord> {
   body[1] = 1;
   body[3] = 1;
   Buffer.from("0100020002000300030003000300020002000200", "hex").copy(body, 4);
-  Buffer.from("ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c", "hex").copy(
-    body,
-    32,
-  );
+  Buffer.from(ECONOMICS_DIGEST_HEX, "hex").copy(body, 32);
   body.writeBigUInt64LE(2n, 104);
   return { owner: MINING_PROGRAM, data };
 }

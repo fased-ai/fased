@@ -40,6 +40,11 @@ void test("Fased binds the finalized SAT-DEP-0006 activation to generation-2 cod
   );
   assert.match(accountOrder, /keeper_payout_authority:writable/u);
   assert.equal(generated.match(/pragma: allowlist secret/gu)?.length, 5);
+  const activationGenerated = fs.readFileSync(
+    path.join(root, "extensions/sat-mining/src/vnext-activation-manifest.ts"),
+    "utf8",
+  );
+  assert.equal(activationGenerated.match(/pragma: allowlist secret/gu)?.length, 17);
 
   const releaseContract = fs.readFileSync(
     path.join(root, "src", "mining", "sat-vnext-release-contract.generated.ts"),

@@ -57,7 +57,7 @@ describe("SAT Mining state identity", () => {
     const release = {
       state: "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED",
       interfaceContractSha256:
-        "sha256:dd562e2f98671d737e9698ad0faec5d2d1154d43d1e3354607f782133a668586",
+        "sha256:dd562e2f98671d737e9698ad0faec5d2d1154d43d1e3354607f782133a668586", // pragma: allowlist secret
     };
     const exact = {
       FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0006",
