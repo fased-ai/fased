@@ -65,6 +65,7 @@ export const SAT_MINING_METHOD_INVENTORY = [
   { method: "sat.setActiveCommit", kind: "mutation" },
   { method: "sat.setMinerProfile", kind: "mutation" },
   { method: "sat.settleCyclePage", kind: "mutation" },
+  { method: "sat.snapshotKeeperCapabilities", kind: "mutation" },
   { method: "sat.startMining", kind: "mutation" },
   { method: "sat.status", kind: "read" },
   { method: "sat.stopMining", kind: "mutation" },

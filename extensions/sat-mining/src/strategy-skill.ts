@@ -59,33 +59,7 @@ export type SatSkillStrategyInput = SatBaseStrategyInput & {
 };
 
 export type SatSkillStrategyOutput = {
-  allocationFp: [
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-  ];
+  allocationFp: number[];
   rationale: string;
   modelId?: string;
   skillId?: string;
@@ -135,7 +109,7 @@ function buildSkillPrompt(input: SatSkillStrategyInput) {
         closeTs: input.roundCloseTs,
       },
       constraints: {
-        buckets: 25,
+        channels: input.channelCount ?? 25,
         normalization: 1_000_000,
         nonNegative: true,
         integerOnly: true,
@@ -145,7 +119,7 @@ function buildSkillPrompt(input: SatSkillStrategyInput) {
         fallback: "if uncertain, prefer a balanced valid allocation with center weighting",
         compilerIntent:
           input.strategyPreset ??
-          "use the configured risk mode and return a valid dense 25-bucket allocation",
+          `use the configured risk mode and return a valid dense ${input.channelCount ?? 25}-channel allocation`,
       },
       liveContext,
     },
@@ -281,7 +255,7 @@ export async function computeSkillStrategy(
             role: "user",
             content:
               "You are choosing a SAT mining strategy for one round. Return only valid JSON. " +
-              "Output exactly 25 integer allocation bucket weights, all >= 0, sum exactly 1000000, and include a short rationale string.\n\n" +
+              `Output exactly ${input.channelCount ?? 25} integer allocation channel weights, all >= 0, sum exactly 1000000, and include a short rationale string.\n\n` +
               prompt,
             timestamp: Date.now(),
           },
@@ -305,7 +279,7 @@ export async function computeSkillStrategy(
       throw new Error("Skill model returned empty text output");
     }
     const parsed = parsedText ? JSON.parse(parsedText) : {};
-    output = validateSatStrategyOutput(parsed);
+    output = validateSatStrategyOutput(parsed, input.channelCount ?? 25);
   } catch (error) {
     fallbackUsed = true;
     fallbackReason = classifySkillFallback({ error, rawText, controller });
@@ -319,12 +293,15 @@ export async function computeSkillStrategy(
       rawPreview: rawText.trim().slice(0, 200) || undefined,
     });
     const rotated = rotateAllocation(base.allocationFp, input.riskMode === "aggressive" ? 3 : 1);
-    output = validateSatStrategyOutput({
-      allocationFp: rotated,
-      rationale: `Skill strategy wrapper selected a deterministic ${input.strategyPreset ?? input.riskMode} fallback variant after model output was unavailable or invalid.`,
-      confidence: "medium",
-      suggestedDifficulty: input.riskMode === "aggressive" ? "high" : "medium",
-    });
+    output = validateSatStrategyOutput(
+      {
+        allocationFp: rotated,
+        rationale: `Skill strategy wrapper selected a deterministic ${input.strategyPreset ?? input.riskMode} fallback variant after model output was unavailable or invalid.`,
+        confidence: "medium",
+        suggestedDifficulty: input.riskMode === "aggressive" ? "high" : "medium",
+      },
+      input.channelCount ?? 25,
+    );
   } finally {
     clearTimeout(timeout);
   }

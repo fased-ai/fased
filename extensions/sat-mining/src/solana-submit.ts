@@ -27,6 +27,7 @@ import {
   inspectSatChainSlot,
   inspectSatCycle,
   inspectSatCycleRegistryMeta,
+  inspectSatMinerCapital,
   inspectSatMinerCapitalsByAuthority,
   inspectSatMinerCyclesByAddress,
   inspectSatVNextRuntimeActivation,
@@ -43,7 +44,12 @@ import {
   type SatSubmissionInstruction,
   type SatSubmissionSignerOperation,
 } from "./submission-service.js";
-import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
+import { assertSatVNextAccountShape } from "./vnext-account-shape.js";
+import {
+  encodeSatVNextRevealData,
+  SAT_VNEXT_INTERFACE,
+  type SatVNextAction,
+} from "./vnext-interface-manifest.js";
 
 export { runWithSatSubmissionWorkflow } from "./submission-service.js";
 
@@ -61,6 +67,20 @@ const SAT_VALIDATOR_ATTESTATION_SEED = "sat_validator_attestation";
 const SAT_DISPUTE_SEED = "sat_dispute";
 const SAT_GLOBAL_STATE_SEED = "sat_global_state";
 const SAT_CYCLE_STATE_SEED = "sat_cycle_state";
+const SAT_GLOBAL_STATE_V2_SEED = "sat_global_state_v2";
+const SAT_PROTOCOL_GENERATION_STATE_V2_SEED = "sat_protocol_generation_state_v2";
+const SAT_CYCLE_STATE_V2_SEED = "sat_cycle_state_v2";
+const SAT_MINER_CYCLE_STATE_V2_SEED = "sat_miner_cycle_state_v2";
+const SAT_CYCLE_SETTLEMENT_PROGRESS_V3_SEED = "sat_cycle_settlement_progress_v3";
+const SAT_REGISTRY_RESERVE_V2_SEED = "sat_registry_reserve_v2";
+const SAT_TREASURY_STATE_V2_SEED = "sat_treasury_state_v2";
+const SAT_REBATE_VAULT_V2_SEED = "sat_rebate_vault_v2";
+const SAT_TREASURY_VAULT_V2_SEED = "sat_treasury_vault_v2";
+const SAT_AGENT_RECORD_SEED = "sat_agent_record";
+const SAT_KEEPER_OPERATING_RESERVE_SEED = "sat_keeper_operating_reserve";
+const SAT_AGENT_REWARD_REMAINDER_V2_SEED = "sat_agent_reward_remainder_v2";
+const SAT_KEEPER_SNAPSHOT_SEED = "sat_keeper_snapshot";
+const SAT_KEEPER_REGISTRY_SEED = "sat_keeper_registry";
 const SAT_CYCLE_REGISTRY_META_SEED = "sat_cycle_registry_meta";
 const SAT_CYCLE_REGISTRY_PAGE_SEED = "sat_cycle_registry_page";
 const SAT_MINER_CYCLE_STATE_SEED = "sat_miner_cycle_state";
@@ -68,6 +88,7 @@ const SAT_MINER_CAPITAL_STATE_SEED = "sat_miner_capital_state";
 const SAT_BOND_POSITION_SEED = "sat_bond_position";
 const SAT_BOND_TIER_POLICY_SEED = "sat_bond_tier_policy";
 const SAT_BOND_STAKING_DISTRIBUTOR_SEED = "sat_bond_staking_distributor";
+const SAT_BOND_EPOCH_DISTRIBUTOR_V3_SEED = "sat_bond_epoch_distributor_v3";
 const SAT_BOND_STAKING_POSITION_SEED = "sat_bond_staking_position";
 const SAT_TREASURY_STATE_SEED = "sat_treasury_state";
 const SAT_REGISTRY_RESERVE_SEED = "sat_registry_reserve";
@@ -86,6 +107,21 @@ const SAT_LOOKUP_TABLE_EXTEND_CHUNK_SIZE = 20;
 const IX = SAT_INSTRUCTION_DISCRIMINATORS;
 
 const BOND_IX = SAT_BOND_INSTRUCTION_DISCRIMINATORS;
+
+function isSatVNextRuntime(): boolean {
+  return SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2";
+}
+
+function buildSatVNextFixedData(action: SatVNextAction, payload: Buffer): Buffer {
+  const codec = SAT_VNEXT_INTERFACE.actionCodecs[action];
+  const data = Buffer.concat([Buffer.from([codec.discriminator]), payload]);
+  if (typeof codec.dataLength === "number" && data.length !== codec.dataLength) {
+    throw new Error(
+      `SAT vNext ${action} payload must contain ${codec.dataLength} bytes, got ${data.length}`,
+    );
+  }
+  return data;
+}
 
 function satSubmitDebug(message: string) {
   if (String(process.env.FASED_SAT_SUBMIT_DEBUG ?? "").trim() === "1") {
@@ -303,7 +339,7 @@ export async function resolveSatValidatorAuthority(_config: SatMiningConfig) {
 }
 
 type SatInstructionSubmitSpec = {
-  actionOverride?: keyof typeof SAT_VNEXT_INTERFACE.keeperCodecs;
+  actionOverride?: SatVNextAction;
   data: Buffer;
   keeperFeePayer?: boolean;
   satCommitment?: {
@@ -417,6 +453,23 @@ export async function resolveSatCommitmentSignerContext(activeConfig: SatMiningC
   };
 }
 
+async function resolveVNextPermanentMiningId(
+  config: SatMiningConfig,
+  authority: string,
+): Promise<string> {
+  const capital = await inspectSatMinerCapital(config, { authority });
+  const permanentMiningId = String(capital?.permanentMiningId ?? "").trim();
+  if (capital?.version !== 2 || !permanentMiningId) {
+    throw new Error(
+      "SAT generation 2 requires miner capital bound to one pre-provisioned permanent AgentRecord",
+    );
+  }
+  if (config.permanentMiningId?.trim() && config.permanentMiningId.trim() !== permanentMiningId) {
+    throw new Error("SAT generation 2 permanentMiningId does not match the on-chain miner binding");
+  }
+  return permanentMiningId;
+}
+
 async function buildLocalSignerInstructionRequest(params: {
   solana: SolanaModuleLike;
   signer: import("@solana/web3.js").PublicKey;
@@ -431,11 +484,15 @@ async function buildLocalSignerInstructionRequest(params: {
   const bondProgramId = resolveSatBondProgramIdFromEnv(params.env).trim() || undefined;
   const codec = params.spec.actionOverride
     ? (() => {
-        const generated = SAT_VNEXT_INTERFACE.keeperCodecs[params.spec.actionOverride];
-        if (
-          params.spec.data[0] !== generated.discriminator ||
-          params.spec.data.length !== generated.dataLength
-        ) {
+        const generated = SAT_VNEXT_INTERFACE.actionCodecs[params.spec.actionOverride];
+        const expectedLength = generated.dataLength;
+        const validLength =
+          typeof expectedLength === "number"
+            ? params.spec.data.length === expectedLength
+            : expectedLength === "9+8*n" &&
+              params.spec.data.length >= 17 &&
+              (params.spec.data.length - 9) % 8 === 0;
+        if (params.spec.data[0] !== generated.discriminator || !validLength) {
           throw new Error(
             `SAT vNext ${params.spec.actionOverride} payload disagrees with the generated codec`,
           );
@@ -448,6 +505,9 @@ async function buildLocalSignerInstructionRequest(params: {
         bondProgramId,
         data: params.spec.data,
       });
+  if (params.spec.actionOverride) {
+    assertSatVNextAccountShape(params.spec.actionOverride, keys);
+  }
   satSubmitDebug(
     `[sat-submit-debug] action=${codec.action} data_len=${params.spec.data.length} disc=${params.spec.data[0] ?? -1} keys=${keys.length}`,
   );
@@ -866,9 +926,33 @@ async function submitInstructionViaLocalSigner(
   } & SatInstructionSubmitSpec,
 ): Promise<SatInstructionSubmitResult> {
   const context = await prepareLocalSignerSubmitContext(params.cfg, params.env);
+  let instructionSigner = context.signer;
+  if (params.keeperFeePayer === true && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+    if (!context.walletId) {
+      throw new Error("SAT generation-2 keeper work requires an explicit keeper wallet binding");
+    }
+    const capability = await callLocalSocketSigner<{
+      miningWalletId?: string;
+      feePayerWalletId?: string;
+      feePayerPublicKey?: string;
+      state?: string;
+    }>(context.socketPath, {
+      op: "v2.keeperFeePayer.get",
+      walletId: context.walletId,
+    });
+    if (
+      capability.state !== "ready" ||
+      capability.miningWalletId !== context.walletId ||
+      !capability.feePayerWalletId?.trim() ||
+      !capability.feePayerPublicKey?.trim()
+    ) {
+      throw new Error("native signer returned an invalid generation-2 keeper capability");
+    }
+    instructionSigner = new context.solana.PublicKey(capability.feePayerPublicKey);
+  }
   const baseRequest = await buildLocalSignerInstructionRequest({
     solana: context.solana,
-    signer: context.signer,
+    signer: instructionSigner,
     env: context.effectiveEnv,
     spec: params,
   });
@@ -946,6 +1030,8 @@ async function submitInstruction(
   return await submitInstructionViaLocalSigner({
     cfg: params.cfg,
     env: effectiveEnv,
+    actionOverride: params.actionOverride,
+    keeperFeePayer: params.keeperFeePayer,
     data: params.data,
     satCommitment: params.satCommitment,
     programId: params.programId,
@@ -1236,9 +1322,9 @@ function buildClaimUnallocatedStakingRewardsData(env: NodeJS.ProcessEnv = proces
   return Buffer.from([BOND_IX.claimUnallocatedStakingRewards]);
 }
 
-function encodeAllocationFp(allocationFp: number[]): Buffer {
-  if (allocationFp.length !== 25) {
-    throw new Error(`expected 25 allocation buckets, got ${allocationFp.length}`);
+function encodeAllocationFp(allocationFp: number[], expectedChannels: 16 | 25): Buffer {
+  if (allocationFp.length !== expectedChannels) {
+    throw new Error(`expected ${expectedChannels} allocation channels, got ${allocationFp.length}`);
   }
   return Buffer.concat(
     allocationFp.map((value) => {
@@ -1263,11 +1349,15 @@ export function buildSatCycleCommitment(params: {
   if (params.nonce.length !== 32) {
     throw new Error(`expected 32-byte cycle nonce, got ${params.nonce.length}`);
   }
-  const allocation = encodeAllocationFp(params.allocationFp);
+  const channelCount = params.allocationFp.length;
+  if (channelCount !== 16 && channelCount !== 25) {
+    throw new Error(`expected 16 or 25 allocation channels, got ${channelCount}`);
+  }
+  const allocation = encodeAllocationFp(params.allocationFp, channelCount);
   return createHash("sha256")
     .update(
       Buffer.concat([
-        Buffer.from("sat-cycle-commit-v1"),
+        Buffer.from(channelCount === 16 ? "sat-cycle-commit-v2" : "sat-cycle-commit-v1"),
         encodePubkey(params.programId ?? SAT_PROGRAM_ID()),
         encodePubkey(params.authority),
         encodeU64(params.cycleId),
@@ -1306,7 +1396,7 @@ function buildRevealCycleData(params: { cycleId: number; nonce: Buffer; allocati
     Buffer.from([IX.revealCycle]),
     encodeU64(params.cycleId),
     params.nonce,
-    encodeAllocationFp(params.allocationFp),
+    encodeAllocationFp(params.allocationFp, 25),
     Buffer.alloc(4),
   ]);
 }
@@ -1726,18 +1816,25 @@ export async function submitSatTopUpRegistryReserve(
 
 export async function submitSatOpenCycle(_config: SatMiningConfig, params: { cycleId: number }) {
   const cfg = loadConfigForSatRuntime(_config);
+  const vnext = isSatVNextRuntime();
   return submitInstruction({
     cfg,
     env: process.env,
-    data: buildOpenCycleData(params),
+    ...(vnext ? { actionOverride: "openCycleV2" as const, keeperFeePayer: true } : {}),
+    data: vnext
+      ? buildSatVNextFixedData("openCycleV2", encodeU64(params.cycleId))
+      : buildOpenCycleData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const [satGlobalState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_GLOBAL_STATE_SEED)],
+        [Buffer.from(vnext ? SAT_GLOBAL_STATE_V2_SEED : SAT_GLOBAL_STATE_SEED)],
         programId,
       );
       const [satCycleState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_CYCLE_STATE_SEED), encodeU64(params.cycleId)],
+        [
+          Buffer.from(vnext ? SAT_CYCLE_STATE_V2_SEED : SAT_CYCLE_STATE_SEED),
+          encodeU64(params.cycleId),
+        ],
         programId,
       );
       const [satCycleRegistryMeta] = solana.PublicKey.findProgramAddressSync(
@@ -1745,34 +1842,46 @@ export async function submitSatOpenCycle(_config: SatMiningConfig, params: { cyc
         programId,
       );
       const [satTreasuryState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_TREASURY_STATE_SEED)],
+        [Buffer.from(vnext ? SAT_TREASURY_STATE_V2_SEED : SAT_TREASURY_STATE_SEED)],
         programId,
       );
       const [satRegistryReserve] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_REGISTRY_RESERVE_SEED)],
+        [Buffer.from(vnext ? SAT_REGISTRY_RESERVE_V2_SEED : SAT_REGISTRY_RESERVE_SEED)],
         programId,
       );
       const [satTreasuryVault] = solana.PublicKey.findProgramAddressSync(
         [Buffer.from(SAT_TREASURY_VAULT_SEED)],
         programId,
       );
-      return [
+      const accounts = [
         { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satGlobalState, isSigner: false, isWritable: true },
+        { pubkey: satGlobalState, isSigner: false, isWritable: !vnext },
+      ];
+      if (vnext) {
+        const [protocolGeneration] = solana.PublicKey.findProgramAddressSync(
+          [Buffer.from(SAT_PROTOCOL_GENERATION_STATE_V2_SEED)],
+          programId,
+        );
+        accounts.push({ pubkey: protocolGeneration, isSigner: false, isWritable: false });
+      }
+      accounts.push(
         { pubkey: satCycleState, isSigner: false, isWritable: true },
         { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
-        { pubkey: satTreasuryState, isSigner: false, isWritable: true },
+        { pubkey: satTreasuryState, isSigner: false, isWritable: !vnext },
         { pubkey: satRegistryReserve, isSigner: false, isWritable: true },
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
-        { pubkey: satTreasuryVault, isSigner: false, isWritable: true },
-      ];
+      );
+      if (!vnext) {
+        accounts.push({ pubkey: satTreasuryVault, isSigner: false, isWritable: true });
+      }
+      return accounts;
     },
   });
 }
 
 export async function submitSatInitMinerCapital(
   _config: SatMiningConfig,
-  params: { authority?: string },
+  params: { authority?: string; permanentMiningId?: string },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
   const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
@@ -1783,6 +1892,12 @@ export async function submitSatInitMinerCapital(
       effectiveEnv,
       "local-socket-signer returned no Solana address for SAT miner capital authority",
     ));
+  const permanentMiningId = params.permanentMiningId?.trim() || _config.permanentMiningId?.trim();
+  if (isSatVNextRuntime() && !permanentMiningId) {
+    throw new Error(
+      "SAT generation 2 miner initialization requires the pre-provisioned permanentMiningId bound to its AgentRecord",
+    );
+  }
   return submitInstruction({
     cfg,
     env: effectiveEnv,
@@ -1794,6 +1909,20 @@ export async function submitSatInitMinerCapital(
         [Buffer.from(SAT_MINER_CAPITAL_STATE_SEED), authorityKey.toBuffer()],
         programId,
       );
+      if (isSatVNextRuntime()) {
+        const permanentMiningKey = new solana.PublicKey(permanentMiningId!);
+        const [agentRecord] = solana.PublicKey.findProgramAddressSync(
+          [Buffer.from(SAT_AGENT_RECORD_SEED), permanentMiningKey.toBuffer()],
+          programId,
+        );
+        return [
+          { pubkey: signer, isSigner: true, isWritable: true },
+          { pubkey: permanentMiningKey, isSigner: false, isWritable: false },
+          { pubkey: agentRecord, isSigner: false, isWritable: false },
+          { pubkey: satMinerCapitalState, isSigner: false, isWritable: true },
+          { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+        ];
+      }
       return [
         { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satMinerCapitalState, isSigner: false, isWritable: true },
@@ -2254,12 +2383,73 @@ export async function submitSatCommitCycle(
 ) {
   const cfg = loadConfigForSatRuntime(_config);
   const commitment = Buffer.from(params.commitmentHex, "hex");
+  const vnext = isSatVNextRuntime();
   return submitInstruction({
     cfg,
     env: process.env,
-    data: buildCommitCycleData({ cycleId: params.cycleId, commitment }),
+    ...(vnext ? { actionOverride: "commitCycleV2" as const } : {}),
+    data: vnext
+      ? buildSatVNextFixedData(
+          "commitCycleV2",
+          Buffer.concat([encodeU64(params.cycleId), commitment]),
+        )
+      : buildCommitCycleData({ cycleId: params.cycleId, commitment }),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
+      if (vnext) {
+        const permanentMiningId = new solana.PublicKey(
+          await resolveVNextPermanentMiningId(_config, signer.toBase58()),
+        );
+        const derive = (seed: string, ...extra: Buffer[]) =>
+          solana.PublicKey.findProgramAddressSync([Buffer.from(seed), ...extra], programId)[0];
+        return {
+          keys: [
+            { pubkey: signer, isSigner: true, isWritable: true },
+            { pubkey: permanentMiningId, isSigner: false, isWritable: false },
+            {
+              pubkey: derive(SAT_AGENT_RECORD_SEED, permanentMiningId.toBuffer()),
+              isSigner: false,
+              isWritable: false,
+            },
+            {
+              pubkey: derive(SAT_PROTOCOL_GENERATION_STATE_V2_SEED),
+              isSigner: false,
+              isWritable: false,
+            },
+            {
+              pubkey: derive(SAT_CYCLE_STATE_V2_SEED, encodeU64(params.cycleId)),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(
+                SAT_MINER_CYCLE_STATE_V2_SEED,
+                signer.toBuffer(),
+                encodeU64(params.cycleId),
+              ),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_MINER_CAPITAL_STATE_SEED, signer.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_KEEPER_OPERATING_RESERVE_SEED, permanentMiningId.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_AGENT_REWARD_REMAINDER_V2_SEED, permanentMiningId.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          context: { permanentMiningIds: [permanentMiningId.toBase58()] },
+        };
+      }
       const [satCycleState] = solana.PublicKey.findProgramAddressSync(
         [Buffer.from(SAT_CYCLE_STATE_SEED), encodeU64(params.cycleId)],
         programId,
@@ -2288,18 +2478,34 @@ async function submitSatCyclePhaseInstruction(
   params: { cycleId: number; phase: "close" | "seal"; intervalStartCycleId?: number },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
+  const vnext = isSatVNextRuntime();
   return submitInstruction({
     cfg,
     env: process.env,
     keeperFeePayer: true,
-    data:
-      params.phase === "close"
+    ...(vnext
+      ? {
+          actionOverride:
+            params.phase === "close"
+              ? ("closeCommitPhaseV2" as const)
+              : ("sealCycleEntropyV2" as const),
+        }
+      : {}),
+    data: vnext
+      ? buildSatVNextFixedData(
+          params.phase === "close" ? "closeCommitPhaseV2" : "sealCycleEntropyV2",
+          encodeU64(params.cycleId),
+        )
+      : params.phase === "close"
         ? buildCloseCommitPhaseData(params)
         : buildSealCycleEntropyData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const [satCycleState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_CYCLE_STATE_SEED), encodeU64(params.cycleId)],
+        [
+          Buffer.from(vnext ? SAT_CYCLE_STATE_V2_SEED : SAT_CYCLE_STATE_SEED),
+          encodeU64(params.cycleId),
+        ],
         programId,
       );
       const accounts = [
@@ -2308,6 +2514,19 @@ async function submitSatCyclePhaseInstruction(
       ];
       let intervalStartCycleIdForSigner: number | undefined;
       if (params.phase === "seal") {
+        if (vnext) {
+          const [snapshot] = solana.PublicKey.findProgramAddressSync(
+            [Buffer.from(SAT_KEEPER_SNAPSHOT_SEED), encodeU64(params.cycleId)],
+            programId,
+          );
+          accounts.push({ pubkey: snapshot, isSigner: false, isWritable: false });
+          accounts.push({
+            pubkey: new solana.PublicKey(SLOT_HASHES_SYSVAR_ID),
+            isSigner: false,
+            isWritable: false,
+          });
+          return accounts;
+        }
         const cycle =
           params.intervalStartCycleId == null
             ? await inspectSatCycle(_config, { cycleId: params.cycleId })
@@ -2343,6 +2562,46 @@ async function submitSatCyclePhaseInstruction(
   });
 }
 
+export async function submitSatSnapshotKeeperCapabilities(
+  _config: SatMiningConfig,
+  params: { cycleId: number; expectedRegistryRevision: number },
+) {
+  if (!isSatVNextRuntime()) {
+    throw new Error("SAT keeper capability snapshots are generation-2 only");
+  }
+  const cfg = loadConfigForSatRuntime(_config);
+  return submitInstruction({
+    cfg,
+    env: process.env,
+    keeperFeePayer: true,
+    actionOverride: "snapshotKeeperCapabilitiesV2",
+    data: buildSatVNextFixedData(
+      "snapshotKeeperCapabilitiesV2",
+      Buffer.concat([encodeU64(params.cycleId), encodeU64(params.expectedRegistryRevision)]),
+    ),
+    accountResolver: async (solana, signer) => {
+      const programId = new solana.PublicKey(SAT_PROGRAM_ID());
+      const derive = (seed: string, ...parts: Buffer[]) =>
+        solana.PublicKey.findProgramAddressSync([Buffer.from(seed), ...parts], programId)[0];
+      return [
+        { pubkey: signer, isSigner: true, isWritable: true },
+        {
+          pubkey: derive(SAT_CYCLE_STATE_V2_SEED, encodeU64(params.cycleId)),
+          isSigner: false,
+          isWritable: false,
+        },
+        { pubkey: derive(SAT_KEEPER_REGISTRY_SEED), isSigner: false, isWritable: false },
+        {
+          pubkey: derive(SAT_KEEPER_SNAPSHOT_SEED, encodeU64(params.cycleId)),
+          isSigner: false,
+          isWritable: true,
+        },
+        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+      ];
+    },
+  });
+}
+
 export async function submitSatCloseCommitPhase(
   _config: SatMiningConfig,
   params: { cycleId: number },
@@ -2362,14 +2621,77 @@ export async function submitSatReleaseUnrevealedCommit(
   params: { cycleId: number; minerAuthority: string },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
+  const vnext = isSatVNextRuntime();
+  const capital = vnext
+    ? await inspectSatMinerCapital(_config, { authority: params.minerAuthority })
+    : null;
+  const permanentMiningId = String(capital?.permanentMiningId ?? "").trim();
+  if (vnext && (capital?.version !== 2 || !permanentMiningId)) {
+    throw new Error("SAT generation-2 release requires the miner's permanent mining identity");
+  }
   return submitInstruction({
     cfg,
     env: process.env,
     keeperFeePayer: true,
-    data: buildReleaseUnrevealedCommitData(params),
+    ...(vnext ? { actionOverride: "releaseUnrevealedCommitV2" as const } : {}),
+    data: vnext
+      ? buildSatVNextFixedData(
+          "releaseUnrevealedCommitV2",
+          Buffer.concat([
+            encodeU64(params.cycleId),
+            new (await loadSolanaWeb3()).PublicKey(permanentMiningId).toBuffer(),
+          ]),
+        )
+      : buildReleaseUnrevealedCommitData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const minerAuthority = new solana.PublicKey(params.minerAuthority);
+      const permanentIdentity = vnext ? new solana.PublicKey(permanentMiningId) : null;
+      const derive = (seed: string, ...parts: Buffer[]) =>
+        solana.PublicKey.findProgramAddressSync([Buffer.from(seed), ...parts], programId)[0];
+      if (vnext && permanentIdentity) {
+        return {
+          keys: [
+            { pubkey: signer, isSigner: true, isWritable: false },
+            { pubkey: permanentIdentity, isSigner: false, isWritable: false },
+            {
+              pubkey: derive(SAT_AGENT_RECORD_SEED, permanentIdentity.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_CYCLE_STATE_V2_SEED, encodeU64(params.cycleId)),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(
+                SAT_MINER_CYCLE_STATE_V2_SEED,
+                minerAuthority.toBuffer(),
+                encodeU64(params.cycleId),
+              ),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_MINER_CAPITAL_STATE_SEED, minerAuthority.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_KEEPER_OPERATING_RESERVE_SEED, permanentIdentity.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            { pubkey: derive(SAT_TREASURY_STATE_V2_SEED), isSigner: false, isWritable: true },
+            { pubkey: derive(SAT_TREASURY_VAULT_V2_SEED), isSigner: false, isWritable: true },
+          ],
+          context: {
+            minerAuthorities: [minerAuthority.toBase58()],
+            permanentMiningIds: [permanentIdentity.toBase58()],
+          },
+        };
+      }
       const [satCycleState] = solana.PublicKey.findProgramAddressSync(
         [Buffer.from(SAT_CYCLE_STATE_SEED), encodeU64(params.cycleId)],
         programId,
@@ -2411,15 +2733,22 @@ export async function submitSatAbortEmptyCycle(
   params: { cycleId: number },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
+  const vnext = isSatVNextRuntime();
   return submitInstruction({
     cfg,
     env: process.env,
     keeperFeePayer: true,
-    data: buildAbortEmptyCycleData(params),
+    ...(vnext ? { actionOverride: "abortEmptyCycleV2" as const } : {}),
+    data: vnext
+      ? buildSatVNextFixedData("abortEmptyCycleV2", encodeU64(params.cycleId))
+      : buildAbortEmptyCycleData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const [satCycleState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_CYCLE_STATE_SEED), encodeU64(params.cycleId)],
+        [
+          Buffer.from(vnext ? SAT_CYCLE_STATE_V2_SEED : SAT_CYCLE_STATE_SEED),
+          encodeU64(params.cycleId),
+        ],
         programId,
       );
       const [satCycleRegistryMeta] = solana.PublicKey.findProgramAddressSync(
@@ -2451,13 +2780,19 @@ export async function submitSatRevealCycle(
       },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
+  const vnext = isSatVNextRuntime();
   const signerOwned = "commitmentReference" in params;
   const nonce = signerOwned ? Buffer.alloc(32) : Buffer.from(params.nonceBase64, "base64");
-  const allocationFp = signerOwned ? new Array(25).fill(0) : params.allocationFp;
+  const allocationFp = signerOwned
+    ? new Array(vnext ? SAT_VNEXT_INTERFACE.strategyChannels : 25).fill(0)
+    : params.allocationFp;
   return submitInstruction({
     cfg,
     env: process.env,
-    data: buildRevealCycleData({ cycleId: params.cycleId, nonce, allocationFp }),
+    ...(vnext ? { actionOverride: "revealCycleV2" as const } : {}),
+    data: vnext
+      ? encodeSatVNextRevealData({ cycleId: BigInt(params.cycleId), nonce, allocationFp })
+      : buildRevealCycleData({ cycleId: params.cycleId, nonce, allocationFp }),
     ...(signerOwned
       ? {
           satCommitment: {
@@ -2470,6 +2805,71 @@ export async function submitSatRevealCycle(
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const pageIndex = await resolveSatCycleRegistryPageIndex(_config, params.cycleId);
+      if (vnext) {
+        const permanentMiningId = new solana.PublicKey(
+          await resolveVNextPermanentMiningId(_config, signer.toBase58()),
+        );
+        const derive = (seed: string, ...extra: Buffer[]) =>
+          solana.PublicKey.findProgramAddressSync([Buffer.from(seed), ...extra], programId)[0];
+        return {
+          keys: [
+            { pubkey: signer, isSigner: true, isWritable: true },
+            {
+              pubkey: derive(SAT_CYCLE_STATE_V2_SEED, encodeU64(params.cycleId)),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_CYCLE_REGISTRY_META_SEED, encodeU64(params.cycleId)),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(
+                SAT_CYCLE_REGISTRY_PAGE_SEED,
+                encodeU64(params.cycleId),
+                encodeU64(pageIndex),
+              ),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_CYCLE_SETTLEMENT_PROGRESS_V3_SEED, encodeU64(params.cycleId)),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(
+                SAT_MINER_CYCLE_STATE_V2_SEED,
+                signer.toBuffer(),
+                encodeU64(params.cycleId),
+              ),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_MINER_CAPITAL_STATE_SEED, signer.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_AGENT_RECORD_SEED, permanentMiningId.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_REGISTRY_RESERVE_V2_SEED),
+              isSigner: false,
+              isWritable: true,
+            },
+            { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          context: {
+            registryPageIndex: String(pageIndex),
+            permanentMiningIds: [permanentMiningId.toBase58()],
+          },
+        };
+      }
       const cycle =
         params.intervalStartCycleId == null
           ? await inspectSatCycle(_config, { cycleId: params.cycleId })
@@ -2646,15 +3046,19 @@ async function submitSatVNextKeeperWork(
           context,
         };
       }
-      const treasuryState = derive(SAT_TREASURY_STATE_SEED);
+      const treasuryState = derive(SAT_TREASURY_STATE_V2_SEED);
       if (action === "finalizeCycleSettlementV2") {
-        const globalState = derive(SAT_GLOBAL_STATE_SEED);
-        const protocolGeneration = derive("sat_protocol_generation_state_v2");
+        const globalState = derive(SAT_GLOBAL_STATE_V2_SEED);
+        const protocolGeneration = derive(SAT_PROTOCOL_GENERATION_STATE_V2_SEED);
         const bondProgramId = new solana.PublicKey(
           resolveSatBondProgramIdFromEnv(resolveSatEffectiveEnv(cfg, process.env)),
         );
         const bondDistributor = solana.PublicKey.findProgramAddressSync(
-          [Buffer.from(SAT_BOND_STAKING_DISTRIBUTOR_SEED)],
+          [Buffer.from(SAT_BOND_EPOCH_DISTRIBUTOR_V3_SEED)],
+          bondProgramId,
+        )[0];
+        const bondTierPolicy = solana.PublicKey.findProgramAddressSync(
+          [Buffer.from(SAT_BOND_TIER_POLICY_SEED)],
           bondProgramId,
         )[0];
         return [
@@ -2666,15 +3070,16 @@ async function submitSatVNextKeeperWork(
           { pubkey: progress, isSigner: false, isWritable: true },
           { pubkey: registryMeta, isSigner: false, isWritable: true },
           { pubkey: treasuryState, isSigner: false, isWritable: true },
-          { pubkey: derive(SAT_REBATE_VAULT_SEED), isSigner: false, isWritable: true },
-          { pubkey: derive(SAT_TREASURY_VAULT_SEED), isSigner: false, isWritable: true },
+          { pubkey: derive(SAT_REBATE_VAULT_V2_SEED), isSigner: false, isWritable: true },
+          { pubkey: derive(SAT_TREASURY_VAULT_V2_SEED), isSigner: false, isWritable: true },
           { pubkey: bondDistributor, isSigner: false, isWritable: false },
+          { pubkey: bondTierPolicy, isSigner: false, isWritable: false },
           { pubkey: snapshot, isSigner: false, isWritable: false },
           { pubkey: capability, isSigner: false, isWritable: false },
         ];
       }
-      const rebateVault = derive(SAT_REBATE_VAULT_SEED);
-      const treasuryVault = derive(SAT_TREASURY_VAULT_SEED);
+      const rebateVault = derive(SAT_REBATE_VAULT_V2_SEED);
+      const treasuryVault = derive(SAT_TREASURY_VAULT_V2_SEED);
       const authorities = minerAuthorities.map((authority) => new solana.PublicKey(authority));
       const capitals = await inspectSatMinerCapitalsByAuthority(config, {
         authorities: minerAuthorities,
@@ -3190,12 +3595,84 @@ export async function submitSatClaimCycleRewards(
   params: { cycleId: number },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
+  const vnext = isSatVNextRuntime();
   return submitInstruction({
     cfg,
     env: process.env,
-    data: buildClaimCycleRewardsData(params),
+    ...(vnext ? { actionOverride: "claimCycleRewardsV2" as const } : {}),
+    data: vnext
+      ? buildSatVNextFixedData("claimCycleRewardsV2", encodeU64(params.cycleId))
+      : buildClaimCycleRewardsData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
+      const derive = (seed: string, ...parts: Buffer[]) =>
+        solana.PublicKey.findProgramAddressSync([Buffer.from(seed), ...parts], programId)[0];
+      if (vnext) {
+        const permanentMiningId = new solana.PublicKey(
+          await resolveVNextPermanentMiningId(_config, signer.toBase58()),
+        );
+        const mintProgramId = new solana.PublicKey(SAT_MINT_PROGRAM_ID());
+        const mint = new solana.PublicKey(SAT_MINT_ADDRESS());
+        const [mintAuthority] = solana.PublicKey.findProgramAddressSync(
+          [Buffer.from("authority")],
+          mintProgramId,
+        );
+        return {
+          keys: [
+            { pubkey: signer, isSigner: true, isWritable: true },
+            { pubkey: signer, isSigner: false, isWritable: false },
+            { pubkey: derive(SAT_GLOBAL_STATE_V2_SEED), isSigner: false, isWritable: false },
+            {
+              pubkey: derive(SAT_PROTOCOL_GENERATION_STATE_V2_SEED),
+              isSigner: false,
+              isWritable: false,
+            },
+            {
+              pubkey: derive(SAT_CYCLE_STATE_V2_SEED, encodeU64(params.cycleId)),
+              isSigner: false,
+              isWritable: false,
+            },
+            {
+              pubkey: derive(
+                SAT_MINER_CYCLE_STATE_V2_SEED,
+                signer.toBuffer(),
+                encodeU64(params.cycleId),
+              ),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_MINER_CAPITAL_STATE_SEED, signer.toBuffer()),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: derive(SAT_AGENT_RECORD_SEED, permanentMiningId.toBuffer()),
+              isSigner: false,
+              isWritable: false,
+            },
+            { pubkey: derive("treasury"), isSigner: false, isWritable: true },
+            { pubkey: derive(SAT_TREASURY_STATE_V2_SEED), isSigner: false, isWritable: true },
+            { pubkey: mintAuthority, isSigner: false, isWritable: true },
+            { pubkey: mint, isSigner: false, isWritable: true },
+            {
+              pubkey: deriveAssociatedTokenAddress(solana, signer, mint),
+              isSigner: false,
+              isWritable: true,
+            },
+            { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+            { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
+            {
+              pubkey: new solana.PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
+              isSigner: false,
+              isWritable: false,
+            },
+            { pubkey: mintProgramId, isSigner: false, isWritable: false },
+            { pubkey: derive(SAT_REBATE_VAULT_V2_SEED), isSigner: false, isWritable: true },
+          ],
+          context: { permanentMiningIds: [permanentMiningId.toBase58()] },
+        };
+      }
       const [satGlobalState] = solana.PublicKey.findProgramAddressSync(
         [Buffer.from(SAT_GLOBAL_STATE_SEED)],
         programId,
@@ -3263,12 +3740,95 @@ export async function submitSatClaimCycleRewardsBatch(
   params: { cycleIds: number[] },
 ) {
   const cfg = loadConfigForSatRuntime(_config);
+  const vnext = isSatVNextRuntime();
+  if (params.cycleIds.length > 255) {
+    throw new Error("SAT cycle reward batch cannot exceed 255 cycles");
+  }
   return submitInstruction({
     cfg,
     env: process.env,
-    data: buildClaimCycleRewardsBatchData(params),
+    ...(vnext ? { actionOverride: "claimCycleRewardsBatchV2" as const } : {}),
+    data: vnext
+      ? buildSatVNextFixedData(
+          "claimCycleRewardsBatchV2",
+          Buffer.concat([
+            Buffer.from([params.cycleIds.length]),
+            Buffer.alloc(7),
+            ...params.cycleIds.map(encodeU64),
+          ]),
+        )
+      : buildClaimCycleRewardsBatchData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
+      const derive = (seed: string, ...parts: Buffer[]) =>
+        solana.PublicKey.findProgramAddressSync([Buffer.from(seed), ...parts], programId)[0];
+      if (vnext) {
+        const permanentMiningId = new solana.PublicKey(
+          await resolveVNextPermanentMiningId(_config, signer.toBase58()),
+        );
+        const mintProgramId = new solana.PublicKey(SAT_MINT_PROGRAM_ID());
+        const mint = new solana.PublicKey(SAT_MINT_ADDRESS());
+        const [mintAuthority] = solana.PublicKey.findProgramAddressSync(
+          [Buffer.from("authority")],
+          mintProgramId,
+        );
+        const accounts = [
+          { pubkey: signer, isSigner: true, isWritable: true },
+          { pubkey: signer, isSigner: false, isWritable: false },
+          { pubkey: derive(SAT_GLOBAL_STATE_V2_SEED), isSigner: false, isWritable: false },
+          {
+            pubkey: derive(SAT_PROTOCOL_GENERATION_STATE_V2_SEED),
+            isSigner: false,
+            isWritable: false,
+          },
+          { pubkey: derive("treasury"), isSigner: false, isWritable: true },
+          { pubkey: derive(SAT_TREASURY_STATE_V2_SEED), isSigner: false, isWritable: true },
+          {
+            pubkey: derive(SAT_MINER_CAPITAL_STATE_SEED, signer.toBuffer()),
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: derive(SAT_AGENT_RECORD_SEED, permanentMiningId.toBuffer()),
+            isSigner: false,
+            isWritable: false,
+          },
+          { pubkey: mintAuthority, isSigner: false, isWritable: true },
+          { pubkey: mint, isSigner: false, isWritable: true },
+          {
+            pubkey: deriveAssociatedTokenAddress(solana, signer, mint),
+            isSigner: false,
+            isWritable: true,
+          },
+        ];
+        for (const cycleId of params.cycleIds) {
+          accounts.push({
+            pubkey: derive(SAT_CYCLE_STATE_V2_SEED, encodeU64(cycleId)),
+            isSigner: false,
+            isWritable: false,
+          });
+          accounts.push({
+            pubkey: derive(SAT_MINER_CYCLE_STATE_V2_SEED, signer.toBuffer(), encodeU64(cycleId)),
+            isSigner: false,
+            isWritable: true,
+          });
+        }
+        accounts.push(
+          { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+          { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
+          {
+            pubkey: new solana.PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
+            isSigner: false,
+            isWritable: false,
+          },
+          { pubkey: mintProgramId, isSigner: false, isWritable: false },
+          { pubkey: derive(SAT_REBATE_VAULT_V2_SEED), isSigner: false, isWritable: true },
+        );
+        return {
+          keys: accounts,
+          context: { permanentMiningIds: [permanentMiningId.toBase58()] },
+        };
+      }
       const [satGlobalState] = solana.PublicKey.findProgramAddressSync(
         [Buffer.from(SAT_GLOBAL_STATE_SEED)],
         programId,
@@ -3550,22 +4110,32 @@ export async function submitSatRetargetUnlock(
   });
 }
 
-function buildCloseResolvedMinerCycleStateSpec(params: {
-  cycleId: number;
-  authority: string;
-}): SatInstructionSubmitSpec {
+function buildCloseResolvedMinerCycleStateSpec(
+  params: {
+    cycleId: number;
+    authority: string;
+  },
+  config?: SatMiningConfig,
+): SatInstructionSubmitSpec {
+  const vnext = isSatVNextRuntime();
   return {
-    data: buildCloseResolvedMinerCycleStateData(params),
+    ...(vnext ? { actionOverride: "closeResolvedMinerCycleStateV2" as const } : {}),
+    data: vnext
+      ? buildSatVNextFixedData("closeResolvedMinerCycleStateV2", encodeU64(params.cycleId))
+      : buildCloseResolvedMinerCycleStateData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const minerAuthority = new solana.PublicKey(params.authority);
       const [satCycleState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_CYCLE_STATE_SEED), encodeU64(params.cycleId)],
+        [
+          Buffer.from(vnext ? SAT_CYCLE_STATE_V2_SEED : SAT_CYCLE_STATE_SEED),
+          encodeU64(params.cycleId),
+        ],
         programId,
       );
       const [satMinerCycleState] = solana.PublicKey.findProgramAddressSync(
         [
-          Buffer.from(SAT_MINER_CYCLE_STATE_SEED),
+          Buffer.from(vnext ? SAT_MINER_CYCLE_STATE_V2_SEED : SAT_MINER_CYCLE_STATE_SEED),
           minerAuthority.toBuffer(),
           encodeU64(params.cycleId),
         ],
@@ -3579,14 +4149,35 @@ function buildCloseResolvedMinerCycleStateSpec(params: {
         [Buffer.from(SAT_CYCLE_REGISTRY_META_SEED), encodeU64(params.cycleId)],
         programId,
       );
-      return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satCycleState, isSigner: false, isWritable: true },
+      const accounts = [
+        { pubkey: signer, isSigner: true, isWritable: !vnext },
+        { pubkey: satCycleState, isSigner: false, isWritable: !vnext },
         { pubkey: minerAuthority, isSigner: false, isWritable: true },
         { pubkey: satMinerCycleState, isSigner: false, isWritable: true },
         { pubkey: satMinerCapitalState, isSigner: false, isWritable: true },
-        { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
       ];
+      let permanentMiningId: InstanceType<SolanaModuleLike["PublicKey"]> | null = null;
+      if (vnext) {
+        if (!config) throw new Error("SAT generation-2 cleanup requires runtime config");
+        permanentMiningId = new solana.PublicKey(
+          await resolveVNextPermanentMiningId(config, params.authority),
+        );
+        accounts.push({
+          pubkey: solana.PublicKey.findProgramAddressSync(
+            [Buffer.from(SAT_AGENT_RECORD_SEED), permanentMiningId.toBuffer()],
+            programId,
+          )[0],
+          isSigner: false,
+          isWritable: false,
+        });
+      }
+      accounts.push({ pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true });
+      return vnext && permanentMiningId
+        ? {
+            keys: accounts,
+            context: { permanentMiningIds: [permanentMiningId.toBase58()] },
+          }
+        : accounts;
     },
   };
 }
@@ -3595,12 +4186,22 @@ function buildCloseResolvedCycleRegistryPageSpec(params: {
   cycleId: number;
   pageIndex: number;
 }): SatInstructionSubmitSpec {
+  const vnext = isSatVNextRuntime();
   return {
-    data: buildCloseResolvedCycleRegistryPageData(params),
+    ...(vnext ? { actionOverride: "closeResolvedCycleRegistryPageV2" as const } : {}),
+    data: vnext
+      ? buildSatVNextFixedData(
+          "closeResolvedCycleRegistryPageV2",
+          Buffer.concat([encodeU64(params.cycleId), encodeU64(params.pageIndex)]),
+        )
+      : buildCloseResolvedCycleRegistryPageData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const [satCycleState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_CYCLE_STATE_SEED), encodeU64(params.cycleId)],
+        [
+          Buffer.from(vnext ? SAT_CYCLE_STATE_V2_SEED : SAT_CYCLE_STATE_SEED),
+          encodeU64(params.cycleId),
+        ],
         programId,
       );
       const [satCycleRegistryMeta] = solana.PublicKey.findProgramAddressSync(
@@ -3616,12 +4217,12 @@ function buildCloseResolvedCycleRegistryPageSpec(params: {
         programId,
       );
       const [satRegistryReserve] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_REGISTRY_RESERVE_SEED)],
+        [Buffer.from(vnext ? SAT_REGISTRY_RESERVE_V2_SEED : SAT_REGISTRY_RESERVE_SEED)],
         programId,
       );
       return [
-        { pubkey: signer, isSigner: true, isWritable: true },
-        { pubkey: satCycleState, isSigner: false, isWritable: true },
+        { pubkey: signer, isSigner: true, isWritable: !vnext },
+        { pubkey: satCycleState, isSigner: false, isWritable: !vnext },
         { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
         { pubkey: satCycleRegistryPage, isSigner: false, isWritable: true },
         { pubkey: satRegistryReserve, isSigner: false, isWritable: true },
@@ -3633,16 +4234,28 @@ function buildCloseResolvedCycleRegistryPageSpec(params: {
 function buildCloseResolvedCycleArtifactsSpec(params: {
   cycleId: number;
 }): SatInstructionSubmitSpec {
+  const vnext = isSatVNextRuntime();
   return {
-    data: buildCloseResolvedCycleArtifactsData(params),
+    ...(vnext ? { actionOverride: "closeResolvedCycleArtifactsV2" as const } : {}),
+    data: vnext
+      ? buildSatVNextFixedData("closeResolvedCycleArtifactsV2", encodeU64(params.cycleId))
+      : buildCloseResolvedCycleArtifactsData(params),
     accountResolver: async (solana, signer) => {
       const programId = new solana.PublicKey(SAT_PROGRAM_ID());
       const [satCycleState] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_CYCLE_STATE_SEED), encodeU64(params.cycleId)],
+        [
+          Buffer.from(vnext ? SAT_CYCLE_STATE_V2_SEED : SAT_CYCLE_STATE_SEED),
+          encodeU64(params.cycleId),
+        ],
         programId,
       );
       const [satCycleSettlementProgress] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from("sat_cycle_settlement_progress_v2"), encodeU64(params.cycleId)],
+        [
+          Buffer.from(
+            vnext ? SAT_CYCLE_SETTLEMENT_PROGRESS_V3_SEED : "sat_cycle_settlement_progress_v2",
+          ),
+          encodeU64(params.cycleId),
+        ],
         programId,
       );
       const [satCycleRegistryMeta] = solana.PublicKey.findProgramAddressSync(
@@ -3650,11 +4263,11 @@ function buildCloseResolvedCycleArtifactsSpec(params: {
         programId,
       );
       const [satRegistryReserve] = solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_REGISTRY_RESERVE_SEED)],
+        [Buffer.from(vnext ? SAT_REGISTRY_RESERVE_V2_SEED : SAT_REGISTRY_RESERVE_SEED)],
         programId,
       );
       return [
-        { pubkey: signer, isSigner: true, isWritable: true },
+        { pubkey: signer, isSigner: true, isWritable: !vnext },
         { pubkey: satCycleState, isSigner: false, isWritable: true },
         { pubkey: satCycleSettlementProgress, isSigner: false, isWritable: true },
         { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
@@ -3672,7 +4285,7 @@ export async function submitSatCloseResolvedMinerCycleState(
   return submitInstruction({
     cfg,
     env: process.env,
-    ...buildCloseResolvedMinerCycleStateSpec(params),
+    ...buildCloseResolvedMinerCycleStateSpec(params, _config),
   });
 }
 
@@ -3720,7 +4333,7 @@ export async function submitSatCloseResolvedCleanupBatch(
     instructions: items.map((item) => {
       switch (item.kind) {
         case "minerCycleState":
-          return buildCloseResolvedMinerCycleStateSpec(item);
+          return buildCloseResolvedMinerCycleStateSpec(item, _config);
         case "cycleRegistryPage":
           return buildCloseResolvedCycleRegistryPageSpec(item);
         case "cycleArtifacts":

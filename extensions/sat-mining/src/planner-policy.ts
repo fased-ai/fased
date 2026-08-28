@@ -6,8 +6,13 @@ import type {
   SatPlannerPolicyMode,
 } from "./audit-store.js";
 import type { SatMiningConfig } from "./config.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
+import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
-const SAT_MIN_ENTRY_LAMPORTS = 250_000_000n;
+const SAT_MIN_ENTRY_LAMPORTS =
+  SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+    ? 250_000_000n
+    : BigInt(SAT_VNEXT_INTERFACE.economics.cycle.directEligibilityLamports);
 const SAT_COMMIT_STEP_LAMPORTS = 25_000_000n;
 const SAT_RATIO_FP_SCALE = 1_000_000n;
 const SCORE_LAMPORT_PENALTY = 1_000_000n;

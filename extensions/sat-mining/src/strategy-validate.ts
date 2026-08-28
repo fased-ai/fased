@@ -1,31 +1,5 @@
 export type SatValidatedStrategyOutput = {
-  allocationFp: [
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-  ];
+  allocationFp: number[];
   rationale: string;
   confidence?: "low" | "medium" | "high";
   suggestedDifficulty?: "low" | "medium" | "high" | "very-high";
@@ -37,7 +11,10 @@ function fail(reason: string): never {
   throw new Error(`invalid SAT strategy output: ${reason}`);
 }
 
-export function validateSatStrategyOutput(value: unknown): SatValidatedStrategyOutput {
+export function validateSatStrategyOutput(
+  value: unknown,
+  expectedChannels: 16 | 25 = 25,
+): SatValidatedStrategyOutput {
   const raw =
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
@@ -46,8 +23,8 @@ export function validateSatStrategyOutput(value: unknown): SatValidatedStrategyO
   if (!Array.isArray(raw.allocationFp)) {
     fail("allocationFp must be an array");
   }
-  if (raw.allocationFp.length !== 25) {
-    fail("allocationFp must contain exactly 25 allocation buckets");
+  if (raw.allocationFp.length !== expectedChannels) {
+    fail(`allocationFp must contain exactly ${expectedChannels} strategy channels`);
   }
   const allocationFp = raw.allocationFp.map((entry, index) => {
     if (!Number.isInteger(entry)) {
@@ -79,7 +56,7 @@ export function validateSatStrategyOutput(value: unknown): SatValidatedStrategyO
       : undefined;
 
   return {
-    allocationFp: allocationFp as SatValidatedStrategyOutput["allocationFp"],
+    allocationFp,
     rationale,
     confidence,
     suggestedDifficulty,

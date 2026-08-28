@@ -78,6 +78,95 @@ func TestSignerV2SATGeneratedManifestAndSemanticValidatorsAreComplete(t *testing
 	}
 }
 
+func TestSignerV2Generation2ActionsHaveSemanticValidators(t *testing.T) {
+	wallet, program := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
+	identity, authority := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
+	for action, generated := range signerSATCodecsGeneration2 {
+		if action == "bootstrapV2" || action == "setVnextEntryEnabled" || action == "migrateAgentRecordV2" || action == "recordAgentCycleReceiptV2" || action == "claimProtocolDistributorSatV2" {
+			continue
+		}
+		t.Run(action, func(t *testing.T) {
+			length := generated.DataLength
+			if length < 0 {
+				length = 17
+			}
+			data := make([]byte, length)
+			data[0] = generated.Discriminator
+			if action == "claimCycleRewardsBatchV2" {
+				data[1] = 1
+			}
+			if action == "releaseUnrevealedCommitV2" {
+				copy(data[9:41], identity[:])
+			}
+			accountCount := len(strings.Split(generated.AccountShape, ",")) + 10
+			accounts := make(solana.AccountMetaSlice, accountCount)
+			for index := range accounts {
+				accounts[index] = &solana.AccountMeta{PublicKey: solana.NewWallet().PublicKey()}
+			}
+			context := &signerSATContextV2{}
+			switch action {
+			case "commitCycleV2", "claimCycleRewardsV2", "claimCycleRewardsBatchV2", "closeResolvedMinerCycleStateV2":
+				context.PermanentMiningIDs = []string{identity.String()}
+			case "releaseUnrevealedCommitV2":
+				context.PermanentMiningIDs = []string{identity.String()}
+				context.MinerAuthorities = []string{authority.String()}
+			case "revealCycleV2":
+				context.RegistryPageIndex = "0"
+				context.PermanentMiningIDs = []string{identity.String()}
+			case "settleCyclePageV2", "scoreCyclePageV2", "distributeCyclePageV2":
+				context.MinerAuthorities = []string{authority.String()}
+				context.PermanentMiningIDs = []string{identity.String()}
+			default:
+				context = nil
+			}
+			instruction := normalizedSATInstructionV2{
+				Wire:    signerSATInstructionV2{Action: action, Context: context},
+				Program: program, Data: data, Accounts: accounts,
+				Codec: signerSATCodecV2{Action: action},
+			}
+			if err := validateSATSemanticsV2(instruction, wallet); err != nil && strings.Contains(err.Error(), "has no semantic validator") {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSignerV2Generation2InitMinerCapitalBindsAgentRecord(t *testing.T) {
+	wallet := solana.NewWallet().PublicKey()
+	program := solana.NewWallet().PublicKey()
+	permanentMiningID := solana.NewWallet().PublicKey()
+	agentRecord := satTestPDA(t, program, []byte("sat_agent_record"), permanentMiningID[:])
+	capital := satTestPDA(t, program, []byte("sat_miner_capital_state"), wallet[:])
+	data := make([]byte, 33)
+	data[0] = signerSATCodecsV2["initMinerCapital"].Discriminator
+	copy(data[1:], wallet[:])
+	input := signerSATInstructionV2{
+		Action: "initMinerCapital", ProgramID: program.String(),
+		DataBase64: base64.StdEncoding.EncodeToString(data),
+		Keys: []signerSATAccountV2{
+			{Pubkey: wallet.String(), IsSigner: true, IsWritable: true},
+			{Pubkey: permanentMiningID.String()},
+			{Pubkey: agentRecord.String()},
+			{Pubkey: capital.String(), IsWritable: true},
+			{Pubkey: solana.SystemProgramID.String()},
+		},
+	}
+	normalized, err := normalizeSATInstructionV2(input, wallet)
+	if err != nil {
+		t.Fatalf("normalize generation-2 init miner capital: %v", err)
+	}
+	if err := validateSATInstructionV2(normalized, wallet); err != nil {
+		t.Fatalf("validate generation-2 init miner capital: %v", err)
+	}
+	tampered := input
+	tampered.Keys = append([]signerSATAccountV2(nil), input.Keys...)
+	tampered.Keys[2].Pubkey = solana.NewWallet().PublicKey().String()
+	if _, err = normalizeSATInstructionV2(tampered, wallet); err == nil ||
+		!strings.Contains(err.Error(), "agent record") {
+		t.Fatalf("tampered AgentRecord was not rejected: %v", err)
+	}
+}
+
 func satTestAccount(key solana.PublicKey, signer, writable bool) signerSATAccountV2 {
 	return signerSATAccountV2{Pubkey: key.String(), IsSigner: signer, IsWritable: writable}
 }

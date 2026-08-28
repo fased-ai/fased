@@ -210,6 +210,37 @@ describe("computeSkillStrategy", () => {
     expect(result.fallbackUsed).toBe(false);
   });
 
+  it("requests and validates the activated 16-channel strategy width", async () => {
+    completeSimple.mockResolvedValue({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            allocationFp: new Array(16).fill(62_500),
+            rationale: "sixteen channels",
+          }),
+        },
+      ],
+    });
+    const { computeSkillStrategy } = await import("./strategy-skill.js");
+
+    const result = await computeSkillStrategy({
+      riskMode: "balanced",
+      epochId: 1,
+      microRoundId: 1,
+      roundOpenTs: 1,
+      roundCloseTs: 60,
+      channelCount: 16,
+      useAgentDefaultModel: true,
+      maxDecisionLatencyMs: 1000,
+    });
+
+    expect(result.allocationFp).toHaveLength(16);
+    expect(String(completeSimple.mock.calls[0]?.[1]?.messages?.[0]?.content ?? "")).toContain(
+      "exactly 16 integer allocation channel weights",
+    );
+  });
+
   it("classifies JSON parse failures", async () => {
     completeSimple.mockResolvedValue({
       content: [{ type: "text", text: '{"allocationFp":[1,2,3],"rationale":' }],

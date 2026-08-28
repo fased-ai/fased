@@ -308,9 +308,13 @@ export async function executeTypedSatIntent(params: {
   const satCommitment = params.instruction?.satCommitment;
   if (
     satCommitment &&
-    (params.action !== "revealCycle" || params.instructions != null || params.lookupTable != null)
+    ((params.action !== "revealCycle" && params.action !== "revealCycleV2") ||
+      params.instructions != null ||
+      params.lookupTable != null)
   ) {
-    throw new Error("signer-owned SAT commitment references are valid only for one revealCycle");
+    throw new Error(
+      "signer-owned SAT commitment references are valid only for one revealCycle generation",
+    );
   }
   const isVaultBond =
     !isLookupTable &&

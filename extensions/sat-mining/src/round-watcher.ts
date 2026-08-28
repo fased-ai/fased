@@ -26,6 +26,7 @@ import {
   inspectSatRegistryReserveLamports,
   inspectSatRentExemptionLamports,
   inspectSatTreasuryVaultLamports,
+  inspectSatVNextKeeperChainContext,
 } from "./rpc-read.js";
 import {
   getOrCreateRoundExecutionState,
@@ -47,10 +48,17 @@ import {
 import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
 import { computeMiningStrategy } from "./strategy-engine.js";
 import type { SatSkillLiveContext } from "./strategy-skill.js";
+import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
 const SAT_CYCLE_SECONDS = SAT_PROTOCOL_CONSTANTS.cycleSeconds;
-const SAT_CYCLE_EROSION_PPM = SAT_PROTOCOL_CONSTANTS.cycleErosionPpm;
-const SAT_MIN_ENTRY_LAMPORTS = SAT_PROTOCOL_CONSTANTS.minimumEntryLamports;
+const SAT_CYCLE_EROSION_PPM =
+  SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+    ? SAT_PROTOCOL_CONSTANTS.cycleErosionPpm
+    : BigInt(SAT_VNEXT_INTERFACE.economics.economics.erosionPpm);
+const SAT_MIN_ENTRY_LAMPORTS =
+  SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+    ? SAT_PROTOCOL_CONSTANTS.minimumEntryLamports
+    : SAT_VNEXT_INTERFACE.economics.cycle.directEligibilityLamports;
 const SAT_DEFAULT_RESERVE_LAMPORTS = 150_000_000n;
 const SAT_DEFAULT_FEE_BUFFER_LAMPORTS = 250_000n;
 const SAT_MAX_PENDING_CYCLE_BACKLOG = 2;
@@ -1496,6 +1504,41 @@ export function createSatRoundWatcherService(params: {
           Math.max(1_000, Math.min(10_000, (commitDeadlineTs - nowSec) * 1_000 + 500)),
         );
         return;
+      }
+      if (onChainCycle.entropyTargetSlot == null || onChainCycle.entropyTargetSlot <= 0) {
+        await runSatGatewayMethod({
+          api,
+          method: "sat.closeCommitPhase",
+          payload: { cycleId },
+        });
+        execution.entropyTargetPinned = true;
+        await persistRuntimeState?.();
+        markWorkerWaiting(
+          state,
+          "roundWatcher",
+          `cycle ${cycleId} pinned its future entropy target`,
+        );
+        scheduleWorkerNextRun(state, "roundWatcher", 500);
+        return;
+      }
+      if (SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+        const keeperContext = await withRoundWatcherTimeout("keeper snapshot", () =>
+          inspectSatVNextKeeperChainContext(state.activeConfig, { cycleId }),
+        ).catch(() => null);
+        if (!keeperContext) {
+          await runSatGatewayMethod({
+            api,
+            method: "sat.snapshotKeeperCapabilities",
+            payload: { cycleId },
+          });
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${cycleId} froze its pre-entropy keeper capability snapshot`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", 500);
+          return;
+        }
       }
       if (execution.entropyTargetPinned !== true) {
         execution.entropyTargetPinned = true;

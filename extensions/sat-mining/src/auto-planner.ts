@@ -21,8 +21,13 @@ import type {
   SatMinerCycleView,
 } from "./rpc-read.js";
 import type { SatPlannerDecision } from "./runtime.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
+import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
-const SAT_DEFAULT_MIN_ENTRY_LAMPORTS = 250_000_000n;
+const SAT_DEFAULT_MIN_ENTRY_LAMPORTS =
+  SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+    ? 250_000_000n
+    : BigInt(SAT_VNEXT_INTERFACE.economics.cycle.directEligibilityLamports);
 const SAT_DEFAULT_RESERVE_LAMPORTS = 150_000_000n;
 const SAT_DEFAULT_FEE_BUFFER_LAMPORTS = 250_000n;
 const SAT_COMMIT_STEP_LAMPORTS = 25_000_000n;

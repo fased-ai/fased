@@ -93,6 +93,7 @@ import {
   inspectSatMinerCyclesByAddress,
   inspectSatCycleRegistryPage,
   inspectSatCycleSettlementProgressV2,
+  inspectSatKeeperRegistry,
   inspectSatDispute,
   inspectSatPayoutReadiness,
   inspectSatRepublishProposal,
@@ -149,6 +150,7 @@ import {
   submitSatScoreCyclePage,
   submitSatSetActiveCommit,
   submitSatSealCycleEntropy,
+  submitSatSnapshotKeeperCapabilities,
   submitSatTopUpRegistryReserve,
   submitSatRetargetUnlock,
   submitSatResolveDispute,
@@ -170,6 +172,7 @@ import {
   findSatValidatorArtifact,
   writeSatValidatorArtifact,
 } from "./src/validator-artifacts.js";
+import { SAT_VNEXT_INTERFACE } from "./src/vnext-interface-manifest.js";
 
 const { createAdapter: createWalletProviderAdapter } = walletProviderFacade;
 const {
@@ -186,7 +189,16 @@ const SAT_CYCLE_SECONDS = 300;
 const SAT_CYCLES_PER_DAY = Math.ceil((24 * 60 * 60) / SAT_CYCLE_SECONDS);
 const SAT_CYCLES_PER_YEAR = Math.ceil((365 * 24 * 60 * 60) / SAT_CYCLE_SECONDS);
 const SAT_HISTORY_INLINE_REPAIR_ACTION_LIMIT = 500;
-const SAT_CYCLE_EROSION_PPM = 83n;
+const SAT_CYCLE_EROSION_PPM =
+  SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+    ? SAT_PROTOCOL_CONSTANTS.cycleErosionPpm
+    : BigInt(SAT_VNEXT_INTERFACE.economics.economics.erosionPpm);
+const SAT_MIN_ENTRY_LAMPORTS =
+  SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+    ? BigInt(SAT_PROTOCOL_CONSTANTS.minimumEntryLamports)
+    : BigInt(SAT_VNEXT_INTERFACE.economics.cycle.directEligibilityLamports);
+const SAT_MIN_ENTRY_LAMPORTS_NUMBER = Number(SAT_MIN_ENTRY_LAMPORTS);
+const SAT_MIN_ENTRY_SOL_LABEL = SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2" ? "0.25 SOL" : "1 SOL";
 const SAT_SETTLEMENT_CHUNK_TARGET = 16n;
 const SAT_KEEPER_STEP_BOUNTY_LAMPORTS = 7_500n;
 const SAT_STATUS_RECENT_ACTION_CYCLE_WINDOW = 12;
@@ -3618,7 +3630,9 @@ const satMiningPlugin = {
             state.activeConfig.plannerConfig?.enableCapitalTierPolicies ?? true,
         },
         funding: {
-          commitLamports: String(state.activeConfig.commitLamports ?? 250_000_000),
+          commitLamports: String(
+            state.activeConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS_NUMBER,
+          ),
           minSolBalanceLamports: String(state.activeConfig.minSolBalanceLamports ?? 150_000_000),
         },
         skillConfig: {
@@ -3790,12 +3804,12 @@ const satMiningPlugin = {
       const nextCommitLamports = Number(
         typeof funding.commitLamports === "string" || typeof funding.commitLamports === "number"
           ? funding.commitLamports
-          : (state.activeConfig.commitLamports ?? 250_000_000),
+          : (state.activeConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS_NUMBER),
       );
       state.activeConfig.commitLamports =
-        Number.isFinite(nextCommitLamports) && nextCommitLamports >= 250_000_000
+        Number.isFinite(nextCommitLamports) && nextCommitLamports >= SAT_MIN_ENTRY_LAMPORTS_NUMBER
           ? Math.floor(nextCommitLamports)
-          : 250_000_000;
+          : SAT_MIN_ENTRY_LAMPORTS_NUMBER;
       const nextMinSolBalanceLamports = Number(
         typeof funding.minSolBalanceLamports === "string" ||
           typeof funding.minSolBalanceLamports === "number"
@@ -3958,7 +3972,7 @@ const satMiningPlugin = {
         try {
           await ensureMiningDiskCapacityForOptionalCommitment();
           await submitSatSetActiveCommit(state.activeConfig, {
-            lamports: state.activeConfig.commitLamports ?? 250_000_000,
+            lamports: state.activeConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS_NUMBER,
           });
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
@@ -4528,7 +4542,7 @@ const satMiningPlugin = {
       const walletLamports =
         wallet?.solBalanceLamports != null ? BigInt(String(wallet.solBalanceLamports)) : null;
       const capitalFreeLamports = BigInt(minerCapital?.freeLamports ?? "0");
-      const capitalEntryThreshold = 250_000_000n;
+      const capitalEntryThreshold = SAT_MIN_ENTRY_LAMPORTS;
       const walletFundingThreshold =
         BigInt(state.activeConfig.minSolBalanceLamports ?? 150_000_000) + 250_000n;
       const walletFundingKnown = walletLamports !== null;
@@ -4563,7 +4577,7 @@ const satMiningPlugin = {
         ? undefined
         : minerCapitalOwnerMismatch
           ? "Repair this wallet-scoped SAT miner capital before funding or commit changes can succeed."
-          : "Fund Mining capital to create the wallet-scoped miner account and deposit at least 0.25 SOL.";
+          : `Fund Mining capital to create the wallet-scoped miner account and deposit at least ${SAT_MIN_ENTRY_SOL_LABEL}.`;
       const checks = [
         {
           key: "walletSelected",
@@ -4641,8 +4655,8 @@ const satMiningPlugin = {
               : minerCapitalGeneration === "unknown"
                 ? "Unknown capital generation; all mutations are blocked"
                 : capitalFreeLamports >= capitalEntryThreshold
-                  ? "Meets 0.25 SOL minimum eligibility capital"
-                  : "Below 0.25 SOL minimum eligibility capital",
+                  ? `Meets ${SAT_MIN_ENTRY_SOL_LABEL} minimum eligibility capital`
+                  : `Below ${SAT_MIN_ENTRY_SOL_LABEL} minimum eligibility capital`,
           remediation: !minerCapitalInitialized
             ? minerCapitalRemediation
             : minerCapitalGeneration === "legacy"
@@ -4651,7 +4665,7 @@ const satMiningPlugin = {
                 ? "Use a supported Fased/protocol generation before mutating this account."
                 : capitalFreeLamports >= capitalEntryThreshold
                   ? undefined
-                  : "Deposit at least 0.25 SOL plus reveal collateral into miner capital to participate in SAT cycles.",
+                  : `Deposit at least ${SAT_MIN_ENTRY_SOL_LABEL} plus reveal collateral into miner capital to participate in SAT cycles.`,
         },
         {
           key: "ataReady",
@@ -4889,7 +4903,7 @@ const satMiningPlugin = {
         }
       })();
       const totalCommittedLamports = currentExecution?.commitSubmitted
-        ? (currentExecution.commitLamports ?? 250_000_000)
+        ? (currentExecution.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS_NUMBER)
         : 0;
       const unlockRatio = Math.min(1, totalCommittedLamports / currentUnlockTargetLamports);
       const claimableSatRaw = snapshot.walletEpoch
@@ -5038,7 +5052,7 @@ const satMiningPlugin = {
       const activeCommitLamports =
         minerCapitalState?.activeCommitLamports ??
         cachedStatus?.activeCommitLamports ??
-        String(state.activeConfig.commitLamports ?? 250_000_000);
+        String(state.activeConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS_NUMBER);
       const recentCapitalActionObserved = allUserFacingRecentActions.some(
         (action) =>
           action.status === "success" &&
@@ -5074,12 +5088,12 @@ const satMiningPlugin = {
         currentMinerCycleState?.committedLamports ??
         activeCommitLamports ??
         globalState?.minimumEntryLamports ??
-        "250000000";
+        String(SAT_MIN_ENTRY_LAMPORTS);
       const currentCycleCommittedLamports =
         claimMinerCycleState?.committedLamports ??
         activeCommitLamports ??
         globalState?.minimumEntryLamports ??
-        "250000000";
+        String(SAT_MIN_ENTRY_LAMPORTS);
       const cycleErosionPpm = resolveSatEffectiveCycleErosionPpm(globalState);
       const cycleCadence = state.activeConfig.cycleCadence ?? 1;
       const claimBacklogSummary = buildSatClaimBacklogSummary(state);
@@ -5390,7 +5404,7 @@ const satMiningPlugin = {
         currentCapitalLockedLamportsBigInt > 0n &&
         (currentCapitalPendingCycleCount >= 2 ||
           (currentCapitalPendingCycleCount > 0 &&
-            BigInt(currentCapitalFreeLamports) < 250_000_000n));
+            BigInt(currentCapitalFreeLamports) < SAT_MIN_ENTRY_LAMPORTS));
       const recoveryBacklogReason = recoveryBacklogBlocked
         ? (() => {
             if (exactPendingCycle) {
@@ -7948,6 +7962,32 @@ const satMiningPlugin = {
       }
     });
 
+    registerSatSubmissionMethod("sat.snapshotKeeperCapabilities", async ({ params, respond }) => {
+      const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
+      try {
+        if (SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2") {
+          throw new Error("keeper capability snapshots are unavailable for legacy SAT cycles");
+        }
+        const registry = await inspectSatKeeperRegistry(state.activeConfig);
+        if (!registry || registry.revision <= 0 || registry.activeCount <= 0) {
+          throw new Error(
+            "generation-2 entropy sealing requires a non-empty active keeper registry",
+          );
+        }
+        const submitted = await submitSatSnapshotKeeperCapabilities(state.activeConfig, {
+          cycleId,
+          expectedRegistryRevision: registry.revision,
+        });
+        invalidateMiningReadCaches();
+        markActionSuccess("snapshotKeeperCapabilities", submitted.txHash, cycleId);
+        await persistRecentActions();
+        respond(true, jsonOk({ submitted, registryRevision: registry.revision }));
+      } catch (error) {
+        markActionFailure("snapshotKeeperCapabilities", error, cycleId);
+        respondGatewayError(respond, error);
+      }
+    });
+
     registerSatSubmissionMethod("sat.sealCycleEntropy", async ({ params, respond }) => {
       const cycleId = Number((params as { cycleId?: number })?.cycleId ?? 0);
       try {
@@ -7955,12 +7995,17 @@ const satMiningPlugin = {
         if (!cycle) {
           throw new Error(`cycle ${cycleId} was not found`);
         }
-        if (cycle.unlockIntervalStartCycleId == null) {
+        if (
+          SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2" &&
+          cycle.unlockIntervalStartCycleId == null
+        ) {
           throw new Error(`cycle ${cycleId} does not expose its unlock interval start`);
         }
         const submitted = await submitSatSealCycleEntropy(state.activeConfig, {
           cycleId,
-          intervalStartCycleId: cycle.unlockIntervalStartCycleId,
+          ...(SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+            ? { intervalStartCycleId: cycle.unlockIntervalStartCycleId! }
+            : {}),
         });
         invalidateMiningReadCaches();
         markActionSuccess("sealCycleEntropy", submitted.txHash, cycleId);
@@ -9277,7 +9322,7 @@ const satMiningPlugin = {
           await maybePrimeSatMinerCapitalAccount(activeWallet.address);
           await ensureMiningDiskCapacityForOptionalCommitment();
           await submitSatSetActiveCommit(state.activeConfig, {
-            lamports: state.activeConfig.commitLamports ?? 250_000_000,
+            lamports: state.activeConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS_NUMBER,
           });
         }
         const payoutReadiness = activeWallet?.address

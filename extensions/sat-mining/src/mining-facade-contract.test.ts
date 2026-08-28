@@ -10,10 +10,10 @@ import {
 } from "fased/plugin-sdk/sat-runtime";
 import { describe, expect, it, vi } from "vitest";
 
-const extensionEntryPath = path.resolve(
+const extensionImplementationPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
-  "index.ts",
+  "implementation.ts",
 );
 
 function readRegistrations(source: string): SatMiningGatewayMethodRegistration[] {
@@ -30,7 +30,7 @@ function readRegistrations(source: string): SatMiningGatewayMethodRegistration[]
 
 describe("sat-mining Mining facade registration contract", () => {
   it("registers each and only facade method with its canonical classification", () => {
-    const source = fs.readFileSync(extensionEntryPath, "utf8");
+    const source = fs.readFileSync(extensionImplementationPath, "utf8");
     const registrations = readRegistrations(source);
 
     expect(registrations).toHaveLength(SAT_MINING_METHOD_INVENTORY.length);

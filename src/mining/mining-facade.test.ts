@@ -10,11 +10,12 @@ import {
 
 describe("SAT Mining Gateway facade", () => {
   it("contains the exact registered method inventory with one classification per method", () => {
-    expect(SAT_MINING_METHOD_INVENTORY).toHaveLength(58);
-    expect(SAT_MINING_GATEWAY_METHODS).toHaveLength(58);
-    expect(new Set(SAT_MINING_GATEWAY_METHODS)).toHaveLength(58);
-    expect(SAT_MINING_MUTATION_METHODS.size + SAT_MINING_READ_METHODS.size).toBe(58);
+    expect(SAT_MINING_METHOD_INVENTORY).toHaveLength(59);
+    expect(SAT_MINING_GATEWAY_METHODS).toHaveLength(59);
+    expect(new Set(SAT_MINING_GATEWAY_METHODS)).toHaveLength(59);
+    expect(SAT_MINING_MUTATION_METHODS.size + SAT_MINING_READ_METHODS.size).toBe(59);
     expect(isSatMiningMutationMethod("sat.startMining")).toBe(true);
+    expect(isSatMiningMutationMethod("sat.snapshotKeeperCapabilities")).toBe(true);
     expect(isSatMiningMutationMethod("sat.getMiningStatus")).toBe(false);
   });
 

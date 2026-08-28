@@ -7,6 +7,8 @@ import {
   resolveSatProgramIdFromEnv,
   type SatRuntimeIds,
 } from "fased/plugin-sdk/sat-runtime";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
+import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
 export type SatMiningConfig = {
   enabled: boolean;
@@ -38,6 +40,7 @@ export type SatMiningConfig = {
   commitLamports?: number;
   minSolBalanceLamports?: number;
   walletId?: string;
+  permanentMiningId?: string;
   role?: "miner" | "validator" | "admin";
   claimMode?: "auto" | "prompt" | "manual";
   payout?: boolean;
@@ -147,6 +150,7 @@ export const satMiningConfigJsonSchema = Type.Object(
     commitLamports: Type.Optional(Type.Number()),
     minSolBalanceLamports: Type.Optional(Type.Number()),
     walletId: Type.Optional(Type.String()),
+    permanentMiningId: Type.Optional(Type.String({ minLength: 32 })),
     role: Type.Optional(
       Type.Union([Type.Literal("miner"), Type.Literal("validator"), Type.Literal("admin")]),
     ),
@@ -365,6 +369,10 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
         : "balanced";
   const walletId =
     typeof raw.walletId === "string" && raw.walletId.trim() ? raw.walletId : undefined;
+  const permanentMiningId =
+    typeof raw.permanentMiningId === "string" && raw.permanentMiningId.trim()
+      ? raw.permanentMiningId.trim()
+      : undefined;
   const strategyExecution =
     raw.strategyExecution === "auto" || raw.strategyExecution === "deterministic"
       ? raw.strategyExecution
@@ -412,7 +420,9 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
     Number.isFinite(raw.commitLamports) &&
     raw.commitLamports > 0
       ? Math.floor(raw.commitLamports)
-      : 250_000_000;
+      : SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+        ? 250_000_000
+        : SAT_VNEXT_INTERFACE.economics.cycle.directEligibilityLamports;
   const minSolBalanceLamports =
     typeof raw.minSolBalanceLamports === "number" &&
     Number.isFinite(raw.minSolBalanceLamports) &&
@@ -574,6 +584,7 @@ export function parseSatMiningConfig(value: unknown): SatMiningConfig {
     commitLamports,
     minSolBalanceLamports,
     walletId,
+    permanentMiningId,
     role,
     claimMode,
     payout,
