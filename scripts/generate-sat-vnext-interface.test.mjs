@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -7,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-void test("Fased binds the finalized SAT-DEP-0006 activation to generation-2 codecs", () => {
+void test("Fased activates only when the finalized deployment matches the candidate interface", () => {
   const result = spawnSync(
     process.execPath,
     ["scripts/generate-sat-vnext-interface.mjs", "--check"],
@@ -22,10 +23,28 @@ void test("Fased binds the finalized SAT-DEP-0006 activation to generation-2 cod
     path.join(root, "extensions/sat-mining/src/vnext-interface-manifest.ts"),
     "utf8",
   );
-  assert.match(generated, /state: "ACTIVE"/u);
-  assert.match(generated, /active: true/u);
+  const bundledInterface = fs.readFileSync(
+    path.join(root, "extensions/sat-mining/protocol-generation/interface-generation.v2.json"),
+  );
+  const activationContract = JSON.parse(
+    fs.readFileSync(
+      path.join(root, "extensions/sat-mining/protocol-generation/activation.sat-dep-0006.json"),
+      "utf8",
+    ),
+  );
+  const activationMatchesCandidate =
+    activationContract.interfaceContractSha256 ===
+    `sha256:${createHash("sha256").update(bundledInterface).digest("hex")}`;
+  assert.match(
+    generated,
+    activationMatchesCandidate ? /state: "ACTIVE"/u : /state: "FROZEN_NOT_ACTIVE"/u,
+  );
+  assert.match(generated, activationMatchesCandidate ? /active: true/u : /active: false/u);
   assert.match(generated, /executableDispatchBound: true/u);
-  assert.match(generated, /publicEntryEnabled: true/u);
+  assert.match(
+    generated,
+    activationMatchesCandidate ? /publicEntryEnabled: true/u : /publicEntryEnabled: false/u,
+  );
   assert.match(generated, /freezeId: "SAT-VNEXT-GATE-P3-008"/u);
   assert.match(generated, /strategyChannels: 16/u);
   assert.match(generated, /legacyStrategyChannels: 25/u);

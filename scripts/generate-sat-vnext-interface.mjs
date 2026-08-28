@@ -102,6 +102,9 @@ const layouts = parsed["state-layouts.generation-2.json"];
 const signer = parsed["signer-codecs.generation-2.json"];
 const economics = parsed["economics-generation.v3.json"];
 const activation = JSON.parse(fs.readFileSync(activationPath, "utf8"));
+const candidateInterfaceSha256 = `sha256:${sha256(
+  bytesByArtifact["interface-generation.v2.json"],
+)}`;
 
 if (
   contract?.freezeId !== "SAT-VNEXT-GATE-P3-008" ||
@@ -119,13 +122,12 @@ if (
   activation?.state !== "ACTIVE" ||
   activation?.deploymentId !== "SAT-DEP-0006" ||
   activation?.cluster !== "devnet" ||
-  activation?.interfaceContractSha256 !==
-    `sha256:${sha256(bytesByArtifact["interface-generation.v2.json"])}` ||
   activation?.protocolGenerationState?.publicEntryEnabled !== true ||
   activation?.protocolGenerationState?.activationGeneration !== 2
 ) {
-  fail("SAT-DEP-0006 activation contract is incomplete or mismatched");
+  fail("SAT-DEP-0006 activation contract is incomplete");
 }
+const activationMatchesCandidate = activation.interfaceContractSha256 === candidateInterfaceSha256;
 const idlReveal = idl?.satMiningInstructions?.find(
   (instruction) => instruction.name === "SatRevealCycleV2",
 );
@@ -330,7 +332,13 @@ const go = `package main\n\n// Code generated from the exact SAT generation-2 in
 
 const goRelease = `package main\n\n// Code generated from the exact SAT generation-2 interface bundle; DO NOT EDIT.\n\ntype frozenSATComponentGenerationsV2 struct {\n\tBond             string \`json:"bond"\`\n\tCycle            string \`json:"cycle"\`\n\tEconomics        string \`json:"economics"\`\n\tKeeper           string \`json:"keeper"\`\n\tPenalty          string \`json:"penalty"\`\n\tProtocol         string \`json:"protocol"\`\n\tReceipt          string \`json:"receipt"\`\n\tSchema           string \`json:"schema"\`\n\tSignerCapability string \`json:"signerCapability"\`\n}\n\ntype frozenSATReleaseAcknowledgementV2 struct {\n\tSchema                  string                          \`json:"schema"\`\n\tState                   string                          \`json:"state"\`\n\tComponentGenerations    frozenSATComponentGenerationsV2 \`json:"componentGenerations"\`\n\tInterfaceContractSHA256 string                          \`json:"interfaceContractSha256"\`\n\tIDLSHA256               string                          \`json:"idlSha256"\`\n\tAccountOrderSHA256      string                          \`json:"accountOrderSha256"\`\n\tStateLayoutsSHA256      string                          \`json:"stateLayoutsSha256"\`\n\tSignerCodecsSHA256      string                          \`json:"signerCodecsSha256"\`\n}\n\nvar signerSATReleaseAcknowledgementGeneration2 = frozenSATReleaseAcknowledgementV2{\n\tSchema: ${JSON.stringify(releaseAcknowledgement.schema)},\n\tState:  ${JSON.stringify(releaseAcknowledgement.state)},\n\tComponentGenerations: frozenSATComponentGenerationsV2{\n\t\tBond:             ${JSON.stringify(releaseAcknowledgement.componentGenerations.bond)},\n\t\tCycle:            ${JSON.stringify(releaseAcknowledgement.componentGenerations.cycle)},\n\t\tEconomics:        ${JSON.stringify(releaseAcknowledgement.componentGenerations.economics)},\n\t\tKeeper:           ${JSON.stringify(releaseAcknowledgement.componentGenerations.keeper)},\n\t\tPenalty:          ${JSON.stringify(releaseAcknowledgement.componentGenerations.penalty)},\n\t\tProtocol:         ${JSON.stringify(releaseAcknowledgement.componentGenerations.protocol)},\n\t\tReceipt:          ${JSON.stringify(releaseAcknowledgement.componentGenerations.receipt)},\n\t\tSchema:           ${JSON.stringify(releaseAcknowledgement.componentGenerations.schema)},\n\t\tSignerCapability: ${JSON.stringify(releaseAcknowledgement.componentGenerations.signerCapability)},\n\t},\n\tInterfaceContractSHA256: ${JSON.stringify(releaseAcknowledgement.interfaceContractSha256)}, // pragma: allowlist secret\n\tIDLSHA256:               ${JSON.stringify(releaseAcknowledgement.idlSha256)}, // pragma: allowlist secret\n\tAccountOrderSHA256:      ${JSON.stringify(releaseAcknowledgement.accountOrderSha256)}, // pragma: allowlist secret\n\tStateLayoutsSHA256:      ${JSON.stringify(releaseAcknowledgement.stateLayoutsSha256)}, // pragma: allowlist secret\n\tSignerCodecsSHA256:      ${JSON.stringify(releaseAcknowledgement.signerCodecsSha256)}, // pragma: allowlist secret\n}\n`;
 
-const typescriptWithPublicIdentityAllowlist = typescript.replace(
+const candidateRuntimeTypescript = activationMatchesCandidate
+  ? typescript
+  : typescript
+      .replace('state: "ACTIVE"', 'state: "FROZEN_NOT_ACTIVE"')
+      .replace("active: true", "active: false")
+      .replace("publicEntryEnabled: true", "publicEntryEnabled: false");
+const typescriptWithPublicIdentityAllowlist = candidateRuntimeTypescript.replace(
   /(\n  (?:contract|economics|idl|accountOrder|stateLayouts|signerCodecs)Sha256: [^\n]+,)/gu,
   "$1 // pragma: allowlist secret",
 );
