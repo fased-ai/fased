@@ -36,6 +36,14 @@ const releaseContractPath = path.join(
 );
 const goPath = path.join(root, "tools", "fased-signerd", "sat_vnext_manifest_generated.go");
 const goReleasePath = path.join(root, "tools", "fased-signerd", "sat_release_ack_generated.go");
+const activationPath = path.join(bundleDir, "activation.sat-dep-0006.json");
+const activationTsPath = path.join(
+  root,
+  "extensions",
+  "sat-mining",
+  "src",
+  "vnext-activation-manifest.ts",
+);
 
 function fail(message) {
   throw new Error(`Fased SAT vNext interface: ${message}`);
@@ -90,6 +98,7 @@ const idl = parsed["idl.generation-2.json"];
 const accountOrder = parsed["account-order.generation-2.json"];
 const layouts = parsed["state-layouts.generation-2.json"];
 const signer = parsed["signer-codecs.generation-2.json"];
+const activation = JSON.parse(fs.readFileSync(activationPath, "utf8"));
 
 if (
   contract?.freezeId !== "SAT-VNEXT-GATE-P3-008" ||
@@ -101,6 +110,18 @@ if (
   contract?.activation?.fasedRuntimeSelected !== false
 ) {
   fail("interface contract is not the executable-bound, public-entry-disabled generation");
+}
+if (
+  activation?.$schema !== "fased.sat-vnext-activation.v1" ||
+  activation?.state !== "ACTIVE" ||
+  activation?.deploymentId !== "SAT-DEP-0006" ||
+  activation?.cluster !== "devnet" ||
+  activation?.interfaceContractSha256 !==
+    `sha256:${sha256(bytesByArtifact["interface-generation.v2.json"])}` ||
+  activation?.protocolGenerationState?.publicEntryEnabled !== true ||
+  activation?.protocolGenerationState?.activationGeneration !== 2
+) {
+  fail("SAT-DEP-0006 activation contract is incomplete or mismatched");
 }
 const idlReveal = idl?.satMiningInstructions?.find(
   (instruction) => instruction.name === "SatRevealCycleV2",
@@ -247,7 +268,18 @@ const keeperCodecs = Object.fromEntries(
   ]),
 );
 
-const typescript = `// Generated from the exact SAT generation-2 interface bundle; do not edit.\n\nexport const SAT_VNEXT_INTERFACE = {\n  freezeId: ${JSON.stringify(contract.freezeId)},\n  state: ${JSON.stringify(contract.state)},\n  active: false,\n  executableDispatchBound: true,\n  publicEntryEnabled: false,\n  schemaGeneration: 2,\n  signerCapabilityGeneration: 2,\n  strategyChannels: 16,\n  legacyStrategyChannels: 25,\n  keeperExclusiveWindowSlots: 20,\n  keeperFallbackJitterSlots: 8,\n  keeperAccounting: ${typescriptLiteral(contract.keeperAccounting, 1)} as const,\n  revealDiscriminator: 114,\n  revealDataLength: 105,\n  revealAccountShape: ${JSON.stringify(accountFlags.join(","))},\n  keeperCodecs: ${typescriptLiteral(keeperCodecs, 1)} as const,\n  contractSha256: ${JSON.stringify(digests["interface-generation.v2.json"])},\n  idlSha256: ${JSON.stringify(digests["idl.generation-2.json"])},\n  accountOrderSha256: ${JSON.stringify(digests["account-order.generation-2.json"])},\n  stateLayoutsSha256: ${JSON.stringify(digests["state-layouts.generation-2.json"])},\n  signerCodecsSha256: ${JSON.stringify(digests["signer-codecs.generation-2.json"])},\n} as const;\n\nexport function encodeSatVNextRevealData(params: {\n  cycleId: bigint;\n  nonce: Buffer;\n  allocationFp: readonly number[];\n}): Buffer {\n  if (params.nonce.length !== 32) throw new Error("SAT vNext reveal nonce must contain 32 bytes");\n  if (params.allocationFp.length !== SAT_VNEXT_INTERFACE.strategyChannels) {\n    throw new Error("SAT vNext reveal must contain exactly 16 strategy channels");\n  }\n  const data = Buffer.alloc(SAT_VNEXT_INTERFACE.revealDataLength);\n  data[0] = SAT_VNEXT_INTERFACE.revealDiscriminator;\n  data.writeBigUInt64LE(params.cycleId, 1);\n  params.nonce.copy(data, 9);\n  params.allocationFp.forEach((value, index) => {\n    if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {\n      throw new Error(\`SAT vNext allocation[\${index}] is not a u32\`);\n    }\n    data.writeUInt32LE(value, 41 + index * 4);\n  });\n  return data;\n}\n`;
+const typescript = `// Generated from the exact SAT generation-2 interface bundle; do not edit.\n\nexport const SAT_VNEXT_INTERFACE = {\n  freezeId: ${JSON.stringify(contract.freezeId)},\n  state: ${JSON.stringify(activation.state)},\n  active: true,\n  executableDispatchBound: true,\n  publicEntryEnabled: true,\n  schemaGeneration: 2,\n  signerCapabilityGeneration: 2,\n  strategyChannels: 16,\n  legacyStrategyChannels: 25,\n  keeperExclusiveWindowSlots: 20,\n  keeperFallbackJitterSlots: 8,\n  keeperAccounting: ${typescriptLiteral(contract.keeperAccounting, 1)} as const,\n  revealDiscriminator: 114,\n  revealDataLength: 105,\n  revealAccountShape: ${JSON.stringify(accountFlags.join(","))},\n  keeperCodecs: ${typescriptLiteral(keeperCodecs, 1)} as const,\n  contractSha256: ${JSON.stringify(digests["interface-generation.v2.json"])},\n  idlSha256: ${JSON.stringify(digests["idl.generation-2.json"])},\n  accountOrderSha256: ${JSON.stringify(digests["account-order.generation-2.json"])},\n  stateLayoutsSha256: ${JSON.stringify(digests["state-layouts.generation-2.json"])},\n  signerCodecsSha256: ${JSON.stringify(digests["signer-codecs.generation-2.json"])},\n} as const;\n\nexport function encodeSatVNextRevealData(params: {\n  cycleId: bigint;\n  nonce: Buffer;\n  allocationFp: readonly number[];\n}): Buffer {\n  if (params.nonce.length !== 32) throw new Error("SAT vNext reveal nonce must contain 32 bytes");\n  if (params.allocationFp.length !== SAT_VNEXT_INTERFACE.strategyChannels) {\n    throw new Error("SAT vNext reveal must contain exactly 16 strategy channels");\n  }\n  const data = Buffer.alloc(SAT_VNEXT_INTERFACE.revealDataLength);\n  data[0] = SAT_VNEXT_INTERFACE.revealDiscriminator;\n  data.writeBigUInt64LE(params.cycleId, 1);\n  params.nonce.copy(data, 9);\n  params.allocationFp.forEach((value, index) => {\n    if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {\n      throw new Error(\`SAT vNext allocation[\${index}] is not a u32\`);\n    }\n    data.writeUInt32LE(value, 41 + index * 4);\n  });\n  return data;\n}\n`;
+
+const activationTypescript =
+  `// Generated from finalized SAT-DEP-0006 activation evidence; do not edit.\n\nexport const SAT_VNEXT_ACTIVATION = ${typescriptLiteral(activation)} as const;\n`
+    .replace(
+      /(^\s+(?:interfaceContractSha256|programId|programDataAddress|allocatedImageSha256|satMint|address|accountSha256|componentTupleHex|economicsContractSha256|signature|receiptDigest): [^\n]+,)/gmu,
+      "$1 // pragma: allowlist secret",
+    )
+    .replace(
+      /^(\s+)(interfaceContractSha256|allocatedImageSha256|economicsContractSha256|signature): ("[^"]+", \/\/ pragma: allowlist secret)$/gmu,
+      "$1$2:\n$1  $3",
+    );
 
 const generationEntries = Object.entries(releaseAcknowledgement.componentGenerations)
   .map(([key, value]) => `    ${key}: ${JSON.stringify(value)},`)
@@ -270,6 +302,7 @@ const typescriptWithPublicIdentityAllowlist = typescript.replace(
 );
 
 update(tsPath, Buffer.from(typescriptWithPublicIdentityAllowlist));
+update(activationTsPath, Buffer.from(activationTypescript));
 update(releaseContractPath, Buffer.from(releaseContract));
 update(goPath, Buffer.from(go));
 update(goReleasePath, Buffer.from(goRelease));
