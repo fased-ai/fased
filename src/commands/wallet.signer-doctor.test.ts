@@ -365,7 +365,7 @@ describe("collectWalletSignerDoctorReport", () => {
               },
               capabilities: {
                 protocol: { current: 2, min: 2, max: 2 },
-                nativeFeeReservationLamports: 5_000_000,
+                nativeFeeReservationLamports: 6_500_000,
                 intentTypes: ["solana.nativeTransfer"],
                 operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
                 features: ["signerOwnedRPC"],

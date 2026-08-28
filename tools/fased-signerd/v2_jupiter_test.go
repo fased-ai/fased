@@ -115,7 +115,7 @@ func TestJupiterIntentNormalizationIsExactAndFailClosed(t *testing.T) {
 		Programs: []string{jupiterAggregatorV6V2},
 		Assets: []signerPolicyAssetV2{
 			{Asset: lowNormalized.Asset, Destinations: []string{owner.String()}, MaxPerTx: "100", MaxDaily: "1000"},
-			{Asset: "solana:native", Destinations: []string{owner.String()}, MaxPerTx: "5000000", MaxDaily: "5000000"},
+			{Asset: "solana:native", Destinations: []string{owner.String()}, MaxPerTx: "6500000", MaxDaily: "6500000"},
 		},
 	})
 	if err != nil {
@@ -526,7 +526,7 @@ func TestJupiterReviewIsDurableImmutableAndExpires(t *testing.T) {
 		Programs:   []string{jupiterAggregatorV6V2},
 		Assets: []signerPolicyAssetV2{
 			{Asset: normalized.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"},
-			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "10000000"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "6500000", MaxDaily: "10000000"},
 		},
 	}, 1)
 	if err != nil {
@@ -651,7 +651,7 @@ func TestJupiterReviewPrepareRequiresSignerOwnedNetworkBeforePersistence(t *test
 		Programs:   []string{jupiterAggregatorV6V2},
 		Assets: []signerPolicyAssetV2{
 			{Asset: intent.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"},
-			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "10000000"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "6500000", MaxDaily: "10000000"},
 		},
 	}, initialPolicy.Version)
 	if err != nil {
@@ -709,7 +709,7 @@ func TestJupiterAuthorizationModesFailClosed(t *testing.T) {
 		Programs:   []string{jupiterAggregatorV6V2},
 		Assets: []signerPolicyAssetV2{
 			{Asset: normalized.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"},
-			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "10000000"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "6500000", MaxDaily: "10000000"},
 		},
 	}, 1)
 	if err != nil {

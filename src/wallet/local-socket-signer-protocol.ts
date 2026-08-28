@@ -1,10 +1,12 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../mining/sat-vnext-release-contract.generated.js";
+import { SIGNER_PROTOCOL_V2 } from "./signer-protocol-v2.generated.js";
 
 const WalletChainSchema = Type.Literal("solana");
 
-export const LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 = 5_000_000;
+export const LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 =
+  SIGNER_PROTOCOL_V2.nativeFeeReservationLamports;
 
 const SignerWalletRoleSchema = Type.Union([
   Type.Literal("agent"),
@@ -183,8 +185,22 @@ const SignerSatContextV2Schema = Type.Object(
     intervalStartCycleId: Type.Optional(Type.String()),
     registryPageIndex: Type.Optional(Type.String()),
     minerAuthorities: Type.Optional(Type.Array(Type.String())),
+    permanentMiningIds: Type.Optional(Type.Array(Type.String())),
     frontCycleIds: Type.Optional(Type.Array(Type.String())),
     backCycleIds: Type.Optional(Type.Array(Type.String())),
+  },
+  { additionalProperties: false },
+);
+
+const SignerSatCommitmentIntentV1Schema = Type.Object(
+  {
+    reference: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+    cluster: Type.Union([
+      Type.Literal("local"),
+      Type.Literal("devnet"),
+      Type.Literal("mainnet-beta"),
+    ]),
+    protocolGeneration: Type.String({ minLength: 1, maxLength: 128 }),
   },
   { additionalProperties: false },
 );
@@ -282,6 +298,7 @@ export const SignerIntentV2Schema = Type.Union([
       dataBase64: Type.Optional(Type.String()),
       keys: Type.Optional(Type.Array(SignerSatAccountV2Schema)),
       context: Type.Optional(SignerSatContextV2Schema),
+      satCommitment: Type.Optional(SignerSatCommitmentIntentV1Schema),
       instructions: Type.Optional(
         Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
       ),
@@ -466,6 +483,55 @@ const SignerSatLookupBindingRequestV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
+const SignerSatCommitmentClusterV1Schema = Type.Union([
+  Type.Literal("local"),
+  Type.Literal("devnet"),
+  Type.Literal("mainnet-beta"),
+]);
+
+const SignerSatCommitmentProgramIdV1Schema = Type.String({
+  pattern: "^[1-9A-HJ-NP-Za-km-z]{32,44}$",
+});
+
+const SignerSatCommitmentProtocolGenerationV1Schema = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: "^[^\\u0000-\\u001f\\u007f]+$",
+});
+
+const SignerSatCommitmentAllocationV1Schema = Type.Union([
+  Type.Array(Type.Integer({ minimum: 0, maximum: 0xffff_ffff }), {
+    minItems: 16,
+    maxItems: 16,
+  }),
+  Type.Array(Type.Integer({ minimum: 0, maximum: 0xffff_ffff }), {
+    minItems: 25,
+    maxItems: 25,
+  }),
+]);
+
+const SignerSatCommitmentBindingRequestV1Schema = Type.Object(
+  {
+    cluster: SignerSatCommitmentClusterV1Schema,
+    programId: SignerSatCommitmentProgramIdV1Schema,
+    protocolGeneration: SignerSatCommitmentProtocolGenerationV1Schema,
+    cycleId: Type.String({ pattern: "^[1-9][0-9]*$" }),
+  },
+  { additionalProperties: false },
+);
+
+const SignerSatCommitmentAllocateRequestV1Schema = Type.Object(
+  {
+    cluster: SignerSatCommitmentClusterV1Schema,
+    programId: SignerSatCommitmentProgramIdV1Schema,
+    protocolGeneration: SignerSatCommitmentProtocolGenerationV1Schema,
+    cycleId: Type.String({ pattern: "^[1-9][0-9]*$" }),
+    committedLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
+    allocationFp: SignerSatCommitmentAllocationV1Schema,
+  },
+  { additionalProperties: false },
+);
+
 export const LocalSocketSignerSatLookupBindingV2Schema = Type.Object(
   {
     cycleId: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
@@ -488,6 +554,22 @@ export const LocalSocketSignerSatLookupBindingV2Schema = Type.Object(
 
 export type LocalSocketSignerSatLookupBindingV2 = Static<
   typeof LocalSocketSignerSatLookupBindingV2Schema
+>;
+
+export const LocalSocketSignerSatCommitmentBindingV1Schema = Type.Object(
+  {
+    reference: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+    commitmentHex: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+    cycleId: Type.String({ pattern: "^[1-9][0-9]*$" }),
+    committedLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
+    allocationCount: Type.Union([Type.Literal(16), Type.Literal(25)]),
+    protocolGeneration: SignerSatCommitmentProtocolGenerationV1Schema,
+  },
+  { additionalProperties: false },
+);
+
+export type LocalSocketSignerSatCommitmentBindingV1 = Static<
+  typeof LocalSocketSignerSatCommitmentBindingV1Schema
 >;
 
 export const LocalSocketSignerNetworkSummaryV2Schema = Type.Object(
@@ -747,6 +829,22 @@ export const LocalSocketSignerRequestSchema = Type.Union(
         op: Type.Literal("v2.satLookup.binding.get"),
         walletId: Type.String(),
         request: SignerSatLookupBindingRequestV2Schema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.satCommitment.allocate"),
+        walletId: Type.String({ minLength: 1 }),
+        request: SignerSatCommitmentAllocateRequestV1Schema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.satCommitment.binding.get"),
+        walletId: Type.String({ minLength: 1 }),
+        request: SignerSatCommitmentBindingRequestV1Schema,
       },
       { additionalProperties: false },
     ),
@@ -1187,6 +1285,28 @@ export function parseLocalSocketSignerRequest(input: unknown): LocalSocketSigner
     throw new Error("invalid signer request");
   }
   if (
+    input.op === "v2.satCommitment.allocate" &&
+    input.request.allocationFp.reduce((sum, value) => sum + value, 0) !== 1_000_000
+  ) {
+    throw new Error("invalid signer request: SAT commitment allocation must sum to 1000000");
+  }
+  if (
+    (input.op === "v2.execute" || input.op === "v2.review.prepare") &&
+    input.request.intent.type === "solana.satAction" &&
+    input.request.intent.satCommitment !== undefined &&
+    (input.request.intent.action !== "revealCycle" ||
+      input.request.intent.instructions !== undefined)
+  ) {
+    if (
+      input.request.intent.action !== "revealCycleV2" ||
+      input.request.intent.instructions !== undefined
+    ) {
+      throw new Error(
+        "invalid signer request: signer-owned SAT commitment references require one revealCycle generation",
+      );
+    }
+  }
+  if (
     input.op === "v2.review.prepare" &&
     (input.request.intent.type === "solana.jupiter.trigger.create" ||
       input.request.intent.type === "solana.jupiter.trigger.cancel") &&
@@ -1248,6 +1368,9 @@ export function validateLocalSocketSignerResult(
       return Value.Check(LocalSocketSignerOperationV2Schema, result);
     case "v2.satLookup.binding.get":
       return Value.Check(LocalSocketSignerSatLookupBindingV2Schema, result);
+    case "v2.satCommitment.allocate":
+    case "v2.satCommitment.binding.get":
+      return Value.Check(LocalSocketSignerSatCommitmentBindingV1Schema, result);
     case "v2.review.get":
     case "v2.review.prepare":
       return Value.Check(LocalSocketSignerReviewV2Schema, result);

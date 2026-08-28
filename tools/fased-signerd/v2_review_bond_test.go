@@ -108,7 +108,7 @@ func TestReviewedVaultBondPrepareBuildsTransactionAndBindsState(t *testing.T) {
 		Operations: []string{reviewedIntent.PolicyOperation}, Programs: reviewedIntent.RequiredPrograms,
 		Assets: []signerPolicyAssetV2{
 			{Asset: reviewedIntent.Asset, Destinations: []string{reviewedIntent.Destination}, MaxPerTx: "75", MaxDaily: "75"},
-			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "5000000"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "6500000", MaxDaily: "6500000"},
 		},
 	}, locked.Version)
 	if err != nil {

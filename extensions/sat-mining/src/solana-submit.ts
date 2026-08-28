@@ -1815,7 +1815,7 @@ export async function submitSatTopUpRegistryReserve(
 }
 
 export async function submitSatOpenCycle(_config: SatMiningConfig, params: { cycleId: number }) {
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(resolveSatKeeperExecutionConfig(_config));
   const vnext = isSatVNextRuntime();
   return submitInstruction({
     cfg,
@@ -2477,7 +2477,7 @@ async function submitSatCyclePhaseInstruction(
   _config: SatMiningConfig,
   params: { cycleId: number; phase: "close" | "seal"; intervalStartCycleId?: number },
 ) {
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(resolveSatKeeperExecutionConfig(_config));
   const vnext = isSatVNextRuntime();
   return submitInstruction({
     cfg,
@@ -2569,7 +2569,7 @@ export async function submitSatSnapshotKeeperCapabilities(
   if (!isSatVNextRuntime()) {
     throw new Error("SAT keeper capability snapshots are generation-2 only");
   }
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(resolveSatKeeperExecutionConfig(_config));
   return submitInstruction({
     cfg,
     env: process.env,
@@ -2620,7 +2620,7 @@ export async function submitSatReleaseUnrevealedCommit(
   _config: SatMiningConfig,
   params: { cycleId: number; minerAuthority: string },
 ) {
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(resolveSatKeeperExecutionConfig(_config));
   const vnext = isSatVNextRuntime();
   const capital = vnext
     ? await inspectSatMinerCapital(_config, { authority: params.minerAuthority })
@@ -2732,7 +2732,7 @@ export async function submitSatAbortEmptyCycle(
   _config: SatMiningConfig,
   params: { cycleId: number },
 ) {
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(resolveSatKeeperExecutionConfig(_config));
   const vnext = isSatVNextRuntime();
   return submitInstruction({
     cfg,
