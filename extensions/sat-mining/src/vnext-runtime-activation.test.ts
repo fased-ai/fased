@@ -17,7 +17,7 @@ function protocolRecord(): NonNullable<SatRpcAccountRecord> {
   return { owner: MINING_PROGRAM, data };
 }
 
-describe("SAT-DEP-0006 runtime activation binding", () => {
+describe("SAT-DEP-0007 runtime activation binding", () => {
   it("rejects a disabled or generation-mismatched protocol root before program checks", () => {
     const protocol = protocolRecord();
     protocol.data[11] = 0;
@@ -28,7 +28,7 @@ describe("SAT-DEP-0006 runtime activation binding", () => {
 
   it("accepts the exact active protocol fields and then fails closed on absent ProgramData", () => {
     expect(() => verifySatVNextRuntimeActivationRecords([protocolRecord()])).toThrow(
-      "mining program binding does not match SAT-DEP-0006",
+      "mining program binding does not match SAT-DEP-0007",
     );
   });
 });
