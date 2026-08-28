@@ -31,6 +31,7 @@ import {
   loadSatBondStakingDistributorLayout,
   loadSatBondStakingPositionLayout,
 } from "./sat-bond-layout.js";
+import { SAT_VNEXT_ACTIVATION } from "./vnext-activation-manifest.js";
 import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
 const require = createRequire(import.meta.url);
@@ -45,6 +46,7 @@ const MINING_STAKE_SEED = "mining_stake";
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const ADDRESS_LOOKUP_TABLE_PROGRAM_ID = "AddressLookupTab1e1111111111111111111111111";
+const BPF_UPGRADEABLE_LOADER_PROGRAM_ID = "BPFLoaderUpgradeab1e11111111111111111111111";
 
 function assertDedicatedBondProgramConfigured(env: NodeJS.ProcessEnv = process.env): void {
   const resolved = resolveSatBondProgramIdFromEnv(env);
@@ -1550,7 +1552,7 @@ type SatReadConnectionLike = {
   >["getMinimumBalanceForRentExemption"];
 };
 
-type SatRpcAccountRecord = {
+export type SatRpcAccountRecord = {
   owner: string | null;
   data: Buffer;
 } | null;
@@ -2856,6 +2858,111 @@ export async function inspectSatVNextKeeperChainContext(
     }
   }
   return { ...cycle, snapshot, capability };
+}
+
+export type SatVNextRuntimeActivationView = {
+  deploymentId: string;
+  activationGeneration: number;
+  protocolStateSha256: string;
+  programDataSlots: Record<"mining" | "mint" | "bond", number>;
+};
+
+export function verifySatVNextRuntimeActivationRecords(
+  records: SatRpcAccountRecord[],
+): SatVNextRuntimeActivationView {
+  const protocol = records[0];
+  if (!protocol?.data || protocol.owner !== SAT_VNEXT_ACTIVATION.programs.mining.programId) {
+    throw new Error("SAT vNext protocol-generation state is absent or has the wrong owner");
+  }
+  const body = expectAccountData(protocol.data, 152, "protocol-generation-v2");
+  if (
+    body.length !== 176 ||
+    body[0] !== 1 ||
+    body[1] !== 1 ||
+    body[3] !== 1 ||
+    body.subarray(4, 24).toString("hex") !==
+      SAT_VNEXT_ACTIVATION.protocolGenerationState.componentTupleHex ||
+    `sha256:${body.subarray(32, 64).toString("hex")}` !==
+      SAT_VNEXT_ACTIVATION.protocolGenerationState.economicsContractSha256 ||
+    body.readBigUInt64LE(104) !==
+      BigInt(SAT_VNEXT_ACTIVATION.protocolGenerationState.activationGeneration)
+  ) {
+    throw new Error("SAT vNext protocol-generation state does not match the active contract");
+  }
+  const roles = ["mining", "mint", "bond"] as const;
+  const programDataSlots = {} as Record<(typeof roles)[number], number>;
+  for (const [roleIndex, role] of roles.entries()) {
+    const expected = SAT_VNEXT_ACTIVATION.programs[role];
+    const program = records[1 + roleIndex * 2];
+    const programData = records[2 + roleIndex * 2];
+    if (
+      !program?.data ||
+      program.owner !== BPF_UPGRADEABLE_LOADER_PROGRAM_ID ||
+      program.data.length !== 36 ||
+      program.data.readUInt32LE(0) !== 2 ||
+      encodeBase58(program.data.subarray(4, 36)) !== expected.programDataAddress
+    ) {
+      throw new Error(`SAT vNext ${role} program binding does not match SAT-DEP-0006`);
+    }
+    const imageDigest = programData?.data
+      ? `sha256:${createHash("sha256").update(programData.data.subarray(45)).digest("hex")}`
+      : "";
+    if (
+      !programData?.data ||
+      programData.owner !== BPF_UPGRADEABLE_LOADER_PROGRAM_ID ||
+      programData.data.length < 45 ||
+      programData.data.readUInt32LE(0) !== 3 ||
+      Number(programData.data.readBigUInt64LE(4)) !== expected.deploymentSlot ||
+      imageDigest !== expected.allocatedImageSha256
+    ) {
+      throw new Error(`SAT vNext ${role} ProgramData does not match SAT-DEP-0006`);
+    }
+    programDataSlots[role] = expected.deploymentSlot;
+  }
+  return {
+    deploymentId: SAT_VNEXT_ACTIVATION.deploymentId,
+    activationGeneration: Number(body.readBigUInt64LE(104)),
+    protocolStateSha256: `sha256:${createHash("sha256").update(protocol.data).digest("hex")}`,
+    programDataSlots,
+  };
+}
+
+export async function inspectSatVNextRuntimeActivation(
+  _config: SatMiningConfig,
+): Promise<SatVNextRuntimeActivationView> {
+  const { programId } = await resolveProgramContext(process.env);
+  if (programId.toBase58() !== SAT_VNEXT_ACTIVATION.programs.mining.programId) {
+    throw new Error("SAT vNext activation mining program does not match SAT-DEP-0006");
+  }
+  const roles = ["mining", "mint", "bond"] as const;
+  const addresses = [
+    SAT_VNEXT_ACTIVATION.protocolGenerationState.address,
+    ...roles.flatMap((role) => [
+      SAT_VNEXT_ACTIVATION.programs[role].programId,
+      SAT_VNEXT_ACTIVATION.programs[role].programDataAddress,
+    ]),
+  ];
+  const rpc = resolveEffectiveReadRpcConfig();
+  const records = await getOrLoadRpcCacheValue<SatRpcAccountRecord[]>(
+    `vnext-runtime-activation:${SAT_VNEXT_ACTIVATION.deploymentId}:${rpcCacheScope(rpc)}`,
+    SAT_RPC_ACCOUNT_RECORD_CACHE_TTL_MS,
+    async () => {
+      const result = await miningRpcRequest<{
+        value?: Array<{ data?: [string, string] | null; owner?: string | null } | null>;
+      }>(rpc, "getMultipleAccounts", [addresses, { encoding: "base64", commitment: "finalized" }]);
+      return addresses.map((_address, index) => {
+        const entry = Array.isArray(result.value) ? result.value[index] : null;
+        const encoded = Array.isArray(entry?.data) ? entry.data[0] : null;
+        return encoded
+          ? {
+              owner: String(entry?.owner ?? "").trim() || null,
+              data: Buffer.from(encoded, "base64"),
+            }
+          : null;
+      });
+    },
+  );
+  return verifySatVNextRuntimeActivationRecords(records);
 }
 
 export async function inspectSatCycleRegistryPage(

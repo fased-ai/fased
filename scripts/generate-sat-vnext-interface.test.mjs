@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-void test("Fased binds executable generation-2 codecs while public entry stays disabled", () => {
+void test("Fased binds the finalized SAT-DEP-0006 activation to generation-2 codecs", () => {
   const result = spawnSync(
     process.execPath,
     ["scripts/generate-sat-vnext-interface.mjs", "--check"],
@@ -22,10 +22,10 @@ void test("Fased binds executable generation-2 codecs while public entry stays d
     path.join(root, "extensions/sat-mining/src/vnext-interface-manifest.ts"),
     "utf8",
   );
-  assert.match(generated, /state: "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED"/u);
-  assert.match(generated, /active: false/u);
+  assert.match(generated, /state: "ACTIVE"/u);
+  assert.match(generated, /active: true/u);
   assert.match(generated, /executableDispatchBound: true/u);
-  assert.match(generated, /publicEntryEnabled: false/u);
+  assert.match(generated, /publicEntryEnabled: true/u);
   assert.match(generated, /freezeId: "SAT-VNEXT-GATE-P3-008"/u);
   assert.match(generated, /strategyChannels: 16/u);
   assert.match(generated, /legacyStrategyChannels: 25/u);
@@ -46,6 +46,7 @@ void test("Fased binds executable generation-2 codecs while public entry stays d
     "utf8",
   );
   assert.match(releaseContract, /fased\.sat-release-acknowledgement\.v1/u);
+  assert.match(releaseContract, /state: "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED"/u);
   assert.match(releaseContract, /schema: "SAT-SCHEMA-GEN-002"/u);
   assert.match(releaseContract, /keeper: "SAT-KEEPER-GEN-002"/u);
   assert.match(releaseContract, /protocol: "SAT-PROTO-GEN-002"/u);
@@ -56,6 +57,14 @@ void test("Fased binds executable generation-2 codecs while public entry stays d
     "utf8",
   );
   assert.match(signerReleaseContract, /signerSATReleaseAcknowledgementGeneration2/u);
+
+  const activation = fs.readFileSync(
+    path.join(root, "extensions/sat-mining/src/vnext-activation-manifest.ts"),
+    "utf8",
+  );
+  assert.match(activation, /deploymentId: "SAT-DEP-0006"/u);
+  assert.match(activation, /cluster: "devnet"/u);
+  assert.match(activation, /activationGeneration: 2/u);
 
   const active = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/protocol-contract.ts"),
