@@ -2,12 +2,12 @@
   "$schema": "sat.interface-generation.v2",
   "activation": {
     "agentReceiptDispatchBound": true,
-    "bondEpochAccountingBound": false,
+    "bondEpochAccountingBound": true,
     "fasedRuntimeSelected": false,
     "keeperReimbursementBound": true,
     "liveConstantsChanged": true,
     "programDispatchBound": true,
-    "publicEntryEnableInstructionArmed": false,
+    "publicEntryEnableInstructionArmed": true,
     "publicEntryEnabled": false
   },
   "artifacts": {
@@ -30,7 +30,7 @@
     "schema": "SAT-SCHEMA-GEN-002",
     "signerCapability": "FSD-SIGNER-GEN-002"
   },
-  "contractDigest": "sha256:c1b2fa1945e83114729c771e9e354916aadb593e5dd17319e6f99fb2e84df687",
+  "contractDigest": "sha256:254eddbdca0cc8ed165a0f18e79c5ae447156b5681597333acddc1d9648ab3fc",
   "contractVersion": 2,
   "economicsContractDigest": "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c",
   "executableComponentTuple": {
@@ -101,6 +101,7 @@
       "SatBootstrapV2": 115,
       "SatClaimCycleRewardsBatchV2": 127,
       "SatClaimCycleRewardsV2": 126,
+      "SatClaimProtocolDistributorSatV2": 135,
       "SatCloseCommitPhaseV2": 118,
       "SatCloseResolvedCycleArtifactsV2": 130,
       "SatCloseResolvedCycleRegistryPageV2": 129,

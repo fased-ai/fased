@@ -269,6 +269,188 @@
       "description": "Records an exact protocol distributor reward after the mining program mints it. Only the generated mining treasury PDA may sign this instruction through CPI.",
       "discriminant": 12,
       "name": "RecordProtocolStakingRewards"
+    },
+    {
+      "accountOrder": [
+        "genesis_authority:readonly+signer",
+        "payer:writable+signer",
+        "bond_tier_policy:writable",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_reward_vault_v3:writable",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "genesis_config_hash",
+          "type": "u8[32]"
+        },
+        {
+          "name": "reserved",
+          "type": "u8[8]"
+        }
+      ],
+      "discriminant": 13,
+      "generation": 3,
+      "name": "InitBondEpochDistributorV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
+    },
+    {
+      "accountOrder": [
+        "mint_caller_treasury:writable+signer",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_snapshot_v3:writable",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "expected_epoch",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 14,
+      "generation": 3,
+      "name": "AdvanceBondEpochV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_position_v3:writable",
+        "activation_bond_epoch_snapshot_v3:readonly",
+        "system_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 15,
+      "generation": 3,
+      "name": "RegisterBondEpochPositionV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
+    },
+    {
+      "accountOrder": [
+        "signer:readonly+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "signer_sat_account:writable",
+        "bond_vault:writable",
+        "sat_mint:readonly",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_position_v3:writable",
+        "activation_bond_epoch_snapshot_v3:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "amount_raw",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 16,
+      "generation": 3,
+      "name": "IncreaseBondPositionV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
+    },
+    {
+      "accountOrder": [
+        "signer:readonly+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_position_v3:writable",
+        "activation_bond_epoch_snapshot_v3:readonly"
+      ],
+      "args": [],
+      "discriminant": 17,
+      "generation": 3,
+      "name": "RequestBondUnlockV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
+    },
+    {
+      "accountOrder": [
+        "signer:readonly+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_position_v3:writable"
+      ],
+      "args": [],
+      "discriminant": 18,
+      "generation": 3,
+      "name": "CancelBondUnlockV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
+    },
+    {
+      "accountOrder": [
+        "signer:readonly+signer",
+        "bond_tier_policy:readonly",
+        "bond_position:writable",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_position_v3:writable",
+        "bond_vault:writable",
+        "signer_sat_account:writable",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 19,
+      "generation": 3,
+      "name": "FinalizeBondUnlockV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
+    },
+    {
+      "accountOrder": [
+        "signer:readonly+signer",
+        "bond_tier_policy:readonly",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_position_v3:writable",
+        "bond_position:readonly",
+        "activation_bond_epoch_snapshot_v3:readonly",
+        "bond_epoch_reward_vault_v3:writable",
+        "signer_sat_account:writable",
+        "sat_mint:readonly",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 20,
+      "generation": 3,
+      "name": "ClaimBondEpochRewardsV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
+    },
+    {
+      "accountOrder": [
+        "mint_caller_treasury:readonly+signer",
+        "payer:writable+signer",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_snapshot_v3:writable",
+        "bond_epoch_reward_vault_v3:writable",
+        "sat_mint:readonly",
+        "system_program:readonly"
+      ],
+      "args": [
+        {
+          "name": "amount_raw",
+          "type": "u64"
+        },
+        {
+          "name": "reward_epoch",
+          "type": "u64"
+        }
+      ],
+      "discriminant": 21,
+      "generation": 3,
+      "name": "RecordProtocolBondEpochRewardsV3",
+      "status": "EXECUTABLE_BOND_EPOCH_V3"
     }
   ],
   "satMiningInstructions": [
@@ -1732,7 +1914,8 @@
         "sat_treasury_state_v2:writable",
         "sat_rebate_vault_v2:writable",
         "sat_treasury_vault_v2:writable",
-        "bond_staking_distributor:readonly",
+        "bond_epoch_distributor_v3:readonly",
+        "bond_tier_policy:readonly",
         "sat_keeper_snapshot:readonly",
         "sat_keeper_capability:readonly"
       ],
@@ -1965,7 +2148,9 @@
       "accountOrder": [
         "program_admin:readonly+signer",
         "sat_global_state_v2:readonly",
-        "sat_protocol_generation_state_v2:writable"
+        "sat_protocol_generation_state_v2:writable",
+        "bond_epoch_distributor_v3:readonly",
+        "bond_tier_policy:readonly"
       ],
       "args": [
         {
@@ -2054,6 +2239,29 @@
       "discriminant": 134,
       "generation": 2,
       "name": "SatRecordAgentCycleReceiptV2",
+      "status": "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED"
+    },
+    {
+      "accountOrder": [
+        "signer:writable+signer",
+        "sat_global_state_v2:readonly",
+        "mint_caller_treasury:readonly",
+        "sat_treasury_state_v2:writable",
+        "bond_epoch_distributor_v3:writable",
+        "bond_epoch_snapshot_v3:writable",
+        "mint_authority:writable",
+        "sat_mint:writable",
+        "bond_epoch_reward_vault_v3:writable",
+        "system_program:readonly",
+        "token_program:readonly",
+        "associated_token_program:readonly",
+        "sat_mint_program:readonly",
+        "sat_bond_program:readonly"
+      ],
+      "args": [],
+      "discriminant": 135,
+      "generation": 2,
+      "name": "SatClaimProtocolDistributorSatV2",
       "status": "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED"
     }
   ],

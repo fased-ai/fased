@@ -12,9 +12,9 @@ type frozenSATCodecGeneration2 struct {
 }
 
 const (
-	satVNextInterfaceContractSHA256 = "b112f2089486560a9e6f10955fda74d4f1771cc2e661329c901c6200a4257040" // pragma: allowlist secret
-	satVNextIDLContractSHA256       = "295bb24983fefae951c9ae2576d0805f54190a0048e8a3af24e1598f2e880ea5" // pragma: allowlist secret
-	satVNextAccountOrderSHA256      = "28c46db739c523199d5d9b7af93d3513c756ce82ea425cb9656e85171be906a6" // pragma: allowlist secret
+	satVNextInterfaceContractSHA256 = "dd562e2f98671d737e9698ad0faec5d2d1154d43d1e3354607f782133a668586" // pragma: allowlist secret
+	satVNextIDLContractSHA256       = "27ee632e51a711fd431e5fbb3fc93541dd75bf74a7fa68eccd614bcda983c7d0" // pragma: allowlist secret
+	satVNextAccountOrderSHA256      = "aedb10657f921a2ea26ce7912c6e8aa4f3905201070f1dd2c3faa2aa59156bd3" // pragma: allowlist secret
 )
 
 var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
@@ -39,7 +39,7 @@ var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
 		Discriminator:      123,
 		DataLength:         9,
 		AllocationChannels: 0,
-		AccountShape:       "SW,-W,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--",
+		AccountShape:       "SW,-W,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
 		Active:             false,
 	},
 	"scoreCyclePageV2": {

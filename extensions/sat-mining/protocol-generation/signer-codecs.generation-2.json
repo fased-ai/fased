@@ -191,6 +191,15 @@
       "dataLength": 25,
       "discriminator": 134,
       "executableDispatchBound": true
+    },
+    {
+      "accountOrderKey": "SatClaimProtocolDistributorSatV2",
+      "action": "claimProtocolDistributorSatV2",
+      "active": false,
+      "contractKey": "claimProtocolDistributorSatV2",
+      "dataLength": 1,
+      "discriminator": 135,
+      "executableDispatchBound": true
     }
   ],
   "generation": 2,

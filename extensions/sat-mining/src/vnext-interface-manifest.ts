@@ -38,7 +38,7 @@ export const SAT_VNEXT_INTERFACE = {
     finalizeCycleSettlementV2: {
       discriminator: 123,
       dataLength: 9,
-      accountShape: "SW,-W,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--",
+      accountShape: "SW,-W,-W,-W,-W,-W,-W,-W,-W,-W,--,--,--,--",
       repeatedAccountGroup: null,
     },
     scoreCyclePageV2: {
@@ -63,11 +63,11 @@ export const SAT_VNEXT_INTERFACE = {
       ],
     },
   } as const,
-  contractSha256: "b112f2089486560a9e6f10955fda74d4f1771cc2e661329c901c6200a4257040", // pragma: allowlist secret
-  idlSha256: "295bb24983fefae951c9ae2576d0805f54190a0048e8a3af24e1598f2e880ea5", // pragma: allowlist secret
-  accountOrderSha256: "28c46db739c523199d5d9b7af93d3513c756ce82ea425cb9656e85171be906a6", // pragma: allowlist secret
-  stateLayoutsSha256: "66b70c10e9522b230ba3bc15da49084215e18602b4f31524c2dd48d18fb7999d", // pragma: allowlist secret
-  signerCodecsSha256: "66dc7de6cdccc67bd3a07994b24f50e1b7da63f58355ea981a6093d27db12452", // pragma: allowlist secret
+  contractSha256: "dd562e2f98671d737e9698ad0faec5d2d1154d43d1e3354607f782133a668586", // pragma: allowlist secret
+  idlSha256: "27ee632e51a711fd431e5fbb3fc93541dd75bf74a7fa68eccd614bcda983c7d0", // pragma: allowlist secret
+  accountOrderSha256: "aedb10657f921a2ea26ce7912c6e8aa4f3905201070f1dd2c3faa2aa59156bd3", // pragma: allowlist secret
+  stateLayoutsSha256: "77717f1e06fcd37944c81a44f75e1b36490c369386090b5eb10d58f2fc63e14f", // pragma: allowlist secret
+  signerCodecsSha256: "b3d2098f7b8b3d9d7e0738e281c23deb7947666c078506929bd124d400096c5e", // pragma: allowlist secret
 } as const;
 
 export function encodeSatVNextRevealData(params: {
