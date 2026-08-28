@@ -285,7 +285,7 @@ export const SAT_VNEXT_INTERFACE = {
     },
   } as const,
   contractSha256: "dd562e2f98671d737e9698ad0faec5d2d1154d43d1e3354607f782133a668586", // pragma: allowlist secret
-  economicsSha256: "36ae4658a8f8d7355c4afe2d75483f03e4ae26d94864af6ce12fb6220f9a6956",
+  economicsSha256: "36ae4658a8f8d7355c4afe2d75483f03e4ae26d94864af6ce12fb6220f9a6956", // pragma: allowlist secret
   idlSha256: "27ee632e51a711fd431e5fbb3fc93541dd75bf74a7fa68eccd614bcda983c7d0", // pragma: allowlist secret
   accountOrderSha256: "aedb10657f921a2ea26ce7912c6e8aa4f3905201070f1dd2c3faa2aa59156bd3", // pragma: allowlist secret
   stateLayoutsSha256: "77717f1e06fcd37944c81a44f75e1b36490c369386090b5eb10d58f2fc63e14f", // pragma: allowlist secret

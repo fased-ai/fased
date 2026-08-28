@@ -9,13 +9,13 @@ const {
   ids,
 } = vi.hoisted(() => {
   const ids = {
-    miningWallet: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW",
-    keeperWallet: "5peszKe8y7dv8KqdSse9UFxmaLxGsy7pWJBm6KpGnGA3",
-    miningProgram: "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
-    mintProgram: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL",
-    bondProgram: "5peszKe8y7dv8KqdSse9UFxmaLxGsy7pWJBm6KpGnGA3",
-    mint: "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU",
-    permanentMiningId: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL",
+    miningWallet: "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW", // pragma: allowlist secret
+    keeperWallet: "5peszKe8y7dv8KqdSse9UFxmaLxGsy7pWJBm6KpGnGA3", // pragma: allowlist secret
+    miningProgram: "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF", // pragma: allowlist secret
+    mintProgram: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL", // pragma: allowlist secret
+    bondProgram: "5peszKe8y7dv8KqdSse9UFxmaLxGsy7pWJBm6KpGnGA3", // pragma: allowlist secret
+    mint: "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU", // pragma: allowlist secret
+    permanentMiningId: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL", // pragma: allowlist secret
   };
   Object.assign(process.env, {
     FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0006",
