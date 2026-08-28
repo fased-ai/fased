@@ -203,7 +203,7 @@ const signerV2Capabilities = {
   },
   capabilities: {
     protocol: { current: 2 as const, min: 2, max: 2 },
-    nativeFeeReservationLamports: 5_000_000 as const,
+    nativeFeeReservationLamports: 6_500_000 as const,
     intentTypes: [...SIGNER_PROTOCOL_V2.intentTypes],
     operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
     features: [...SIGNER_PROTOCOL_V2_REQUIRED_CLIENT_FEATURES],

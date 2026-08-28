@@ -196,6 +196,51 @@ describe("SAT submission service boundary", () => {
     );
   });
 
+  it("records a missing native fee policy as a definitive pre-broadcast failure", async () => {
+    callLocalSocketSigner.mockImplementation(
+      async (_socketPath: string, payload: { op?: string }) => {
+        if (payload.op === "v2.capabilities") {
+          return typedCapabilities();
+        }
+        if (payload.op === "v2.policy.get") {
+          return { hash: `sha256:${"cd".repeat(32)}` };
+        }
+        if (payload.op === "v2.execute") {
+          throw new Error(
+            "explicit positive solana:native policy is required for transaction fees and rent",
+          );
+        }
+        if (payload.op === "v2.operation.get") {
+          throw new Error("signer operation not found");
+        }
+        throw new Error(`unexpected signer operation ${payload.op}`);
+      },
+    );
+
+    await expect(
+      executeTypedSatIntent({
+        socketPath: "/run/fased-signerd.sock",
+        walletId: "wallet-mining",
+        stateProgramId: "program-id",
+        action: "initMinerCapital",
+        instruction,
+        cluster: "devnet",
+        env: {},
+      }),
+    ).rejects.toThrow(
+      "explicit positive solana:native policy is required for transaction fees and rent",
+    );
+
+    expect(updateSatSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletId: "wallet-mining",
+        requestId: "request-exact",
+        state: "failed",
+        releaseLease: true,
+      }),
+    );
+  });
+
   it("uses the signer-owned keeper capability while keeping the Mining ledger identity", async () => {
     callLocalSocketSigner.mockImplementation(
       async (

@@ -21,12 +21,6 @@ import (
 const (
 	signerProtocolVersion = 2
 
-	// signerNativeFeeReservationV2 is a signer-owned upper bound for the
-	// network fee and any explicitly validated rent paid by a signer-built
-	// transaction. It is deliberately independent of caller input. Jupiter
-	// requests may choose a lower ceiling, but can never raise this bound.
-	signerNativeFeeReservationV2 = uint64(5_000_000)
-
 	intentSolanaNativeTransfer     = "solana.nativeTransfer"
 	intentSolanaSPLTransferChecked = "solana.splTransferChecked"
 	intentSolanaSATAction          = "solana.satAction"

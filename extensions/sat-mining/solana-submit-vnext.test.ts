@@ -30,6 +30,14 @@ const {
     callLocalSocketSigner: vi.fn(
       async (_socketPath: string, payload: { op?: string; walletId?: string }) => {
         if (payload.op === "v2.keeperFeePayer.get") {
+          if (payload.walletId === "keeper-wallet") {
+            return {
+              miningWalletId: "keeper-wallet",
+              feePayerWalletId: "keeper-wallet",
+              feePayerPublicKey: ids.keeperWallet,
+              state: "ready",
+            };
+          }
           return {
             miningWalletId: "mining-wallet",
             feePayerWalletId: "keeper-wallet",
@@ -160,6 +168,8 @@ describe("SAT generation-2 transaction builders", () => {
       network: "devnet",
       riskMode: "balanced",
       walletId: "mining-wallet",
+      keeperMode: "dedicated",
+      keeperWalletId: "keeper-wallet",
       permanentMiningId: ids.permanentMiningId,
     } as const;
 
@@ -191,6 +201,9 @@ describe("SAT generation-2 transaction builders", () => {
     expect(calls[0]?.instruction.keys).toHaveLength(5);
     expect(calls[0]?.instruction.keys[1]?.pubkey).toBe(ids.permanentMiningId);
     expect(calls[1]?.instruction.keys).toHaveLength(10);
+    expect(calls[1]?.instruction.context).toEqual({
+      permanentMiningIds: [ids.permanentMiningId],
+    });
     expect(calls[2]?.instruction.keys).toHaveLength(10);
     for (const request of calls.slice(3)) {
       expect(request.useKeeperFeePayer).toBe(true);
@@ -199,9 +212,41 @@ describe("SAT generation-2 transaction builders", () => {
         isSigner: true,
       });
     }
+    expect(
+      callLocalSocketSigner.mock.calls
+        .map(([, payload]) => payload)
+        .filter((payload) => payload.op === "v2.keeperFeePayer.get")
+        .map((payload) => payload.walletId),
+    ).toEqual(["keeper-wallet", "keeper-wallet", "keeper-wallet", "keeper-wallet"]);
     expect(callLocalSocketSigner).toHaveBeenCalledWith("/tmp/fased-vnext-test-signer.sock", {
       op: "v2.keeperFeePayer.get",
-      walletId: "mining-wallet",
+      walletId: "keeper-wallet",
     });
+  });
+
+  it("uses the configured standalone Keeper wallet for dedicated cycle opening", async () => {
+    await submitSatOpenCycle(
+      {
+        enabled: false,
+        network: "devnet",
+        riskMode: "balanced",
+        walletId: "mining-wallet",
+        keeperMode: "dedicated",
+        keeperWalletId: "keeper-wallet",
+      },
+      { cycleId: 7 },
+    );
+
+    expect(callLocalSocketSigner).toHaveBeenCalledWith("/tmp/fased-vnext-test-signer.sock", {
+      op: "v2.keeperFeePayer.get",
+      walletId: "keeper-wallet",
+    });
+    expect(executeTypedSatIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletId: "keeper-wallet",
+        useKeeperFeePayer: true,
+        action: "openCycleV2",
+      }),
+    );
   });
 });

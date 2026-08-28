@@ -1492,6 +1492,25 @@ export function createSatRoundWatcherService(params: {
         currentSlot != null && onChainCycle.revealDeadlineSlot != null
           ? currentSlot < onChainCycle.revealDeadlineSlot
           : nowSec < revealDeadlineTs;
+      if (SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+        const keeperContext = await withRoundWatcherTimeout("keeper snapshot", () =>
+          inspectSatVNextKeeperChainContext(state.activeConfig, { cycleId }),
+        ).catch(() => null);
+        if (!keeperContext) {
+          await runSatGatewayMethod({
+            api,
+            method: "sat.snapshotKeeperCapabilities",
+            payload: { cycleId },
+          });
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${cycleId} froze its pre-entropy keeper capability snapshot`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", 500);
+          return;
+        }
+      }
       if (commitPhaseOpen) {
         markWorkerWaiting(
           state,
@@ -1520,25 +1539,6 @@ export function createSatRoundWatcherService(params: {
         );
         scheduleWorkerNextRun(state, "roundWatcher", 500);
         return;
-      }
-      if (SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
-        const keeperContext = await withRoundWatcherTimeout("keeper snapshot", () =>
-          inspectSatVNextKeeperChainContext(state.activeConfig, { cycleId }),
-        ).catch(() => null);
-        if (!keeperContext) {
-          await runSatGatewayMethod({
-            api,
-            method: "sat.snapshotKeeperCapabilities",
-            payload: { cycleId },
-          });
-          markWorkerWaiting(
-            state,
-            "roundWatcher",
-            `cycle ${cycleId} froze its pre-entropy keeper capability snapshot`,
-          );
-          scheduleWorkerNextRun(state, "roundWatcher", 500);
-          return;
-        }
       }
       if (execution.entropyTargetPinned !== true) {
         execution.entropyTargetPinned = true;

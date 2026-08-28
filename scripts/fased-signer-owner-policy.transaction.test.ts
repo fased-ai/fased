@@ -235,7 +235,7 @@ describe("initial-only policy transaction", () => {
     const raced = __testing.policyWithVersion(
       {
         ...policy,
-        assets: [{ ...policy.assets[0], maxPerTx: "5000000", maxDaily: "5000000" }],
+        assets: [{ ...policy.assets[0], maxPerTx: "6500000", maxDaily: "6500000" }],
       },
       2,
     );
@@ -280,7 +280,7 @@ describe("initial-only policy transaction", () => {
     const mismatched = __testing.policyWithVersion(
       {
         ...policy,
-        assets: [{ ...policy.assets[0], maxPerTx: "5000000", maxDaily: "5000000" }],
+        assets: [{ ...policy.assets[0], maxPerTx: "6500000", maxDaily: "6500000" }],
       },
       2,
     );

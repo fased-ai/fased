@@ -546,10 +546,11 @@ export async function executeTypedSatIntent(params: {
         const lookupDetail =
           lookupError instanceof Error ? lookupError.message : String(lookupError);
         const detail = `${executeDetail}; ${lookupDetail}`;
-        if (
-          /^policy denies operation /u.test(executeDetail) &&
-          /signer operation not found/iu.test(lookupDetail)
-        ) {
+        const definitivePolicyRejection =
+          /^policy denies operation /u.test(executeDetail) ||
+          executeDetail ===
+            "explicit positive solana:native policy is required for transaction fees and rent";
+        if (definitivePolicyRejection && /signer operation not found/iu.test(lookupDetail)) {
           await updateSatSubmission({
             walletId: params.walletId,
             requestId,
