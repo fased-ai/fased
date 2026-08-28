@@ -1040,7 +1040,7 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATPDAV2(ix, 7, p, "treasury state", []byte("sat_treasury_state")),
 			expectSATPDAV2(ix, 8, p, "rebate vault", []byte("sat_rebate_vault")),
 			expectSATPDAV2(ix, 9, p, "treasury vault", []byte("sat_treasury_vault")),
-			expectSATPDAV2(ix, 11, p, "keeper snapshot", []byte("sat_keeper_snapshot"), cycle),
+			expectSATPDAV2(ix, 12, p, "keeper snapshot", []byte("sat_keeper_snapshot"), cycle),
 		)
 	case "distributeCyclePageV2":
 		cycle, page := satU64BytesV2(d, 1), satU64BytesV2(d, 9)

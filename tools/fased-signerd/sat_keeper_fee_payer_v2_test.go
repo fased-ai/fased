@@ -155,6 +155,7 @@ func testKeeperFinalizeIntentGeneration2(
 			satTestAccount(satTestPDA(t, program, []byte("sat_rebate_vault")), false, true),
 			satTestAccount(satTestPDA(t, program, []byte("sat_treasury_vault")), false, true),
 			satTestAccount(solana.NewWallet().PublicKey(), false, false),
+			satTestAccount(solana.NewWallet().PublicKey(), false, false),
 			satTestAccount(satTestPDA(t, program, []byte("sat_keeper_snapshot"), cycle), false, false),
 			satTestAccount(solana.NewWallet().PublicKey(), false, false),
 		},
