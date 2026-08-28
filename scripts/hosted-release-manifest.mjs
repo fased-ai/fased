@@ -62,7 +62,7 @@ function parseCapabilities(value, claimedDigest) {
     value.protocol.current !== 2 ||
     value.protocol.min !== 2 ||
     value.protocol.max !== 2 ||
-    value.nativeFeeReservationLamports !== 5_000_000 ||
+    value.nativeFeeReservationLamports !== 6_500_000 ||
     !Array.isArray(value.intentTypes) ||
     !Array.isArray(value.operationStates) ||
     !Array.isArray(value.features) ||

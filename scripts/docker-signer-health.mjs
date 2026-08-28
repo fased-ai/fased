@@ -13,7 +13,7 @@ const REQUIRED_FEATURES = [
   "signerOwnedKeys",
   "typedSolanaTransactions",
 ];
-const NATIVE_FEE_RESERVATION_LAMPORTS = 5_000_000;
+const NATIVE_FEE_RESERVATION_LAMPORTS = 6_500_000;
 const RELEASE_VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 const RELEASE_COMMIT_RE = /^[a-f0-9]{40}$/u;
 const RELEASE_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;

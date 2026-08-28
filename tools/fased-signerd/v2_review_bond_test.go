@@ -42,7 +42,7 @@ func (f *vaultBondReviewRPCV2) ServeHTTP(response http.ResponseWriter, request *
 	var result any
 	switch body.Method {
 	case "getGenesisHash":
-		result = "7YkK94UjQ9uR5nH6QpV2yMVgF2mJkQNWqFQ4rQPhhVxS"
+		result = "7YkK94UjQ9uR5nH6QpV2yMVgF2mJkQNWqFQ4rQPhhVxS" // pragma: allowlist secret
 	case "getMultipleAccounts":
 		result = map[string]any{"context": map[string]any{"slot": 100}, "value": f.accounts()}
 	case "getLatestBlockhash":
@@ -108,7 +108,7 @@ func TestReviewedVaultBondPrepareBuildsTransactionAndBindsState(t *testing.T) {
 		Operations: []string{reviewedIntent.PolicyOperation}, Programs: reviewedIntent.RequiredPrograms,
 		Assets: []signerPolicyAssetV2{
 			{Asset: reviewedIntent.Asset, Destinations: []string{reviewedIntent.Destination}, MaxPerTx: "75", MaxDaily: "75"},
-			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "5000000", MaxDaily: "5000000"},
+			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "6500000", MaxDaily: "6500000"},
 		},
 	}, locked.Version)
 	if err != nil {

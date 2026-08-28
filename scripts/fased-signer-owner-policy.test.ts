@@ -196,7 +196,7 @@ describe("strict owner policy input", () => {
         {
           asset: "solana:native",
           destinations: [destination],
-          maxPerTx: "5000000",
+          maxPerTx: "6500000",
           maxDaily: "10000000",
         },
       ],
@@ -219,7 +219,7 @@ describe("strict owner policy input", () => {
         {
           asset: "solana:native",
           destinations: [__testing.SYSTEM_PROGRAM],
-          maxPerTx: "5000000",
+          maxPerTx: "6500000",
           maxDaily: "10000000",
         },
       ],
@@ -241,7 +241,7 @@ describe("strict owner policy input", () => {
         {
           asset: "solana:native",
           destinations: [__testing.SYSTEM_PROGRAM],
-          maxPerTx: "5000000",
+          maxPerTx: "6500000",
           maxDaily: "10000000",
         },
       ],
@@ -313,12 +313,12 @@ describe("strict owner policy input", () => {
         assets: [
           {
             ...validPolicy().assets[0],
-            maxPerTx: "4999999",
-            maxDaily: "5000000",
+            maxPerTx: "6499999",
+            maxDaily: "6500000",
           },
         ],
       }),
-    ).toThrow("at least 5000000 lamports");
+    ).toThrow("at least 6500000 lamports");
 
     expect(() =>
       normalizeOwnerPolicy({
@@ -336,8 +336,8 @@ describe("strict owner policy input", () => {
           {
             asset: "solana:native",
             destinations: [destination],
-            maxPerTx: "5000000",
-            maxDaily: "5000000",
+            maxPerTx: "6500000",
+            maxDaily: "6500000",
           },
         ],
       }),

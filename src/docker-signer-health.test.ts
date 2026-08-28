@@ -48,7 +48,7 @@ describe("Docker native signer health", () => {
         release: developmentRelease,
         capabilities: {
           protocol: { current: 2, min: 2, max: 2 },
-          nativeFeeReservationLamports: 5_000_000,
+          nativeFeeReservationLamports: 6_500_000,
           features: requiredFeatures,
         },
       },
@@ -78,7 +78,7 @@ describe("Docker native signer health", () => {
           ...healthy.result,
           capabilities: {
             ...healthy.result.capabilities,
-            nativeFeeReservationLamports: 5_000_001,
+            nativeFeeReservationLamports: 6_500_001,
           },
         },
       }),
@@ -93,7 +93,7 @@ describe("Docker native signer health", () => {
         release: productionRelease,
         capabilities: {
           protocol: { current: 2, min: 2, max: 2 },
-          nativeFeeReservationLamports: 5_000_000,
+          nativeFeeReservationLamports: 6_500_000,
           features: requiredFeatures,
         },
       },
@@ -135,7 +135,7 @@ describe("Docker native signer health", () => {
               release: developmentRelease,
               capabilities: {
                 protocol: { current: 2, min: 2, max: 2 },
-                nativeFeeReservationLamports: 5_000_000,
+                nativeFeeReservationLamports: 6_500_000,
                 features: requiredFeatures,
               },
             },

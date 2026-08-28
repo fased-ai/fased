@@ -23,7 +23,7 @@ describe("local socket signer protocol", () => {
       network: { ready: true, wallets: [] },
       capabilities: {
         protocol: { current: 2, min: 2, max: 2 },
-        nativeFeeReservationLamports: 5_000_000,
+        nativeFeeReservationLamports: 6_500_000,
         intentTypes: ["solana.nativeTransfer"],
         operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
         features: ["failClosedPolicies", "policyHashes", "signerOwnedKeys"],
@@ -104,7 +104,7 @@ describe("local socket signer protocol", () => {
         },
         capabilities: {
           protocol: { current: 2, min: 2, max: 2 },
-          nativeFeeReservationLamports: 5_000_000,
+          nativeFeeReservationLamports: 6_500_000,
           intentTypes: ["solana.nativeTransfer", "solana.splTransferChecked"],
           operationStates: ["reserved", "broadcast", "confirmed", "failed", "unknown"],
           features: ["failClosedPolicies", "policyHashes"],
@@ -133,7 +133,7 @@ describe("local socket signer protocol", () => {
       },
       capabilities: {
         protocol: { current: 2, min: 2, max: 2 },
-        nativeFeeReservationLamports: 5_000_000,
+        nativeFeeReservationLamports: 6_500_000,
         intentTypes: ["solana.nativeTransfer"],
         operationStates: ["reserved"],
         features: ["signerControlledNativeFeeCaps"],
@@ -389,10 +389,43 @@ describe("local socket signer protocol", () => {
               isWritable: true,
             },
           ],
+          context: {
+            permanentMiningIds: [
+              "8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW", // pragma: allowlist secret
+            ],
+          },
         },
       },
     };
     expect(parseLocalSocketSignerRequest(request)).toEqual(request);
+    const signerOwnedReveal = {
+      ...request,
+      request: {
+        ...request.request,
+        intent: {
+          ...request.request.intent,
+          action: "revealCycleV2",
+          satCommitment: {
+            reference: `sha256:${"a".repeat(64)}`,
+            cluster: "devnet" as const,
+            protocolGeneration: `sha256:${"b".repeat(64)}`,
+          },
+        },
+      },
+    };
+    expect(parseLocalSocketSignerRequest(signerOwnedReveal)).toEqual(signerOwnedReveal);
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...request,
+        request: {
+          ...request.request,
+          intent: {
+            ...request.request.intent,
+            satCommitment: signerOwnedReveal.request.intent.satCommitment,
+          },
+        },
+      }),
+    ).toThrow("signer-owned SAT commitment references require one revealCycle generation");
     const lookupBackedDistribution = {
       ...request,
       request: {
@@ -478,6 +511,61 @@ describe("local socket signer protocol", () => {
         request: { ...bindingRequest.request, address: request.request.intent.lookupTable.address },
       }),
     ).toThrow("invalid signer request");
+  });
+
+  it("accepts only strict signer-owned SAT commitment allocation and binding operations", () => {
+    const request = {
+      op: "v2.satCommitment.allocate" as const,
+      walletId: "mining",
+      request: {
+        cluster: "devnet" as const,
+        programId: "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF", // pragma: allowlist secret
+        protocolGeneration: SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.interfaceContractSha256,
+        cycleId: "5959753",
+        committedLamports: "1000000000",
+        allocationFp: Array.from({ length: 16 }, () => 62_500),
+      },
+    };
+    expect(parseLocalSocketSignerRequest(request)).toEqual(request);
+
+    const result = {
+      reference: `sha256:${"a".repeat(64)}`,
+      commitmentHex: "b".repeat(64),
+      cycleId: request.request.cycleId,
+      committedLamports: request.request.committedLamports,
+      allocationCount: 16,
+      protocolGeneration: request.request.protocolGeneration,
+    };
+    expect(validateLocalSocketSignerResult(request.op, result)).toBe(true);
+
+    const bindingRequest = {
+      op: "v2.satCommitment.binding.get" as const,
+      walletId: request.walletId,
+      request: {
+        cluster: request.request.cluster,
+        programId: request.request.programId,
+        protocolGeneration: request.request.protocolGeneration,
+        cycleId: request.request.cycleId,
+      },
+    };
+    expect(parseLocalSocketSignerRequest(bindingRequest)).toEqual(bindingRequest);
+    expect(validateLocalSocketSignerResult(bindingRequest.op, result)).toBe(true);
+
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...request,
+        request: { ...request.request, allocationFp: Array.from({ length: 16 }, () => 1) },
+      }),
+    ).toThrow("SAT commitment allocation must sum to 1000000");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...bindingRequest,
+        request: { ...bindingRequest.request, commitmentHex: result.commitmentHex },
+      }),
+    ).toThrow("invalid signer request");
+    expect(
+      validateLocalSocketSignerResult(request.op, { ...result, nonceBase64: "must-not-cross" }),
+    ).toBe(false);
   });
 
   it("accepts only narrow Vault bond and federation challenge intents", () => {

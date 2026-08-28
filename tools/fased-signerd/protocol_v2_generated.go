@@ -2,9 +2,13 @@
 
 package main
 
+// signerNativeFeeReservationV2 is the signer-owned upper bound for network
+// fees and explicitly validated rent paid by a signer-built transaction.
+const signerNativeFeeReservationV2 = uint64(6500000)
+
 var signerV2Capabilities = signerCapabilitiesV2{
 	Protocol:                     signerProtocolRangeV2{Current: 2, Min: 2, Max: 2},
-	NativeFeeReservationLamports: 5000000,
+	NativeFeeReservationLamports: signerNativeFeeReservationV2,
 	IntentTypes: []string{
 		"solana.nativeTransfer",
 		"solana.splTransferChecked",

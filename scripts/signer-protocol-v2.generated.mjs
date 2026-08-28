@@ -5,7 +5,7 @@ export const SIGNER_PROTOCOL_V2 = Object.freeze({
     min: 2,
     max: 2,
   },
-  nativeFeeReservationLamports: 5000000,
+  nativeFeeReservationLamports: 6500000,
   intentTypes: [
     "solana.nativeTransfer",
     "solana.splTransferChecked",
