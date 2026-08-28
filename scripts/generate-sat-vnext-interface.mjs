@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { format } from "oxfmt";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bundleDir = path.join(root, "extensions", "sat-mining", "protocol-generation");
@@ -26,6 +27,7 @@ const artifacts = [
   "account-order.generation-2.json",
   "state-layouts.generation-2.json",
   "signer-codecs.generation-2.json",
+  "economics-generation.v3.json",
 ];
 const tsPath = path.join(root, "extensions", "sat-mining", "src", "vnext-interface-manifest.ts");
 const releaseContractPath = path.join(
@@ -98,6 +100,7 @@ const idl = parsed["idl.generation-2.json"];
 const accountOrder = parsed["account-order.generation-2.json"];
 const layouts = parsed["state-layouts.generation-2.json"];
 const signer = parsed["signer-codecs.generation-2.json"];
+const economics = parsed["economics-generation.v3.json"];
 const activation = JSON.parse(fs.readFileSync(activationPath, "utf8"));
 
 if (
@@ -204,6 +207,17 @@ if (
 ) {
   fail("keeper payment contract is not the exact P3-008 generation");
 }
+if (
+  economics?.$schema !== "sat.economics-generation.v3" ||
+  economics?.freezeId !== "SAT-VNEXT-GATE-P4-004" ||
+  economics?.cycle?.strategyChannels !== 16 ||
+  economics?.cycle?.directEligibilityLamports !== 1_000_000_000 ||
+  economics?.cycle?.currentCycleCapitalReferenceLamports !== 250_000_000_000 ||
+  economics?.economics?.erosionPpm !== 14 ||
+  contract?.economicsContractDigest !== economics?.contractDigest
+) {
+  fail("generation-3 economics contract is incomplete or mismatched");
+}
 
 const digests = Object.fromEntries(
   Object.entries(bytesByArtifact).map(([artifact, bytes]) => [artifact, sha256(bytes)]),
@@ -246,18 +260,19 @@ function typescriptLiteral(value, depth = 0) {
   return JSON.stringify(value);
 }
 const accountFlags = accountShape(orderReveal.accountOrder);
-const generatedCodecs = [codec, ...keeperActions.map((action) => codecsByAction.get(action))].map(
-  (generatedCodec) => {
-    const order = accountOrdersByKey.get(generatedCodec.accountOrderKey);
-    return {
-      ...generatedCodec,
-      accountShape: accountShape(order.accountOrder).join(","),
-      repeatedAccountGroup: order.repeatedAccountGroup ?? null,
-    };
-  },
-);
-const keeperCodecs = Object.fromEntries(
-  generatedCodecs.slice(1).map((item) => [
+const generatedCodecs = signer.codecs.map((generatedCodec) => {
+  const order = accountOrdersByKey.get(generatedCodec.accountOrderKey);
+  if (!order?.accountOrder) {
+    fail(`generation-2 codec ${generatedCodec.action} has no canonical account order`);
+  }
+  return {
+    ...generatedCodec,
+    accountShape: accountShape(order.accountOrder).join(","),
+    repeatedAccountGroup: order.repeatedAccountGroup ?? null,
+  };
+});
+const actionCodecs = Object.fromEntries(
+  generatedCodecs.map((item) => [
     item.action,
     {
       discriminator: item.discriminator,
@@ -267,8 +282,25 @@ const keeperCodecs = Object.fromEntries(
     },
   ]),
 );
+const keeperCodecs = Object.fromEntries(
+  keeperActions.map((action) => {
+    const item = generatedCodecs.find((candidate) => candidate.action === action);
+    if (!item) {
+      fail(`generation-2 keeper codec ${action} is absent`);
+    }
+    return [
+      item.action,
+      {
+        discriminator: item.discriminator,
+        dataLength: item.dataLength,
+        accountShape: item.accountShape,
+        repeatedAccountGroup: item.repeatedAccountGroup,
+      },
+    ];
+  }),
+);
 
-const typescript = `// Generated from the exact SAT generation-2 interface bundle; do not edit.\n\nexport const SAT_VNEXT_INTERFACE = {\n  freezeId: ${JSON.stringify(contract.freezeId)},\n  state: ${JSON.stringify(activation.state)},\n  active: true,\n  executableDispatchBound: true,\n  publicEntryEnabled: true,\n  schemaGeneration: 2,\n  signerCapabilityGeneration: 2,\n  strategyChannels: 16,\n  legacyStrategyChannels: 25,\n  keeperExclusiveWindowSlots: 20,\n  keeperFallbackJitterSlots: 8,\n  keeperAccounting: ${typescriptLiteral(contract.keeperAccounting, 1)} as const,\n  revealDiscriminator: 114,\n  revealDataLength: 105,\n  revealAccountShape: ${JSON.stringify(accountFlags.join(","))},\n  keeperCodecs: ${typescriptLiteral(keeperCodecs, 1)} as const,\n  contractSha256: ${JSON.stringify(digests["interface-generation.v2.json"])},\n  idlSha256: ${JSON.stringify(digests["idl.generation-2.json"])},\n  accountOrderSha256: ${JSON.stringify(digests["account-order.generation-2.json"])},\n  stateLayoutsSha256: ${JSON.stringify(digests["state-layouts.generation-2.json"])},\n  signerCodecsSha256: ${JSON.stringify(digests["signer-codecs.generation-2.json"])},\n} as const;\n\nexport function encodeSatVNextRevealData(params: {\n  cycleId: bigint;\n  nonce: Buffer;\n  allocationFp: readonly number[];\n}): Buffer {\n  if (params.nonce.length !== 32) throw new Error("SAT vNext reveal nonce must contain 32 bytes");\n  if (params.allocationFp.length !== SAT_VNEXT_INTERFACE.strategyChannels) {\n    throw new Error("SAT vNext reveal must contain exactly 16 strategy channels");\n  }\n  const data = Buffer.alloc(SAT_VNEXT_INTERFACE.revealDataLength);\n  data[0] = SAT_VNEXT_INTERFACE.revealDiscriminator;\n  data.writeBigUInt64LE(params.cycleId, 1);\n  params.nonce.copy(data, 9);\n  params.allocationFp.forEach((value, index) => {\n    if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {\n      throw new Error(\`SAT vNext allocation[\${index}] is not a u32\`);\n    }\n    data.writeUInt32LE(value, 41 + index * 4);\n  });\n  return data;\n}\n`;
+const typescript = `// Generated from the exact SAT generation-2 interface bundle; do not edit.\n\nexport const SAT_VNEXT_INTERFACE = {\n  freezeId: ${JSON.stringify(contract.freezeId)},\n  state: ${JSON.stringify(activation.state)},\n  active: true,\n  executableDispatchBound: true,\n  publicEntryEnabled: true,\n  schemaGeneration: 2,\n  signerCapabilityGeneration: 2,\n  strategyChannels: 16,\n  legacyStrategyChannels: 25,\n  economics: ${typescriptLiteral({ cycle: economics.cycle, economics: economics.economics, penalty: economics.penalty, bond: economics.bond }, 1)} as const,\n  keeperExclusiveWindowSlots: 20,\n  keeperFallbackJitterSlots: 8,\n  keeperAccounting: ${typescriptLiteral(contract.keeperAccounting, 1)} as const,\n  revealDiscriminator: 114,\n  revealDataLength: 105,\n  revealAccountShape: ${JSON.stringify(accountFlags.join(","))},\n  actionCodecs: ${typescriptLiteral(actionCodecs, 1)} as const,\n  keeperCodecs: ${typescriptLiteral(keeperCodecs, 1)} as const,\n  contractSha256: ${JSON.stringify(digests["interface-generation.v2.json"])},\n  economicsSha256: ${JSON.stringify(digests["economics-generation.v3.json"])},\n  idlSha256: ${JSON.stringify(digests["idl.generation-2.json"])},\n  accountOrderSha256: ${JSON.stringify(digests["account-order.generation-2.json"])},\n  stateLayoutsSha256: ${JSON.stringify(digests["state-layouts.generation-2.json"])},\n  signerCodecsSha256: ${JSON.stringify(digests["signer-codecs.generation-2.json"])},\n} as const;\n\nexport type SatVNextAction = keyof typeof SAT_VNEXT_INTERFACE.actionCodecs;\n\nexport function encodeSatVNextRevealData(params: {\n  cycleId: bigint;\n  nonce: Buffer;\n  allocationFp: readonly number[];\n}): Buffer {\n  if (params.nonce.length !== 32) throw new Error("SAT vNext reveal nonce must contain 32 bytes");\n  if (params.allocationFp.length !== SAT_VNEXT_INTERFACE.strategyChannels) {\n    throw new Error("SAT vNext reveal must contain exactly 16 strategy channels");\n  }\n  const data = Buffer.alloc(SAT_VNEXT_INTERFACE.revealDataLength);\n  data[0] = SAT_VNEXT_INTERFACE.revealDiscriminator;\n  data.writeBigUInt64LE(params.cycleId, 1);\n  params.nonce.copy(data, 9);\n  params.allocationFp.forEach((value, index) => {\n    if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {\n      throw new Error(\`SAT vNext allocation[\${index}] is not a u32\`);\n    }\n    data.writeUInt32LE(value, 41 + index * 4);\n  });\n  return data;\n}\n`;
 
 const activationTypescript =
   `// Generated from finalized SAT-DEP-0006 activation evidence; do not edit.\n\nexport const SAT_VNEXT_ACTIVATION = ${typescriptLiteral(activation)} as const;\n`
@@ -287,12 +319,14 @@ const generationEntries = Object.entries(releaseAcknowledgement.componentGenerat
 const releaseContract = `// Generated from the exact SAT generation-2 interface bundle; do not edit.\n\nexport const SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT = {\n  schema: ${JSON.stringify(releaseAcknowledgement.schema)},\n  state: ${JSON.stringify(releaseAcknowledgement.state)},\n  componentGenerations: {\n${generationEntries}\n  },\n  interfaceContractSha256:\n    ${JSON.stringify(releaseAcknowledgement.interfaceContractSha256)}, // pragma: allowlist secret\n  idlSha256: ${JSON.stringify(releaseAcknowledgement.idlSha256)}, // pragma: allowlist secret\n  accountOrderSha256: ${JSON.stringify(releaseAcknowledgement.accountOrderSha256)}, // pragma: allowlist secret\n  stateLayoutsSha256: ${JSON.stringify(releaseAcknowledgement.stateLayoutsSha256)}, // pragma: allowlist secret\n  signerCodecsSha256: ${JSON.stringify(releaseAcknowledgement.signerCodecsSha256)}, // pragma: allowlist secret\n} as const;\n`;
 
 const goCodecEntries = generatedCodecs
-  .map(
-    (generatedCodec) =>
-      `\t${JSON.stringify(generatedCodec.action)}: {\n\t\tAction:             ${JSON.stringify(generatedCodec.action)},\n\t\tDiscriminator:      ${generatedCodec.discriminator},\n\t\tDataLength:         ${generatedCodec.dataLength},\n\t\tAllocationChannels: ${generatedCodec.allocationChannels ?? 0},\n\t\tAccountShape:       ${JSON.stringify(generatedCodec.accountShape)},\n\t\tActive:             false,\n\t},`,
-  )
+  .map((generatedCodec) => {
+    const dataLength = Number.isInteger(generatedCodec.dataLength)
+      ? String(generatedCodec.dataLength)
+      : "-1";
+    return `\t${JSON.stringify(generatedCodec.action)}: {\n\t\tAction:             ${JSON.stringify(generatedCodec.action)},\n\t\tDiscriminator:      ${generatedCodec.discriminator},\n\t\tDataLength:         ${dataLength},\n\t\tAllocationChannels: ${generatedCodec.allocationChannels ?? 0},\n\t\tAccountShape:       ${JSON.stringify(generatedCodec.accountShape)},\n\t\tActive:             false,\n\t},`;
+  })
   .join("\n");
-const go = `package main\n\n// Code generated from the exact SAT generation-2 interface bundle; DO NOT EDIT.\n\ntype frozenSATCodecGeneration2 struct {\n\tAction             string\n\tDiscriminator      byte\n\tDataLength         int\n\tAllocationChannels int\n\tAccountShape       string\n\tActive             bool\n}\n\nconst (\n\tsatVNextInterfaceContractSHA256 = ${JSON.stringify(digests["interface-generation.v2.json"])} // pragma: allowlist secret\n\tsatVNextIDLContractSHA256       = ${JSON.stringify(digests["idl.generation-2.json"])} // pragma: allowlist secret\n\tsatVNextAccountOrderSHA256      = ${JSON.stringify(digests["account-order.generation-2.json"])} // pragma: allowlist secret\n)\n\nvar signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{\n${goCodecEntries}\n}\n\nfunc isCanonicalFrozenSATGeneration2Data(action string, data []byte) bool {\n\tcodec, ok := signerSATCodecsGeneration2[action]\n\treturn ok && !codec.Active && len(data) == codec.DataLength && data[0] == codec.Discriminator\n}\n`;
+const go = `package main\n\n// Code generated from the exact SAT generation-2 interface bundle; DO NOT EDIT.\n\ntype frozenSATCodecGeneration2 struct {\n\tAction             string\n\tDiscriminator      byte\n\tDataLength         int\n\tAllocationChannels int\n\tAccountShape       string\n\tActive             bool\n}\n\nconst (\n\tsatVNextInterfaceContractSHA256 = ${JSON.stringify(digests["interface-generation.v2.json"])} // pragma: allowlist secret\n\tsatVNextIDLContractSHA256       = ${JSON.stringify(digests["idl.generation-2.json"])} // pragma: allowlist secret\n\tsatVNextAccountOrderSHA256      = ${JSON.stringify(digests["account-order.generation-2.json"])} // pragma: allowlist secret\n)\n\nvar signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{\n${goCodecEntries}\n}\n\nfunc isCanonicalFrozenSATGeneration2Data(action string, data []byte) bool {\n\tcodec, ok := signerSATCodecsGeneration2[action]\n\tif !ok || codec.Active || len(data) == 0 || data[0] != codec.Discriminator {\n\t\treturn false\n\t}\n\tif codec.DataLength >= 0 {\n\t\treturn len(data) == codec.DataLength\n\t}\n\treturn action == "claimCycleRewardsBatchV2" && len(data) >= 9 && (len(data)-9)%8 == 0\n}\n`;
 
 const goRelease = `package main\n\n// Code generated from the exact SAT generation-2 interface bundle; DO NOT EDIT.\n\ntype frozenSATComponentGenerationsV2 struct {\n\tBond             string \`json:"bond"\`\n\tCycle            string \`json:"cycle"\`\n\tEconomics        string \`json:"economics"\`\n\tKeeper           string \`json:"keeper"\`\n\tPenalty          string \`json:"penalty"\`\n\tProtocol         string \`json:"protocol"\`\n\tReceipt          string \`json:"receipt"\`\n\tSchema           string \`json:"schema"\`\n\tSignerCapability string \`json:"signerCapability"\`\n}\n\ntype frozenSATReleaseAcknowledgementV2 struct {\n\tSchema                  string                          \`json:"schema"\`\n\tState                   string                          \`json:"state"\`\n\tComponentGenerations    frozenSATComponentGenerationsV2 \`json:"componentGenerations"\`\n\tInterfaceContractSHA256 string                          \`json:"interfaceContractSha256"\`\n\tIDLSHA256               string                          \`json:"idlSha256"\`\n\tAccountOrderSHA256      string                          \`json:"accountOrderSha256"\`\n\tStateLayoutsSHA256      string                          \`json:"stateLayoutsSha256"\`\n\tSignerCodecsSHA256      string                          \`json:"signerCodecsSha256"\`\n}\n\nvar signerSATReleaseAcknowledgementGeneration2 = frozenSATReleaseAcknowledgementV2{\n\tSchema: ${JSON.stringify(releaseAcknowledgement.schema)},\n\tState:  ${JSON.stringify(releaseAcknowledgement.state)},\n\tComponentGenerations: frozenSATComponentGenerationsV2{\n\t\tBond:             ${JSON.stringify(releaseAcknowledgement.componentGenerations.bond)},\n\t\tCycle:            ${JSON.stringify(releaseAcknowledgement.componentGenerations.cycle)},\n\t\tEconomics:        ${JSON.stringify(releaseAcknowledgement.componentGenerations.economics)},\n\t\tKeeper:           ${JSON.stringify(releaseAcknowledgement.componentGenerations.keeper)},\n\t\tPenalty:          ${JSON.stringify(releaseAcknowledgement.componentGenerations.penalty)},\n\t\tProtocol:         ${JSON.stringify(releaseAcknowledgement.componentGenerations.protocol)},\n\t\tReceipt:          ${JSON.stringify(releaseAcknowledgement.componentGenerations.receipt)},\n\t\tSchema:           ${JSON.stringify(releaseAcknowledgement.componentGenerations.schema)},\n\t\tSignerCapability: ${JSON.stringify(releaseAcknowledgement.componentGenerations.signerCapability)},\n\t},\n\tInterfaceContractSHA256: ${JSON.stringify(releaseAcknowledgement.interfaceContractSha256)}, // pragma: allowlist secret\n\tIDLSHA256:               ${JSON.stringify(releaseAcknowledgement.idlSha256)}, // pragma: allowlist secret\n\tAccountOrderSHA256:      ${JSON.stringify(releaseAcknowledgement.accountOrderSha256)}, // pragma: allowlist secret\n\tStateLayoutsSHA256:      ${JSON.stringify(releaseAcknowledgement.stateLayoutsSha256)}, // pragma: allowlist secret\n\tSignerCodecsSHA256:      ${JSON.stringify(releaseAcknowledgement.signerCodecsSha256)}, // pragma: allowlist secret\n}\n`;
 
@@ -300,8 +334,14 @@ const typescriptWithPublicIdentityAllowlist = typescript.replace(
   /(\n  (?:contract|idl|accountOrder|stateLayouts|signerCodecs)Sha256: [^\n]+,)/gu,
   "$1 // pragma: allowlist secret",
 );
+const formattedTypescript = await format(tsPath, typescriptWithPublicIdentityAllowlist);
+if (formattedTypescript.errors.length > 0) {
+  fail(
+    `cannot format generated TypeScript: ${formattedTypescript.errors[0]?.message ?? "unknown error"}`,
+  );
+}
 
-update(tsPath, Buffer.from(typescriptWithPublicIdentityAllowlist));
+update(tsPath, Buffer.from(formattedTypescript.code));
 update(activationTsPath, Buffer.from(activationTypescript));
 update(releaseContractPath, Buffer.from(releaseContract));
 update(goPath, Buffer.from(go));

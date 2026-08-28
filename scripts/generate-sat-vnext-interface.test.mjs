@@ -30,6 +30,13 @@ void test("Fased binds the finalized SAT-DEP-0006 activation to generation-2 cod
   assert.match(generated, /strategyChannels: 16/u);
   assert.match(generated, /legacyStrategyChannels: 25/u);
   assert.match(generated, /revealDataLength: 105/u);
+  assert.match(generated, /actionCodecs:/u);
+  assert.match(generated, /openCycleV2:/u);
+  assert.match(generated, /commitCycleV2:/u);
+  assert.match(generated, /closeCommitPhaseV2:/u);
+  assert.match(generated, /sealCycleEntropyV2:/u);
+  assert.match(generated, /claimCycleRewardsV2:/u);
+  assert.match(generated, /snapshotKeeperCapabilitiesV2:/u);
   assert.match(generated, /settleCyclePageV2/u);
   assert.match(generated, /distributeCyclePageV2/u);
   assert.match(generated, /maximumChargePerWorkLamports: 40000/u);
@@ -71,15 +78,15 @@ void test("Fased binds the finalized SAT-DEP-0006 activation to generation-2 cod
   assert.match(activation, /cluster: "devnet"/u);
   assert.match(activation, /activationGeneration: 2/u);
 
-  const active = fs.readFileSync(
+  const legacy = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/protocol-contract.ts"),
     "utf8",
   );
-  assert.match(active, /allocationBuckets: 25/u);
-  const activeSigner = fs.readFileSync(
+  assert.match(legacy, /allocationBuckets: 25/u);
+  const legacySigner = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/signer-codec-manifest.ts"),
     "utf8",
   );
-  assert.match(activeSigner, /action: "revealCycle"[\s\S]*?dataLength: 145/u);
-  assert.doesNotMatch(activeSigner, /action: "revealCycleV2"/u);
+  assert.match(legacySigner, /action: "revealCycle"[\s\S]*?dataLength: 145/u);
+  assert.doesNotMatch(legacySigner, /action: "revealCycleV2"/u);
 });

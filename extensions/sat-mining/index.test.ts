@@ -6474,6 +6474,7 @@ describe("sat-mining cycle gateway integration", () => {
       "sat.topUpRegistryReserve",
       "sat.commitCycle",
       "sat.closeCommitPhase",
+      "sat.snapshotKeeperCapabilities",
       "sat.sealCycleEntropy",
       "sat.revealCycle",
       "sat.releaseUnrevealedCommit",

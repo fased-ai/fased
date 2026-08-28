@@ -1,0 +1,153 @@
+{
+  "$schema": "sat.economics-generation.v3",
+  "contractVersion": 3,
+  "freezeId": "SAT-VNEXT-GATE-P4-004",
+  "state": "FROZEN_NOT_ACTIVE",
+  "formulaGeneration": "sat-economics-formula.v5",
+  "componentGenerations": {
+    "cycle": "SAT-CYCLE-GEN-003",
+    "economics": "SAT-ECON-GEN-003",
+    "penalty": "SAT-PENALTY-GEN-003",
+    "bond": "SAT-BOND-GEN-003"
+  },
+  "source": {
+    "freezeContractPath": "economics-sim/scenarios/vnext-economics-freeze-v3.json",
+    "freezeContractSha256": "sha256:cfa49e688b0b8911ad7f5e5003fb24a72657a8a861b7da76222fdb0f76ec7041",
+    "matrixExtensionPath": "economics-sim/scenarios/vnext-economics-matrix-v3-extension.json",
+    "matrixExtensionSha256": "sha256:8ae42fc7cfc0285cf2690d803a105bd169a6c41fa080e937453c8d40e00e42a7",
+    "baseMatrixPath": "economics-sim/scenarios/vnext-economics-matrix-v2.json",
+    "baseMatrixSha256": "sha256:a49f2e0b013bdddd44f648fe614c12d142bd5a9b13705e3c77092d953596f40a",
+    "evidenceCommit": "1adab2f97d0d6a916ac8f35705c5c0a0036d5bc5",
+    "evidenceTree": "4744513490bd4f259021cd1e2f9146728b9b40d0",
+    "evidenceReportSha256": "sha256:6181f76d322dcf17c81aa1b5c8b28ee1cb8a332a50b4072be5f1a06fa1e552c4",
+    "historicalCaseCount": 1828,
+    "extensionControlCount": 55,
+    "seeds": [
+      101,
+      202
+    ],
+    "componentRegistryExtensionPath": "api/component-generations.v2-extension.json",
+    "componentRegistryExtensionSha256": "sha256:7baf418697c7e8f441b8938d8b6b8232f2339dcd410e894e03951d66a9341af5"
+  },
+  "cycle": {
+    "cycleSeconds": 300,
+    "strategyChannels": 16,
+    "directEligibilityLamports": 1000000000,
+    "currentCycleCapitalReferenceLamports": 250000000000,
+    "capitalQualification": "VALID_REVEALED_CURRENT_CYCLE",
+    "postResolutionExitAllowed": true,
+    "trailingCapitalQualification": false,
+    "launchMiningCommitmentRequired": false,
+    "automaticReferenceRetarget": false
+  },
+  "economics": {
+    "hardCapSat": 21000000,
+    "satDecimals": 11,
+    "erosionPpm": 14,
+    "satRouteBps": {
+      "baseMiner": 7500,
+      "performanceMiner": 1500,
+      "bond": 500,
+      "treasury": 500
+    },
+    "solRouteBps": {
+      "deterministic": 3000,
+      "performance": 5000,
+      "treasury": 2000
+    },
+    "issuance": {
+      "nominalYears": 25,
+      "annualBpsOfHardCap": [
+        1000,
+        900,
+        800,
+        700,
+        600,
+        550,
+        500,
+        450,
+        400,
+        350,
+        350,
+        350,
+        350,
+        350,
+        350,
+        250,
+        250,
+        250,
+        250,
+        250,
+        150,
+        150,
+        150,
+        150,
+        150
+      ],
+      "tailAnnualBpsMaximum": 150,
+      "participationUnlockApplied": true,
+      "acceleratedCatchUpAllowed": false,
+      "existingMintSupplyCountsAgainstCap": true,
+      "stopAtHardCap": true
+    },
+    "performance": {
+      "launchMultiplierBps": 10000,
+      "launchMonetaryState": "NEUTRAL_ONLY",
+      "deferredMinimumMultiplierBps": 7500,
+      "deferredMaximumMultiplierBps": 12500,
+      "deferredMonetaryPerformanceActive": false,
+      "newTimelockedGenerationRequired": true,
+      "capitalTimeWeighted": true,
+      "priorCompletedDataOnly": true
+    }
+  },
+  "penalty": {
+    "strikeWindowDays": 30,
+    "cleanActiveDaysPerTierDecay": 30,
+    "ladderBps": [
+      10,
+      25,
+      100
+    ],
+    "appliesToMissedCommitmentOnly": true,
+    "pauseOnAttributableMiss": true,
+    "resumePolicy": "EXPLICIT_AUTHORIZED_REVIEW",
+    "persistentAgentRecordMemory": true,
+    "nonAttributablePenaltyBps": 0
+  },
+  "bond": {
+    "basicThresholdSat": 25,
+    "rewardThresholdSat": 500,
+    "weightPolicy": "LINEAR_UNCAPPED_MINIMUM_ACTIVE",
+    "epochDays": 7,
+    "entryAndIncreaseActivation": "NEXT_COMPLETE_EPOCH",
+    "withdrawalStopsEligibilityImmediately": true,
+    "withdrawalCooldownDays": 7,
+    "cancelRequalification": "NEXT_COMPLETE_EPOCH",
+    "completedClaimsPreserved": true,
+    "emptyLaneDisposition": "UNISSUED",
+    "serviceGatingRequired": false,
+    "stalePositionsEligible": false
+  },
+  "rounding": {
+    "indexScale": "1000000000000000000",
+    "beneficiaryFractionalRemainderPreserved": true,
+    "splitTopologyGainAllowed": false
+  },
+  "keeperFunding": {
+    "commonWorkSource": "BOOTSTRAP_OR_TREASURY",
+    "identityWorkSource": "BENEFICIARY_OPERATING_RESERVE",
+    "principalSpendAllowed": false,
+    "minerPoolSpendAllowed": false,
+    "reimbursement": "MEASURED_P95_PLUS_10_PERCENT_CAPPED"
+  },
+  "activation": {
+    "state": "FROZEN_NOT_ACTIVE",
+    "liveConstantsChanged": false,
+    "programDispatchBound": false,
+    "fasedRuntimeSelected": false,
+    "keeperGenerationActivated": false,
+    "publicEntryEnabled": false
+  },
+  "contractDigest": "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c"
+}

@@ -14,18 +14,24 @@ import (
 )
 
 var keeperFeePayerActionsV2 = map[string]struct{}{
-	"closeCommitPhase":          {},
-	"sealCycleEntropy":          {},
-	"releaseUnrevealedCommit":   {},
-	"abortEmptyCycle":           {},
-	"settleCyclePage":           {},
-	"finalizeCycleSettlement":   {},
-	"scoreCyclePage":            {},
-	"distributeCyclePage":       {},
-	"settleCyclePageV2":         {},
-	"finalizeCycleSettlementV2": {},
-	"scoreCyclePageV2":          {},
-	"distributeCyclePageV2":     {},
+	"openCycleV2":                  {},
+	"closeCommitPhase":             {},
+	"closeCommitPhaseV2":           {},
+	"sealCycleEntropy":             {},
+	"snapshotKeeperCapabilitiesV2": {},
+	"sealCycleEntropyV2":           {},
+	"releaseUnrevealedCommit":      {},
+	"releaseUnrevealedCommitV2":    {},
+	"abortEmptyCycle":              {},
+	"abortEmptyCycleV2":            {},
+	"settleCyclePage":              {},
+	"finalizeCycleSettlement":      {},
+	"scoreCyclePage":               {},
+	"distributeCyclePage":          {},
+	"settleCyclePageV2":            {},
+	"finalizeCycleSettlementV2":    {},
+	"scoreCyclePageV2":             {},
+	"distributeCyclePageV2":        {},
 }
 
 func normalizeKeeperFeePayerIntentV2(

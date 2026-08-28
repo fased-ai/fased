@@ -8,12 +8,14 @@ import {
   decodeSatBondPosition,
   decodeSatBondStakingDistributor,
   decodeSatCycle,
+  decodeSatCycleV2,
   decodeSatCycleSettlementProgressV2,
   decodeSatCycleSettlementProgressV3,
   decodeSatRoundBucket,
   decodeSatCycleRegistryPage,
   decodeSatGlobalState,
   decodeSatKeeperCapability,
+  decodeSatKeeperRegistry,
   decodeSatMinerCapital,
   decodeSatMinerCycle,
   decodeSatMinerCycleV2,
@@ -25,7 +27,9 @@ import {
   inspectSatConnectionDetails,
   invalidateSatReadCaches,
   resolveDefaultSolanaPublicReadFallbackUrl,
+  resolveSatRentAccountSpaces,
   SAT_RENT_ACCOUNT_SPACES,
+  SAT_VNEXT_RENT_ACCOUNT_SPACES,
 } from "./rpc-read.js";
 
 const READ_RPC_ENV_KEYS = [
@@ -240,6 +244,26 @@ describe("decodeSatKeeperCapability", () => {
   });
 });
 
+describe("decodeSatKeeperRegistry", () => {
+  it("uses the canonical generation-2 registry header offsets", () => {
+    const data = Buffer.alloc(64);
+    data[0] = 144;
+    const body = data.subarray(8);
+    body.writeUInt16LE(2, 4);
+    body.writeBigUInt64LE(41n, 8);
+    body.writeUInt16LE(9, 16);
+    body.writeUInt16LE(9, 18);
+
+    expect(decodeSatKeeperRegistry(data, "registry")).toEqual({
+      address: "registry",
+      keeperGeneration: 2,
+      revision: 41,
+      entryCount: 9,
+      activeCount: 9,
+    });
+  });
+});
+
 async function startRpcServer(
   handler: (payload: { id?: string | number; method?: string; params?: unknown[] }) => {
     statusCode?: number;
@@ -334,6 +358,17 @@ describe("inspectSatRentExemptionLamports", () => {
       minerCycle: 352,
       unlockInterval: 80,
     });
+    expect(SAT_VNEXT_RENT_ACCOUNT_SPACES).toEqual({
+      protocolVault: 0,
+      cycleState: 408,
+      cycleRegistryMeta: 88,
+      cycleRegistryPage: 2_072,
+      cycleSettlementProgressV2: 936,
+      minerCycle: 416,
+      unlockInterval: 0,
+    });
+    expect(resolveSatRentAccountSpaces("sat-v2")).toBe(SAT_RENT_ACCOUNT_SPACES);
+    expect(resolveSatRentAccountSpaces("sha256:generation-2")).toBe(SAT_VNEXT_RENT_ACCOUNT_SPACES);
     expect(
       calculateSatRevealSharedRentLamports({
         cycleSettlementProgressLamports: 2_048,
@@ -501,6 +536,72 @@ describe("Solana pubkey decoding", () => {
       claimedPerfRebateLamports: "1",
       validParticipation: true,
       lockedCollateralLamports: "900000000",
+    });
+  });
+
+  it("decodes the canonical generation-2 cycle layout", () => {
+    const data = Buffer.alloc(408);
+    data[0] = 149;
+    const body = data.subarray(8);
+    body.writeBigUInt64LE(99n, 0);
+    body.writeBigInt64LE(1_000n, 8);
+    body.writeBigInt64LE(1_300n, 16);
+    body[24] = 2;
+    body.fill(7, 40, 72);
+    body.writeBigUInt64LE(250_000_000_000n, 176);
+    body.writeBigUInt64LE(100_000_000_000n, 184);
+    body.writeBigUInt64LE(4n, 192);
+    body.writeBigUInt64LE(400_000n, 200);
+    body.writeBigUInt64LE(75n, 208);
+    body.writeBigUInt64LE(15n, 216);
+    body.writeBigUInt64LE(5n, 224);
+    body.writeBigUInt64LE(1_400_000n, 240);
+    body.writeBigUInt64LE(420_000n, 248);
+    body.writeBigUInt64LE(700_000n, 256);
+    body.writeBigUInt64LE(280_000n, 264);
+    body.writeBigUInt64LE(1_400_000n, 272);
+    body.writeBigUInt64LE(40_000n, 280);
+    body.writeBigInt64LE(1_100n, 288);
+    body.writeBigInt64LE(1_200n, 296);
+    body.writeBigUInt64LE(500n, 304);
+    body.writeBigUInt64LE(5n, 312);
+    body.writeBigUInt64LE(5n, 320);
+    body.writeBigUInt64LE(550n, 328);
+    body.writeBigUInt64LE(450n, 336);
+    body.writeBigUInt64LE(475n, 344);
+    body.writeBigUInt64LE(525n, 352);
+    body.writeBigUInt64LE(3n, 360);
+    body.writeBigUInt64LE(1n, 368);
+
+    expect(decodeSatCycleV2(data, "cycle-v2")).toMatchObject({
+      address: "cycle-v2",
+      cycleId: 99,
+      openTs: 1000,
+      closeTs: 1300,
+      status: 2,
+      unlockTargetLamports: "250000000000",
+      totalCommittedLamports: "100000000000",
+      validMinerCount: "4",
+      unlockRatioFp: "400000",
+      issuedCycleMinerSatRaw: "90",
+      unissuedCycleMinerSatRaw: "5",
+      solErosionPoolLamports: "1400000",
+      deterministicRebatePoolLamports: "420000",
+      performanceRebatePoolLamports: "700000",
+      treasurySolLamports: "280000",
+      submittedSolErosionPoolLamports: "1400000",
+      keeperBountyPaidLamports: "40000",
+      commitDeadlineTs: 1100,
+      revealDeadlineTs: 1200,
+      entropyTargetSlot: 500,
+      committedMinerCount: "5",
+      resolvedCommitCount: "5",
+      entropySealedSlot: 550,
+      openSlot: 450,
+      commitDeadlineSlot: 475,
+      revealDeadlineSlot: 525,
+      entropyHashCount: 3,
+      releasedCommitCount: "1",
     });
   });
 

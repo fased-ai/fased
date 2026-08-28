@@ -761,7 +761,7 @@ function normalizeSatRoundExecutionState(
   })();
   const allocationFp =
     Array.isArray(execution.allocationFp) &&
-    execution.allocationFp.length === 25 &&
+    (execution.allocationFp.length === 25 || execution.allocationFp.length === 16) &&
     execution.allocationFp.every(
       (value) => Number.isSafeInteger(value) && value >= 0 && value <= 0xffff_ffff,
     ) &&

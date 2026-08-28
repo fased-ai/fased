@@ -152,8 +152,14 @@ func satCommitmentBindingReferenceV1(walletID string, request signerSATCommitmen
 	})
 }
 
-func buildSATCommitmentV1(authority solana.PublicKey, cycleID, committedLamports uint64, nonce []byte, allocation []uint32) string {
+func buildSATCommitmentV1(programID, authority solana.PublicKey, cycleID, committedLamports uint64, nonce []byte, allocation []uint32) string {
 	hash := sha256.New()
+	domain := "sat-cycle-commit-v1"
+	if len(allocation) == 16 {
+		domain = "sat-cycle-commit-v2"
+	}
+	hash.Write([]byte(domain))
+	hash.Write(programID.Bytes())
 	hash.Write(authority.Bytes())
 	var encoded [8]byte
 	binary.LittleEndian.PutUint64(encoded[:], cycleID)
@@ -327,6 +333,10 @@ func (m *signerKeyManagerV2) allocateSATCommitmentV1(walletID string, request si
 	if err != nil {
 		return signerSATCommitmentAllocationResultV1{}, errors.New("signer Mining wallet authority is invalid")
 	}
+	programID, err := solana.PublicKeyFromBase58(request.ProgramID)
+	if err != nil {
+		return signerSATCommitmentAllocationResultV1{}, errors.New("SAT commitment program ID is invalid")
+	}
 	reference := satCommitmentReferenceV1(walletID, request)
 	var result signerSATCommitmentAllocationResultV1
 	err = m.store.db.Update(func(tx *bolt.Tx) error {
@@ -368,7 +378,7 @@ func (m *signerKeyManagerV2) allocateSATCommitmentV1(walletID string, request si
 			Authority: wallet.PublicKey, Cluster: request.Cluster, ProgramID: request.ProgramID,
 			ProtocolGeneration: request.ProtocolGeneration, CycleID: request.CycleID,
 			CommittedLamports: request.CommittedLamports, AllocationCount: len(request.AllocationFP),
-			CommitmentHex: buildSATCommitmentV1(authority, cycleID, committedLamports, revealNonce, request.AllocationFP),
+			CommitmentHex: buildSATCommitmentV1(programID, authority, cycleID, committedLamports, revealNonce, request.AllocationFP),
 			CreatedAt:     timestampV2(m.store.now()),
 		}
 		if err := m.encryptSATCommitmentMaterialV1(&record, signerSATCommitmentMaterialV1{
@@ -460,6 +470,10 @@ func validateSATCommitmentMaterialV1(record signerSATCommitmentRecordV1, materia
 	if len(material.AllocationFP) != record.AllocationCount {
 		return errors.New("SAT commitment allocation count mismatch")
 	}
+	if (record.ProtocolGeneration == "sat-v2" && record.AllocationCount != 25) ||
+		(record.ProtocolGeneration != "sat-v2" && record.AllocationCount != 16) {
+		return errors.New("SAT commitment allocation count does not match its protocol generation")
+	}
 	nonce, err := base64.StdEncoding.DecodeString(material.NonceBase64)
 	if err != nil || len(nonce) != 32 {
 		return errors.New("SAT commitment reveal nonce is invalid")
@@ -478,8 +492,12 @@ func validateSATCommitmentMaterialV1(record signerSATCommitmentRecordV1, materia
 		allocationTotal += uint64(value)
 	}
 	authority, err := solana.PublicKeyFromBase58(record.Authority)
+	if err != nil {
+		return errors.New("stored SAT commitment authority is invalid")
+	}
+	programID, err := solana.PublicKeyFromBase58(record.ProgramID)
 	if err != nil || allocationTotal != signerSATAllocationScaleV1 ||
-		buildSATCommitmentV1(authority, cycleID, committedLamports, nonce, material.AllocationFP) != record.CommitmentHex {
+		buildSATCommitmentV1(programID, authority, cycleID, committedLamports, nonce, material.AllocationFP) != record.CommitmentHex {
 		return errors.New("SAT commitment reveal material does not match its durable commitment")
 	}
 	return nil
@@ -490,8 +508,8 @@ func (s *signerServiceV2) hydrateSATCommitmentIntentV1(input signerIntentV2, wal
 		return input, nil
 	}
 	commitment := *input.SATCommitment
-	if input.Type != intentSolanaSATAction || input.Action != "revealCycle" || len(input.Instructions) != 0 {
-		return signerIntentV2{}, errors.New("signer-owned SAT commitment references are valid only for one revealCycle")
+	if input.Type != intentSolanaSATAction || (input.Action != "revealCycle" && input.Action != "revealCycleV2") || len(input.Instructions) != 0 {
+		return signerIntentV2{}, errors.New("signer-owned SAT commitment references are valid only for one revealCycle generation")
 	}
 	if commitment.Reference != strings.TrimSpace(commitment.Reference) || commitment.Cluster != strings.TrimSpace(commitment.Cluster) || commitment.ProtocolGeneration != strings.TrimSpace(commitment.ProtocolGeneration) {
 		return signerIntentV2{}, errors.New("signer-owned SAT commitment identity is not canonical")
@@ -502,8 +520,13 @@ func (s *signerServiceV2) hydrateSATCommitmentIntentV1(input signerIntentV2, wal
 	if commitment.ProtocolGeneration == "" {
 		return signerIntentV2{}, errors.New("signer-owned SAT commitment protocol generation is required")
 	}
+	isVNext := input.Action == "revealCycleV2"
+	expectedLength, expectedDiscriminator, expectedAllocationCount := 145, byte(92), 25
+	if isVNext {
+		expectedLength, expectedDiscriminator, expectedAllocationCount = 105, byte(114), 16
+	}
 	placeholder, err := base64.StdEncoding.DecodeString(input.DataBase64)
-	if err != nil || len(placeholder) != 145 || placeholder[0] != 92 {
+	if err != nil || len(placeholder) != expectedLength || placeholder[0] != expectedDiscriminator {
 		return signerIntentV2{}, errors.New("signer-owned SAT reveal requires the canonical sealed placeholder")
 	}
 	for _, value := range placeholder[9:] {
@@ -522,7 +545,9 @@ func (s *signerServiceV2) hydrateSATCommitmentIntentV1(input signerIntentV2, wal
 	if record.Cluster != commitment.Cluster || record.ProtocolGeneration != commitment.ProtocolGeneration || record.ProgramID != strings.TrimSpace(input.ProgramID) || record.CycleID != strconv.FormatUint(cycleID, 10) {
 		return signerIntentV2{}, errors.New("signer-owned SAT reveal does not match its immutable commitment binding")
 	}
-	if record.AllocationCount != 25 || commitment.ProtocolGeneration != "sat-v2" {
+	if record.AllocationCount != expectedAllocationCount ||
+		(!isVNext && commitment.ProtocolGeneration != "sat-v2") ||
+		(isVNext && commitment.ProtocolGeneration == "sat-v2") {
 		return signerIntentV2{}, errors.New("signer-owned SAT reveal protocol generation is not active")
 	}
 	wallet, err := s.keys.PublicRecord(walletID)
@@ -552,8 +577,8 @@ func (s *signerServiceV2) hydrateSATCommitmentIntentV1(input signerIntentV2, wal
 		return signerIntentV2{}, errors.New("SAT commitment reveal nonce is invalid")
 	}
 	defer zeroBytes(nonce)
-	data := make([]byte, 145)
-	data[0] = 92
+	data := make([]byte, expectedLength)
+	data[0] = expectedDiscriminator
 	binary.LittleEndian.PutUint64(data[1:9], cycleID)
 	copy(data[9:41], nonce)
 	for index, value := range material.AllocationFP {

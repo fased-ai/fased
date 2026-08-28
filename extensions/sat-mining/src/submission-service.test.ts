@@ -122,6 +122,9 @@ describe("SAT submission service boundary", () => {
     expect(facade).not.toContain("claimSatSubmission(");
     expect(facade).not.toContain("waitForSatSubmissionLease(");
     expect(facade).not.toContain('op: "v2.execute"');
+    expect(facade).toContain("actionOverride: params.actionOverride");
+    expect(facade).toContain("keeperFeePayer: params.keeperFeePayer");
+    expect(facade).toMatch(/actionOverride: "openCycleV2" as const, keeperFeePayer: true/u);
   });
 
   it("normalizes one printable workflow key for the exact async scope", async () => {

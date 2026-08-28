@@ -1,5 +1,6 @@
 import type { SatMiningConfig } from "./config.js";
 import type { SatCycleContext, SatStrategyDecision } from "./runtime.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
 import { computeBaseStrategy } from "./strategy-base.js";
 import { computeSkillStrategy, type SatSkillLiveContext } from "./strategy-skill.js";
 import { validateSatStrategyOutput } from "./strategy-validate.js";
@@ -11,6 +12,7 @@ export async function computeMiningStrategy(params: {
 }): Promise<SatStrategyDecision> {
   const { config, round, liveContext } = params;
   const strategyMode = config.strategyMode === "skill" ? "skill" : "base";
+  const channelCount = SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2" ? 25 : 16;
 
   if (strategyMode === "base") {
     const output = validateSatStrategyOutput(
@@ -21,7 +23,9 @@ export async function computeMiningStrategy(params: {
         microRoundId: round.microRoundId,
         roundOpenTs: round.roundOpenTs,
         roundCloseTs: round.roundCloseTs,
+        channelCount,
       }),
+      channelCount,
     );
     return {
       source: "base",
@@ -44,8 +48,9 @@ export async function computeMiningStrategy(params: {
       useAgentDefaultModel: config.skillConfig?.useAgentDefaultModel ?? true,
       maxDecisionLatencyMs: config.skillConfig?.maxDecisionLatencyMs ?? 12000,
       liveContext,
+      channelCount,
     });
-    const validated = validateSatStrategyOutput(output);
+    const validated = validateSatStrategyOutput(output, channelCount);
     return {
       source: "skill",
       allocationFp: validated.allocationFp,
@@ -67,7 +72,9 @@ export async function computeMiningStrategy(params: {
         microRoundId: round.microRoundId,
         roundOpenTs: round.roundOpenTs,
         roundCloseTs: round.roundCloseTs,
+        channelCount,
       }),
+      channelCount,
     );
     return {
       source: "base",

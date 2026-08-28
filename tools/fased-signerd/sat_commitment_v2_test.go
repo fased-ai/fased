@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,6 +16,47 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	bolt "go.etcd.io/bbolt"
 )
+
+func TestSignerSATCommitmentVNextUsesDomainProgramAndSixteenChannels(t *testing.T) {
+	program := solana.NewWallet().PublicKey()
+	authority := solana.NewWallet().PublicKey()
+	nonce := bytes.Repeat([]byte{0x5a}, 32)
+	allocation := make([]uint32, 16)
+	for index := range allocation {
+		allocation[index] = 62_500
+	}
+	got := buildSATCommitmentV1(program, authority, 77, 1_000_000_000, nonce, allocation)
+	hash := sha256.New()
+	hash.Write([]byte("sat-cycle-commit-v2"))
+	hash.Write(program.Bytes())
+	hash.Write(authority.Bytes())
+	var u64 [8]byte
+	binary.LittleEndian.PutUint64(u64[:], 77)
+	hash.Write(u64[:])
+	binary.LittleEndian.PutUint64(u64[:], 1_000_000_000)
+	hash.Write(u64[:])
+	hash.Write(nonce)
+	var u32 [4]byte
+	for _, value := range allocation {
+		binary.LittleEndian.PutUint32(u32[:], value)
+		hash.Write(u32[:])
+	}
+	want := fmt.Sprintf("%x", hash.Sum(nil))
+	if got != want {
+		t.Fatalf("generation-2 commitment mismatch: got %s want %s", got, want)
+	}
+	otherProgram := solana.NewWallet().PublicKey()
+	if buildSATCommitmentV1(otherProgram, authority, 77, 1_000_000_000, nonce, allocation) == got {
+		t.Fatal("generation-2 commitment did not bind the mining program ID")
+	}
+	legacyAllocation := make([]uint32, 25)
+	for index := range legacyAllocation {
+		legacyAllocation[index] = 40_000
+	}
+	if buildSATCommitmentV1(program, authority, 77, 1_000_000_000, nonce, legacyAllocation) == got {
+		t.Fatal("legacy and generation-2 commitment domains collided")
+	}
+}
 
 func testSATCommitmentRequestV1(program string) signerSATCommitmentAllocateRequestV1 {
 	allocation := make([]uint32, 25)
@@ -81,7 +124,8 @@ func TestSignerSATCommitmentMaterialIsEncryptedAndSurvivesRestart(t *testing.T) 
 		t.Fatalf("invalid reveal material returned: nonceBytes=%d allocation=%d err=%v", len(nonce), len(revealed.AllocationFP), err)
 	}
 	authority, _ := solana.PublicKeyFromBase58(wallet.PublicKey)
-	if calculated := buildSATCommitmentV1(authority, 12345, 250_000_000, nonce, revealed.AllocationFP); calculated != allocated.CommitmentHex {
+	program, _ := solana.PublicKeyFromBase58(request.ProgramID)
+	if calculated := buildSATCommitmentV1(program, authority, 12345, 250_000_000, nonce, revealed.AllocationFP); calculated != allocated.CommitmentHex {
 		t.Fatalf("revealed material does not reproduce commitment: got %s want %s", calculated, allocated.CommitmentHex)
 	}
 	if err := store.db.View(func(tx *bolt.Tx) error {

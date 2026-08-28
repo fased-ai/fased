@@ -31,6 +31,7 @@ import {
   loadSatBondStakingDistributorLayout,
   loadSatBondStakingPositionLayout,
 } from "./sat-bond-layout.js";
+import { SAT_RUNTIME_PROTOCOL_GENERATION } from "./state-identity.js";
 import { SAT_VNEXT_ACTIVATION } from "./vnext-activation-manifest.js";
 import { SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
@@ -73,6 +74,7 @@ const ACCOUNT_DISCRIMINATOR = {
   satCycleSettlementProgressV2: 137,
   satMinerCapitalState: 138,
   satKeeperCapability: 145,
+  satKeeperRegistry: 144,
   satKeeperSnapshot: 146,
   satCycleStateV2: 149,
   satMinerCycleStateV2: 150,
@@ -911,6 +913,46 @@ export function decodeSatCycle(data: Buffer, address: string): SatCycleView {
   };
 }
 
+export function decodeSatCycleV2(data: Buffer, address: string): SatCycleView {
+  const body = expectAccountData(data, ACCOUNT_DISCRIMINATOR.satCycleStateV2, "SAT cycle state v2");
+  const cycleSeed = readHash32(body, 40);
+  const baseSat = BigInt(readU64String(body, 208));
+  const performanceSat = BigInt(readU64String(body, 216));
+  return {
+    address,
+    cycleId: readU64Number(body, 0),
+    openTs: readI64Number(body, 8),
+    closeTs: readI64Number(body, 16),
+    status: body.readUInt8(24),
+    cycleSeed,
+    entropyUnavailable: cycleSeed === SAT_PROTOCOL_CONSTANTS.entropyUnavailableSeedHex,
+    unlockTargetLamports: readU64String(body, 176),
+    totalCommittedLamports: readU64String(body, 184),
+    validMinerCount: readU64String(body, 192),
+    unlockRatioFp: readU64String(body, 200),
+    issuedCycleMinerSatRaw: (baseSat + performanceSat).toString(),
+    unissuedCycleMinerSatRaw: readU64String(body, 224),
+    solErosionPoolLamports: readU64String(body, 240),
+    deterministicRebatePoolLamports: readU64String(body, 248),
+    performanceRebatePoolLamports: readU64String(body, 256),
+    treasurySolLamports: readU64String(body, 264),
+    submittedSolErosionPoolLamports: readU64String(body, 272),
+    keeperBountyPaidLamports: readU64String(body, 280),
+    commitDeadlineTs: readI64Number(body, 288),
+    revealDeadlineTs: readI64Number(body, 296),
+    entropyTargetSlot: readU64Number(body, 304),
+    committedMinerCount: readU64String(body, 312),
+    revealedMinerCount: readU64String(body, 192),
+    resolvedCommitCount: readU64String(body, 320),
+    entropySealedSlot: readU64Number(body, 328),
+    openSlot: readU64Number(body, 336),
+    commitDeadlineSlot: readU64Number(body, 344),
+    revealDeadlineSlot: readU64Number(body, 352),
+    entropyHashCount: readU64Number(body, 360),
+    releasedCommitCount: readU64String(body, 368),
+  };
+}
+
 export function decodeSatMinerCycle(data: Buffer, address: string): SatMinerCycleView {
   const body = expectAccountData(
     data,
@@ -1313,6 +1355,21 @@ export function decodeSatKeeperCapability(data: Buffer, address: string) {
     capabilityMask: Number(body.readBigUInt64LE(32)),
     feePayerPublicKey: readPubkey(body, 96),
     payoutAuthority: readPubkey(body, 128),
+  };
+}
+
+export function decodeSatKeeperRegistry(data: Buffer, address: string) {
+  const body = expectAccountData(
+    data,
+    ACCOUNT_DISCRIMINATOR.satKeeperRegistry,
+    "SAT keeper registry",
+  );
+  return {
+    address,
+    keeperGeneration: body.readUInt16LE(4),
+    revision: readU64Number(body, 8),
+    entryCount: body.readUInt16LE(16),
+    activeCount: body.readUInt16LE(18),
   };
 }
 
@@ -1846,6 +1903,20 @@ export const SAT_RENT_ACCOUNT_SPACES = {
   unlockInterval: 80,
 } as const;
 
+export const SAT_VNEXT_RENT_ACCOUNT_SPACES = {
+  protocolVault: 0,
+  cycleState: 408,
+  cycleRegistryMeta: 88,
+  cycleRegistryPage: 2_072,
+  cycleSettlementProgressV2: 936,
+  minerCycle: 416,
+  unlockInterval: 0,
+} as const;
+
+export function resolveSatRentAccountSpaces(protocolGeneration: string) {
+  return protocolGeneration === "sat-v2" ? SAT_RENT_ACCOUNT_SPACES : SAT_VNEXT_RENT_ACCOUNT_SPACES;
+}
+
 export function calculateSatRevealSharedRentLamports(params: {
   cycleSettlementProgressLamports: number;
   cycleRegistryPageLamports: number;
@@ -2104,7 +2175,11 @@ export async function inspectSatMinerCycleAccountExists(
   const { solana, programId } = await resolveProgramContext(process.env);
   const [address] = solana.PublicKey.findProgramAddressSync(
     [
-      Buffer.from(SAT_MINER_CYCLE_STATE_SEED),
+      Buffer.from(
+        SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+          ? SAT_MINER_CYCLE_STATE_SEED
+          : "sat_miner_cycle_state_v2",
+      ),
       new solana.PublicKey(params.authority).toBuffer(),
       encodeU64(params.cycleId),
     ],
@@ -2116,7 +2191,10 @@ export async function inspectSatMinerCycleAccountExists(
     return false;
   }
   try {
-    const decoded = decodeSatMinerCycle(account, address.toBase58());
+    const decoded =
+      SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+        ? decodeSatMinerCycle(account, address.toBase58())
+        : decodeSatMinerCycleV2(account, address.toBase58());
     return decoded.cycleId === params.cycleId;
   } catch {
     return false;
@@ -2129,7 +2207,12 @@ export async function inspectSatCycleAccountExists(
 ): Promise<boolean> {
   const { solana, programId } = await resolveProgramContext(process.env);
   const [address] = solana.PublicKey.findProgramAddressSync(
-    [Buffer.from("sat_cycle_state"), encodeU64(params.cycleId)],
+    [
+      Buffer.from(
+        SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2" ? "sat_cycle_state" : "sat_cycle_state_v2",
+      ),
+      encodeU64(params.cycleId),
+    ],
     programId,
   );
   const rpc = resolveEffectiveReadRpcConfig();
@@ -2138,7 +2221,10 @@ export async function inspectSatCycleAccountExists(
     return false;
   }
   try {
-    const decoded = decodeSatCycle(account, address.toBase58());
+    const decoded =
+      SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+        ? decodeSatCycle(account, address.toBase58())
+        : decodeSatCycleV2(account, address.toBase58());
     return decoded.cycleId === params.cycleId;
   } catch {
     return false;
@@ -2150,7 +2236,11 @@ export async function inspectSatGlobalState(
 ): Promise<SatGlobalStateView | null> {
   const { solana, programId } = await resolveProgramContext(process.env);
   const [address] = solana.PublicKey.findProgramAddressSync(
-    [Buffer.from("sat_global_state")],
+    [
+      Buffer.from(
+        SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2" ? "sat_global_state" : "sat_global_state_v2",
+      ),
+    ],
     programId,
   );
   const rpc = resolveEffectiveReadRpcConfig();
@@ -2170,7 +2260,12 @@ export async function inspectSatCycle(
 ): Promise<SatCycleView | null> {
   const { solana, programId } = await resolveProgramContext(process.env);
   const [address] = solana.PublicKey.findProgramAddressSync(
-    [Buffer.from("sat_cycle_state"), encodeU64(params.cycleId)],
+    [
+      Buffer.from(
+        SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2" ? "sat_cycle_state" : "sat_cycle_state_v2",
+      ),
+      encodeU64(params.cycleId),
+    ],
     programId,
   );
   const rpc = resolveEffectiveReadRpcConfig();
@@ -2179,7 +2274,11 @@ export async function inspectSatCycle(
     SAT_RPC_LIVE_VIEW_CACHE_TTL_MS,
     async () => {
       const account = await fetchAccountInfoRaw(rpc, address.toBase58(), "cycle-view");
-      return account ? decodeSatCycle(account, address.toBase58()) : null;
+      return account
+        ? SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+          ? decodeSatCycle(account, address.toBase58())
+          : decodeSatCycleV2(account, address.toBase58())
+        : null;
     },
   );
 }
@@ -2191,7 +2290,11 @@ export async function inspectSatMinerCycle(
   const { solana, programId } = await resolveProgramContext(process.env);
   const [address] = solana.PublicKey.findProgramAddressSync(
     [
-      Buffer.from(SAT_MINER_CYCLE_STATE_SEED),
+      Buffer.from(
+        SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+          ? SAT_MINER_CYCLE_STATE_SEED
+          : "sat_miner_cycle_state_v2",
+      ),
       new solana.PublicKey(params.authority).toBuffer(),
       encodeU64(params.cycleId),
     ],
@@ -2203,7 +2306,11 @@ export async function inspectSatMinerCycle(
     SAT_RPC_LIVE_VIEW_CACHE_TTL_MS,
     async () => {
       const account = await fetchAccountInfoRaw(rpc, address.toBase58(), "miner-cycle-view");
-      return account ? decodeSatMinerCycle(account, address.toBase58()) : null;
+      return account
+        ? SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+          ? decodeSatMinerCycle(account, address.toBase58())
+          : decodeSatMinerCycleV2(account, address.toBase58())
+        : null;
     },
   );
 }
@@ -2215,7 +2322,11 @@ export async function deriveSatMinerCycleAddress(
   const { solana, programId } = await resolveProgramContext(process.env);
   const [address] = solana.PublicKey.findProgramAddressSync(
     [
-      Buffer.from(SAT_MINER_CYCLE_STATE_SEED),
+      Buffer.from(
+        SAT_RUNTIME_PROTOCOL_GENERATION === "sat-v2"
+          ? SAT_MINER_CYCLE_STATE_SEED
+          : "sat_miner_cycle_state_v2",
+      ),
       new solana.PublicKey(params.authority).toBuffer(),
       encodeU64(params.cycleId),
     ],
@@ -2234,7 +2345,11 @@ export async function inspectSatMinerCycleByAddress(
     SAT_RPC_LIVE_VIEW_CACHE_TTL_MS,
     async () => {
       const account = await fetchAccountInfoRaw(rpc, params.address, "miner-cycle-address");
-      return account ? decodeSatMinerCycle(account, params.address) : null;
+      return account
+        ? account[0] === ACCOUNT_DISCRIMINATOR.satMinerCycleStateV2
+          ? decodeSatMinerCycleV2(account, params.address)
+          : decodeSatMinerCycle(account, params.address)
+        : null;
     },
   );
 }
@@ -2367,6 +2482,7 @@ export async function inspectSatMiningStatusAccounts(
   },
 ): Promise<SatMiningStatusAccountsView> {
   const { solana, programId } = await resolveProgramContext(process.env);
+  const vnext = SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2";
   const rpc = resolveEffectiveReadRpcConfig();
   const authority = String(params.authority ?? "").trim();
   const owner = authority ? new solana.PublicKey(authority) : null;
@@ -2379,32 +2495,43 @@ export async function inspectSatMiningStatusAccounts(
       : null;
   const mint = new solana.PublicKey(SAT_MINT_ADDRESS());
   const [globalAddress] = solana.PublicKey.findProgramAddressSync(
-    [Buffer.from("sat_global_state")],
+    [Buffer.from(vnext ? "sat_global_state_v2" : "sat_global_state")],
     programId,
   );
   const [currentCycleAddress] = solana.PublicKey.findProgramAddressSync(
-    [Buffer.from("sat_cycle_state"), encodeU64(currentCycleId)],
+    [Buffer.from(vnext ? "sat_cycle_state_v2" : "sat_cycle_state"), encodeU64(currentCycleId)],
     programId,
   );
   const [currentSettlementProgressAddress] = solana.PublicKey.findProgramAddressSync(
-    [Buffer.from("sat_cycle_settlement_progress_v2"), encodeU64(currentCycleId)],
+    [
+      Buffer.from(vnext ? "sat_cycle_settlement_progress_v3" : "sat_cycle_settlement_progress_v2"),
+      encodeU64(currentCycleId),
+    ],
     programId,
   );
   const [treasuryStateAddress] = solana.PublicKey.findProgramAddressSync(
-    [Buffer.from("sat_treasury_state")],
+    [Buffer.from(vnext ? "sat_treasury_state_v2" : "sat_treasury_state")],
     programId,
   );
   const [treasury] = solana.PublicKey.findProgramAddressSync([Buffer.from("treasury")], programId);
   const currentMinerCycleAddress = owner
     ? solana.PublicKey.findProgramAddressSync(
-        [Buffer.from(SAT_MINER_CYCLE_STATE_SEED), owner.toBuffer(), encodeU64(currentCycleId)],
+        [
+          Buffer.from(vnext ? "sat_miner_cycle_state_v2" : SAT_MINER_CYCLE_STATE_SEED),
+          owner.toBuffer(),
+          encodeU64(currentCycleId),
+        ],
         programId,
       )[0]
     : null;
   const claimMinerCycleAddress =
     owner && claimCycleId != null
       ? solana.PublicKey.findProgramAddressSync(
-          [Buffer.from(SAT_MINER_CYCLE_STATE_SEED), owner.toBuffer(), encodeU64(claimCycleId)],
+          [
+            Buffer.from(vnext ? "sat_miner_cycle_state_v2" : SAT_MINER_CYCLE_STATE_SEED),
+            owner.toBuffer(),
+            encodeU64(claimCycleId),
+          ],
           programId,
         )[0]
       : null;
@@ -2466,19 +2593,36 @@ export async function inspectSatMiningStatusAccounts(
     ? decodeSatGlobalState(globalRecord.data, globalAddress.toBase58())
     : null;
   const currentCycle = currentCycleRecord?.data
-    ? decodeSatCycle(currentCycleRecord.data, currentCycleAddress.toBase58())
+    ? vnext
+      ? decodeSatCycleV2(currentCycleRecord.data, currentCycleAddress.toBase58())
+      : decodeSatCycle(currentCycleRecord.data, currentCycleAddress.toBase58())
     : null;
   const currentSettlementProgress = currentSettlementProgressRecord?.data
-    ? decodeSatCycleSettlementProgressV2(
-        currentSettlementProgressRecord.data,
-        currentSettlementProgressAddress.toBase58(),
-      )
+    ? vnext
+      ? decodeSatCycleSettlementProgressV3(
+          currentSettlementProgressRecord.data,
+          currentSettlementProgressAddress.toBase58(),
+        )
+      : decodeSatCycleSettlementProgressV2(
+          currentSettlementProgressRecord.data,
+          currentSettlementProgressAddress.toBase58(),
+        )
     : null;
   const currentMinerCycle = currentMinerCycleRecord?.data
-    ? decodeSatMinerCycle(currentMinerCycleRecord.data, currentMinerCycleAddress?.toBase58() ?? "")
+    ? vnext
+      ? decodeSatMinerCycleV2(
+          currentMinerCycleRecord.data,
+          currentMinerCycleAddress?.toBase58() ?? "",
+        )
+      : decodeSatMinerCycle(
+          currentMinerCycleRecord.data,
+          currentMinerCycleAddress?.toBase58() ?? "",
+        )
     : null;
   const claimMinerCycle = claimMinerCycleRecord?.data
-    ? decodeSatMinerCycle(claimMinerCycleRecord.data, claimMinerCycleAddress?.toBase58() ?? "")
+    ? vnext
+      ? decodeSatMinerCycleV2(claimMinerCycleRecord.data, claimMinerCycleAddress?.toBase58() ?? "")
+      : decodeSatMinerCycle(claimMinerCycleRecord.data, claimMinerCycleAddress?.toBase58() ?? "")
     : null;
   const minerCapital = minerCapitalRecord?.data
     ? decodeSatMinerCapital(minerCapitalRecord.data, minerCapitalAddress?.toBase58() ?? "")
@@ -2791,6 +2935,17 @@ export async function inspectSatCycleSettlementProgressV3(
   return account ? decodeSatCycleSettlementProgressV3(account, address.toBase58()) : null;
 }
 
+export async function inspectSatKeeperRegistry(_config: SatMiningConfig) {
+  const { solana, programId } = await resolveProgramContext(process.env);
+  const [address] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from("sat_keeper_registry")],
+    programId,
+  );
+  const rpc = resolveEffectiveReadRpcConfig();
+  const account = await fetchAccountInfoRaw(rpc, address.toBase58(), "keeper-registry");
+  return account ? decodeSatKeeperRegistry(account, address.toBase58()) : null;
+}
+
 export async function inspectSatVNextKeeperChainContext(
   _config: SatMiningConfig,
   params: { cycleId: number; feePayerPublicKey?: string; minimumFeePayerLamports?: string },
@@ -2988,16 +3143,23 @@ export async function listSatMinerCycleAddressesForCycle(
   params: { cycleId: number },
 ): Promise<string[]> {
   const { connection, programId } = await resolveConnection(process.env);
+  const vnext = SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2";
   const filters = [
     {
       memcmp: {
         offset: 0,
-        bytes: encodeBase58(Uint8Array.from([ACCOUNT_DISCRIMINATOR.satMinerCycleState])),
+        bytes: encodeBase58(
+          Uint8Array.from([
+            vnext
+              ? ACCOUNT_DISCRIMINATOR.satMinerCycleStateV2
+              : ACCOUNT_DISCRIMINATOR.satMinerCycleState,
+          ]),
+        ),
       },
     },
     {
       memcmp: {
-        offset: 104,
+        offset: vnext ? 136 : 104,
         bytes: encodeBase58(encodeU64(params.cycleId)),
       },
     },
@@ -3006,7 +3168,9 @@ export async function listSatMinerCycleAddressesForCycle(
   const participants: string[] = [];
   for (const { pubkey, account } of accounts) {
     try {
-      const decoded = decodeSatMinerCycle(Buffer.from(account.data), pubkey.toBase58());
+      const decoded = vnext
+        ? decodeSatMinerCycleV2(Buffer.from(account.data), pubkey.toBase58())
+        : decodeSatMinerCycle(Buffer.from(account.data), pubkey.toBase58());
       if (decoded.cycleId === params.cycleId) {
         participants.push(pubkey.toBase58());
       }
@@ -3373,8 +3537,9 @@ export async function inspectSatRentExemptionLamports(config: SatMiningConfig): 
   const registryReserveTargetLamports = resolveSatGenesisProfileContract(
     config.network,
   ).registryReserveTargetLamports;
+  const accountSpaces = resolveSatRentAccountSpaces(SAT_RUNTIME_PROTOCOL_GENERATION);
   return await getOrLoadRpcCacheValue(
-    `view:rent-exemption:${rpcCacheScope(rpc)}:${registryReserveTargetLamports}`,
+    `view:rent-exemption:${rpcCacheScope(rpc)}:${SAT_RUNTIME_PROTOCOL_GENERATION}:${registryReserveTargetLamports}`,
     SAT_RPC_RENT_EXEMPTION_CACHE_TTL_MS,
     async () => {
       const [
@@ -3386,15 +3551,15 @@ export async function inspectSatRentExemptionLamports(config: SatMiningConfig): 
         minerCycleLamports,
         unlockIntervalLamports,
       ] = await Promise.all([
-        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.protocolVault),
-        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.cycleState),
-        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.cycleRegistryMeta),
-        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.cycleRegistryPage),
-        connection.getMinimumBalanceForRentExemption(
-          SAT_RENT_ACCOUNT_SPACES.cycleSettlementProgressV2,
-        ),
-        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.minerCycle),
-        connection.getMinimumBalanceForRentExemption(SAT_RENT_ACCOUNT_SPACES.unlockInterval),
+        connection.getMinimumBalanceForRentExemption(accountSpaces.protocolVault),
+        connection.getMinimumBalanceForRentExemption(accountSpaces.cycleState),
+        connection.getMinimumBalanceForRentExemption(accountSpaces.cycleRegistryMeta),
+        connection.getMinimumBalanceForRentExemption(accountSpaces.cycleRegistryPage),
+        connection.getMinimumBalanceForRentExemption(accountSpaces.cycleSettlementProgressV2),
+        connection.getMinimumBalanceForRentExemption(accountSpaces.minerCycle),
+        accountSpaces.unlockInterval === 0
+          ? Promise.resolve(0)
+          : connection.getMinimumBalanceForRentExemption(accountSpaces.unlockInterval),
       ]);
       const openCycleLamports = cycleStateLamports + cycleRegistryMetaLamports;
       const submitCycleSharedLamports = calculateSatRevealSharedRentLamports({

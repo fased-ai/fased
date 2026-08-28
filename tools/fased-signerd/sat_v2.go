@@ -69,8 +69,8 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 	if action == "" {
 		return normalizedIntentV2{}, errors.New("typed SAT action is required")
 	}
-	if input.SATCommitment != nil && (input.Type != intentSolanaSATAction || action != "revealCycle" || len(input.Instructions) != 0) {
-		return normalizedIntentV2{}, errors.New("signer-owned SAT commitment references are valid only for one revealCycle")
+	if input.SATCommitment != nil && (input.Type != intentSolanaSATAction || (action != "revealCycle" && action != "revealCycleV2") || len(input.Instructions) != 0) {
+		return normalizedIntentV2{}, errors.New("signer-owned SAT commitment references are valid only for one revealCycle generation")
 	}
 	addressLookupTables := []string(nil)
 	if len(input.AddressLookupTables) > 0 {
@@ -238,8 +238,10 @@ func publicKeysFromStringsV2(values []string) []solana.PublicKey {
 func satDestinationForActionV2(instruction normalizedSATInstructionV2, wallet solana.PublicKey) (solana.PublicKey, bool) {
 	index := -1
 	switch instruction.Codec.Action {
-	case "topUpRegistryReserve", "initMinerCapital", "depositMinerCapital", "setActiveCommit":
+	case "topUpRegistryReserve", "depositMinerCapital", "setActiveCommit":
 		index = 1
+	case "initMinerCapital":
+		index = 3
 	case "openBondPosition", "increaseBondPosition":
 		index = 2
 	case "claimUnallocatedStakingRewards", "claimProtocolDistributorSat":
@@ -250,7 +252,7 @@ func satDestinationForActionV2(instruction normalizedSATInstructionV2, wallet so
 		index = 3
 	case "closeResolvedMinerCycleState":
 		index = 2
-	case "withdrawMinerCapital", "finalizeBondUnlock", "claimBondStakingRewards", "claimCycleRewards", "claimCycleRewardsBatch":
+	case "withdrawMinerCapital", "finalizeBondUnlock", "claimBondStakingRewards", "claimCycleRewards", "claimCycleRewardsBatch", "claimCycleRewardsV2", "claimCycleRewardsBatchV2":
 		return wallet, true
 	}
 	if index < 0 || index >= len(instruction.Accounts) {
@@ -272,6 +274,10 @@ func satMintForActionV2(instruction normalizedSATInstructionV2) (solana.PublicKe
 		index = 8
 	case "claimCycleRewardsBatch", "claimProtocolDistributorSat":
 		index = 6
+	case "claimCycleRewardsV2":
+		index = 11
+	case "claimCycleRewardsBatchV2":
+		index = 9
 	}
 	if index < 0 || index >= len(instruction.Accounts) {
 		return solana.PublicKey{}, false
@@ -290,6 +296,8 @@ func normalizeSATInstructionV2(input signerSATInstructionV2, wallet solana.Publi
 				variable = "vnextKeeperIdentityPairs"
 			case "distributeCyclePageV2":
 				variable = "vnextDistributionGroups"
+			case "claimCycleRewardsBatchV2":
+				variable = "vnextClaimBatch"
 			}
 			codec = signerSATCodecV2{
 				Action: action, Discriminator: generated.Discriminator,
@@ -301,6 +309,11 @@ func normalizeSATInstructionV2(input signerSATInstructionV2, wallet solana.Publi
 	}
 	if !ok {
 		return normalizedSATInstructionV2{}, fmt.Errorf("unsupported typed SAT action %q", action)
+	}
+	// Generation 2 retains the initMinerCapital discriminator but extends its
+	// account contract with the permanent identity and AgentRecord binding.
+	if action == "initMinerCapital" {
+		codec.AccountShape = "SW,--,--,-W,--"
 	}
 	programText, err := normalizePublicKeyV2(input.ProgramID, "SAT programId")
 	if err != nil {
@@ -446,7 +459,7 @@ func additionalSATProgramsV2(instruction normalizedSATInstructionV2) []string {
 	switch instruction.Codec.Action {
 	case "claimCycleRewards":
 		programs = append(programs, instruction.Accounts[13].PublicKey.String())
-	case "claimCycleRewardsBatch":
+	case "claimCycleRewardsBatch", "claimCycleRewardsBatchV2":
 		count := int(instruction.Data[1])
 		programs = append(programs, instruction.Accounts[8+2*count+3].PublicKey.String())
 	case "claimProtocolTreasury":
@@ -528,6 +541,14 @@ func validateSATContextForActionV2(action string, context *signerSATContextV2) e
 	case "revealCycle":
 		allowed["intervalStartCycleId"], required["intervalStartCycleId"] = true, true
 		allowed["registryPageIndex"], required["registryPageIndex"] = true, true
+	case "revealCycleV2":
+		allowed["registryPageIndex"], required["registryPageIndex"] = true, true
+		allowed["permanentMiningIds"], required["permanentMiningIds"] = true, true
+	case "commitCycleV2", "claimCycleRewardsV2", "claimCycleRewardsBatchV2", "closeResolvedMinerCycleStateV2":
+		allowed["permanentMiningIds"], required["permanentMiningIds"] = true, true
+	case "releaseUnrevealedCommitV2":
+		allowed["minerAuthorities"], required["minerAuthorities"] = true, true
+		allowed["permanentMiningIds"], required["permanentMiningIds"] = true, true
 	case "settleCyclePage", "scoreCyclePage", "distributeCyclePage":
 		allowed["minerAuthorities"] = true
 	case "settleCyclePageV2", "scoreCyclePageV2", "distributeCyclePageV2":
@@ -630,6 +651,28 @@ func validateSATAccountShapeV2(instruction normalizedSATInstructionV2) error {
 		if len(instruction.Accounts) != expected {
 			return errors.New("SAT claimCycleRewardsBatch account count mismatch")
 		}
+	case "vnextClaimBatch":
+		count := int(instruction.Data[1])
+		expected = len(shape) - 2 + count*2
+		if len(instruction.Accounts) != expected {
+			return errors.New("SAT claimCycleRewardsBatchV2 account count mismatch")
+		}
+		for index := 0; index < 11; index++ {
+			if err := expectSATFlagsV2(instruction, index, shape[index]); err != nil {
+				return err
+			}
+		}
+		for index := 0; index < count*2; index++ {
+			if err := expectSATFlagsV2(instruction, 11+index, "-W"); err != nil {
+				return err
+			}
+		}
+		for index, flags := range shape[13:] {
+			if err := expectSATFlagsV2(instruction, 11+count*2+index, flags); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "compactCycles":
 		if context == nil {
 			return errors.New("SAT compactPendingCycleRange context is required")
@@ -832,9 +875,11 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 		if authority.IsZero() {
 			return errors.New("SAT initMinerCapital authority cannot be zero")
 		}
+		permanentMiningID := ix.Accounts[1].PublicKey
 		return firstSATErrorV2(
-			expectSATPDAV2(ix, 1, p, "miner capital", []byte("sat_miner_capital_state"), authority[:]),
-			expectSATKeyV2(ix, 2, system, "system program"),
+			expectSATPDAV2(ix, 2, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 3, p, "miner capital", []byte("sat_miner_capital_state"), authority[:]),
+			expectSATKeyV2(ix, 4, system, "system program"),
 		)
 	case "depositMinerCapital", "withdrawMinerCapital":
 		if satU64V2(d, 1) == 0 {
@@ -930,6 +975,178 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATKeyV2(ix, 6, system, "system program"),
 			expectSATKeyV2(ix, 7, token, "SPL token program"),
 			expectSATKeyV2(ix, 8, ataProgram, "associated token program"),
+		)
+	case "openCycleV2":
+		cycle := satU64BytesV2(d, 1)
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "global state v2", []byte("sat_global_state_v2")),
+			expectSATPDAV2(ix, 2, p, "protocol generation v2", []byte("sat_protocol_generation_state_v2")),
+			expectSATPDAV2(ix, 3, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 4, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
+			expectSATPDAV2(ix, 5, p, "treasury state v2", []byte("sat_treasury_state_v2")),
+			expectSATPDAV2(ix, 6, p, "registry reserve v2", []byte("sat_registry_reserve_v2")),
+			expectSATKeyV2(ix, 7, system, "system program"),
+		)
+	case "commitCycleV2":
+		cycle := satU64BytesV2(d, 1)
+		permanentMiningID := ix.Accounts[1].PublicKey
+		if permanentMiningID.IsZero() {
+			return errors.New("SAT commitCycleV2 permanent mining identity cannot be zero")
+		}
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 2, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 3, p, "protocol generation v2", []byte("sat_protocol_generation_state_v2")),
+			expectSATPDAV2(ix, 4, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 5, p, "miner cycle state v2", []byte("sat_miner_cycle_state_v2"), wallet[:], cycle),
+			expectSATPDAV2(ix, 6, p, "miner capital", []byte("sat_miner_capital_state"), wallet[:]),
+			expectSATPDAV2(ix, 7, p, "keeper operating reserve", []byte("sat_keeper_operating_reserve"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 8, p, "agent reward remainder v2", []byte("sat_agent_reward_remainder_v2"), permanentMiningID[:]),
+			expectSATKeyV2(ix, 9, system, "system program"),
+		)
+	case "closeCommitPhaseV2":
+		return expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), satU64BytesV2(d, 1))
+	case "sealCycleEntropyV2":
+		cycle := satU64BytesV2(d, 1)
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 2, p, "keeper snapshot", []byte("sat_keeper_snapshot"), cycle),
+			expectSATKeyV2(ix, 3, solana.SysVarSlotHashesPubkey, "slot hashes sysvar"),
+		)
+	case "revealCycleV2":
+		cycle := satU64BytesV2(d, 1)
+		page := satU64SeedV2(satContextU64V2(c.RegistryPageIndex))
+		if len(c.PermanentMiningIDs) != 1 {
+			return errors.New("SAT revealCycleV2 requires one permanent mining identity")
+		}
+		permanentMiningID := solana.MustPublicKeyFromBase58(c.PermanentMiningIDs[0])
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 2, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
+			expectSATPDAV2(ix, 3, p, "cycle registry page", []byte("sat_cycle_registry_page"), cycle, page),
+			expectSATPDAV2(ix, 4, p, "cycle settlement progress v3", []byte("sat_cycle_settlement_progress_v3"), cycle),
+			expectSATPDAV2(ix, 5, p, "miner cycle state v2", []byte("sat_miner_cycle_state_v2"), wallet[:], cycle),
+			expectSATPDAV2(ix, 6, p, "miner capital", []byte("sat_miner_capital_state"), wallet[:]),
+			expectSATPDAV2(ix, 7, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 8, p, "registry reserve v2", []byte("sat_registry_reserve_v2")),
+			expectSATKeyV2(ix, 9, system, "system program"),
+		)
+	case "snapshotKeeperCapabilitiesV2":
+		cycle := satU64BytesV2(d, 1)
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 2, p, "keeper registry", []byte("sat_keeper_registry")),
+			expectSATPDAV2(ix, 3, p, "keeper snapshot", []byte("sat_keeper_snapshot"), cycle),
+			expectSATKeyV2(ix, 4, system, "system program"),
+		)
+	case "releaseUnrevealedCommitV2":
+		cycle := satU64BytesV2(d, 1)
+		permanentMiningID := satPublicKeyV2(d, 9)
+		if len(minerAuthorities) != 1 || len(c.PermanentMiningIDs) != 1 {
+			return errors.New("SAT releaseUnrevealedCommitV2 requires one miner and permanent identity")
+		}
+		authority := solana.MustPublicKeyFromBase58(minerAuthorities[0])
+		if c.PermanentMiningIDs[0] != permanentMiningID.String() || ix.Accounts[1].PublicKey != permanentMiningID {
+			return errors.New("SAT releaseUnrevealedCommitV2 permanent identity mismatch")
+		}
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 2, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 3, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 4, p, "miner cycle state v2", []byte("sat_miner_cycle_state_v2"), authority[:], cycle),
+			expectSATPDAV2(ix, 5, p, "miner capital", []byte("sat_miner_capital_state"), authority[:]),
+			expectSATPDAV2(ix, 6, p, "keeper operating reserve", []byte("sat_keeper_operating_reserve"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 7, p, "treasury state v2", []byte("sat_treasury_state_v2")),
+			expectSATPDAV2(ix, 8, p, "treasury vault v2", []byte("sat_treasury_vault_v2")),
+		)
+	case "abortEmptyCycleV2":
+		cycle := satU64BytesV2(d, 1)
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 2, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
+		)
+	case "claimCycleRewardsV2":
+		cycle := satU64BytesV2(d, 1)
+		if len(c.PermanentMiningIDs) != 1 || ix.Accounts[1].PublicKey != wallet {
+			return errors.New("SAT claimCycleRewardsV2 requires the active miner and one permanent identity")
+		}
+		permanentMiningID := solana.MustPublicKeyFromBase58(c.PermanentMiningIDs[0])
+		mint, mintProgram := ix.Accounts[11].PublicKey, ix.Accounts[16].PublicKey
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 2, p, "global state v2", []byte("sat_global_state_v2")),
+			expectSATPDAV2(ix, 3, p, "protocol generation v2", []byte("sat_protocol_generation_state_v2")),
+			expectSATPDAV2(ix, 4, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 5, p, "miner cycle state v2", []byte("sat_miner_cycle_state_v2"), wallet[:], cycle),
+			expectSATPDAV2(ix, 6, p, "miner capital", []byte("sat_miner_capital_state"), wallet[:]),
+			expectSATPDAV2(ix, 7, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 8, p, "mint caller treasury", []byte("treasury")),
+			expectSATPDAV2(ix, 9, p, "treasury state v2", []byte("sat_treasury_state_v2")),
+			expectSATPDAV2(ix, 10, mintProgram, "mint authority", []byte("authority")),
+			expectSATATAV2(ix, 12, wallet, mint, "fixed SAT reward destination"),
+			expectSATKeyV2(ix, 13, system, "system program"),
+			expectSATKeyV2(ix, 14, token, "SPL token program"),
+			expectSATKeyV2(ix, 15, ataProgram, "associated token program"),
+			expectSATPDAV2(ix, 17, p, "rebate vault v2", []byte("sat_rebate_vault_v2")),
+		)
+	case "claimCycleRewardsBatchV2":
+		count := int(d[1])
+		if len(c.PermanentMiningIDs) != 1 || ix.Accounts[1].PublicKey != wallet {
+			return errors.New("SAT claimCycleRewardsBatchV2 requires the active miner and one permanent identity")
+		}
+		permanentMiningID := solana.MustPublicKeyFromBase58(c.PermanentMiningIDs[0])
+		checks := []error{
+			expectSATPDAV2(ix, 2, p, "global state v2", []byte("sat_global_state_v2")),
+			expectSATPDAV2(ix, 3, p, "protocol generation v2", []byte("sat_protocol_generation_state_v2")),
+			expectSATPDAV2(ix, 4, p, "mint caller treasury", []byte("treasury")),
+			expectSATPDAV2(ix, 5, p, "treasury state v2", []byte("sat_treasury_state_v2")),
+			expectSATPDAV2(ix, 6, p, "miner capital", []byte("sat_miner_capital_state"), wallet[:]),
+			expectSATPDAV2(ix, 7, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
+		}
+		for index := 0; index < count; index++ {
+			cycle := d[9+index*8 : 17+index*8]
+			checks = append(checks,
+				expectSATPDAV2(ix, 11+index*2, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+				expectSATPDAV2(ix, 12+index*2, p, "miner cycle state v2", []byte("sat_miner_cycle_state_v2"), wallet[:], cycle),
+			)
+		}
+		programBase := 11 + count*2
+		mint, mintProgram := ix.Accounts[9].PublicKey, ix.Accounts[programBase+3].PublicKey
+		checks = append(checks,
+			expectSATPDAV2(ix, 8, mintProgram, "mint authority", []byte("authority")),
+			expectSATATAV2(ix, 10, wallet, mint, "fixed SAT reward destination"),
+			expectSATKeyV2(ix, programBase, system, "system program"),
+			expectSATKeyV2(ix, programBase+1, token, "SPL token program"),
+			expectSATKeyV2(ix, programBase+2, ataProgram, "associated token program"),
+			expectSATPDAV2(ix, programBase+4, p, "rebate vault v2", []byte("sat_rebate_vault_v2")),
+		)
+		return firstSATErrorV2(checks...)
+	case "closeResolvedMinerCycleStateV2":
+		cycle := satU64BytesV2(d, 1)
+		authority := ix.Accounts[2].PublicKey
+		if len(c.PermanentMiningIDs) != 1 {
+			return errors.New("SAT closeResolvedMinerCycleStateV2 requires one permanent identity")
+		}
+		permanentMiningID := solana.MustPublicKeyFromBase58(c.PermanentMiningIDs[0])
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 3, p, "miner cycle state v2", []byte("sat_miner_cycle_state_v2"), authority[:], cycle),
+			expectSATPDAV2(ix, 4, p, "miner capital", []byte("sat_miner_capital_state"), authority[:]),
+			expectSATPDAV2(ix, 5, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 6, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
+		)
+	case "closeResolvedCycleRegistryPageV2":
+		cycle, page := satU64BytesV2(d, 1), satU64BytesV2(d, 9)
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 2, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
+			expectSATPDAV2(ix, 3, p, "cycle registry page", []byte("sat_cycle_registry_page"), cycle, page),
+			expectSATPDAV2(ix, 4, p, "registry reserve v2", []byte("sat_registry_reserve_v2")),
+		)
+	case "closeResolvedCycleArtifactsV2":
+		cycle := satU64BytesV2(d, 1)
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 2, p, "cycle settlement progress v3", []byte("sat_cycle_settlement_progress_v3"), cycle),
+			expectSATPDAV2(ix, 3, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
+			expectSATPDAV2(ix, 4, p, "registry reserve v2", []byte("sat_registry_reserve_v2")),
 		)
 	case "commitCycle":
 		cycle := satU64BytesV2(d, 1)
@@ -1032,14 +1249,14 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 	case "finalizeCycleSettlementV2":
 		cycle := satU64BytesV2(d, 1)
 		return firstSATErrorV2(
-			expectSATPDAV2(ix, 2, p, "global state", []byte("sat_global_state")),
+			expectSATPDAV2(ix, 2, p, "global state v2", []byte("sat_global_state_v2")),
 			expectSATPDAV2(ix, 3, p, "protocol generation v2", []byte("sat_protocol_generation_state_v2")),
 			expectSATPDAV2(ix, 4, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
 			expectSATPDAV2(ix, 5, p, "cycle settlement progress v3", []byte("sat_cycle_settlement_progress_v3"), cycle),
 			expectSATPDAV2(ix, 6, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
-			expectSATPDAV2(ix, 7, p, "treasury state", []byte("sat_treasury_state")),
-			expectSATPDAV2(ix, 8, p, "rebate vault", []byte("sat_rebate_vault")),
-			expectSATPDAV2(ix, 9, p, "treasury vault", []byte("sat_treasury_vault")),
+			expectSATPDAV2(ix, 7, p, "treasury state v2", []byte("sat_treasury_state_v2")),
+			expectSATPDAV2(ix, 8, p, "rebate vault v2", []byte("sat_rebate_vault_v2")),
+			expectSATPDAV2(ix, 9, p, "treasury vault v2", []byte("sat_treasury_vault_v2")),
 			expectSATPDAV2(ix, 12, p, "keeper snapshot", []byte("sat_keeper_snapshot"), cycle),
 		)
 	case "distributeCyclePageV2":
@@ -1048,9 +1265,9 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATPDAV2(ix, 2, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
 			expectSATPDAV2(ix, 3, p, "cycle registry page", []byte("sat_cycle_registry_page"), cycle, page),
 			expectSATPDAV2(ix, 4, p, "cycle settlement progress v3", []byte("sat_cycle_settlement_progress_v3"), cycle),
-			expectSATPDAV2(ix, 5, p, "treasury state", []byte("sat_treasury_state")),
-			expectSATPDAV2(ix, 6, p, "rebate vault", []byte("sat_rebate_vault")),
-			expectSATPDAV2(ix, 7, p, "treasury vault", []byte("sat_treasury_vault")),
+			expectSATPDAV2(ix, 5, p, "treasury state v2", []byte("sat_treasury_state_v2")),
+			expectSATPDAV2(ix, 6, p, "rebate vault v2", []byte("sat_rebate_vault_v2")),
+			expectSATPDAV2(ix, 7, p, "treasury vault v2", []byte("sat_treasury_vault_v2")),
 			expectSATPDAV2(ix, 8, p, "keeper snapshot", []byte("sat_keeper_snapshot"), cycle),
 		}
 		const base = 10

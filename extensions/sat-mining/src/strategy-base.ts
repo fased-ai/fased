@@ -17,36 +17,11 @@ export type SatBaseStrategyInput = {
   microRoundId: number;
   roundOpenTs: number;
   roundCloseTs: number;
+  channelCount?: 16 | 25;
 };
 
 export type SatBaseStrategyOutput = {
-  allocationFp: [
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-  ];
+  allocationFp: number[];
   rationale: string;
 };
 
@@ -83,6 +58,60 @@ function hashNumber(input: string): number {
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
+}
+
+function normalizeChannelAllocation(rawWeights: readonly number[], channelCount: number): number[] {
+  if (rawWeights.length !== channelCount) {
+    throw new Error(`expected ${channelCount} SAT strategy channels`);
+  }
+  const rawSum = rawWeights.reduce((sum, value) => sum + Math.max(0, Math.floor(value)), 0);
+  if (rawSum <= 0) {
+    throw new Error("SAT strategy allocation must contain positive weight");
+  }
+  const normalized = rawWeights.map((value) =>
+    Math.floor((Math.max(0, Math.floor(value)) * NORMALIZATION) / rawSum),
+  );
+  let remainder = NORMALIZATION - normalized.reduce((sum, value) => sum + value, 0);
+  for (let index = 0; remainder > 0; index = (index + 1) % normalized.length) {
+    normalized[index] += 1;
+    remainder -= 1;
+  }
+  return normalized;
+}
+
+function computeVNextStrategy(input: SatBaseStrategyInput): SatBaseStrategyOutput {
+  const channelCount = 16;
+  const preset = input.strategyPreset ?? "balanced";
+  const ranked = Array.from({ length: channelCount }, (_unused, channel) => ({
+    channel,
+    score: hashNumber(
+      `${input.epochId}:${input.microRoundId}:${input.roundOpenTs}:${input.roundCloseTs}:${input.riskMode}:${preset}:${channel}`,
+    ),
+  }))
+    .sort((left, right) => right.score - left.score)
+    .map((entry) => entry.channel);
+  const weights = Array.from({ length: channelCount }, () => 1);
+  if (preset === "spread" || input.riskMode === "conservative") {
+    weights.fill(1);
+  } else if (preset === "top_k" || preset === "conviction" || input.riskMode === "aggressive") {
+    weights.fill(0);
+    const head = preset === "top_k" ? [55, 30, 15] : [45, 27, 16, 8, 4];
+    ranked.slice(0, head.length).forEach((channel, index) => {
+      weights[channel] = head[index] ?? 0;
+    });
+  } else {
+    const curve =
+      preset === "swarm" || input.riskMode === "swarm"
+        ? [18, 15, 12, 10, 8, 6]
+        : [28, 20, 14, 10, 7, 5];
+    ranked.slice(0, curve.length).forEach((channel, index) => {
+      weights[channel] += curve[index] ?? 0;
+    });
+  }
+  return {
+    allocationFp: normalizeChannelAllocation(weights, channelCount),
+    rationale: `${describeBaseStrategyPreset(preset)} Compiled for the generation-2 16-channel interface.`,
+  };
 }
 
 function normalizeAllocation(rawWeights: readonly number[]): SatBaseStrategyOutput["allocationFp"] {
@@ -178,6 +207,9 @@ function presetToRiskMode(preset: SatBaseStrategyPreset): SatBaseRiskMode {
 }
 
 export function computeBaseStrategy(input: SatBaseStrategyInput): SatBaseStrategyOutput {
+  if (input.channelCount === 16) {
+    return computeVNextStrategy(input);
+  }
   const preset = input.strategyPreset;
   if (preset === "top_k") {
     return {

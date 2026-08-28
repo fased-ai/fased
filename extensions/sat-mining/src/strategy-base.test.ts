@@ -50,6 +50,33 @@ describe("strategy-base", () => {
     }
   });
 
+  it("compiles every strategy preset to the generation-2 16-channel contract", () => {
+    const presets: SatBaseStrategyPreset[] = [
+      "spread",
+      "balanced",
+      "conviction",
+      "swarm",
+      "top_k",
+      "ranked",
+      "adaptive",
+      "crowd_aware",
+      "safe_fallback",
+    ];
+    for (const strategyPreset of presets) {
+      const result = computeBaseStrategy({
+        riskMode: "balanced",
+        strategyPreset,
+        epochId: 1,
+        microRoundId: 2,
+        roundOpenTs: 3,
+        roundCloseTs: 303,
+        channelCount: 16,
+      });
+      expect(result.allocationFp).toHaveLength(16);
+      expect(result.allocationFp.reduce((sum, value) => sum + value, 0)).toBe(1_000_000);
+    }
+  });
+
   it("makes advanced compiler presets materially different from safe fallback", () => {
     const base = computeBaseStrategy({
       riskMode: "balanced",
