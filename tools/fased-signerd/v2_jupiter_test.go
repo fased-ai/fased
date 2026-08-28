@@ -619,7 +619,7 @@ func TestTriggerReturnSignedAndSecretsNeverCrossSocketResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"signed-transaction-secret", "api-key-secret", "jwt-secret", "signedTxBase64"} {
+	for _, secret := range []string{"signed-transaction-secret", "api-key-secret", "jwt-secret", "signedTxBase64"} { // pragma: allowlist secret
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("socket result leaked %q: %s", secret, raw)
 		}
@@ -912,11 +912,11 @@ func TestJupiterTriggerWithdrawalRequiresExactWalletAndVaultSignerSet(t *testing
 	if index, err := validateJupiterRequiredSignersV2(tx, wallet, intent); err != nil || index != 0 {
 		t.Fatalf("validate exact wallet+vault signer set: index=%d err=%v", index, err)
 	}
-	tx.Message.AccountKeys = solana.PublicKeySlice{vault, wallet}
+	tx.Message.AccountKeys = solana.PublicKeySlice{vault, wallet} // pragma: allowlist secret
 	if _, err := validateJupiterRequiredSignersV2(tx, wallet, intent); err == nil || !strings.Contains(err.Error(), "final transaction identity") {
 		t.Fatalf("vault fee payer made the returned wallet signature an incorrect transaction id: %v", err)
 	}
-	tx.Message.AccountKeys = solana.PublicKeySlice{wallet, vault}
+	tx.Message.AccountKeys = solana.PublicKeySlice{wallet, vault} // pragma: allowlist secret
 	tx.Message.AccountKeys[1] = solana.NewWallet().PublicKey()
 	if _, err := validateJupiterRequiredSignersV2(tx, wallet, intent); err == nil {
 		t.Fatal("unexpected Trigger co-signer was accepted")

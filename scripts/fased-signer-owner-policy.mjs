@@ -14,13 +14,13 @@ const MAX_ADMIN_OUTPUT_BYTES = 128 * 1024;
 const ADMIN_TIMEOUT_MS = 20_000;
 const FEDERATION_POLICY_DOMAIN = "domain:fased:federation-bond-challenge-v1";
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
-const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-const ASSOCIATED_TOKEN_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"; // pragma: allowlist secret
+const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"; // pragma: allowlist secret
+const ASSOCIATED_TOKEN_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"; // pragma: allowlist secret
 const ADDRESS_LOOKUP_TABLE_PROGRAM = "AddressLookupTab1e1111111111111111111111111";
 const NATIVE_FEE_RESERVATION_LAMPORTS = 6_500_000n;
 const UINT64_MAX = 18_446_744_073_709_551_615n;
-const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"; // pragma: allowlist secret
 const BASE58_INDEX = new Map(
   Array.from(BASE58_ALPHABET).map((character, index) => [character, index]),
 );
