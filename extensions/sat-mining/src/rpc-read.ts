@@ -3057,7 +3057,7 @@ export function verifySatVNextRuntimeActivationRecords(
       program.data.readUInt32LE(0) !== 2 ||
       encodeBase58(program.data.subarray(4, 36)) !== expected.programDataAddress
     ) {
-      throw new Error(`SAT vNext ${role} program binding does not match SAT-DEP-0006`);
+      throw new Error(`SAT vNext ${role} program binding does not match SAT-DEP-0007`);
     }
     const imageDigest = programData?.data
       ? `sha256:${createHash("sha256").update(programData.data.subarray(45)).digest("hex")}`
@@ -3070,7 +3070,7 @@ export function verifySatVNextRuntimeActivationRecords(
       Number(programData.data.readBigUInt64LE(4)) !== expected.deploymentSlot ||
       imageDigest !== expected.allocatedImageSha256
     ) {
-      throw new Error(`SAT vNext ${role} ProgramData does not match SAT-DEP-0006`);
+      throw new Error(`SAT vNext ${role} ProgramData does not match SAT-DEP-0007`);
     }
     programDataSlots[role] = expected.deploymentSlot;
   }
@@ -3087,7 +3087,7 @@ export async function inspectSatVNextRuntimeActivation(
 ): Promise<SatVNextRuntimeActivationView> {
   const { programId } = await resolveProgramContext(process.env);
   if (programId.toBase58() !== SAT_VNEXT_ACTIVATION.programs.mining.programId) {
-    throw new Error("SAT vNext activation mining program does not match SAT-DEP-0006");
+    throw new Error("SAT vNext activation mining program does not match SAT-DEP-0007");
   }
   const roles = ["mining", "mint", "bond"] as const;
   const addresses = [

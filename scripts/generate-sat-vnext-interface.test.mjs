@@ -28,7 +28,7 @@ void test("Fased activates only when the finalized deployment matches the candid
   );
   const activationContract = JSON.parse(
     fs.readFileSync(
-      path.join(root, "extensions/sat-mining/protocol-generation/activation.sat-dep-0006.json"),
+      path.join(root, "extensions/sat-mining/protocol-generation/activation.sat-dep-0007.json"),
       "utf8",
     ),
   );
@@ -70,7 +70,7 @@ void test("Fased activates only when the finalized deployment matches the candid
     path.join(root, "extensions/sat-mining/src/vnext-activation-manifest.ts"),
     "utf8",
   );
-  assert.equal(activationGenerated.match(/pragma: allowlist secret/gu)?.length, 17);
+  assert.equal(activationGenerated.match(/pragma: allowlist secret/gu)?.length, 21);
 
   const releaseContract = fs.readFileSync(
     path.join(root, "src", "mining", "sat-vnext-release-contract.generated.ts"),
@@ -93,7 +93,7 @@ void test("Fased activates only when the finalized deployment matches the candid
     path.join(root, "extensions/sat-mining/src/vnext-activation-manifest.ts"),
     "utf8",
   );
-  assert.match(activation, /deploymentId: "SAT-DEP-0006"/u);
+  assert.match(activation, /deploymentId: "SAT-DEP-0007"/u);
   assert.match(activation, /cluster: "devnet"/u);
   assert.match(activation, /activationGeneration: 2/u);
 

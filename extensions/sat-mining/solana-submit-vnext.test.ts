@@ -18,7 +18,7 @@ const {
     permanentMiningId: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL", // pragma: allowlist secret
   };
   Object.assign(process.env, {
-    FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0006",
+    FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0007",
     FASED_SAT_PROGRAM_ID: ids.miningProgram,
     FASED_SAT_MINT_PROGRAM_ID: ids.mintProgram,
     FASED_SAT_BOND_PROGRAM_ID: ids.bondProgram,

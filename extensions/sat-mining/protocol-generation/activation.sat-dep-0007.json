@@ -1,0 +1,51 @@
+{
+  "$schema": "fased.sat-vnext-activation.v1",
+  "state": "ACTIVE",
+  "deploymentId": "SAT-DEP-0007",
+  "cluster": "devnet",
+  "interfaceContractSha256": "sha256:d8f6e6cceb810ee9ceed33da5a0b4dc187c17043a2c57ede25d7207dd8a20dd4",
+  "programs": {
+    "mining": {
+      "programId": "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
+      "programDataAddress": "3bzGnmBnDhsB2ct3HUVBazrMNpbheizosEZ7H2evjoQu",
+      "deploymentSlot": 489553534,
+      "allocatedImageSha256": "sha256:ef04057067a9e634bcba32dbb5460cbb3d2988ec66f19124c4889d32218e7108"
+    },
+    "mint": {
+      "programId": "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL",
+      "programDataAddress": "HwJ6bGHF6iK9adY2eMTHHyqEEoFtU1oxRF2GypFpUQ8E",
+      "deploymentSlot": 488411168,
+      "allocatedImageSha256": "sha256:c82b8a5e5f83bb451f6a714840db193d68242928633606e12bced83a66d44a45"
+    },
+    "bond": {
+      "programId": "5peszKe8y7dv8KqdSse9UFxmaLxGsy7pWJBm6KpGnGA3",
+      "programDataAddress": "HDRZP9bxzmhCcAAtkjL9giJ6zmY1pXjeTfb6zo9aXznw",
+      "deploymentSlot": 489112812,
+      "allocatedImageSha256": "sha256:ce67a62d347c30ef988c1db40a78b3248823e8b2222875b72812200cf25bf6aa"
+    }
+  },
+  "satMint": "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU",
+  "protocolGenerationState": {
+    "address": "4bAddyonLtrQmAKfASHgpUHqaxYY7fU48yrXV7JJrBzE",
+    "accountSha256": "sha256:dee155fd9de4ccda8fe0a7296f3256863bef09d1d623428706b52d9d003fc8c6",
+    "publicEntryEnabled": true,
+    "activationGeneration": 2,
+    "componentTupleHex": "0100020002000300030003000300020002000200",
+    "economicsContractSha256": "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c"
+  },
+  "activation": {
+    "signature": "3k4H9r33xRyo3yvtVMi3bi7JSa5gqnQPCLMThXAXLpqtLnPJHQZWHvJd1x2sxDbLmppDZEzYz3MBCSn1WCzPAq8E",
+    "finalizedSlot": 489132439,
+    "receiptDigest": "sha256:546af09f8e8fb0c263745a31b13fe2985c0150941af10be015f7b6e8496ea896"
+  },
+  "replacementDeployment": {
+    "signature": "3xhYiigwu55CrKGcNSrrh7MVbTR1Za5pUpg8wKoY9Y5J2f1dF1mV3mHC4oftEL89xHkNUgazsPWBBvffR5TmzQq4",
+    "finalizedSlot": 489553534,
+    "descriptorSha256": "sha256:230641c115cbf76ec34c0b795380a71dda337c89e31a55484cd71a03a9ecadc5",
+    "artifactSha256": "sha256:57a31d9966c23edead64c75d69250985512970ba664150a4ffcbf0f310c3dc6d",
+    "artifactBytes": 753568,
+    "allocatedImageSha256": "sha256:ef04057067a9e634bcba32dbb5460cbb3d2988ec66f19124c4889d32218e7108",
+    "allocatedImageBytes": 753936,
+    "zeroPaddingBytes": 368
+  }
+}
