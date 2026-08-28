@@ -1411,6 +1411,6 @@
     "program/src/sat_retarget_unlock.rs": "sha256:499073e420d7143599db446089a986730a3dba90c72c1258de86630d85929b18",
     "program/src/sat_settle_cycle.rs": "sha256:7b16996ac71e8ade12df7c0a6b00b079c802e15547e93984019b41c37fbda339",
     "program/src/sat_settle_vnext.rs": "sha256:0df708745f37c951318aa6b33fce343b3f4a6a2fbbbb0cd8874c902bb318b0e7",
-    "program/src/sat_vnext.rs": "sha256:54113f83e4f6564d4dab619e1137500391a962dbadf6cab3bf2af55c5772fbf2"
+    "program/src/sat_vnext.rs": "sha256:24853a843515ec8adabb01520bda2574592b3eb51ca53deeffaef87938693a55"
   }
 }

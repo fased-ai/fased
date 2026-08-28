@@ -2,10 +2,10 @@
 
 export const SAT_VNEXT_INTERFACE = {
   freezeId: "SAT-VNEXT-GATE-P3-008",
-  state: "ACTIVE",
-  active: true,
+  state: "FROZEN_NOT_ACTIVE",
+  active: false,
   executableDispatchBound: true,
-  publicEntryEnabled: true,
+  publicEntryEnabled: false,
   schemaGeneration: 2,
   signerCapabilityGeneration: 2,
   strategyChannels: 16,
@@ -284,10 +284,10 @@ export const SAT_VNEXT_INTERFACE = {
       ],
     },
   } as const,
-  contractSha256: "d8f6e6cceb810ee9ceed33da5a0b4dc187c17043a2c57ede25d7207dd8a20dd4", // pragma: allowlist secret
+  contractSha256: "5810f9f9b6171dd4ee37190dea513363f99bb915feb46ac207a0a7d14f312fff", // pragma: allowlist secret
   economicsSha256: "36ae4658a8f8d7355c4afe2d75483f03e4ae26d94864af6ce12fb6220f9a6956", // pragma: allowlist secret
   idlSha256: "27ee632e51a711fd431e5fbb3fc93541dd75bf74a7fa68eccd614bcda983c7d0", // pragma: allowlist secret
-  accountOrderSha256: "bcfd6ff94c80fe8302e486d30850785a0218a7c4410fc43d96de0a52307ce6f4", // pragma: allowlist secret
+  accountOrderSha256: "36b7594215cf5de44e645c0dc70240459d49bfe5a4b72cdb4fa82289e44ee7ea", // pragma: allowlist secret
   stateLayoutsSha256: "77717f1e06fcd37944c81a44f75e1b36490c369386090b5eb10d58f2fc63e14f", // pragma: allowlist secret
   signerCodecsSha256: "b3d2098f7b8b3d9d7e0738e281c23deb7947666c078506929bd124d400096c5e", // pragma: allowlist secret
 } as const;

@@ -135,13 +135,14 @@ import {
   submitSatSealCycleEntropy,
   submitSatSnapshotKeeperCapabilities,
 } from "./src/solana-submit.js";
+import { SAT_VNEXT_INTERFACE } from "./src/vnext-interface-manifest.js";
 
 describe("SAT generation-2 transaction builders", () => {
-  it("defaults direct mining capital to the frozen 1-SOL eligibility", () => {
+  it("uses the generation-2 direct minimum only while its deployment is active", () => {
     expect(
       parseSatMiningConfig({ enabled: true, network: "devnet", riskMode: "balanced" })
         .commitLamports,
-    ).toBe(1_000_000_000);
+    ).toBe(SAT_VNEXT_INTERFACE.active ? 1_000_000_000 : 250_000_000);
   });
 
   it("builds the exact 16-channel commitment domain", () => {
@@ -163,6 +164,10 @@ describe("SAT generation-2 transaction builders", () => {
   });
 
   it("binds common keeper work to generated actions and the separate keeper signer", async () => {
+    if (!SAT_VNEXT_INTERFACE.active) {
+      expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(false);
+      return;
+    }
     const config = {
       enabled: true,
       network: "devnet",
@@ -225,6 +230,10 @@ describe("SAT generation-2 transaction builders", () => {
   });
 
   it("uses the configured standalone Keeper wallet for dedicated cycle opening", async () => {
+    if (!SAT_VNEXT_INTERFACE.active) {
+      expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(false);
+      return;
+    }
     await submitSatOpenCycle(
       {
         enabled: false,
