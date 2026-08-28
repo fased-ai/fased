@@ -64,7 +64,7 @@ describe("SAT Mining state identity", () => {
       FASED_SAT_PROGRAM_ID: "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
       FASED_SAT_MINT_PROGRAM_ID: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL",
       FASED_SAT_BOND_PROGRAM_ID: "5peszKe8y7dv8KqdSse9UFxmaLxGsy7pWJBm6KpGnGA3",
-      FASED_SAT_MINT_ADDRESS: "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU",
+      FASED_SAT_MINT_ADDRESS: "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU", // pragma: allowlist secret
     };
     expect(resolveSatRuntimeProtocolGeneration(release, exact)).toBe(
       release.interfaceContractSha256,
