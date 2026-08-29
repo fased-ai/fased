@@ -30,7 +30,7 @@
     "schema": "SAT-SCHEMA-GEN-002",
     "signerCapability": "FSD-SIGNER-GEN-002"
   },
-  "contractDigest": "sha256:93d60b42f2aeee4369df034d41d915e5e5494dd27c6b2f12f29fcf2a50dececd",
+  "contractDigest": "sha256:82a39936c420b8216aeff9e2dc922d395b6112db57f72d5700a8786bd5a5f875",
   "contractVersion": 2,
   "economicsContractDigest": "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c",
   "executableComponentTuple": {
@@ -81,7 +81,7 @@
     "economicsPath": "api/economics-generation.v3.json",
     "economicsSha256": "sha256:36ae4658a8f8d7355c4afe2d75483f03e4ae26d94864af6ce12fb6220f9a6956",
     "legacyAccountOrderPath": "api/account-order.v1.json",
-    "legacyAccountOrderSha256": "sha256:e66830ef00f43252578dcbb479c291b7ca7044ef7ed708e172a65e429fc170b2",
+    "legacyAccountOrderSha256": "sha256:c9d47fed5056f41a25f28b7f78698270caa67a72df097545b79ef2bbe267dae8",
     "legacyIdlPath": "api/idl.json",
     "legacyIdlSha256": "sha256:031e5e976f40a373a47222ae6484385c841132498d227b93d2e6ef6d2b4233c6"
   },
