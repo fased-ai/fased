@@ -2,7 +2,7 @@
 
 export const SAT_VNEXT_ACTIVATION = {
   $schema: "fased.sat-vnext-activation.v1",
-  state: "FROZEN_NOT_ACTIVE",
+  state: "ACTIVE",
   deploymentId: "SAT-DEP-0009",
   cluster: "devnet",
   interfaceContractSha256:
@@ -33,18 +33,18 @@ export const SAT_VNEXT_ACTIVATION = {
   satMint: "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU", // pragma: allowlist secret
   protocolGenerationState: {
     address: "4bAddyonLtrQmAKfASHgpUHqaxYY7fU48yrXV7JJrBzE", // pragma: allowlist secret
-    accountSha256: "sha256:14592556f27a42e66b8f3e1616e84df66d0521f8bf2e8b243739e1a90e2ed738", // pragma: allowlist secret
-    publicEntryEnabled: false,
-    activationGeneration: 5,
+    accountSha256: "sha256:1f2c9ffebbb95e6b9c2332166a623e0fec0507593fe6471352ebdf4207f229fe", // pragma: allowlist secret
+    publicEntryEnabled: true,
+    activationGeneration: 6,
     componentTupleHex: "0100020002000300030003000300020002000200", // pragma: allowlist secret
     economicsContractSha256:
       "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c", // pragma: allowlist secret
   },
   activation: {
     signature:
-      "h4MM1BCSWp3qLwJCRSVWDhJzBFAye7h5CytJGrMEGPgJaUduH4Bi2ShdfeGvh5LUjbRWnK7Ut9C3Sozssg6ArCM", // pragma: allowlist secret
-    finalizedSlot: 489778039,
-    receiptDigest: "sha256:b306d2edcd6e1c3b6946383aedea11eaad0d6ad7db7162fe156813a3bf31a61b", // pragma: allowlist secret
+      "1XtYvooJBH2zGNtMfHLyvCCp9awE9MNRpkgkAyjamgTeLMRsfThHeCQ6VLJrRNEm1AVCdjcuNFEeCXtT9ApM4Nh", // pragma: allowlist secret
+    finalizedSlot: 490068035,
+    receiptDigest: "sha256:2f71ea52f246f8cb559b8022c3967e4b4a70fde2d0cff8a1bbffd06026316ab7", // pragma: allowlist secret
   },
   replacementDeployment: {
     signature:
