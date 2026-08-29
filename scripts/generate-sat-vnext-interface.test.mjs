@@ -28,7 +28,7 @@ void test("Fased activates only when the finalized deployment matches the candid
   );
   const activationContract = JSON.parse(
     fs.readFileSync(
-      path.join(root, "extensions/sat-mining/protocol-generation/activation.sat-dep-0008.json"),
+      path.join(root, "extensions/sat-mining/protocol-generation/activation.sat-dep-0009.json"),
       "utf8",
     ),
   );
@@ -95,11 +95,11 @@ void test("Fased activates only when the finalized deployment matches the candid
     path.join(root, "extensions/sat-mining/src/vnext-activation-manifest.ts"),
     "utf8",
   );
-  assert.match(activation, /deploymentId: "SAT-DEP-0008"/u);
+  assert.match(activation, /deploymentId: "SAT-DEP-0009"/u);
   assert.match(activation, /cluster: "devnet"/u);
-  assert.match(activation, /state: "ACTIVE"/u);
-  assert.match(activation, /publicEntryEnabled: true/u);
-  assert.match(activation, /activationGeneration: 4/u);
+  assert.match(activation, /state: "FROZEN_NOT_ACTIVE"/u);
+  assert.match(activation, /publicEntryEnabled: false/u);
+  assert.match(activation, /activationGeneration: 5/u);
 
   const legacy = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/protocol-contract.ts"),
