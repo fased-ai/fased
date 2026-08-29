@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSatRoundWatcherService, shouldParticipateInSatCycle } from "./round-watcher.js";
+import {
+  createSatRoundWatcherService,
+  ensureSatVNextKeeperSnapshotBeforeCommit,
+  shouldParticipateInSatCycle,
+} from "./round-watcher.js";
 import { createSatMiningRuntimeState, getOrCreateRoundExecutionState } from "./runtime.js";
 
 type GatewayMethodArgs = { method: string; payload: { cycleId?: number; [key: string]: unknown } };
@@ -136,6 +140,20 @@ const inspectSatMinerCapital = vi.fn(
 const inspectSatMinerCycle = vi.fn(
   async (_config: unknown, _args: CycleArgs): Promise<MinerCycleView | null> => null,
 );
+const inspectSatVNextKeeperChainContext = vi.fn(
+  async (_config: unknown, _args: { cycleId: number }): Promise<unknown | null> => ({
+    cycleId: 1,
+    cycleSeedHex: "0".repeat(64),
+    revealDeadlineSlot: 1,
+    snapshot: {
+      cycleId: 1,
+      keeperGeneration: 1,
+      registryRootHex: "0".repeat(64),
+      capabilities: [],
+    },
+    capability: null,
+  }),
+);
 const computeMiningStrategy = vi.fn(
   async ({ config }: { config: { riskMode: string; strategyMode?: string } }) => ({
     source: config.strategyMode === "skill" ? "skill" : "base",
@@ -188,6 +206,9 @@ vi.mock("./rpc-read.js", () => ({
     inspectSatMinerCapital(...args),
   inspectSatMinerCycle: (...args: Parameters<typeof inspectSatMinerCycle>) =>
     inspectSatMinerCycle(...args),
+  inspectSatVNextKeeperChainContext: (
+    ...args: Parameters<typeof inspectSatVNextKeeperChainContext>
+  ) => inspectSatVNextKeeperChainContext(...args),
 }));
 
 vi.mock("./strategy-engine.js", () => ({
@@ -215,6 +236,69 @@ describe("SAT economy cadence", () => {
     expect(shouldParticipateInSatCycle({ cycleId: 99, launchCycleId: 100, cadence: 1 })).toBe(
       false,
     );
+  });
+});
+
+describe("vNext pre-commit keeper snapshot", () => {
+  beforeEach(() => {
+    runSatGatewayMethod.mockReset();
+    runSatGatewayMethod.mockResolvedValue({ ok: true });
+    inspectSatVNextKeeperChainContext.mockReset();
+    allocateSignerOwnedSatCommitment.mockClear();
+  });
+
+  it("submits the snapshot and blocks commit preparation until readback exists", async () => {
+    inspectSatVNextKeeperChainContext.mockResolvedValueOnce(null);
+
+    const ready = await ensureSatVNextKeeperSnapshotBeforeCommit({
+      api: { config: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } as never,
+      config: {
+        enabled: true,
+        network: "devnet",
+        riskMode: "balanced",
+        walletId: "wallet-a",
+      },
+      cycleId: 77,
+    });
+
+    expect(ready).toBe(false);
+    expect(runSatGatewayMethod).toHaveBeenCalledTimes(1);
+    expect(runSatGatewayMethod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "sat.snapshotKeeperCapabilities",
+        payload: { cycleId: 77 },
+      }),
+    );
+    expect(allocateSignerOwnedSatCommitment).not.toHaveBeenCalled();
+  });
+
+  it("allows commit preparation only after the snapshot is readable", async () => {
+    inspectSatVNextKeeperChainContext.mockResolvedValueOnce({
+      cycleId: 77,
+      cycleSeedHex: "0".repeat(64),
+      revealDeadlineSlot: 1,
+      snapshot: {
+        cycleId: 77,
+        keeperGeneration: 1,
+        registryRootHex: "0".repeat(64),
+        capabilities: [],
+      },
+      capability: null,
+    });
+
+    const ready = await ensureSatVNextKeeperSnapshotBeforeCommit({
+      api: { config: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } as never,
+      config: {
+        enabled: true,
+        network: "devnet",
+        riskMode: "balanced",
+        walletId: "wallet-a",
+      },
+      cycleId: 77,
+    });
+
+    expect(ready).toBe(true);
+    expect(runSatGatewayMethod).not.toHaveBeenCalled();
   });
 });
 

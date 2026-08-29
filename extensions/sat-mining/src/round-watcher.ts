@@ -365,6 +365,28 @@ function computeCapitalContinuityReserveLamports(params: {
   return minimumEntryWithCollateral;
 }
 
+export async function ensureSatVNextKeeperSnapshotBeforeCommit(params: {
+  api: FasedAgentPluginApi;
+  config: SatMiningConfig;
+  cycleId: number;
+}): Promise<boolean> {
+  const keeperContext = await withRoundWatcherTimeout("pre-commit keeper snapshot", () =>
+    inspectSatVNextKeeperChainContext(params.config, { cycleId: params.cycleId }),
+  );
+  if (keeperContext) return true;
+
+  try {
+    await runSatGatewayMethod({
+      api: params.api,
+      method: "sat.snapshotKeeperCapabilities",
+      payload: { cycleId: params.cycleId },
+    });
+  } catch (error) {
+    if (!isAlreadyInitializedCycleError(error)) throw error;
+  }
+  return false;
+}
+
 export function createSatRoundWatcherService(params: {
   api: FasedAgentPluginApi;
   config: SatMiningConfig;
@@ -1421,6 +1443,22 @@ export function createSatRoundWatcherService(params: {
           SAT_MIN_ENTRY_LAMPORTS,
           Math.floor(effectiveConfig.commitLamports ?? SAT_MIN_ENTRY_LAMPORTS),
         );
+        if (
+          SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2" &&
+          !(await ensureSatVNextKeeperSnapshotBeforeCommit({
+            api,
+            config: state.activeConfig,
+            cycleId,
+          }))
+        ) {
+          markWorkerWaiting(
+            state,
+            "roundWatcher",
+            `cycle ${cycleId} froze its pre-commit keeper capability snapshot`,
+          );
+          scheduleWorkerNextRun(state, "roundWatcher", 500);
+          return;
+        }
         const hasSignerOwnedCommitPlan =
           typeof execution.commitmentReference === "string" &&
           /^sha256:[0-9a-f]{64}$/u.test(execution.commitmentReference);
