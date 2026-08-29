@@ -12,9 +12,9 @@ type frozenSATCodecGeneration2 struct {
 }
 
 const (
-	satVNextInterfaceContractSHA256 = "2232dcb4d977d582ee0d1593d8a0886e620151581b49ebc24f43dbf91a7bbc15" // pragma: allowlist secret
+	satVNextInterfaceContractSHA256 = "74439f2033b857df0d408830fa5df1406a1c2cb5245f242bb89bdc756a960274" // pragma: allowlist secret
 	satVNextIDLContractSHA256       = "27ee632e51a711fd431e5fbb3fc93541dd75bf74a7fa68eccd614bcda983c7d0" // pragma: allowlist secret
-	satVNextAccountOrderSHA256      = "17827cb872d524d728810086a584bdca74ca8668703e56adc41d12629488e46e" // pragma: allowlist secret
+	satVNextAccountOrderSHA256      = "0af20a9d7f0cfbc68cffd7f8d231306391bb083bf3a3a1243f4999d4f8c15d0e" // pragma: allowlist secret
 )
 
 var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
