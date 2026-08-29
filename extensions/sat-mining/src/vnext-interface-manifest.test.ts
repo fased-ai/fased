@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { encodeSatVNextRevealData, SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
 describe("SAT generation-2 interface", () => {
-  it("keeps the replacement candidate inactive while encoding the exact 16-channel reveal", () => {
-    expect(SAT_VNEXT_INTERFACE.active).toBe(false);
-    expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(false);
+  it("activates the exact replacement while encoding the exact 16-channel reveal", () => {
+    expect(SAT_VNEXT_INTERFACE.active).toBe(true);
+    expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(true);
     expect(SAT_VNEXT_INTERFACE.strategyChannels).toBe(16);
     expect(SAT_VNEXT_INTERFACE.legacyStrategyChannels).toBe(25);
 
