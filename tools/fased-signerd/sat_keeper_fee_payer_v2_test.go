@@ -162,6 +162,37 @@ func testKeeperFinalizeIntentGeneration2(
 	}
 }
 
+func testKeeperRecordReceiptIntentGeneration2(
+	t *testing.T,
+	keeper, authority, permanentMiningID, program solana.PublicKey,
+) signerIntentV2 {
+	t.Helper()
+	const cycleID uint64 = 12
+	cycle := make([]byte, 8)
+	binary.LittleEndian.PutUint64(cycle, cycleID)
+	data := make([]byte, 25)
+	data[0] = 134
+	binary.LittleEndian.PutUint64(data[1:9], cycleID)
+	binary.LittleEndian.PutUint64(data[9:17], 1)
+	binary.LittleEndian.PutUint64(data[17:25], 1)
+	return signerIntentV2{
+		Type: intentSolanaSATKeeperAction, AuthorityWalletID: "mining", Action: "recordAgentCycleReceiptV2",
+		ProgramID: program.String(), DataBase64: base64.StdEncoding.EncodeToString(data),
+		Keys: []signerSATAccountV2{
+			satTestAccount(keeper, true, false),
+			satTestAccount(permanentMiningID, false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_agent_record"), permanentMiningID[:]), false, true),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_state_v2"), cycle), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_miner_cycle_state_v2"), authority[:], cycle), false, false),
+			satTestAccount(satTestPDA(t, program, []byte("sat_cycle_settlement_progress_v3"), cycle), false, false),
+		},
+		Context: &signerSATContextV2{
+			MinerAuthorities:   []string{authority.String()},
+			PermanentMiningIDs: []string{permanentMiningID.String()},
+		},
+	}
+}
+
 func testKeeperPrivateKeyV2(t *testing.T) solana.PrivateKey {
 	t.Helper()
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -367,6 +398,35 @@ func TestGeneration2ScoreAndFinalizeUseAmendedKeeperAccountOrders(t *testing.T) 
 		if _, err := normalizeKeeperFeePayerIntentV2(intent, keeper, "mining", authority); err != nil {
 			t.Fatalf("normalize amended generation-2 %s account order: %v", intent.Action, err)
 		}
+	}
+}
+
+func TestGeneration2KeeperReceiptBindsMinerAndPermanentIdentity(t *testing.T) {
+	keeper := solana.NewWallet().PublicKey()
+	authority := solana.NewWallet().PublicKey()
+	permanentMiningID := solana.NewWallet().PublicKey()
+	program := solana.NewWallet().PublicKey()
+	intent := testKeeperRecordReceiptIntentGeneration2(t, keeper, authority, permanentMiningID, program)
+	if _, err := normalizeKeeperFeePayerIntentV2(intent, keeper, "mining", authority); err != nil {
+		t.Fatalf("normalize generation-2 receipt intent: %v", err)
+	}
+
+	tampered := cloneSATTestIntent(t, intent)
+	tampered.Keys[4] = satTestAccount(
+		satTestPDA(t, program, []byte("sat_miner_cycle_state_v2"), permanentMiningID[:], []byte{12, 0, 0, 0, 0, 0, 0, 0}),
+		false,
+		false,
+	)
+	if _, err := normalizeKeeperFeePayerIntentV2(tampered, keeper, "mining", authority); err == nil ||
+		!strings.Contains(err.Error(), "miner cycle state v2") {
+		t.Fatalf("generation-2 receipt accepted a miner-cycle identity mismatch: %v", err)
+	}
+
+	tampered = cloneSATTestIntent(t, intent)
+	tampered.Context.PermanentMiningIDs = []string{authority.String()}
+	if _, err := normalizeKeeperFeePayerIntentV2(tampered, keeper, "mining", authority); err == nil ||
+		!strings.Contains(err.Error(), "permanent identity mismatch") {
+		t.Fatalf("generation-2 receipt accepted a permanent identity mismatch: %v", err)
 	}
 }
 

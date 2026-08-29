@@ -32,6 +32,7 @@ var keeperFeePayerActionsV2 = map[string]struct{}{
 	"finalizeCycleSettlementV2":    {},
 	"scoreCyclePageV2":             {},
 	"distributeCyclePageV2":        {},
+	"recordAgentCycleReceiptV2":    {},
 }
 
 func normalizeKeeperFeePayerIntentV2(

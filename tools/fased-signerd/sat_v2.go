@@ -546,7 +546,7 @@ func validateSATContextForActionV2(action string, context *signerSATContextV2) e
 		allowed["permanentMiningIds"], required["permanentMiningIds"] = true, true
 	case "commitCycleV2", "claimCycleRewardsV2", "claimCycleRewardsBatchV2", "closeResolvedMinerCycleStateV2":
 		allowed["permanentMiningIds"], required["permanentMiningIds"] = true, true
-	case "releaseUnrevealedCommitV2":
+	case "releaseUnrevealedCommitV2", "recordAgentCycleReceiptV2":
 		allowed["minerAuthorities"], required["minerAuthorities"] = true, true
 		allowed["permanentMiningIds"], required["permanentMiningIds"] = true, true
 	case "settleCyclePage", "scoreCyclePage", "distributeCyclePage":
@@ -1147,6 +1147,22 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATPDAV2(ix, 2, p, "cycle settlement progress v3", []byte("sat_cycle_settlement_progress_v3"), cycle),
 			expectSATPDAV2(ix, 3, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
 			expectSATPDAV2(ix, 4, p, "registry reserve v2", []byte("sat_registry_reserve_v2")),
+		)
+	case "recordAgentCycleReceiptV2":
+		cycle := satU64BytesV2(d, 1)
+		if len(minerAuthorities) != 1 || len(c.PermanentMiningIDs) != 1 {
+			return errors.New("SAT recordAgentCycleReceiptV2 requires one miner and permanent identity")
+		}
+		authority := solana.MustPublicKeyFromBase58(minerAuthorities[0])
+		permanentMiningID := solana.MustPublicKeyFromBase58(c.PermanentMiningIDs[0])
+		if ix.Accounts[1].PublicKey != permanentMiningID {
+			return errors.New("SAT recordAgentCycleReceiptV2 permanent identity mismatch")
+		}
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 2, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
+			expectSATPDAV2(ix, 3, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
+			expectSATPDAV2(ix, 4, p, "miner cycle state v2", []byte("sat_miner_cycle_state_v2"), authority[:], cycle),
+			expectSATPDAV2(ix, 5, p, "cycle settlement progress v3", []byte("sat_cycle_settlement_progress_v3"), cycle),
 		)
 	case "commitCycle":
 		cycle := satU64BytesV2(d, 1)
