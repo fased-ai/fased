@@ -82,7 +82,7 @@ func TestSignerV2Generation2ActionsHaveSemanticValidators(t *testing.T) {
 	wallet, program := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
 	identity, authority := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
 	for action, generated := range signerSATCodecsGeneration2 {
-		if action == "bootstrapV2" || action == "setVnextEntryEnabled" || action == "migrateAgentRecordV2" || action == "recordAgentCycleReceiptV2" || action == "claimProtocolDistributorSatV2" {
+		if action == "bootstrapV2" || action == "setVnextEntryEnabled" || action == "migrateAgentRecordV2" || action == "claimProtocolDistributorSatV2" {
 			continue
 		}
 		t.Run(action, func(t *testing.T) {
