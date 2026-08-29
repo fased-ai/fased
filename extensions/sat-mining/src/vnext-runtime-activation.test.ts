@@ -10,25 +10,25 @@ function protocolRecord(): NonNullable<SatRpcAccountRecord> {
   const body = data.subarray(8);
   body[0] = 1;
   body[1] = 1;
-  body[3] = 1;
+  body[3] = 0;
   Buffer.from("0100020002000300030003000300020002000200", "hex").copy(body, 4);
   Buffer.from(ECONOMICS_DIGEST_HEX, "hex").copy(body, 32);
-  body.writeBigUInt64LE(2n, 104);
+  body.writeBigUInt64LE(3n, 104);
   return { owner: MINING_PROGRAM, data };
 }
 
-describe("SAT-DEP-0007 runtime activation binding", () => {
+describe("SAT-DEP-0008 frozen deployment binding", () => {
   it("rejects a disabled or generation-mismatched protocol root before program checks", () => {
     const protocol = protocolRecord();
-    protocol.data[11] = 0;
+    protocol.data[11] = 1;
     expect(() => verifySatVNextRuntimeActivationRecords([protocol])).toThrow(
       "protocol-generation state does not match",
     );
   });
 
-  it("accepts the exact active protocol fields and then fails closed on absent ProgramData", () => {
+  it("accepts the exact frozen protocol fields and then fails closed on absent ProgramData", () => {
     expect(() => verifySatVNextRuntimeActivationRecords([protocolRecord()])).toThrow(
-      "mining program binding does not match SAT-DEP-0007",
+      "mining program binding does not match SAT-DEP-0008",
     );
   });
 });

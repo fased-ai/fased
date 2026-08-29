@@ -46,7 +46,7 @@ export function assertSatVNextRuntimeBinding(
     resolveSatRuntimeProtocolGeneration(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT, env) === "sat-v2"
   ) {
     throw new Error(
-      "SAT generation 2 requires the exact SAT-DEP-0007 Devnet activation and complete runtime ID tuple",
+      "SAT generation 2 requires the exact active SAT-DEP-0008 Devnet contract and complete runtime ID tuple",
     );
   }
 }
