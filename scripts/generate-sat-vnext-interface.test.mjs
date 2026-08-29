@@ -28,13 +28,15 @@ void test("Fased activates only when the finalized deployment matches the candid
   );
   const activationContract = JSON.parse(
     fs.readFileSync(
-      path.join(root, "extensions/sat-mining/protocol-generation/activation.sat-dep-0007.json"),
+      path.join(root, "extensions/sat-mining/protocol-generation/activation.sat-dep-0008.json"),
       "utf8",
     ),
   );
   const activationMatchesCandidate =
+    activationContract.state === "ACTIVE" &&
+    activationContract.protocolGenerationState.publicEntryEnabled === true &&
     activationContract.interfaceContractSha256 ===
-    `sha256:${createHash("sha256").update(bundledInterface).digest("hex")}`;
+      `sha256:${createHash("sha256").update(bundledInterface).digest("hex")}`;
   assert.match(
     generated,
     activationMatchesCandidate ? /state: "ACTIVE"/u : /state: "FROZEN_NOT_ACTIVE"/u,
@@ -93,9 +95,11 @@ void test("Fased activates only when the finalized deployment matches the candid
     path.join(root, "extensions/sat-mining/src/vnext-activation-manifest.ts"),
     "utf8",
   );
-  assert.match(activation, /deploymentId: "SAT-DEP-0007"/u);
+  assert.match(activation, /deploymentId: "SAT-DEP-0008"/u);
   assert.match(activation, /cluster: "devnet"/u);
-  assert.match(activation, /activationGeneration: 2/u);
+  assert.match(activation, /state: "FROZEN_NOT_ACTIVE"/u);
+  assert.match(activation, /publicEntryEnabled: false/u);
+  assert.match(activation, /activationGeneration: 3/u);
 
   const legacy = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/protocol-contract.ts"),

@@ -1,19 +1,19 @@
-// Generated from finalized SAT-DEP-0007 activation evidence; do not edit.
+// Generated from finalized SAT-DEP-0008 deployment evidence; do not edit.
 
 export const SAT_VNEXT_ACTIVATION = {
   $schema: "fased.sat-vnext-activation.v1",
-  state: "ACTIVE",
-  deploymentId: "SAT-DEP-0007",
+  state: "FROZEN_NOT_ACTIVE",
+  deploymentId: "SAT-DEP-0008",
   cluster: "devnet",
   interfaceContractSha256:
-    "sha256:d8f6e6cceb810ee9ceed33da5a0b4dc187c17043a2c57ede25d7207dd8a20dd4", // pragma: allowlist secret
+    "sha256:2232dcb4d977d582ee0d1593d8a0886e620151581b49ebc24f43dbf91a7bbc15", // pragma: allowlist secret
   programs: {
     mining: {
       programId: "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF", // pragma: allowlist secret
       programDataAddress: "3bzGnmBnDhsB2ct3HUVBazrMNpbheizosEZ7H2evjoQu", // pragma: allowlist secret
-      deploymentSlot: 489553534,
+      deploymentSlot: 489703957,
       allocatedImageSha256:
-        "sha256:ef04057067a9e634bcba32dbb5460cbb3d2988ec66f19124c4889d32218e7108", // pragma: allowlist secret
+        "sha256:d63a61af908842530c9786784cabb8f55db08ac5d71b23ac3597a4701b704257", // pragma: allowlist secret
     },
     mint: {
       programId: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL", // pragma: allowlist secret
@@ -33,9 +33,9 @@ export const SAT_VNEXT_ACTIVATION = {
   satMint: "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU", // pragma: allowlist secret
   protocolGenerationState: {
     address: "4bAddyonLtrQmAKfASHgpUHqaxYY7fU48yrXV7JJrBzE", // pragma: allowlist secret
-    accountSha256: "sha256:dee155fd9de4ccda8fe0a7296f3256863bef09d1d623428706b52d9d003fc8c6", // pragma: allowlist secret
-    publicEntryEnabled: true,
-    activationGeneration: 2,
+    accountSha256: "sha256:935837ae7e52b5c8ee826851d6445fe5f858160eec061a39b410ff63a5639ab9", // pragma: allowlist secret
+    publicEntryEnabled: false,
+    activationGeneration: 3,
     componentTupleHex: "0100020002000300030003000300020002000200", // pragma: allowlist secret
     economicsContractSha256:
       "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c", // pragma: allowlist secret
@@ -48,13 +48,13 @@ export const SAT_VNEXT_ACTIVATION = {
   },
   replacementDeployment: {
     signature:
-      "3xhYiigwu55CrKGcNSrrh7MVbTR1Za5pUpg8wKoY9Y5J2f1dF1mV3mHC4oftEL89xHkNUgazsPWBBvffR5TmzQq4", // pragma: allowlist secret
-    finalizedSlot: 489553534,
-    descriptorSha256: "sha256:230641c115cbf76ec34c0b795380a71dda337c89e31a55484cd71a03a9ecadc5", // pragma: allowlist secret
-    artifactSha256: "sha256:57a31d9966c23edead64c75d69250985512970ba664150a4ffcbf0f310c3dc6d", // pragma: allowlist secret
-    artifactBytes: 753568,
-    allocatedImageSha256: "sha256:ef04057067a9e634bcba32dbb5460cbb3d2988ec66f19124c4889d32218e7108", // pragma: allowlist secret
-    allocatedImageBytes: 753936,
-    zeroPaddingBytes: 368,
+      "9JLKNB5CEYNmJQRzCjwZBKx9wSuAJvJwa6LH2KC2cpbZrzFmLsXSTNeZ2sRP9wo3GscxWRzzJdfg3mpfnh2qQcK", // pragma: allowlist secret
+    finalizedSlot: 489703957,
+    descriptorSha256: "sha256:6d92f2b93a273e4bd1c8daa6fc9e45681964e11850b99307b5e5998388909569", // pragma: allowlist secret
+    artifactSha256: "sha256:399a627e5ad851308757a1077b2f2223d5b30853e75e36eb964b3d5d5a52047e", // pragma: allowlist secret
+    artifactBytes: 754408,
+    allocatedImageSha256: "sha256:d63a61af908842530c9786784cabb8f55db08ac5d71b23ac3597a4701b704257", // pragma: allowlist secret
+    allocatedImageBytes: 764176,
+    zeroPaddingBytes: 9768,
   },
 } as const;
