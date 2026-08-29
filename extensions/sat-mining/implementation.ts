@@ -38,7 +38,10 @@ import {
   SAT_SQLITE_ARCHIVED_FAILURE_LIMIT,
   SAT_PLANNER_HISTORY_CHART_POINT_LIMIT,
 } from "./src/audit-store.js";
-import { deriveSatRuntimeCadencePolicy } from "./src/cadence-policy.js";
+import {
+  availableSatCadenceFeeReserveLamports,
+  deriveSatRuntimeCadencePolicy,
+} from "./src/cadence-policy.js";
 import { refreshSatChainTime, resolveStatusSatChainTime } from "./src/chain-time.js";
 import { createSatClaimService } from "./src/claim-service.js";
 import { SatMiningClient } from "./src/client.js";
@@ -5100,7 +5103,10 @@ const satMiningPlugin = {
       const cadencePolicy = deriveSatRuntimeCadencePolicy(SAT_RUNTIME_PROTOCOL_GENERATION, {
         activeCapitalLamports: currentCapitalFundedLamports,
         activeCommitLamports,
-        feeReserveLamports: currentSolBalanceLamports,
+        feeReserveLamports: availableSatCadenceFeeReserveLamports(
+          currentSolBalanceLamports,
+          state.activeConfig.minSolBalanceLamports ?? 150_000_000,
+        ),
         cycleErosionPpm: globalState?.cycleErosionPpm ?? null,
         annualOperationsBudgetBps:
           state.activeConfig.cadencePolicy?.annualOperationsBudgetBps ??

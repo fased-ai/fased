@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  availableSatCadenceFeeReserveLamports,
   deriveSatCadencePolicy,
   deriveSatCadencePolicyFromOperationalState,
   deriveSatRuntimeCadencePolicy,
@@ -28,6 +29,25 @@ function policyInput(overrides: Partial<SatCadencePolicyInput> = {}): SatCadence
 }
 
 describe("SAT capital-aware cadence policy", () => {
+  it("excludes the protected signer minimum before evaluating cadence solvency", () => {
+    const feeReserve = availableSatCadenceFeeReserveLamports(127_625_000n, 100_000_000n);
+    const result = deriveSatCadencePolicy(
+      policyInput({
+        activeCapitalLamports: SOL,
+        activeCommitLamports: SOL,
+        feeReserveLamports: feeReserve,
+        annualMiningExposureBps: 400,
+        requestedCadence: 48,
+      }),
+    );
+
+    expect(feeReserve).toBe(27_625_000n);
+    expect(result.spendableFeeReserveLamports).toBe("27375000");
+    expect(result.recommendedCadence).toBe(48);
+    expect(availableSatCadenceFeeReserveLamports(99_999_999n, 100_000_000n)).toBe(0n);
+    expect(availableSatCadenceFeeReserveLamports(null, 100_000_000n)).toBeNull();
+  });
+
   it.each([
     [1, 48],
     [2.5, 12],

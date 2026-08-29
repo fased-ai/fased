@@ -114,6 +114,16 @@ function optionalLamports(value: string | number | bigint | null | undefined): b
   }
 }
 
+export function availableSatCadenceFeeReserveLamports(
+  walletBalanceLamports: string | number | bigint | null | undefined,
+  protectedMinimumLamports: string | number | bigint | null | undefined,
+): bigint | null {
+  const walletBalance = optionalLamports(walletBalanceLamports);
+  const protectedMinimum = optionalLamports(protectedMinimumLamports);
+  if (walletBalance == null || protectedMinimum == null) return null;
+  return walletBalance > protectedMinimum ? walletBalance - protectedMinimum : 0n;
+}
+
 function positiveSamples(values: readonly bigint[]): bigint[] {
   return values
     .filter((value) => value > 0n)

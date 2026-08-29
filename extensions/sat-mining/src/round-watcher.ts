@@ -1,6 +1,10 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { computeAutoPlannerDecision } from "./auto-planner.js";
-import { deriveSatRuntimeCadencePolicy, type SatCycleCadence } from "./cadence-policy.js";
+import {
+  availableSatCadenceFeeReserveLamports,
+  deriveSatRuntimeCadencePolicy,
+  type SatCycleCadence,
+} from "./cadence-policy.js";
 import { refreshSatChainTime } from "./chain-time.js";
 import {
   allocateSignerOwnedSatCommitment,
@@ -696,7 +700,10 @@ export function createSatRoundWatcherService(params: {
             null,
           activeCommitLamports:
             cadenceCapital?.activeCommitLamports ?? state.activeConfig.commitLamports ?? null,
-          feeReserveLamports: cadenceFeeReserve,
+          feeReserveLamports: availableSatCadenceFeeReserveLamports(
+            cadenceFeeReserve,
+            state.activeConfig.minSolBalanceLamports ?? Number(SAT_DEFAULT_RESERVE_LAMPORTS),
+          ),
           cycleErosionPpm: cadenceGlobalState?.cycleErosionPpm ?? null,
           annualOperationsBudgetBps:
             state.activeConfig.cadencePolicy?.annualOperationsBudgetBps ??
