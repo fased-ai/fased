@@ -119,11 +119,11 @@ if (
 }
 if (
   activation?.$schema !== "fased.sat-vnext-activation.v1" ||
-  activation?.state !== "FROZEN_NOT_ACTIVE" ||
+  activation?.state !== "ACTIVE" ||
   activation?.deploymentId !== "SAT-DEP-0012" ||
   activation?.cluster !== "devnet" ||
-  activation?.protocolGenerationState?.publicEntryEnabled !== false ||
-  activation?.protocolGenerationState?.activationGeneration !== 11
+  activation?.protocolGenerationState?.publicEntryEnabled !== true ||
+  activation?.protocolGenerationState?.activationGeneration !== 12
 ) {
   fail("SAT-DEP-0012 deployment contract is incomplete");
 }
