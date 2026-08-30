@@ -308,6 +308,118 @@ describe("SAT submission service boundary", () => {
     );
   });
 
+  it("submits atomic generation-2 entry through separate bounded keeper and Mining roles", async () => {
+    let advertiseAtomicEntry = true;
+    callLocalSocketSigner.mockImplementation(
+      async (
+        _socketPath: string,
+        payload: {
+          op?: string;
+          walletId?: string;
+          request?: { requestId?: string; intent?: unknown };
+        },
+      ) => {
+        if (payload.op === "v2.keeperFeePayer.get") {
+          return {
+            miningWalletId: "wallet-mining",
+            feePayerWalletId: `sat_kfp_${"a".repeat(56)}`,
+            feePayerPublicKey: "keeper-public-key",
+            state: "ready",
+          };
+        }
+        if (payload.op === "v2.capabilities") {
+          const capabilities = typedCapabilities();
+          capabilities.capabilities.intentTypes.push("solana.satKeeperAction");
+          capabilities.capabilities.features.push("signerOwnedKeeperFeePayer");
+          if (advertiseAtomicEntry) {
+            capabilities.capabilities.features.push("atomicSatOpenCommitV2");
+          }
+          return capabilities;
+        }
+        if (payload.op === "v2.policy.get") {
+          expect(payload.walletId).toBe(`sat_kfp_${"a".repeat(56)}`);
+          return { hash: `sha256:${"ef".repeat(32)}` };
+        }
+        if (payload.op === "v2.execute") {
+          expect(payload.walletId).toBe(`sat_kfp_${"a".repeat(56)}`);
+          expect(payload.request?.intent).toEqual({
+            type: "solana.satKeeperAction",
+            authorityWalletId: "wallet-mining",
+            action: "openAndCommitCycleV2",
+            instructions: [
+              { ...instruction, action: "openCycleV2" },
+              { ...instruction, action: "commitCycleV2" },
+            ],
+          });
+          return {
+            requestId: payload.request?.requestId,
+            state: "confirmed",
+            signature: "atomic-entry-signature",
+          };
+        }
+        throw new Error(`unexpected signer operation ${payload.op}`);
+      },
+    );
+
+    await expect(
+      executeTypedSatIntent({
+        socketPath: "/run/fased-signerd.sock",
+        walletId: "wallet-mining",
+        stateProgramId: "program-id",
+        action: "openAndCommitCycleV2",
+        instructions: [
+          { ...instruction, action: "openCycleV2" },
+          { ...instruction, action: "commitCycleV2" },
+        ],
+        cluster: "devnet",
+        env: {},
+        useKeeperFeePayer: true,
+      }),
+    ).resolves.toMatchObject({ state: "confirmed", signature: "atomic-entry-signature" });
+
+    advertiseAtomicEntry = false;
+    await expect(
+      executeTypedSatIntent({
+        socketPath: "/run/fased-signerd.sock",
+        walletId: "wallet-mining",
+        stateProgramId: "program-id",
+        action: "openAndCommitCycleV2",
+        instructions: [
+          { ...instruction, action: "openCycleV2" },
+          { ...instruction, action: "commitCycleV2" },
+        ],
+        cluster: "devnet",
+        env: {},
+        useKeeperFeePayer: true,
+      }),
+    ).rejects.toThrow("missing features: atomicSatOpenCommitV2");
+
+    advertiseAtomicEntry = true;
+    await expect(
+      executeTypedSatIntent({
+        socketPath: "/run/fased-signerd.sock",
+        walletId: "wallet-mining",
+        stateProgramId: "program-id",
+        action: "openAndCommitCycleV2",
+        instructions: [
+          { ...instruction, action: "commitCycleV2" },
+          { ...instruction, action: "openCycleV2" },
+        ],
+        cluster: "devnet",
+        env: {},
+        useKeeperFeePayer: true,
+      }),
+    ).rejects.toThrow("requires openCycleV2 followed by commitCycleV2");
+
+    expect(updateSatSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletId: "wallet-mining",
+        state: "confirmed",
+        signature: "atomic-entry-signature",
+      }),
+    );
+  });
+
   it("uses the signer-owned keeper capability for a typed generation-2 cleanup batch", async () => {
     callLocalSocketSigner.mockImplementation(
       async (

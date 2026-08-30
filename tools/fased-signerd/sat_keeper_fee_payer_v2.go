@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -39,6 +40,8 @@ var keeperFeePayerActionsV2 = map[string]struct{}{
 	"closeResolvedCycleArtifactsV2":    {},
 }
 
+const keeperAtomicOpenCommitActionV2 = "openAndCommitCycleV2"
+
 func isVNextKeeperActionV2(input signerIntentV2) bool {
 	action := strings.TrimSpace(input.Action)
 	if strings.HasSuffix(action, "V2") {
@@ -68,6 +71,9 @@ func normalizeKeeperFeePayerIntentV2(
 	}
 	if strings.TrimSpace(input.Type) != intentSolanaSATKeeperAction {
 		return normalizedIntentV2{}, errors.New("typed SAT keeper intent has the wrong type")
+	}
+	if strings.TrimSpace(input.Action) == keeperAtomicOpenCommitActionV2 {
+		return normalizeAtomicOpenCommitKeeperIntentV2(input, feePayer, authorityWalletID, authority)
 	}
 	if err := requireKeeperFeePayerActionV2(input.Action); err != nil {
 		return normalizedIntentV2{}, err
@@ -112,6 +118,95 @@ func normalizeKeeperFeePayerIntentV2(
 		PolicyOperation:      "satKeeperFee." + strings.TrimSpace(input.Action) + "@" + authorityIntent.Instructions[0].ProgramID().String(),
 		RequiredRole:         "keeper",
 		ParentIntent:         parentIntent,
+	}, nil
+}
+
+func normalizeAtomicOpenCommitKeeperIntentV2(
+	input signerIntentV2,
+	feePayer solana.PublicKey,
+	authorityWalletID string,
+	authority solana.PublicKey,
+) (normalizedIntentV2, error) {
+	if feePayer.IsZero() || authority.IsZero() || feePayer.Equals(authority) {
+		return normalizedIntentV2{}, errors.New("atomic SAT open-and-commit requires distinct keeper and Mining authorities")
+	}
+	if strings.TrimSpace(input.AuthorityWalletID) != normalizeWalletID(authorityWalletID) {
+		return normalizedIntentV2{}, errors.New("atomic SAT open-and-commit authority wallet binding mismatch")
+	}
+	if strings.TrimSpace(input.ProgramID) != "" || strings.TrimSpace(input.DataBase64) != "" ||
+		len(input.Keys) != 0 || input.Context != nil || input.SATCommitment != nil ||
+		len(input.AddressLookupTables) != 0 || len(input.Instructions) != 2 {
+		return normalizedIntentV2{}, errors.New("atomic SAT open-and-commit requires exactly two typed instructions and no top-level instruction fields")
+	}
+	if input.Instructions[0].Action != "openCycleV2" || input.Instructions[1].Action != "commitCycleV2" {
+		return normalizedIntentV2{}, errors.New("atomic SAT open-and-commit requires openCycleV2 followed by commitCycleV2")
+	}
+	normalizeSingle := func(raw signerSATInstructionV2, wallet solana.PublicKey) (normalizedIntentV2, error) {
+		return normalizeSATIntentV2(signerIntentV2{
+			Type: intentSolanaSATAction, Action: raw.Action, ProgramID: raw.ProgramID,
+			DataBase64: raw.DataBase64, Keys: raw.Keys, Context: raw.Context,
+		}, wallet)
+	}
+	openIntent, err := normalizeSingle(input.Instructions[0], feePayer)
+	if err != nil {
+		return normalizedIntentV2{}, fmt.Errorf("normalize atomic SAT open instruction: %w", err)
+	}
+	commitIntent, err := normalizeSingle(input.Instructions[1], authority)
+	if err != nil {
+		return normalizedIntentV2{}, fmt.Errorf("normalize atomic SAT commit instruction: %w", err)
+	}
+	openInstruction := openIntent.Instructions[0]
+	commitInstruction := commitIntent.Instructions[0]
+	if !openInstruction.ProgramID().Equals(commitInstruction.ProgramID()) {
+		return normalizedIntentV2{}, errors.New("atomic SAT open-and-commit instructions must use one program")
+	}
+	openData, err := openInstruction.Data()
+	if err != nil {
+		return normalizedIntentV2{}, errors.New("atomic SAT open instruction data is unavailable")
+	}
+	commitData, err := commitInstruction.Data()
+	if err != nil {
+		return normalizedIntentV2{}, errors.New("atomic SAT commit instruction data is unavailable")
+	}
+	if len(openData) != 9 || len(commitData) != 41 || !bytes.Equal(openData[1:9], commitData[1:9]) {
+		return normalizedIntentV2{}, errors.New("atomic SAT open-and-commit cycle binding mismatch")
+	}
+	canonicalInstructions := []signerSATInstructionV2{
+		{
+			Action: openIntent.Intent.Action, ProgramID: openIntent.Intent.ProgramID,
+			DataBase64: openIntent.Intent.DataBase64, Keys: openIntent.Intent.Keys,
+			Context: openIntent.Intent.Context,
+		},
+		{
+			Action: commitIntent.Intent.Action, ProgramID: commitIntent.Intent.ProgramID,
+			DataBase64: commitIntent.Intent.DataBase64, Keys: commitIntent.Intent.Keys,
+			Context: commitIntent.Intent.Context,
+		},
+	}
+	canonical := signerIntentV2{
+		Type: intentSolanaSATKeeperAction, AuthorityWalletID: normalizeWalletID(authorityWalletID),
+		Action: keeperAtomicOpenCommitActionV2, Instructions: canonicalInstructions,
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return normalizedIntentV2{}, err
+	}
+	digest := sha256.Sum256(encoded)
+	requiredPrograms := append([]string{}, openIntent.RequiredPrograms...)
+	requiredPrograms = append(requiredPrograms, commitIntent.RequiredPrograms...)
+	requiredPrograms, err = normalizeSortedStringsV2(requiredPrograms, func(raw string) (string, error) {
+		return normalizePublicKeyV2(raw, "atomic SAT required program")
+	})
+	if err != nil {
+		return normalizedIntentV2{}, err
+	}
+	return normalizedIntentV2{
+		Intent: canonical, Digest: "sha256:" + hex.EncodeToString(digest[:]),
+		Asset: "solana:native", Amount: big.NewInt(1), RequiredPrograms: requiredPrograms,
+		Destination: feePayer.String(), Instructions: []solana.Instruction{openInstruction, commitInstruction},
+		PolicyOperation: "satKeeperFee.openCycleV2@" + openInstruction.ProgramID().String(),
+		RequiredRole:    "keeper", ParentIntent: &commitIntent,
+		NativeFeeReservation: new(big.Int).SetUint64(500_000),
 	}, nil
 }
 

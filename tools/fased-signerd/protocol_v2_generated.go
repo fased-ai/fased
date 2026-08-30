@@ -55,6 +55,7 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"idempotentAssociatedTokenCreation",
 		"typedSATActions",
 		"signerOwnedKeeperFeePayer",
+		"atomicSatOpenCommitV2",
 		"typedSATAddressLookupTables",
 		"typedVaultBondActions",
 		"domainSeparatedFederationBondChallenges",
