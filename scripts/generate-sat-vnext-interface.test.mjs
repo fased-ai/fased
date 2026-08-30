@@ -97,9 +97,9 @@ void test("Fased activates only when the finalized deployment matches the candid
   );
   assert.match(activation, /deploymentId: "SAT-DEP-0010"/u);
   assert.match(activation, /cluster: "devnet"/u);
-  assert.match(activation, /state: "FROZEN_NOT_ACTIVE"/u);
-  assert.match(activation, /publicEntryEnabled: false/u);
-  assert.match(activation, /activationGeneration: 7/u);
+  assert.match(activation, /state: "ACTIVE"/u);
+  assert.match(activation, /publicEntryEnabled: true/u);
+  assert.match(activation, /activationGeneration: 8/u);
 
   const legacy = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/protocol-contract.ts"),
