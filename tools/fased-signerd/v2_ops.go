@@ -1483,10 +1483,19 @@ func validateSignerNativeSpendV2(
 			},
 		})
 		cancel()
-		if simulationErr != nil || simulation == nil || simulation.Value == nil || simulation.Value.Err != nil || len(simulation.Value.Accounts) != 1 || simulation.Value.Accounts[0] == nil {
+		if simulationErr != nil || simulation == nil || simulation.Value == nil {
 			if simulationErr == nil {
-				simulationErr = errors.New("wallet spend simulation failed or omitted the wallet account")
+				simulationErr = errors.New("wallet spend simulation failed")
 			}
+			markSolanaWriteRPCFailure(rpcURL, simulationErr)
+			continue
+		}
+		if simulation.Value.Err != nil {
+			markSolanaWriteRPCSuccess(rpcURL)
+			return errors.New("signer-owned Solana RPC rejected transaction simulation")
+		}
+		if len(simulation.Value.Accounts) != 1 || simulation.Value.Accounts[0] == nil {
+			simulationErr = errors.New("wallet spend simulation omitted the wallet account")
 			markSolanaWriteRPCFailure(rpcURL, simulationErr)
 			continue
 		}
