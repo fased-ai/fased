@@ -127,6 +127,7 @@ vi.mock("./src/submission-service.js", async (importOriginal) => ({
 import { parseSatMiningConfig } from "./src/config.js";
 import {
   buildSatCycleCommitment,
+  resolveSatPendingMinerCycleSeed,
   submitSatCloseResolvedCycleArtifacts,
   submitSatCloseResolvedCycleRegistryPage,
   submitSatCloseResolvedCleanupBatch,
@@ -141,6 +142,11 @@ import {
 import { SAT_VNEXT_INTERFACE } from "./src/vnext-interface-manifest.js";
 
 describe("SAT generation-2 transaction builders", () => {
+  it("uses the generation-specific pending miner-cycle namespace", () => {
+    expect(resolveSatPendingMinerCycleSeed(false)).toBe("sat_miner_cycle_state");
+    expect(resolveSatPendingMinerCycleSeed(true)).toBe("sat_miner_cycle_state_v2");
+  });
+
   it("uses the generation-2 direct minimum only while its deployment is active", () => {
     expect(
       parseSatMiningConfig({ enabled: true, network: "devnet", riskMode: "balanced" })

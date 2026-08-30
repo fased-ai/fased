@@ -1578,6 +1578,10 @@ function buildCompactPendingCycleRangeData(params: {
   ]);
 }
 
+export function resolveSatPendingMinerCycleSeed(vnext: boolean): string {
+  return vnext ? SAT_MINER_CYCLE_STATE_V2_SEED : SAT_MINER_CYCLE_STATE_SEED;
+}
+
 async function resolveSatCycleRegistryPageIndex(config: SatMiningConfig, cycleId: number) {
   const registryMeta = await inspectSatCycleRegistryMeta(config, { cycleId }).catch(() => null);
   return Math.floor((registryMeta?.participantCount ?? 0) / SAT_CYCLE_REGISTRY_PAGE_CAPACITY);
@@ -4417,7 +4421,11 @@ export async function submitSatCompactPendingCycleRange(
       ];
       for (const cycleId of params.frontCycleIds) {
         const [satMinerCycleState] = solana.PublicKey.findProgramAddressSync(
-          [Buffer.from(SAT_MINER_CYCLE_STATE_SEED), signer.toBuffer(), encodeU64(cycleId)],
+          [
+            Buffer.from(resolveSatPendingMinerCycleSeed(vnext)),
+            signer.toBuffer(),
+            encodeU64(cycleId),
+          ],
           programId,
         );
         accounts.push({
@@ -4428,7 +4436,11 @@ export async function submitSatCompactPendingCycleRange(
       }
       for (const cycleId of params.backCycleIds) {
         const [satMinerCycleState] = solana.PublicKey.findProgramAddressSync(
-          [Buffer.from(SAT_MINER_CYCLE_STATE_SEED), signer.toBuffer(), encodeU64(cycleId)],
+          [
+            Buffer.from(resolveSatPendingMinerCycleSeed(vnext)),
+            signer.toBuffer(),
+            encodeU64(cycleId),
+          ],
           programId,
         );
         accounts.push({

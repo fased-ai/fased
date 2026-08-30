@@ -513,6 +513,20 @@ func TestSignerV2TypedSATCompactionRequiresExactBoundarySequences(t *testing.T) 
 	if _, err := normalizeSignerIntentForWalletV2(intent, &wallet); err != nil {
 		t.Fatalf("normalize exact SAT pending-range compaction: %v", err)
 	}
+	vnext := cloneSATTestIntent(t, intent)
+	for index, cycleID := range cycleIDs {
+		seed := make([]byte, 8)
+		binary.LittleEndian.PutUint64(seed, cycleID)
+		vnext.Keys[index+2].Pubkey = satTestPDA(t, program, []byte("sat_miner_cycle_state_v2"), wallet[:], seed).String()
+	}
+	if _, err := normalizeSignerIntentForWalletV2(vnext, &wallet); err != nil {
+		t.Fatalf("normalize exact generation-2 SAT pending-range compaction: %v", err)
+	}
+	mixedNamespace := cloneSATTestIntent(t, vnext)
+	mixedNamespace.Keys[2] = intent.Keys[2]
+	if _, err := normalizeSignerIntentForWalletV2(mixedNamespace, &wallet); err == nil || !strings.Contains(err.Error(), "one exact legacy or generation-2 namespace") {
+		t.Fatalf("mixed pending-cycle namespaces must be rejected, got %v", err)
+	}
 	nonContiguous := cloneSATTestIntent(t, intent)
 	nonContiguous.Context.FrontCycleIDs[1] = "12"
 	if _, err := normalizeSignerIntentForWalletV2(nonContiguous, &wallet); err == nil || !strings.Contains(err.Error(), "front cycles must be contiguous") {
