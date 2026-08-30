@@ -15,6 +15,7 @@ import {
   waitForSatSubmissionLease as waitForUnboundSatSubmissionLease,
   type SatSubmissionSignerState,
 } from "./submission-ledger.js";
+import type { SatVNextAction } from "./vnext-interface-manifest.js";
 
 const satSubmissionWorkflowStorage = new AsyncLocalStorage<string>();
 
@@ -54,7 +55,7 @@ export type SatVNextKeeperAction =
   | "distributeCyclePageV2";
 
 export type SatSubmissionInstruction = {
-  action: SatSignerAction | SatVNextKeeperAction;
+  action: SatSignerAction | SatVNextAction;
   programId: string;
   dataBase64: string;
   satCommitment?: {
@@ -73,7 +74,7 @@ export type SatSubmissionInstruction = {
 
 export type SatSubmissionAction =
   | SatSignerAction
-  | SatVNextKeeperAction
+  | SatVNextAction
   | "openAndCommitCycleV2"
   | "cleanupBatch"
   | "create"
@@ -82,6 +83,23 @@ export type SatSubmissionAction =
   | "close";
 
 export type SatSubmissionOutcome = SatSubmissionSignerOperation & { signature: string };
+
+type SatAtomicEntryInstructions = [
+  SatSubmissionInstruction & { action: "openCycleV2" },
+  SatSubmissionInstruction & { action: "snapshotKeeperCapabilitiesV2" },
+  SatSubmissionInstruction & { action: "commitCycleV2" },
+];
+
+function isSatAtomicEntryInstructions(
+  instructions: SatSubmissionInstruction[] | undefined,
+): instructions is SatAtomicEntryInstructions {
+  return (
+    instructions?.length === 3 &&
+    instructions[0]?.action === "openCycleV2" &&
+    instructions[1]?.action === "snapshotKeeperCapabilitiesV2" &&
+    instructions[2]?.action === "commitCycleV2"
+  );
+}
 
 const VAULT_BOND_ACTIONS = new Set<SatSignerAction>([
   "updateBondTierPolicy",
@@ -399,14 +417,9 @@ export async function executeTypedSatIntent(params: {
       : keeperCapability
         ? (() => {
             if (params.action === "openAndCommitCycleV2") {
-              if (
-                params.instruction ||
-                params.instructions?.length !== 2 ||
-                params.instructions[0]?.action !== "openCycleV2" ||
-                params.instructions[1]?.action !== "commitCycleV2"
-              ) {
+              if (params.instruction || !isSatAtomicEntryInstructions(params.instructions)) {
                 throw new Error(
-                  "typed SAT atomic entry requires openCycleV2 followed by commitCycleV2",
+                  "typed SAT atomic entry requires openCycleV2 followed by snapshotKeeperCapabilitiesV2 and commitCycleV2",
                 );
               }
               return {

@@ -349,6 +349,7 @@ describe("SAT submission service boundary", () => {
             action: "openAndCommitCycleV2",
             instructions: [
               { ...instruction, action: "openCycleV2" },
+              { ...instruction, action: "snapshotKeeperCapabilitiesV2" },
               { ...instruction, action: "commitCycleV2" },
             ],
           });
@@ -370,6 +371,7 @@ describe("SAT submission service boundary", () => {
         action: "openAndCommitCycleV2",
         instructions: [
           { ...instruction, action: "openCycleV2" },
+          { ...instruction, action: "snapshotKeeperCapabilitiesV2" },
           { ...instruction, action: "commitCycleV2" },
         ],
         cluster: "devnet",
@@ -388,6 +390,7 @@ describe("SAT submission service boundary", () => {
         action: "openAndCommitCycleV2",
         instructions: [
           { ...instruction, action: "openCycleV2" },
+          { ...instruction, action: "snapshotKeeperCapabilitiesV2" },
           { ...instruction, action: "commitCycleV2" },
         ],
         cluster: "devnet",
@@ -405,7 +408,27 @@ describe("SAT submission service boundary", () => {
         stateProgramId: "program-id",
         action: "openAndCommitCycleV2",
         instructions: [
+          { ...instruction, action: "openCycleV2" },
           { ...instruction, action: "commitCycleV2" },
+        ],
+        cluster: "devnet",
+        env: {},
+        useKeeperFeePayer: true,
+        keeperWalletId: "keeper",
+      }),
+    ).rejects.toThrow(
+      "requires openCycleV2 followed by snapshotKeeperCapabilitiesV2 and commitCycleV2",
+    );
+
+    await expect(
+      executeTypedSatIntent({
+        socketPath: "/run/fased-signerd.sock",
+        walletId: "wallet-mining",
+        stateProgramId: "program-id",
+        action: "openAndCommitCycleV2",
+        instructions: [
+          { ...instruction, action: "commitCycleV2" },
+          { ...instruction, action: "snapshotKeeperCapabilitiesV2" },
           { ...instruction, action: "openCycleV2" },
         ],
         cluster: "devnet",
@@ -413,7 +436,9 @@ describe("SAT submission service boundary", () => {
         useKeeperFeePayer: true,
         keeperWalletId: "keeper",
       }),
-    ).rejects.toThrow("requires openCycleV2 followed by commitCycleV2");
+    ).rejects.toThrow(
+      "requires openCycleV2 followed by snapshotKeeperCapabilitiesV2 and commitCycleV2",
+    );
 
     expect(updateSatSubmission).toHaveBeenCalledWith(
       expect.objectContaining({
