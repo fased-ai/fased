@@ -46,6 +46,7 @@ export const SIGNER_PROTOCOL_V2 = Object.freeze({
     "idempotentAssociatedTokenCreation",
     "typedSATActions",
     "signerOwnedKeeperFeePayer",
+    "atomicSatOpenCommitV2",
     "typedSATAddressLookupTables",
     "typedVaultBondActions",
     "domainSeparatedFederationBondChallenges",

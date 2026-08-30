@@ -996,6 +996,16 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		}
 		return failed, safeErr
 	}
+	if intent.Intent.Type == intentSolanaSATKeeperAction && intent.Intent.Action == keeperAtomicOpenCommitActionV2 {
+		if err := simulateSignedAtomicOpenCommitV2(rpcURLs, tx); err != nil {
+			safeErr := fmt.Errorf("signed atomic SAT open-and-commit simulation failed: %w", err)
+			failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, safeErr)
+			if markErr != nil {
+				return signerOperationV2{}, fmt.Errorf("%v; persist signer failure: %w", safeErr, markErr)
+			}
+			return failed, safeErr
+		}
+	}
 	digest := sha256.Sum256(raw)
 	signature := tx.Signatures[0].String()
 	signedTxBase64 := base64.StdEncoding.EncodeToString(raw)
@@ -1499,6 +1509,43 @@ func validateSignerNativeSpendV2(
 		return nil
 	}
 	return errors.New("signer-owned Solana RPC native spend validation failed")
+}
+
+func simulateSignedAtomicOpenCommitV2(rpcURLs []string, tx *solana.Transaction) error {
+	if tx == nil {
+		return errors.New("signed atomic SAT transaction is missing")
+	}
+	if err := tx.VerifySignatures(); err != nil {
+		return fmt.Errorf("verify both atomic SAT signatures: %w", err)
+	}
+	active, err := activeSolanaWriteRPCURLs(rpcURLs)
+	if err != nil {
+		return err
+	}
+	for _, rpcURL := range active {
+		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
+		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
+		response, requestErr := client.SimulateTransactionWithOpts(ctx, tx, &rpc.SimulateTransactionOpts{
+			SigVerify:  true,
+			Commitment: rpc.CommitmentConfirmed,
+		})
+		cancel()
+		if requestErr != nil || response == nil || response.Value == nil {
+			if requestErr == nil {
+				requestErr = errors.New("signed atomic SAT simulation returned no result")
+			}
+			markSolanaWriteRPCFailure(rpcURL, requestErr)
+			continue
+		}
+		if response.Value.Err != nil {
+			simulationErr := fmt.Errorf("program rejected signed atomic SAT transaction: %v", response.Value.Err)
+			markSolanaWriteRPCFailure(rpcURL, simulationErr)
+			return simulationErr
+		}
+		markSolanaWriteRPCSuccess(rpcURL)
+		return nil
+	}
+	return errors.New("signer-owned Solana RPC could not verify the signed atomic SAT transaction")
 }
 
 func broadcastSignedOnceV2(rpcURLs []string, signedRaw []byte, expectedSignature solana.Signature) error {

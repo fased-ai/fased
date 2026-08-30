@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -25,6 +27,59 @@ func testKeeperCloseCommitIntentV2(t *testing.T, keeper, authority, program sola
 		Keys: []signerSATAccountV2{
 			satTestAccount(authority, true, false),
 			satTestAccount(cycle, false, true),
+		},
+	}
+}
+
+func testAtomicOpenCommitIntentV2(
+	t *testing.T,
+	keeper, authority, permanentMiningID, program solana.PublicKey,
+	cycleID uint64,
+) signerIntentV2 {
+	t.Helper()
+	cycle := make([]byte, 8)
+	binary.LittleEndian.PutUint64(cycle, cycleID)
+	openData := append([]byte{116}, cycle...)
+	commitData := make([]byte, 41)
+	commitData[0] = 117
+	copy(commitData[1:9], cycle)
+	commitData[9] = 1
+	cycleState := satTestPDA(t, program, []byte("sat_cycle_state_v2"), cycle)
+	return signerIntentV2{
+		Type: intentSolanaSATKeeperAction, AuthorityWalletID: "mining",
+		Action: keeperAtomicOpenCommitActionV2,
+		Instructions: []signerSATInstructionV2{
+			{
+				Action: "openCycleV2", ProgramID: program.String(),
+				DataBase64: base64.StdEncoding.EncodeToString(openData),
+				Keys: []signerSATAccountV2{
+					satTestAccount(keeper, true, true),
+					satTestAccount(satTestPDA(t, program, []byte("sat_global_state_v2")), false, false),
+					satTestAccount(satTestPDA(t, program, []byte("sat_protocol_generation_state_v2")), false, false),
+					satTestAccount(cycleState, false, true),
+					satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_meta"), cycle), false, true),
+					satTestAccount(satTestPDA(t, program, []byte("sat_treasury_state_v2")), false, false),
+					satTestAccount(satTestPDA(t, program, []byte("sat_registry_reserve_v2")), false, true),
+					satTestAccount(solana.SystemProgramID, false, false),
+				},
+			},
+			{
+				Action: "commitCycleV2", ProgramID: program.String(),
+				DataBase64: base64.StdEncoding.EncodeToString(commitData),
+				Keys: []signerSATAccountV2{
+					satTestAccount(authority, true, true),
+					satTestAccount(permanentMiningID, false, false),
+					satTestAccount(satTestPDA(t, program, []byte("sat_agent_record"), permanentMiningID[:]), false, false),
+					satTestAccount(satTestPDA(t, program, []byte("sat_protocol_generation_state_v2")), false, false),
+					satTestAccount(cycleState, false, true),
+					satTestAccount(satTestPDA(t, program, []byte("sat_miner_cycle_state_v2"), authority[:], cycle), false, true),
+					satTestAccount(satTestPDA(t, program, []byte("sat_miner_capital_state"), authority[:]), false, true),
+					satTestAccount(satTestPDA(t, program, []byte("sat_keeper_operating_reserve"), permanentMiningID[:]), false, true),
+					satTestAccount(satTestPDA(t, program, []byte("sat_agent_reward_remainder_v2"), permanentMiningID[:]), false, true),
+					satTestAccount(solana.SystemProgramID, false, false),
+				},
+				Context: &signerSATContextV2{PermanentMiningIDs: []string{permanentMiningID.String()}},
+			},
 		},
 	}
 }
@@ -354,6 +409,153 @@ func TestKeeperFeePayerAcceptsGenerationTwoCleanupBatchV2(t *testing.T) {
 	}
 	if normalized.RequiredRole != "keeper" || len(normalized.Instructions) != len(cleanup) {
 		t.Fatalf("generation-two cleanup batch did not preserve Keeper authority: %+v", normalized)
+	}
+}
+
+func TestAtomicOpenCommitBindsTwoAuthoritiesOneProgramAndOneCycleV2(t *testing.T) {
+	keeper := testKeeperPrivateKeyV2(t)
+	authority := testKeeperPrivateKeyV2(t)
+	permanentMiningID := authority.PublicKey()
+	program := solana.NewWallet().PublicKey()
+	intent := testAtomicOpenCommitIntentV2(
+		t, keeper.PublicKey(), authority.PublicKey(), permanentMiningID, program, 42,
+	)
+	normalized, err := normalizeKeeperFeePayerIntentV2(
+		intent, keeper.PublicKey(), "mining", authority.PublicKey(),
+	)
+	if err != nil {
+		t.Fatalf("normalize atomic open-and-commit: %v", err)
+	}
+	if normalized.PolicyOperation != "satKeeperFee.openCycleV2@"+program.String() ||
+		normalized.ParentIntent == nil || normalized.ParentIntent.PolicyOperation != "sat.commitCycleV2@"+program.String() ||
+		len(normalized.Instructions) != 2 {
+		t.Fatalf("atomic open-and-commit did not preserve independent policy authority: %#v", normalized)
+	}
+	tx, err := execution.NewSignedTypedTransactionWithFeePayer(
+		normalized.Instructions, solana.Hash{}, keeper,
+		[]solana.PrivateKey{authority}, nil,
+	)
+	if err != nil {
+		t.Fatalf("sign atomic open-and-commit: %v", err)
+	}
+	if len(tx.Signatures) != 2 || tx.Signatures[0].IsZero() || tx.Signatures[1].IsZero() {
+		t.Fatalf("atomic open-and-commit does not contain both signatures: %#v", tx.Signatures)
+	}
+	if err := tx.VerifySignatures(); err != nil {
+		t.Fatalf("verify atomic open-and-commit signatures: %v", err)
+	}
+
+	wrongOrder := cloneSATTestIntent(t, intent)
+	wrongOrder.Instructions[0], wrongOrder.Instructions[1] = wrongOrder.Instructions[1], wrongOrder.Instructions[0]
+	if _, err := normalizeKeeperFeePayerIntentV2(wrongOrder, keeper.PublicKey(), "mining", authority.PublicKey()); err == nil ||
+		!strings.Contains(err.Error(), "followed by") {
+		t.Fatalf("atomic open-and-commit accepted reversed instructions: %v", err)
+	}
+
+	wrongCycle := cloneSATTestIntent(t, intent)
+	commitData, err := base64.StdEncoding.DecodeString(wrongCycle.Instructions[1].DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary.LittleEndian.PutUint64(commitData[1:9], 43)
+	wrongCycle.Instructions[1].DataBase64 = base64.StdEncoding.EncodeToString(commitData)
+	if _, err := normalizeKeeperFeePayerIntentV2(wrongCycle, keeper.PublicKey(), "mining", authority.PublicKey()); err == nil {
+		t.Fatal("atomic open-and-commit accepted a mismatched cycle")
+	}
+
+	extra := cloneSATTestIntent(t, intent)
+	extra.Instructions = append(extra.Instructions, extra.Instructions[1])
+	if _, err := normalizeKeeperFeePayerIntentV2(extra, keeper.PublicKey(), "mining", authority.PublicKey()); err == nil ||
+		!strings.Contains(err.Error(), "exactly two") {
+		t.Fatalf("atomic open-and-commit accepted an extra instruction: %v", err)
+	}
+}
+
+func TestAtomicOpenCommitRequiresBothSignaturesAndSignatureVerifiedSimulationV2(t *testing.T) {
+	keeperKey := solana.NewWallet().PrivateKey
+	miningKey := solana.NewWallet().PrivateKey
+	program := solana.NewWallet().PublicKey()
+	permanentMiningID := solana.NewWallet().PublicKey()
+	intent := testAtomicOpenCommitIntentV2(
+		t,
+		keeperKey.PublicKey(),
+		miningKey.PublicKey(),
+		permanentMiningID,
+		program,
+		42,
+	)
+	normalized, err := normalizeKeeperFeePayerIntentV2(
+		intent,
+		keeperKey.PublicKey(),
+		"mining",
+		miningKey.PublicKey(),
+	)
+	if err != nil {
+		t.Fatalf("normalize atomic open+commit: %v", err)
+	}
+	var blockhash solana.Hash
+	blockhash[0] = 9
+	tx, err := execution.NewSignedTypedTransactionWithFeePayer(
+		normalized.Instructions,
+		blockhash,
+		keeperKey,
+		[]solana.PrivateKey{miningKey},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("sign atomic open+commit: %v", err)
+	}
+
+	rpcCalls := 0
+	rpcServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
+		rpcCalls++
+		var body struct {
+			ID     any               `json:"id"`
+			Method string            `json:"method"`
+			Params []json.RawMessage `json:"params"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode signed simulation request: %v", err)
+		}
+		if body.Method != "simulateTransaction" || len(body.Params) != 2 {
+			t.Fatalf("unexpected signed simulation request: method=%q params=%d", body.Method, len(body.Params))
+		}
+		var opts map[string]any
+		if err := json.Unmarshal(body.Params[1], &opts); err != nil {
+			t.Fatalf("decode signed simulation options: %v", err)
+		}
+		if sigVerify, ok := opts["sigVerify"].(bool); !ok || !sigVerify {
+			t.Fatalf("atomic simulation did not require signature verification: %#v", opts)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(writer).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      body.ID,
+			"result": map[string]any{
+				"context": map[string]any{"slot": 1},
+				"value":   map[string]any{"err": nil, "logs": []string{}, "unitsConsumed": 1},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer rpcServer.Close()
+
+	if err := simulateSignedAtomicOpenCommitV2([]string{rpcServer.URL}, tx); err != nil {
+		t.Fatalf("signature-verified atomic simulation: %v", err)
+	}
+	if rpcCalls != 1 {
+		t.Fatalf("atomic simulation RPC calls = %d, want 1", rpcCalls)
+	}
+
+	tx.Signatures[1] = solana.Signature{}
+	if err := simulateSignedAtomicOpenCommitV2([]string{rpcServer.URL}, tx); err == nil ||
+		!strings.Contains(err.Error(), "verify both atomic SAT signatures") {
+		t.Fatalf("atomic simulation accepted a missing mining signature: %v", err)
+	}
+	if rpcCalls != 1 {
+		t.Fatalf("invalid dual-signature transaction reached RPC; calls=%d", rpcCalls)
 	}
 }
 

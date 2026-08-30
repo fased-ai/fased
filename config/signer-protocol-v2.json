@@ -41,6 +41,7 @@
     "idempotentAssociatedTokenCreation",
     "typedSATActions",
     "signerOwnedKeeperFeePayer",
+    "atomicSatOpenCommitV2",
     "typedSATAddressLookupTables",
     "typedVaultBondActions",
     "domainSeparatedFederationBondChallenges",

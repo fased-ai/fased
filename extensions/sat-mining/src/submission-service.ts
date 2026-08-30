@@ -74,6 +74,7 @@ export type SatSubmissionInstruction = {
 export type SatSubmissionAction =
   | SatSignerAction
   | SatVNextKeeperAction
+  | "openAndCommitCycleV2"
   | "cleanupBatch"
   | "create"
   | "extend"
@@ -114,6 +115,7 @@ export async function requireTypedSatSignerCapabilities(
     | "solana.satKeeperAction"
     | "solana.satLookupTable"
     | "solana.vaultBondAction",
+  requiredFeatures: readonly string[] = [],
 ): Promise<void> {
   const result = await callLocalSocketSigner<{
     ready?: boolean;
@@ -128,7 +130,9 @@ export async function requireTypedSatSignerCapabilities(
   const protocol = capabilities?.protocol;
   const features = new Set(capabilities?.features ?? []);
   const states = new Set(capabilities?.operationStates ?? []);
-  const missingFeatures = REQUIRED_SAT_SIGNER_FEATURES.filter((feature) => !features.has(feature));
+  const missingFeatures = [
+    ...new Set([...REQUIRED_SAT_SIGNER_FEATURES, ...requiredFeatures]),
+  ].filter((feature) => !features.has(feature));
   const missingStates = ["reserved", "broadcast", "confirmed", "failed", "unknown"].filter(
     (state) => !states.has(state),
   );
@@ -348,7 +352,11 @@ export async function executeTypedSatIntent(params: {
       : keeperCapability
         ? "solana.satKeeperAction"
         : "solana.satAction";
-  await requireTypedSatSignerCapabilities(params.socketPath, intentType);
+  await requireTypedSatSignerCapabilities(
+    params.socketPath,
+    intentType,
+    params.action === "openAndCommitCycleV2" ? ["atomicSatOpenCommitV2"] : [],
+  );
   const intent = isLookupTable
     ? (() => {
         if (params.instruction || params.instructions || !params.lookupTable) {
@@ -375,6 +383,24 @@ export async function executeTypedSatIntent(params: {
         })()
       : keeperCapability
         ? (() => {
+            if (params.action === "openAndCommitCycleV2") {
+              if (
+                params.instruction ||
+                params.instructions?.length !== 2 ||
+                params.instructions[0]?.action !== "openCycleV2" ||
+                params.instructions[1]?.action !== "commitCycleV2"
+              ) {
+                throw new Error(
+                  "typed SAT atomic entry requires openCycleV2 followed by commitCycleV2",
+                );
+              }
+              return {
+                type: "solana.satKeeperAction" as const,
+                authorityWalletId: params.walletId,
+                action: "openAndCommitCycleV2" as const,
+                instructions: params.instructions,
+              };
+            }
             if (params.action === "cleanupBatch") {
               if (params.instruction || !params.instructions?.length) {
                 throw new Error(
