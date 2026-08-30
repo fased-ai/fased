@@ -194,6 +194,14 @@ var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
 		AccountShape:       "SW,--,--,-W,-W,-W,-W,-W,-W,--,--,--,--,--",
 		Active:             false,
 	},
+	"setAgentEntryPause": {
+		Action:             "setAgentEntryPause",
+		Discriminator:      105,
+		DataLength:         9,
+		AllocationChannels: 0,
+		AccountShape:       "S-,--,-W",
+		Active:             false,
+	},
 }
 
 func isCanonicalFrozenSATGeneration2Data(action string, data []byte) bool {

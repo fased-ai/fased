@@ -518,6 +518,8 @@ func validateSATCanonicalPaddingV2(action string, data []byte) error {
 			seenCycles[cycleID] = true
 		}
 		padding = data[2:9]
+	case "setAgentEntryPause":
+		padding = data[4:9]
 	case "compactPendingCycleRange":
 		padding = data[19:25]
 	}
@@ -545,7 +547,7 @@ func validateSATContextForActionV2(action string, context *signerSATContextV2) e
 	case "revealCycleV2":
 		allowed["registryPageIndex"], required["registryPageIndex"] = true, true
 		allowed["permanentMiningIds"], required["permanentMiningIds"] = true, true
-	case "commitCycleV2", "claimCycleRewardsV2", "claimCycleRewardsBatchV2", "closeResolvedMinerCycleStateV2":
+	case "commitCycleV2", "claimCycleRewardsV2", "claimCycleRewardsBatchV2", "closeResolvedMinerCycleStateV2", "setAgentEntryPause":
 		allowed["permanentMiningIds"], required["permanentMiningIds"] = true, true
 	case "releaseUnrevealedCommitV2", "recordAgentCycleReceiptV2":
 		allowed["minerAuthorities"], required["minerAuthorities"] = true, true
@@ -976,6 +978,18 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATKeyV2(ix, 6, system, "system program"),
 			expectSATKeyV2(ix, 7, token, "SPL token program"),
 			expectSATKeyV2(ix, 8, ataProgram, "associated token program"),
+		)
+	case "setAgentEntryPause":
+		if d[3] != 0 {
+			return errors.New("SAT setAgentEntryPause signer capability permits reviewed resume only")
+		}
+		if len(c.PermanentMiningIDs) != 1 {
+			return errors.New("SAT setAgentEntryPause requires one permanent mining identity")
+		}
+		permanentMiningID := solana.MustPublicKeyFromBase58(c.PermanentMiningIDs[0])
+		return firstSATErrorV2(
+			expectSATKeyV2(ix, 1, permanentMiningID, "permanent mining identity"),
+			expectSATPDAV2(ix, 2, p, "agent record", []byte("sat_agent_record"), permanentMiningID[:]),
 		)
 	case "openCycleV2":
 		cycle := satU64BytesV2(d, 1)

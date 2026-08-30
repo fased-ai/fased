@@ -39,6 +39,7 @@ func TestFrozenSATGeneration2ManifestCoversCompleteMiningLifecycle(t *testing.T)
 		"closeResolvedMinerCycleStateV2",
 		"closeResolvedCycleRegistryPageV2",
 		"closeResolvedCycleArtifactsV2",
+		"setAgentEntryPause",
 	} {
 		if _, ok := signerSATCodecsGeneration2[action]; !ok {
 			t.Fatalf("missing generation-2 lifecycle codec %s", action)

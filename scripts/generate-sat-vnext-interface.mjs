@@ -161,6 +161,31 @@ if (
   fail("legacy drain decoder is not preserved distinctly");
 }
 
+const reviewedResumeIdl = idl.satMiningInstructions.find(
+  (instruction) => instruction.name === "SatSetAgentEntryPause",
+);
+const reviewedResumeOrder = accountOrder.programs.satMining.find(
+  (instruction) => instruction.name === "SatSetAgentEntryPause",
+);
+const reviewedResumeAccounts = [
+  "authority:readonly+signer",
+  "permanent_mining_id:readonly",
+  "sat_agent_record:writable",
+];
+if (
+  reviewedResumeIdl?.discriminant !== 105 ||
+  JSON.stringify(reviewedResumeIdl.args) !==
+    JSON.stringify([
+      { name: "expected_policy_generation", type: "u16" },
+      { name: "paused", type: "u8" },
+      { name: "padding0", requiredValue: "all-zero", type: "u8[5]" },
+    ]) ||
+  reviewedResumeOrder?.discriminant !== 105 ||
+  JSON.stringify(reviewedResumeOrder.accountOrder) !== JSON.stringify(reviewedResumeAccounts)
+) {
+  fail("reviewed AgentRecord entry-pause control disagrees across bound IDL/account-order bytes");
+}
+
 const keeperActions = [
   "settleCyclePageV2",
   "finalizeCycleSettlementV2",
@@ -275,6 +300,17 @@ const generatedCodecs = signer.codecs.map((generatedCodec) => {
     accountShape: accountShape(order.accountOrder).join(","),
     repeatedAccountGroup: order.repeatedAccountGroup ?? null,
   };
+});
+generatedCodecs.push({
+  action: "setAgentEntryPause",
+  contractKey: "setAgentEntryPause",
+  discriminator: 105,
+  dataLength: 9,
+  accountOrderKey: "SatSetAgentEntryPause",
+  active: false,
+  executableDispatchBound: true,
+  accountShape: accountShape(reviewedResumeAccounts).join(","),
+  repeatedAccountGroup: null,
 });
 const actionCodecs = Object.fromEntries(
   generatedCodecs.map((item) => [
