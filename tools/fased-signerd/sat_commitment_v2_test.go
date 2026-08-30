@@ -196,11 +196,12 @@ func TestSignerSATCommitmentRejectsRebindingAndCiphertextTampering(t *testing.T)
 		if err := json.Unmarshal(raw, &record); err != nil {
 			return err
 		}
-		replacement := "A"
-		if strings.HasSuffix(record.EncryptedMaterial, replacement) {
-			replacement = "B"
+		ciphertext, err := base64.RawURLEncoding.DecodeString(record.EncryptedMaterial)
+		if err != nil {
+			return err
 		}
-		record.EncryptedMaterial = record.EncryptedMaterial[:len(record.EncryptedMaterial)-1] + replacement
+		ciphertext[0] ^= 0x01
+		record.EncryptedMaterial = base64.RawURLEncoding.EncodeToString(ciphertext)
 		encoded, err := json.Marshal(record)
 		if err != nil {
 			return err
