@@ -245,6 +245,12 @@ export const SAT_VNEXT_INTERFACE = {
       accountShape: "SW,--,--,-W,-W,-W,-W,-W,-W,--,--,--,--,--",
       repeatedAccountGroup: null,
     },
+    setAgentEntryPause: {
+      discriminator: 105,
+      dataLength: 9,
+      accountShape: "S-,--,-W",
+      repeatedAccountGroup: null,
+    },
   } as const,
   keeperCodecs: {
     settleCyclePageV2: {

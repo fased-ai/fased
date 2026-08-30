@@ -105,7 +105,7 @@ func TestSignerV2Generation2ActionsHaveSemanticValidators(t *testing.T) {
 			}
 			context := &signerSATContextV2{}
 			switch action {
-			case "commitCycleV2", "claimCycleRewardsV2", "claimCycleRewardsBatchV2", "closeResolvedMinerCycleStateV2":
+			case "commitCycleV2", "claimCycleRewardsV2", "claimCycleRewardsBatchV2", "closeResolvedMinerCycleStateV2", "setAgentEntryPause":
 				context.PermanentMiningIDs = []string{identity.String()}
 			case "releaseUnrevealedCommitV2":
 				context.PermanentMiningIDs = []string{identity.String()}
@@ -128,6 +128,60 @@ func TestSignerV2Generation2ActionsHaveSemanticValidators(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestSignerV2ReviewedAgentResumeBindsControllerIdentityAndAgentRecord(t *testing.T) {
+	wallet, program := solana.NewWallet().PublicKey(), solana.NewWallet().PublicKey()
+	permanentMiningID := solana.NewWallet().PublicKey()
+	agentRecord := satTestPDA(t, program, []byte("sat_agent_record"), permanentMiningID[:])
+	data := make([]byte, 9)
+	data[0] = 105
+	binary.LittleEndian.PutUint16(data[1:3], 1)
+	input := signerIntentV2{
+		Type: intentSolanaSATAction, Action: "setAgentEntryPause", ProgramID: program.String(),
+		DataBase64: base64.StdEncoding.EncodeToString(data),
+		Keys: []signerSATAccountV2{
+			satTestAccount(wallet, true, false),
+			satTestAccount(permanentMiningID, false, false),
+			satTestAccount(agentRecord, false, true),
+		},
+		Context: &signerSATContextV2{PermanentMiningIDs: []string{permanentMiningID.String()}},
+	}
+	normalized, err := normalizeSignerIntentForWalletV2(input, &wallet)
+	if err != nil {
+		t.Fatalf("normalize reviewed AgentRecord resume: %v", err)
+	}
+	if normalized.PolicyOperation != "sat.setAgentEntryPause@"+program.String() || normalized.RequiredRole != "mining" {
+		t.Fatalf("reviewed resume is not bound to the Mining policy and program: %#v", normalized)
+	}
+
+	paused := cloneSATTestIntent(t, input)
+	pausedData := append([]byte(nil), data...)
+	pausedData[3] = 1
+	paused.DataBase64 = base64.StdEncoding.EncodeToString(pausedData)
+	if _, err := normalizeSignerIntentForWalletV2(paused, &wallet); err == nil || !strings.Contains(err.Error(), "reviewed resume only") {
+		t.Fatalf("runtime signer accepted an entry-pause mutation: %v", err)
+	}
+
+	badPadding := cloneSATTestIntent(t, input)
+	badPaddingData := append([]byte(nil), data...)
+	badPaddingData[8] = 1
+	badPadding.DataBase64 = base64.StdEncoding.EncodeToString(badPaddingData)
+	if _, err := normalizeSignerIntentForWalletV2(badPadding, &wallet); err == nil || !strings.Contains(err.Error(), "reserved padding") {
+		t.Fatalf("runtime signer accepted nonzero resume padding: %v", err)
+	}
+
+	wrongRecord := cloneSATTestIntent(t, input)
+	wrongRecord.Keys[2].Pubkey = solana.NewWallet().PublicKey().String()
+	if _, err := normalizeSignerIntentForWalletV2(wrongRecord, &wallet); err == nil || !strings.Contains(err.Error(), "agent record") {
+		t.Fatalf("runtime signer accepted a different AgentRecord: %v", err)
+	}
+
+	wrongIdentity := cloneSATTestIntent(t, input)
+	wrongIdentity.Context.PermanentMiningIDs[0] = solana.NewWallet().PublicKey().String()
+	if _, err := normalizeSignerIntentForWalletV2(wrongIdentity, &wallet); err == nil || !strings.Contains(err.Error(), "permanent mining identity") {
+		t.Fatalf("runtime signer accepted mismatched permanent identity context: %v", err)
 	}
 }
 

@@ -57,6 +57,7 @@ void test("Fased activates only when the finalized deployment matches the candid
   assert.match(generated, /closeCommitPhaseV2:/u);
   assert.match(generated, /sealCycleEntropyV2:/u);
   assert.match(generated, /claimCycleRewardsV2:/u);
+  assert.match(generated, /setAgentEntryPause:/u);
   assert.match(generated, /snapshotKeeperCapabilitiesV2:/u);
   assert.match(generated, /settleCyclePageV2/u);
   assert.match(generated, /distributeCyclePageV2/u);
@@ -90,6 +91,15 @@ void test("Fased activates only when the finalized deployment matches the candid
     "utf8",
   );
   assert.match(signerReleaseContract, /signerSATReleaseAcknowledgementGeneration2/u);
+
+  const signerManifest = fs.readFileSync(
+    path.join(root, "tools", "fased-signerd", "sat_vnext_manifest_generated.go"),
+    "utf8",
+  );
+  assert.match(
+    signerManifest,
+    /"setAgentEntryPause": \{[\s\S]*?Discriminator:\s+105,[\s\S]*?DataLength:\s+9,[\s\S]*?AccountShape:\s+"S-,--,-W"/u,
+  );
 
   const activation = fs.readFileSync(
     path.join(root, "extensions/sat-mining/src/vnext-activation-manifest.ts"),
