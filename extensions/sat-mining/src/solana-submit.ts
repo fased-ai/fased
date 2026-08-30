@@ -1060,12 +1060,39 @@ async function submitInstructionBatch(params: {
     );
   }
   const context = await prepareLocalSignerSubmitContext(params.cfg, effectiveEnv);
+  const keeperBatch = params.instructions.every((spec) => spec.keeperFeePayer === true);
+  if (params.instructions.some((spec) => spec.keeperFeePayer === true) && !keeperBatch) {
+    throw new Error("SAT cleanup batch cannot mix mining and Keeper fee-payer authorities");
+  }
+  let instructionSigner = context.signer;
+  if (keeperBatch && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
+    if (!context.walletId) {
+      throw new Error("SAT generation-2 cleanup requires an explicit Keeper wallet binding");
+    }
+    const capability = await callLocalSocketSigner<{
+      miningWalletId?: string;
+      feePayerWalletId?: string;
+      feePayerPublicKey?: string;
+      state?: string;
+    }>(context.socketPath, {
+      op: "v2.keeperFeePayer.get",
+      walletId: context.walletId,
+    });
+    if (
+      capability.state !== "ready" ||
+      capability.miningWalletId !== context.walletId ||
+      !capability.feePayerPublicKey?.trim()
+    ) {
+      throw new Error("native signer returned an invalid generation-2 cleanup capability");
+    }
+    instructionSigner = new context.solana.PublicKey(capability.feePayerPublicKey);
+  }
   const instructions: Array<Awaited<ReturnType<typeof buildLocalSignerInstructionRequest>>> = [];
   for (const spec of params.instructions) {
     instructions.push(
       await buildLocalSignerInstructionRequest({
         solana: context.solana,
-        signer: context.signer,
+        signer: instructionSigner,
         env: context.effectiveEnv,
         spec,
       }),
@@ -1082,6 +1109,7 @@ async function submitInstructionBatch(params: {
     instructions,
     cluster: resolveSatCluster(params.cfg),
     env: context.effectiveEnv,
+    useKeeperFeePayer: keeperBatch && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2",
   });
   return {
     txHash: submitted.signature,
@@ -2596,6 +2624,7 @@ export async function submitSatSnapshotKeeperCapabilities(
           isSigner: false,
           isWritable: true,
         },
+        { pubkey: derive(SAT_REGISTRY_RESERVE_V2_SEED), isSigner: false, isWritable: true },
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
       ];
     },
@@ -4119,7 +4148,9 @@ function buildCloseResolvedMinerCycleStateSpec(
 ): SatInstructionSubmitSpec {
   const vnext = isSatVNextRuntime();
   return {
-    ...(vnext ? { actionOverride: "closeResolvedMinerCycleStateV2" as const } : {}),
+    ...(vnext
+      ? { actionOverride: "closeResolvedMinerCycleStateV2" as const, keeperFeePayer: true }
+      : {}),
     data: vnext
       ? buildSatVNextFixedData("closeResolvedMinerCycleStateV2", encodeU64(params.cycleId))
       : buildCloseResolvedMinerCycleStateData(params),
@@ -4150,7 +4181,7 @@ function buildCloseResolvedMinerCycleStateSpec(
         programId,
       );
       const accounts = [
-        { pubkey: signer, isSigner: true, isWritable: !vnext },
+        { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satCycleState, isSigner: false, isWritable: !vnext },
         { pubkey: minerAuthority, isSigner: false, isWritable: true },
         { pubkey: satMinerCycleState, isSigner: false, isWritable: true },
@@ -4188,7 +4219,9 @@ function buildCloseResolvedCycleRegistryPageSpec(params: {
 }): SatInstructionSubmitSpec {
   const vnext = isSatVNextRuntime();
   return {
-    ...(vnext ? { actionOverride: "closeResolvedCycleRegistryPageV2" as const } : {}),
+    ...(vnext
+      ? { actionOverride: "closeResolvedCycleRegistryPageV2" as const, keeperFeePayer: true }
+      : {}),
     data: vnext
       ? buildSatVNextFixedData(
           "closeResolvedCycleRegistryPageV2",
@@ -4221,7 +4254,7 @@ function buildCloseResolvedCycleRegistryPageSpec(params: {
         programId,
       );
       return [
-        { pubkey: signer, isSigner: true, isWritable: !vnext },
+        { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satCycleState, isSigner: false, isWritable: !vnext },
         { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
         { pubkey: satCycleRegistryPage, isSigner: false, isWritable: true },
@@ -4236,7 +4269,9 @@ function buildCloseResolvedCycleArtifactsSpec(params: {
 }): SatInstructionSubmitSpec {
   const vnext = isSatVNextRuntime();
   return {
-    ...(vnext ? { actionOverride: "closeResolvedCycleArtifactsV2" as const } : {}),
+    ...(vnext
+      ? { actionOverride: "closeResolvedCycleArtifactsV2" as const, keeperFeePayer: true }
+      : {}),
     data: vnext
       ? buildSatVNextFixedData("closeResolvedCycleArtifactsV2", encodeU64(params.cycleId))
       : buildCloseResolvedCycleArtifactsData(params),
@@ -4266,11 +4301,16 @@ function buildCloseResolvedCycleArtifactsSpec(params: {
         [Buffer.from(vnext ? SAT_REGISTRY_RESERVE_V2_SEED : SAT_REGISTRY_RESERVE_SEED)],
         programId,
       );
+      const [satKeeperSnapshot] = solana.PublicKey.findProgramAddressSync(
+        [Buffer.from(SAT_KEEPER_SNAPSHOT_SEED), encodeU64(params.cycleId)],
+        programId,
+      );
       return [
-        { pubkey: signer, isSigner: true, isWritable: !vnext },
+        { pubkey: signer, isSigner: true, isWritable: true },
         { pubkey: satCycleState, isSigner: false, isWritable: true },
         { pubkey: satCycleSettlementProgress, isSigner: false, isWritable: true },
         { pubkey: satCycleRegistryMeta, isSigner: false, isWritable: true },
+        ...(vnext ? [{ pubkey: satKeeperSnapshot, isSigner: false, isWritable: true }] : []),
         { pubkey: satRegistryReserve, isSigner: false, isWritable: true },
       ];
     },
@@ -4281,7 +4321,9 @@ export async function submitSatCloseResolvedMinerCycleState(
   _config: SatMiningConfig,
   params: { cycleId: number; authority: string },
 ) {
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(
+    isSatVNextRuntime() ? resolveSatKeeperExecutionConfig(_config) : _config,
+  );
   return submitInstruction({
     cfg,
     env: process.env,
@@ -4293,7 +4335,9 @@ export async function submitSatCloseResolvedCycleRegistryPage(
   _config: SatMiningConfig,
   params: { cycleId: number; pageIndex: number },
 ) {
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(
+    isSatVNextRuntime() ? resolveSatKeeperExecutionConfig(_config) : _config,
+  );
   return submitInstruction({
     cfg,
     env: process.env,
@@ -4305,7 +4349,9 @@ export async function submitSatCloseResolvedCycleArtifacts(
   _config: SatMiningConfig,
   params: { cycleId: number },
 ) {
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(
+    isSatVNextRuntime() ? resolveSatKeeperExecutionConfig(_config) : _config,
+  );
   return submitInstruction({
     cfg,
     env: process.env,
@@ -4325,7 +4371,9 @@ export async function submitSatCloseResolvedCleanupBatch(
   if (items.length === 0) {
     throw new Error("SAT cleanup batch has no items");
   }
-  const cfg = loadConfigForSatRuntime(_config);
+  const cfg = loadConfigForSatRuntime(
+    isSatVNextRuntime() ? resolveSatKeeperExecutionConfig(_config) : _config,
+  );
   return submitInstructionBatch({
     cfg,
     env: process.env,

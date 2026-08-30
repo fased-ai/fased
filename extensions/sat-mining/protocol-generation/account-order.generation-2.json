@@ -1247,7 +1247,7 @@
       },
       {
         "accountOrder": [
-          "signer:readonly+signer",
+          "keeper_fee_payer:writable+signer",
           "sat_cycle_state_v2:readonly",
           "active_miner_authority:writable",
           "sat_miner_cycle_state_v2:writable",
@@ -1261,7 +1261,7 @@
       },
       {
         "accountOrder": [
-          "signer:readonly+signer",
+          "keeper_fee_payer:writable+signer",
           "sat_cycle_state_v2:readonly",
           "sat_cycle_registry_meta:writable",
           "sat_cycle_registry_page:writable",
@@ -1273,10 +1273,11 @@
       },
       {
         "accountOrder": [
-          "signer:readonly+signer",
+          "keeper_fee_payer:writable+signer",
           "sat_cycle_state_v2:writable",
           "sat_cycle_settlement_progress_v3:writable",
           "sat_cycle_registry_meta:writable",
+          "sat_keeper_snapshot:writable",
           "sat_registry_reserve_v2:writable"
         ],
         "discriminant": 130,
@@ -1309,10 +1310,11 @@
       },
       {
         "accountOrder": [
-          "payer:writable+signer",
+          "keeper_fee_payer:writable+signer",
           "sat_cycle_state_v2:readonly",
           "sat_keeper_registry:readonly",
           "sat_keeper_snapshot:writable",
+          "sat_registry_reserve_v2:writable",
           "system_program:readonly"
         ],
         "discriminant": 133,
@@ -1404,8 +1406,8 @@
     "program/src/sat_claim_vnext.rs": "sha256:646619690595d05f0ca0d5ee9dcf4ed2913a7390d19418229b63451759025b7c",
     "program/src/sat_cycle.rs": "sha256:126377c0b7c0ce0252113cdde7514709017f5b018785db9fc184e05e87eaebe6",
     "program/src/sat_cycle_maintenance.rs": "sha256:ccdf29724057ad0c299f70b2b463b6993d53dc874c18126bd130db41e5905bf4",
-    "program/src/sat_cycle_maintenance_vnext.rs": "sha256:63c753a9960515d34bf1a836238bbc51fc58b72688bf3c67ad56319bbcac9990",
-    "program/src/sat_keeper_capability.rs": "sha256:8cf746d8b464fa179fe37150e0daf264dedd21c6c15873deef9b345fa71d0f49",
+    "program/src/sat_cycle_maintenance_vnext.rs": "sha256:a94da6fc3250d60cd60bb23e17731e8e06a22c7450d103a8db5ded78f84bc2e9",
+    "program/src/sat_keeper_capability.rs": "sha256:4195a57a21458e8e34ff2b4ec2f21a095bcf820cd1cb26b264fb53bc3b8ca2ca",
     "program/src/sat_miner_capital.rs": "sha256:bfdb30f6fa3a9b966eb06eeb59f2eeed73fb15b24efdaf3712b1718b41eac2f8",
     "program/src/sat_protocol_treasury.rs": "sha256:bbf041566f69449d0acfc34513622da911aa3052c3e739131035d71aeaaa439e",
     "program/src/sat_retarget_unlock.rs": "sha256:499073e420d7143599db446089a986730a3dba90c72c1258de86630d85929b18",

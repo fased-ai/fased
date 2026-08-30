@@ -308,6 +308,73 @@ describe("SAT submission service boundary", () => {
     );
   });
 
+  it("uses the signer-owned keeper capability for a typed generation-2 cleanup batch", async () => {
+    callLocalSocketSigner.mockImplementation(
+      async (
+        _socketPath: string,
+        payload: {
+          op?: string;
+          walletId?: string;
+          request?: { requestId?: string; intent?: unknown };
+        },
+      ) => {
+        if (payload.op === "v2.keeperFeePayer.get") {
+          return {
+            miningWalletId: "wallet-mining",
+            feePayerWalletId: `sat_kfp_${"a".repeat(56)}`,
+            feePayerPublicKey: "keeper-public-key",
+            state: "ready",
+          };
+        }
+        if (payload.op === "v2.capabilities") {
+          const capabilities = typedCapabilities();
+          capabilities.capabilities.intentTypes.push("solana.satKeeperAction");
+          capabilities.capabilities.features.push("signerOwnedKeeperFeePayer");
+          return capabilities;
+        }
+        if (payload.op === "v2.policy.get") {
+          return { hash: `sha256:${"ef".repeat(32)}` };
+        }
+        if (payload.op === "v2.execute") {
+          expect(payload.request?.intent).toMatchObject({
+            type: "solana.satKeeperAction",
+            authorityWalletId: "wallet-mining",
+            action: "cleanupBatch",
+            instructions: [
+              expect.objectContaining({ action: "closeResolvedCycleRegistryPageV2" }),
+              expect.objectContaining({ action: "closeResolvedCycleArtifactsV2" }),
+            ],
+          });
+          return {
+            requestId: payload.request?.requestId,
+            state: "confirmed",
+            signature: "keeper-cleanup-signature",
+          };
+        }
+        throw new Error(`unexpected signer operation ${payload.op}`);
+      },
+    );
+
+    await expect(
+      executeTypedSatIntent({
+        socketPath: "/run/fased-signerd.sock",
+        walletId: "wallet-mining",
+        stateProgramId: "program-id",
+        action: "cleanupBatch",
+        instructions: [
+          { ...instruction, action: "closeResolvedCycleRegistryPageV2" },
+          { ...instruction, action: "closeResolvedCycleArtifactsV2" },
+        ],
+        cluster: "devnet",
+        env: {},
+        useKeeperFeePayer: true,
+      }),
+    ).resolves.toMatchObject({
+      state: "confirmed",
+      signature: "keeper-cleanup-signature",
+    });
+  });
+
   it("reconciles an ambiguous broadcast without issuing a second execute", async () => {
     callLocalSocketSigner.mockImplementation(
       async (_socketPath: string, payload: { op?: string; request?: { requestId?: string } }) => {

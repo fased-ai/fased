@@ -14,6 +14,7 @@ import (
 )
 
 var keeperFeePayerActionsV2 = map[string]struct{}{
+	"cleanupBatch":                     {},
 	"openCycleV2":                      {},
 	"closeCommitPhase":                 {},
 	"closeCommitPhaseV2":               {},
@@ -45,6 +46,15 @@ func normalizeKeeperFeePayerIntentV2(
 	authority solana.PublicKey,
 ) (normalizedIntentV2, error) {
 	vnextKeeper := strings.HasSuffix(strings.TrimSpace(input.Action), "V2")
+	if strings.TrimSpace(input.Action) == "cleanupBatch" && len(input.Instructions) > 0 {
+		vnextKeeper = true
+		for _, instruction := range input.Instructions {
+			if !strings.HasSuffix(strings.TrimSpace(instruction.Action), "V2") {
+				vnextKeeper = false
+				break
+			}
+		}
+	}
 	standaloneKeeper := vnextKeeper && normalizeWalletID(input.AuthorityWalletID) == normalizeWalletID(authorityWalletID) && feePayer.Equals(authority)
 	if feePayer.IsZero() || authority.IsZero() || (!standaloneKeeper && feePayer.Equals(authority)) {
 		return normalizedIntentV2{}, errors.New("keeper fee payer must be distinct from operational authority")
@@ -132,7 +142,7 @@ func keeperRuntimeFromMiningPolicyV2(policy signerPolicyV2) (signerRoleBaselineR
 	}
 	programID := ""
 	for _, action := range sortedKeeperFeePayerActionsV2() {
-		if strings.HasSuffix(action, "V2") {
+		if action == "cleanupBatch" || strings.HasSuffix(action, "V2") {
 			continue
 		}
 		prefix := "sat." + action + "@"

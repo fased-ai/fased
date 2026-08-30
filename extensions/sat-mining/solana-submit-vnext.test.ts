@@ -18,7 +18,7 @@ const {
     permanentMiningId: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL", // pragma: allowlist secret
   };
   Object.assign(process.env, {
-    FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0009",
+    FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0010",
     FASED_SAT_PROGRAM_ID: ids.miningProgram,
     FASED_SAT_MINT_PROGRAM_ID: ids.mintProgram,
     FASED_SAT_BOND_PROGRAM_ID: ids.bondProgram,
@@ -127,6 +127,9 @@ vi.mock("./src/submission-service.js", async (importOriginal) => ({
 import { parseSatMiningConfig } from "./src/config.js";
 import {
   buildSatCycleCommitment,
+  submitSatCloseResolvedCycleArtifacts,
+  submitSatCloseResolvedCycleRegistryPage,
+  submitSatCloseResolvedCleanupBatch,
   submitSatCloseCommitPhase,
   submitSatCommitCycle,
   submitSatInitMinerCapital,
@@ -192,6 +195,8 @@ describe("SAT generation-2 transaction builders", () => {
       expectedRegistryRevision: 3,
     });
     await submitSatSealCycleEntropy(config, { cycleId: 7 });
+    await submitSatCloseResolvedCycleRegistryPage(config, { cycleId: 7, pageIndex: 0 });
+    await submitSatCloseResolvedCycleArtifacts(config, { cycleId: 7 });
 
     const calls = executeTypedSatIntent.mock.calls.map(([request]) => request);
     expect(calls.map((request) => request.action)).toEqual([
@@ -202,6 +207,8 @@ describe("SAT generation-2 transaction builders", () => {
       "closeCommitPhaseV2",
       "snapshotKeeperCapabilitiesV2",
       "sealCycleEntropyV2",
+      "closeResolvedCycleRegistryPageV2",
+      "closeResolvedCycleArtifactsV2",
     ]);
     expect(calls[0]?.instruction.keys).toHaveLength(5);
     expect(calls[0]?.instruction.keys[1]?.pubkey).toBe(ids.permanentMiningId);
@@ -210,6 +217,9 @@ describe("SAT generation-2 transaction builders", () => {
       permanentMiningIds: [ids.permanentMiningId],
     });
     expect(calls[2]?.instruction.keys).toHaveLength(10);
+    expect(calls[5]?.instruction.keys).toHaveLength(6);
+    expect(calls[7]?.instruction.keys).toHaveLength(5);
+    expect(calls[8]?.instruction.keys).toHaveLength(6);
     for (const request of calls.slice(3)) {
       expect(request.useKeeperFeePayer).toBe(true);
       expect(request.instruction.keys[0]).toMatchObject({
@@ -222,7 +232,14 @@ describe("SAT generation-2 transaction builders", () => {
         .map(([, payload]) => payload)
         .filter((payload) => payload.op === "v2.keeperFeePayer.get")
         .map((payload) => payload.walletId),
-    ).toEqual(["keeper-wallet", "keeper-wallet", "keeper-wallet", "keeper-wallet"]);
+    ).toEqual([
+      "keeper-wallet",
+      "keeper-wallet",
+      "keeper-wallet",
+      "keeper-wallet",
+      "keeper-wallet",
+      "keeper-wallet",
+    ]);
     expect(callLocalSocketSigner).toHaveBeenCalledWith("/tmp/fased-vnext-test-signer.sock", {
       op: "v2.keeperFeePayer.get",
       walletId: "keeper-wallet",
@@ -255,6 +272,39 @@ describe("SAT generation-2 transaction builders", () => {
         walletId: "keeper-wallet",
         useKeeperFeePayer: true,
         action: "openCycleV2",
+      }),
+    );
+  });
+
+  it("routes a generation-2 cleanup batch through the standalone Keeper signer", async () => {
+    if (!SAT_VNEXT_INTERFACE.active) {
+      expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(false);
+      return;
+    }
+    const config = {
+      enabled: false,
+      network: "devnet",
+      riskMode: "balanced",
+      walletId: "mining-wallet",
+      keeperMode: "dedicated",
+      keeperWalletId: "keeper-wallet",
+      permanentMiningId: ids.permanentMiningId,
+    } as const;
+
+    await submitSatCloseResolvedCleanupBatch(config, [
+      { kind: "cycleRegistryPage", cycleId: 7, pageIndex: 0 },
+      { kind: "cycleArtifacts", cycleId: 7 },
+    ]);
+
+    expect(executeTypedSatIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletId: "keeper-wallet",
+        useKeeperFeePayer: true,
+        action: "cleanupBatch",
+        instructions: expect.arrayContaining([
+          expect.objectContaining({ action: "closeResolvedCycleRegistryPageV2" }),
+          expect.objectContaining({ action: "closeResolvedCycleArtifactsV2" }),
+        ]),
       }),
     );
   });

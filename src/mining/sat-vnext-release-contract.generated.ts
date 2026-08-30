@@ -15,9 +15,9 @@ export const SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT = {
     signerCapability: "FSD-SIGNER-GEN-002",
   },
   interfaceContractSha256:
-    "sha256:09047a1f194bcb85cbf8ff34519a3be563a7cea487c48f009fa314c6254f8cba", // pragma: allowlist secret
-  idlSha256: "sha256:27ee632e51a711fd431e5fbb3fc93541dd75bf74a7fa68eccd614bcda983c7d0", // pragma: allowlist secret
-  accountOrderSha256: "sha256:c25a0bfc7c7bd4b8ebe859e420624b624988970bd904236ddb170766511b6857", // pragma: allowlist secret
+    "sha256:ae4888cbfce71c2099e98eae88c24d90cf9a2b97a01f7cfa3c513a443ac8cd3f", // pragma: allowlist secret
+  idlSha256: "sha256:484f2488c643cd2234acf84f130fbc385d10f965ef0eff318027ec9c96e9038c", // pragma: allowlist secret
+  accountOrderSha256: "sha256:6a1ffc1eb889cf5770dd0a7842e9997176c52a17925c0281e3c90e8a87e15998", // pragma: allowlist secret
   stateLayoutsSha256: "sha256:77717f1e06fcd37944c81a44f75e1b36490c369386090b5eb10d58f2fc63e14f", // pragma: allowlist secret
   signerCodecsSha256: "sha256:b3d2098f7b8b3d9d7e0738e281c23deb7947666c078506929bd124d400096c5e", // pragma: allowlist secret
 } as const;
