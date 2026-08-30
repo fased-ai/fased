@@ -40,6 +40,10 @@ func testAtomicOpenCommitIntentV2(
 	cycle := make([]byte, 8)
 	binary.LittleEndian.PutUint64(cycle, cycleID)
 	openData := append([]byte{116}, cycle...)
+	snapshotData := make([]byte, 17)
+	snapshotData[0] = 133
+	copy(snapshotData[1:9], cycle)
+	binary.LittleEndian.PutUint64(snapshotData[9:17], 2)
 	commitData := make([]byte, 41)
 	commitData[0] = 117
 	copy(commitData[1:9], cycle)
@@ -59,6 +63,18 @@ func testAtomicOpenCommitIntentV2(
 					satTestAccount(cycleState, false, true),
 					satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_meta"), cycle), false, true),
 					satTestAccount(satTestPDA(t, program, []byte("sat_treasury_state_v2")), false, false),
+					satTestAccount(satTestPDA(t, program, []byte("sat_registry_reserve_v2")), false, true),
+					satTestAccount(solana.SystemProgramID, false, false),
+				},
+			},
+			{
+				Action: "snapshotKeeperCapabilitiesV2", ProgramID: program.String(),
+				DataBase64: base64.StdEncoding.EncodeToString(snapshotData),
+				Keys: []signerSATAccountV2{
+					satTestAccount(keeper, true, true),
+					satTestAccount(cycleState, false, false),
+					satTestAccount(satTestPDA(t, program, []byte("sat_keeper_registry")), false, false),
+					satTestAccount(satTestPDA(t, program, []byte("sat_keeper_snapshot"), cycle), false, true),
 					satTestAccount(satTestPDA(t, program, []byte("sat_registry_reserve_v2")), false, true),
 					satTestAccount(solana.SystemProgramID, false, false),
 				},
@@ -428,7 +444,7 @@ func TestAtomicOpenCommitBindsTwoAuthoritiesOneProgramAndOneCycleV2(t *testing.T
 	}
 	if normalized.PolicyOperation != "satKeeperFee.openCycleV2@"+program.String() ||
 		normalized.ParentIntent == nil || normalized.ParentIntent.PolicyOperation != "sat.commitCycleV2@"+program.String() ||
-		len(normalized.Instructions) != 2 {
+		len(normalized.Instructions) != 3 {
 		t.Fatalf("atomic open-and-commit did not preserve independent policy authority: %#v", normalized)
 	}
 	tx, err := execution.NewSignedTypedTransactionWithFeePayer(
@@ -452,21 +468,42 @@ func TestAtomicOpenCommitBindsTwoAuthoritiesOneProgramAndOneCycleV2(t *testing.T
 		t.Fatalf("atomic open-and-commit accepted reversed instructions: %v", err)
 	}
 
+	missingSnapshot := cloneSATTestIntent(t, intent)
+	missingSnapshot.Instructions = []signerSATInstructionV2{
+		missingSnapshot.Instructions[0],
+		missingSnapshot.Instructions[2],
+	}
+	if _, err := normalizeKeeperFeePayerIntentV2(missingSnapshot, keeper.PublicKey(), "mining", authority.PublicKey()); err == nil ||
+		!strings.Contains(err.Error(), "exactly three") {
+		t.Fatalf("atomic open-and-commit accepted a missing keeper snapshot: %v", err)
+	}
+
+	wrongSnapshotCycle := cloneSATTestIntent(t, intent)
+	snapshotData, err := base64.StdEncoding.DecodeString(wrongSnapshotCycle.Instructions[1].DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary.LittleEndian.PutUint64(snapshotData[1:9], 43)
+	wrongSnapshotCycle.Instructions[1].DataBase64 = base64.StdEncoding.EncodeToString(snapshotData)
+	if _, err := normalizeKeeperFeePayerIntentV2(wrongSnapshotCycle, keeper.PublicKey(), "mining", authority.PublicKey()); err == nil {
+		t.Fatal("atomic open-and-commit accepted a keeper snapshot for another cycle")
+	}
+
 	wrongCycle := cloneSATTestIntent(t, intent)
-	commitData, err := base64.StdEncoding.DecodeString(wrongCycle.Instructions[1].DataBase64)
+	commitData, err := base64.StdEncoding.DecodeString(wrongCycle.Instructions[2].DataBase64)
 	if err != nil {
 		t.Fatal(err)
 	}
 	binary.LittleEndian.PutUint64(commitData[1:9], 43)
-	wrongCycle.Instructions[1].DataBase64 = base64.StdEncoding.EncodeToString(commitData)
+	wrongCycle.Instructions[2].DataBase64 = base64.StdEncoding.EncodeToString(commitData)
 	if _, err := normalizeKeeperFeePayerIntentV2(wrongCycle, keeper.PublicKey(), "mining", authority.PublicKey()); err == nil {
 		t.Fatal("atomic open-and-commit accepted a mismatched cycle")
 	}
 
 	extra := cloneSATTestIntent(t, intent)
-	extra.Instructions = append(extra.Instructions, extra.Instructions[1])
+	extra.Instructions = append(extra.Instructions, extra.Instructions[2])
 	if _, err := normalizeKeeperFeePayerIntentV2(extra, keeper.PublicKey(), "mining", authority.PublicKey()); err == nil ||
-		!strings.Contains(err.Error(), "exactly two") {
+		!strings.Contains(err.Error(), "exactly three") {
 		t.Fatalf("atomic open-and-commit accepted an extra instruction: %v", err)
 	}
 }

@@ -347,6 +347,16 @@ export const SignerIntentV2Schema = Type.Union([
           ),
           Type.Object(
             {
+              action: Type.Literal("snapshotKeeperCapabilitiesV2"),
+              programId: Type.String(),
+              dataBase64: Type.String(),
+              keys: Type.Array(SignerSatAccountV2Schema),
+              context: Type.Optional(SignerSatContextV2Schema),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
               action: Type.Literal("commitCycleV2"),
               programId: Type.String(),
               dataBase64: Type.String(),

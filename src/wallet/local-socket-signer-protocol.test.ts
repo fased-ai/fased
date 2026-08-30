@@ -508,6 +508,7 @@ describe("local socket signer protocol", () => {
           action: "openAndCommitCycleV2" as const,
           instructions: [
             { ...instruction, action: "openCycleV2" as const },
+            { ...instruction, action: "snapshotKeeperCapabilitiesV2" as const },
             { ...instruction, action: "commitCycleV2" as const },
           ],
         },
@@ -516,6 +517,21 @@ describe("local socket signer protocol", () => {
     expect(parseLocalSocketSignerRequest(single)).toEqual(single);
     expect(parseLocalSocketSignerRequest(batch)).toEqual(batch);
     expect(parseLocalSocketSignerRequest(atomic)).toEqual(atomic);
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...atomic,
+        request: {
+          ...atomic.request,
+          intent: {
+            ...atomic.request.intent,
+            instructions: [
+              { ...instruction, action: "openCycleV2" as const },
+              { ...instruction, action: "commitCycleV2" as const },
+            ],
+          },
+        },
+      }),
+    ).toThrow("invalid signer request");
     expect(() =>
       parseLocalSocketSignerRequest({
         ...batch,
