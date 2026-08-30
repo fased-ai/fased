@@ -277,6 +277,10 @@ describe("SAT generation-2 transaction builders", () => {
   });
 
   it("routes a generation-2 cleanup batch through the standalone Keeper signer", async () => {
+    if (!SAT_VNEXT_INTERFACE.active) {
+      expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(false);
+      return;
+    }
     const config = {
       enabled: false,
       network: "devnet",
