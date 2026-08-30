@@ -1402,11 +1402,17 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			}
 		}
 		checks := []error{expectSATPDAV2(ix, 1, p, "miner capital", []byte("sat_miner_capital_state"), wallet[:])}
+		legacyCycleChecks := make([]error, 0, len(c.FrontCycleIDs)+len(c.BackCycleIDs))
+		vnextCycleChecks := make([]error, 0, len(c.FrontCycleIDs)+len(c.BackCycleIDs))
 		index := 2
 		for _, cycleText := range append(append([]string{}, c.FrontCycleIDs...), c.BackCycleIDs...) {
 			cycle := satU64SeedV2(satContextU64V2(cycleText))
-			checks = append(checks, expectSATPDAV2(ix, index, p, "pending miner cycle", []byte("sat_miner_cycle_state"), wallet[:], cycle))
+			legacyCycleChecks = append(legacyCycleChecks, expectSATPDAV2(ix, index, p, "pending miner cycle", []byte("sat_miner_cycle_state"), wallet[:], cycle))
+			vnextCycleChecks = append(vnextCycleChecks, expectSATPDAV2(ix, index, p, "pending miner cycle v2", []byte("sat_miner_cycle_state_v2"), wallet[:], cycle))
 			index++
+		}
+		if legacyErr, vnextErr := firstSATErrorV2(legacyCycleChecks...), firstSATErrorV2(vnextCycleChecks...); legacyErr != nil && vnextErr != nil {
+			checks = append(checks, errors.New("SAT compactPendingCycleRange cycle accounts must use one exact legacy or generation-2 namespace"))
 		}
 		return firstSATErrorV2(checks...)
 	case "finalizeCycleSettlement":
