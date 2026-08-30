@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { encodeSatVNextRevealData, SAT_VNEXT_INTERFACE } from "./vnext-interface-manifest.js";
 
 describe("SAT generation-2 interface", () => {
-  it("activates the exact deployed interface while encoding the 16-channel reveal", () => {
-    expect(SAT_VNEXT_INTERFACE.state).toBe("ACTIVE");
-    expect(SAT_VNEXT_INTERFACE.active).toBe(true);
-    expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(true);
+  it("keeps the exact deployed interface frozen while encoding the 16-channel reveal", () => {
+    expect(SAT_VNEXT_INTERFACE.state).toBe("FROZEN_NOT_ACTIVE");
+    expect(SAT_VNEXT_INTERFACE.active).toBe(false);
+    expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(false);
     expect(SAT_VNEXT_INTERFACE.strategyChannels).toBe(16);
     expect(SAT_VNEXT_INTERFACE.legacyStrategyChannels).toBe(25);
 

@@ -2,10 +2,10 @@
 
 export const SAT_VNEXT_INTERFACE = {
   freezeId: "SAT-VNEXT-GATE-P3-008",
-  state: "ACTIVE",
-  active: true,
+  state: "FROZEN_NOT_ACTIVE",
+  active: false,
   executableDispatchBound: true,
-  publicEntryEnabled: true,
+  publicEntryEnabled: false,
   schemaGeneration: 2,
   signerCapabilityGeneration: 2,
   strategyChannels: 16,
