@@ -453,6 +453,72 @@ describe("local socket signer protocol", () => {
     ).toThrow("invalid signer request");
   });
 
+  it("accepts strict typed Keeper single actions and cleanup batches", () => {
+    const instruction = {
+      action: "closeResolvedCycleArtifactsV2",
+      programId: "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF", // pragma: allowlist secret
+      dataBase64: "AQ==",
+      keys: [
+        {
+          pubkey: "9NoPc1XDuKyM3FtWkGe6dWfDfgfByFwZVAisgxwNuDS2", // pragma: allowlist secret
+          isSigner: true,
+          isWritable: true,
+        },
+      ],
+    };
+    const base = {
+      op: "v2.execute" as const,
+      walletId: "keeper",
+      request: {
+        requestId: "keeper-cleanup-request-123",
+        policyHash: `sha256:${"d".repeat(64)}`,
+      },
+    };
+    const single = {
+      ...base,
+      request: {
+        ...base.request,
+        intent: {
+          type: "solana.satKeeperAction" as const,
+          authorityWalletId: "keeper",
+          ...instruction,
+        },
+      },
+    };
+    const batch = {
+      ...base,
+      request: {
+        ...base.request,
+        intent: {
+          type: "solana.satKeeperAction" as const,
+          authorityWalletId: "keeper",
+          action: "cleanupBatch" as const,
+          instructions: [instruction],
+        },
+      },
+    };
+    expect(parseLocalSocketSignerRequest(single)).toEqual(single);
+    expect(parseLocalSocketSignerRequest(batch)).toEqual(batch);
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...batch,
+        request: {
+          ...batch.request,
+          intent: { ...batch.request.intent, programId: instruction.programId },
+        },
+      }),
+    ).toThrow("invalid signer request");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...batch,
+        request: {
+          ...batch.request,
+          intent: { ...batch.request.intent, instructions: [] },
+        },
+      }),
+    ).toThrow("invalid signer request");
+  });
+
   it("accepts only semantic SAT lookup-table operations", () => {
     const request = {
       op: "v2.execute" as const,

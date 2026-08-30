@@ -824,7 +824,7 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	var authorityPolicy signerPolicyV2
 	if strings.TrimSpace(hydratedIntent.Type) == intentSolanaSATKeeperAction {
 		authorityWalletID = normalizeWalletID(hydratedIntent.AuthorityWalletID)
-		standaloneKeeper := strings.HasSuffix(strings.TrimSpace(hydratedIntent.Action), "V2") && authorityWalletID == normalizeWalletID(req.IntentWalletID())
+		standaloneKeeper := isVNextKeeperActionV2(hydratedIntent) && authorityWalletID == normalizeWalletID(req.IntentWalletID())
 		authorityRecord, authorityErr := s.keys.PublicRecord(authorityWalletID)
 		if authorityErr != nil {
 			return signerOperationV2{}, errors.New("typed SAT keeper authority wallet is unavailable")

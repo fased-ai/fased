@@ -39,22 +39,29 @@ var keeperFeePayerActionsV2 = map[string]struct{}{
 	"closeResolvedCycleArtifactsV2":    {},
 }
 
+func isVNextKeeperActionV2(input signerIntentV2) bool {
+	action := strings.TrimSpace(input.Action)
+	if strings.HasSuffix(action, "V2") {
+		return true
+	}
+	if action != "cleanupBatch" || len(input.Instructions) == 0 {
+		return false
+	}
+	for _, instruction := range input.Instructions {
+		if !strings.HasSuffix(strings.TrimSpace(instruction.Action), "V2") {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeKeeperFeePayerIntentV2(
 	input signerIntentV2,
 	feePayer solana.PublicKey,
 	authorityWalletID string,
 	authority solana.PublicKey,
 ) (normalizedIntentV2, error) {
-	vnextKeeper := strings.HasSuffix(strings.TrimSpace(input.Action), "V2")
-	if strings.TrimSpace(input.Action) == "cleanupBatch" && len(input.Instructions) > 0 {
-		vnextKeeper = true
-		for _, instruction := range input.Instructions {
-			if !strings.HasSuffix(strings.TrimSpace(instruction.Action), "V2") {
-				vnextKeeper = false
-				break
-			}
-		}
-	}
+	vnextKeeper := isVNextKeeperActionV2(input)
 	standaloneKeeper := vnextKeeper && normalizeWalletID(input.AuthorityWalletID) == normalizeWalletID(authorityWalletID) && feePayer.Equals(authority)
 	if feePayer.IsZero() || authority.IsZero() || (!standaloneKeeper && feePayer.Equals(authority)) {
 		return normalizedIntentV2{}, errors.New("keeper fee payer must be distinct from operational authority")
