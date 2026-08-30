@@ -1,6 +1,6 @@
 {
   "$schema": "fased.sat-vnext-activation.v1",
-  "state": "FROZEN_NOT_ACTIVE",
+  "state": "ACTIVE",
   "deploymentId": "SAT-DEP-0010",
   "cluster": "devnet",
   "interfaceContractSha256": "sha256:09047a1f194bcb85cbf8ff34519a3be563a7cea487c48f009fa314c6254f8cba",
@@ -27,16 +27,16 @@
   "satMint": "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU",
   "protocolGenerationState": {
     "address": "4bAddyonLtrQmAKfASHgpUHqaxYY7fU48yrXV7JJrBzE",
-    "accountSha256": "sha256:21d2d721dc7ebd671fb91c631664d2c94ef9d4f98caa529e624c28b632367fc5",
-    "publicEntryEnabled": false,
-    "activationGeneration": 7,
+    "accountSha256": "sha256:3bdab8ee9243df9b0f7370793a3012e738555fe90e41295473afc13bb4ac0707",
+    "publicEntryEnabled": true,
+    "activationGeneration": 8,
     "componentTupleHex": "0100020002000300030003000300020002000200",
     "economicsContractSha256": "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c"
   },
   "activation": {
-    "signature": "1XtYvooJBH2zGNtMfHLyvCCp9awE9MNRpkgkAyjamgTeLMRsfThHeCQ6VLJrRNEm1AVCdjcuNFEeCXtT9ApM4Nh",
-    "finalizedSlot": 490068035,
-    "receiptDigest": "sha256:2f71ea52f246f8cb559b8022c3967e4b4a70fde2d0cff8a1bbffd06026316ab7"
+    "signature": "RojabFjN2NGzzJ5pwHS9d7wut79Qy6jixr11MmDo82UPGWpSmxwTUM3yrZucGQSTHHYz6dVxe5d6arxd5xmEUEh",
+    "finalizedSlot": 490152153,
+    "receiptDigest": "sha256:c2093d86cb87a43a942d850a89cabeac1f321ffee9b6fb3ce9f80a1d2f3ddae2"
   },
   "replacementDeployment": {
     "signature": "5nYwtkoxZyQw6oXbXchU9y2LWdc3PzoaEMfBb9mptJGZ76TRVUT17bBJzNyV7DmPJY1jEpJXKgiKdykafgL9gz92",
