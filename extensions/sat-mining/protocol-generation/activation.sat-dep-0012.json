@@ -1,15 +1,15 @@
 {
   "$schema": "fased.sat-vnext-activation.v1",
-  "state": "ACTIVE",
-  "deploymentId": "SAT-DEP-0011",
+  "state": "FROZEN_NOT_ACTIVE",
+  "deploymentId": "SAT-DEP-0012",
   "cluster": "devnet",
   "interfaceContractSha256": "sha256:ae4888cbfce71c2099e98eae88c24d90cf9a2b97a01f7cfa3c513a443ac8cd3f",
   "programs": {
     "mining": {
       "programId": "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
       "programDataAddress": "3bzGnmBnDhsB2ct3HUVBazrMNpbheizosEZ7H2evjoQu",
-      "deploymentSlot": 490182796,
-      "allocatedImageSha256": "sha256:8098f9a708fd85cfc571cbba225c4019598243e1f079686feb1f419ba409596d"
+      "deploymentSlot": 490227926,
+      "allocatedImageSha256": "sha256:0d7dea638161e60ebe157959d2abe99d080dc60e0f02dad6d11604f57ab39856"
     },
     "mint": {
       "programId": "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL",
@@ -27,25 +27,25 @@
   "satMint": "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU",
   "protocolGenerationState": {
     "address": "4bAddyonLtrQmAKfASHgpUHqaxYY7fU48yrXV7JJrBzE",
-    "accountSha256": "sha256:09523702faa9445f87be30bad31af6ba09570a0a39829c1ec466322cbba0df5a",
-    "publicEntryEnabled": true,
-    "activationGeneration": 10,
+    "accountSha256": "sha256:bca313d3903cca77f60000443347afde0984415e890c61b4050d85e51543b56d",
+    "publicEntryEnabled": false,
+    "activationGeneration": 11,
     "componentTupleHex": "0100020002000300030003000300020002000200",
     "economicsContractSha256": "sha256:ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c"
   },
   "activation": {
-    "signature": "25tD5oBsJjZmDnShYgkuijk2cKhnbhwptRkwvYMre4qiUEw5qALiiRh6QXM2jgeUNRY6A7kSWj59nibT5Q1oChTf",
-    "finalizedSlot": 490184880,
-    "receiptDigest": "sha256:8aaadde73d83ffc325a308e3ab2037d07480e9ac649a76a9f196c2d986f2d453"
+    "signature": "2jGRTswaJByHwQvT4Ynj4zXrEEYd74iHKwgoULN6SRmc84XYFQwqzp5mRESsr2vRoRnUgZs7odFAoovj2mQVSCqU",
+    "finalizedSlot": 490218899,
+    "receiptDigest": "sha256:d5a3284292a4cb67749cd0831cba4691cce9a59693a73fefe3655366086bc33c"
   },
   "replacementDeployment": {
-    "signature": "51dMbKNPXznHUkSxEzaV64Ti8Jh1gbyyVb5isGXZUFnbvw2UJ8qP5kyM5h3BX14LK8kGYmjvdxS7VWjxbQKc9GGN",
-    "finalizedSlot": 490182796,
-    "descriptorSha256": "sha256:33f90bea210eabd41358946467e16ae3c02f576efd8a65830e84664554647502",
-    "artifactSha256": "sha256:8b471578d9eeb99ee92a3d3ccf74f3368a76dc97e99efd953157f07ceafd6813",
-    "artifactBytes": 759888,
-    "allocatedImageSha256": "sha256:8098f9a708fd85cfc571cbba225c4019598243e1f079686feb1f419ba409596d",
+    "signature": "2iQCnF8yUr6KanZZDYnqFjeXkMxhef9Bw67BrRYTCUB7nu6qdUzbA2kEsjPFvCczrJMGroSwuWet84wEEvKWmDMT",
+    "finalizedSlot": 490227926,
+    "descriptorSha256": "sha256:9d86712517ebd0c2692bdf49c775d8f2cdbbc609e3b57a9b3904bb900f4fbb9b",
+    "artifactSha256": "sha256:55a42a9abcc69985df5484bec5edbdc2441d480b46690f123277c5f019ffda61",
+    "artifactBytes": 761080,
+    "allocatedImageSha256": "sha256:0d7dea638161e60ebe157959d2abe99d080dc60e0f02dad6d11604f57ab39856",
     "allocatedImageBytes": 764176,
-    "zeroPaddingBytes": 4288
+    "zeroPaddingBytes": 3096
   }
 }
