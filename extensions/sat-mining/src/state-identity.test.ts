@@ -53,7 +53,7 @@ describe("SAT Mining state identity", () => {
     ).toBe("sat-v2");
   });
 
-  it("keeps SAT-DEP-0012 frozen even when the runtime tuple is exact", () => {
+  it("selects SAT-DEP-0012 only when the complete runtime tuple is exact", () => {
     const release = {
       state: "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED",
       interfaceContractSha256:
@@ -66,7 +66,9 @@ describe("SAT Mining state identity", () => {
       FASED_SAT_BOND_PROGRAM_ID: "5peszKe8y7dv8KqdSse9UFxmaLxGsy7pWJBm6KpGnGA3",
       FASED_SAT_MINT_ADDRESS: "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU", // pragma: allowlist secret
     };
-    expect(resolveSatRuntimeProtocolGeneration(release, exact)).toBe("sat-v2");
+    expect(resolveSatRuntimeProtocolGeneration(release, exact)).toBe(
+      "sha256:ae4888cbfce71c2099e98eae88c24d90cf9a2b97a01f7cfa3c513a443ac8cd3f",
+    );
     expect(
       resolveSatRuntimeProtocolGeneration(release, {
         ...exact,
