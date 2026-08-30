@@ -306,19 +306,30 @@ export const SignerIntentV2Schema = Type.Union([
     },
     { additionalProperties: false },
   ),
-  Type.Object(
-    {
-      type: Type.Literal("solana.satKeeperAction"),
-      authorityWalletId: Type.String({ minLength: 1 }),
-      action: Type.String({ minLength: 1 }),
-      programId: Type.String(),
-      dataBase64: Type.String(),
-      keys: Type.Array(SignerSatAccountV2Schema),
-      context: Type.Optional(SignerSatContextV2Schema),
-      addressLookupTables: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 1 })),
-    },
-    { additionalProperties: false },
-  ),
+  Type.Union([
+    Type.Object(
+      {
+        type: Type.Literal("solana.satKeeperAction"),
+        authorityWalletId: Type.String({ minLength: 1 }),
+        action: Type.String({ minLength: 1 }),
+        programId: Type.String(),
+        dataBase64: Type.String(),
+        keys: Type.Array(SignerSatAccountV2Schema),
+        context: Type.Optional(SignerSatContextV2Schema),
+        addressLookupTables: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 1 })),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        type: Type.Literal("solana.satKeeperAction"),
+        authorityWalletId: Type.String({ minLength: 1 }),
+        action: Type.Literal("cleanupBatch"),
+        instructions: Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
+      },
+      { additionalProperties: false },
+    ),
+  ]),
   Type.Object(
     {
       type: Type.Literal("solana.satLookupTable"),

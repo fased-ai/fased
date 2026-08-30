@@ -334,13 +334,17 @@ func TestKeeperFeePayerAcceptsGenerationTwoCleanupBatchV2(t *testing.T) {
 			Context:    instruction.Context,
 		})
 	}
+	input := signerIntentV2{
+		Type:              intentSolanaSATKeeperAction,
+		AuthorityWalletID: "keeper",
+		Action:            "cleanupBatch",
+		Instructions:      instructions,
+	}
+	if !isVNextKeeperActionV2(input) {
+		t.Fatal("generation-two Keeper cleanup batch was not classified as standalone")
+	}
 	normalized, err := normalizeKeeperFeePayerIntentV2(
-		signerIntentV2{
-			Type:              intentSolanaSATKeeperAction,
-			AuthorityWalletID: "keeper",
-			Action:            "cleanupBatch",
-			Instructions:      instructions,
-		},
+		input,
 		keeper,
 		"keeper",
 		keeper,
