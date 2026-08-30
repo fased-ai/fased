@@ -280,6 +280,7 @@ export async function executeTypedSatIntent(params: {
   cluster: "local" | "devnet" | "mainnet-beta";
   env: NodeJS.ProcessEnv;
   useKeeperFeePayer?: boolean;
+  keeperWalletId?: string;
 }): Promise<SatSubmissionOutcome> {
   if (!params.stateProgramId.trim()) {
     throw new Error("typed SAT execution requires its canonical Mining program ID");
@@ -324,6 +325,14 @@ export async function executeTypedSatIntent(params: {
     !isLookupTable &&
     params.action !== "cleanupBatch" &&
     VAULT_BOND_ACTIONS.has(params.action as SatSignerAction);
+  const explicitKeeperWalletId = params.keeperWalletId?.trim() ?? "";
+  if (explicitKeeperWalletId && !params.useKeeperFeePayer) {
+    throw new Error("explicit SAT keeper wallet requires keeper fee-payer execution");
+  }
+  if (explicitKeeperWalletId && !/^[a-z0-9_]{1,64}$/u.test(explicitKeeperWalletId)) {
+    throw new Error("explicit SAT keeper wallet identifier is invalid");
+  }
+  const keeperCapabilityWalletId = explicitKeeperWalletId || params.walletId;
   const keeperCapability = params.useKeeperFeePayer
     ? await callLocalSocketSigner<{
         miningWalletId?: string;
@@ -332,15 +341,21 @@ export async function executeTypedSatIntent(params: {
         state?: string;
       }>(params.socketPath, {
         op: "v2.keeperFeePayer.get",
-        walletId: params.walletId,
+        walletId: keeperCapabilityWalletId,
       })
     : null;
+  const standaloneKeeper = Boolean(
+    keeperCapability && explicitKeeperWalletId && explicitKeeperWalletId !== params.walletId,
+  );
   if (
     keeperCapability &&
     (keeperCapability.state !== "ready" ||
-      keeperCapability.miningWalletId !== params.walletId ||
       !keeperCapability.feePayerWalletId?.trim() ||
-      !keeperCapability.feePayerPublicKey?.trim())
+      !keeperCapability.feePayerPublicKey?.trim() ||
+      (standaloneKeeper
+        ? keeperCapability.miningWalletId !== explicitKeeperWalletId ||
+          keeperCapability.feePayerWalletId !== explicitKeeperWalletId
+        : keeperCapability.miningWalletId !== params.walletId))
   ) {
     throw new Error("native signer returned an invalid SAT keeper fee-payer capability");
   }

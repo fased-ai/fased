@@ -320,9 +320,10 @@ describe("SAT submission service boundary", () => {
         },
       ) => {
         if (payload.op === "v2.keeperFeePayer.get") {
+          expect(payload.walletId).toBe("keeper");
           return {
-            miningWalletId: "wallet-mining",
-            feePayerWalletId: `sat_kfp_${"a".repeat(56)}`,
+            miningWalletId: "keeper",
+            feePayerWalletId: "keeper",
             feePayerPublicKey: "keeper-public-key",
             state: "ready",
           };
@@ -337,11 +338,11 @@ describe("SAT submission service boundary", () => {
           return capabilities;
         }
         if (payload.op === "v2.policy.get") {
-          expect(payload.walletId).toBe(`sat_kfp_${"a".repeat(56)}`);
+          expect(payload.walletId).toBe("keeper");
           return { hash: `sha256:${"ef".repeat(32)}` };
         }
         if (payload.op === "v2.execute") {
-          expect(payload.walletId).toBe(`sat_kfp_${"a".repeat(56)}`);
+          expect(payload.walletId).toBe("keeper");
           expect(payload.request?.intent).toEqual({
             type: "solana.satKeeperAction",
             authorityWalletId: "wallet-mining",
@@ -374,6 +375,7 @@ describe("SAT submission service boundary", () => {
         cluster: "devnet",
         env: {},
         useKeeperFeePayer: true,
+        keeperWalletId: "keeper",
       }),
     ).resolves.toMatchObject({ state: "confirmed", signature: "atomic-entry-signature" });
 
@@ -391,6 +393,7 @@ describe("SAT submission service boundary", () => {
         cluster: "devnet",
         env: {},
         useKeeperFeePayer: true,
+        keeperWalletId: "keeper",
       }),
     ).rejects.toThrow("missing features: atomicSatOpenCommitV2");
 
@@ -408,6 +411,7 @@ describe("SAT submission service boundary", () => {
         cluster: "devnet",
         env: {},
         useKeeperFeePayer: true,
+        keeperWalletId: "keeper",
       }),
     ).rejects.toThrow("requires openCycleV2 followed by commitCycleV2");
 
