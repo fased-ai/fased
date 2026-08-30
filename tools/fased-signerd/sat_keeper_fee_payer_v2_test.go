@@ -219,7 +219,7 @@ func testKeeperCleanupIntentsGeneration2(
 			Type: intentSolanaSATKeeperAction, AuthorityWalletID: "keeper", Action: "closeResolvedMinerCycleStateV2",
 			ProgramID: program.String(), DataBase64: data(128, cycle),
 			Keys: []signerSATAccountV2{
-				satTestAccount(keeper, true, false),
+				satTestAccount(keeper, true, true),
 				satTestAccount(cycleState, false, false),
 				satTestAccount(authority, false, true),
 				satTestAccount(satTestPDA(t, program, []byte("sat_miner_cycle_state_v2"), authority[:], cycle), false, true),
@@ -233,7 +233,7 @@ func testKeeperCleanupIntentsGeneration2(
 			Type: intentSolanaSATKeeperAction, AuthorityWalletID: "keeper", Action: "closeResolvedCycleRegistryPageV2",
 			ProgramID: program.String(), DataBase64: data(129, cycle, page),
 			Keys: []signerSATAccountV2{
-				satTestAccount(keeper, true, false),
+				satTestAccount(keeper, true, true),
 				satTestAccount(cycleState, false, false),
 				satTestAccount(registry, false, true),
 				satTestAccount(satTestPDA(t, program, []byte("sat_cycle_registry_page"), cycle, page), false, true),
@@ -244,10 +244,11 @@ func testKeeperCleanupIntentsGeneration2(
 			Type: intentSolanaSATKeeperAction, AuthorityWalletID: "keeper", Action: "closeResolvedCycleArtifactsV2",
 			ProgramID: program.String(), DataBase64: data(130, cycle),
 			Keys: []signerSATAccountV2{
-				satTestAccount(keeper, true, false),
+				satTestAccount(keeper, true, true),
 				satTestAccount(cycleState, false, true),
 				satTestAccount(satTestPDA(t, program, []byte("sat_cycle_settlement_progress_v3"), cycle), false, true),
 				satTestAccount(registry, false, true),
+				satTestAccount(satTestPDA(t, program, []byte("sat_keeper_snapshot"), cycle), false, true),
 				satTestAccount(reserve, false, true),
 			},
 		},
@@ -265,6 +266,7 @@ func testKeeperPrivateKeyV2(t *testing.T) solana.PrivateKey {
 
 func TestKeeperFeePayerActionBoundaryV2(t *testing.T) {
 	for _, action := range []string{
+		"cleanupBatch",
 		"openCycleV2",
 		"closeCommitPhase",
 		"closeCommitPhaseV2",
@@ -307,6 +309,47 @@ func TestKeeperFeePayerActionBoundaryV2(t *testing.T) {
 			!strings.Contains(err.Error(), "not an allowlisted keeper action") {
 			t.Fatalf("non-keeper action %s was not rejected safely: %v", action, err)
 		}
+	}
+}
+
+func TestKeeperFeePayerAcceptsGenerationTwoCleanupBatchV2(t *testing.T) {
+	keeper := solana.NewWallet().PublicKey()
+	authority := solana.NewWallet().PublicKey()
+	permanentMiningID := solana.NewWallet().PublicKey()
+	program := solana.NewWallet().PublicKey()
+	cleanup := testKeeperCleanupIntentsGeneration2(
+		t,
+		keeper,
+		authority,
+		permanentMiningID,
+		program,
+	)
+	instructions := make([]signerSATInstructionV2, 0, len(cleanup))
+	for _, instruction := range cleanup {
+		instructions = append(instructions, signerSATInstructionV2{
+			Action:     instruction.Action,
+			ProgramID:  instruction.ProgramID,
+			DataBase64: instruction.DataBase64,
+			Keys:       instruction.Keys,
+			Context:    instruction.Context,
+		})
+	}
+	normalized, err := normalizeKeeperFeePayerIntentV2(
+		signerIntentV2{
+			Type:              intentSolanaSATKeeperAction,
+			AuthorityWalletID: "keeper",
+			Action:            "cleanupBatch",
+			Instructions:      instructions,
+		},
+		keeper,
+		"keeper",
+		keeper,
+	)
+	if err != nil {
+		t.Fatalf("normalize generation-two Keeper cleanup batch: %v", err)
+	}
+	if normalized.RequiredRole != "keeper" || len(normalized.Instructions) != len(cleanup) {
+		t.Fatalf("generation-two cleanup batch did not preserve Keeper authority: %+v", normalized)
 	}
 }
 

@@ -1247,7 +1247,7 @@
       },
       {
         "accountOrder": [
-          "signer:readonly+signer",
+          "keeper_fee_payer:writable+signer",
           "sat_cycle_state_v2:readonly",
           "active_miner_authority:writable",
           "sat_miner_cycle_state_v2:writable",
@@ -1261,7 +1261,7 @@
       },
       {
         "accountOrder": [
-          "signer:readonly+signer",
+          "keeper_fee_payer:writable+signer",
           "sat_cycle_state_v2:readonly",
           "sat_cycle_registry_meta:writable",
           "sat_cycle_registry_page:writable",
@@ -1273,10 +1273,11 @@
       },
       {
         "accountOrder": [
-          "signer:readonly+signer",
+          "keeper_fee_payer:writable+signer",
           "sat_cycle_state_v2:writable",
           "sat_cycle_settlement_progress_v3:writable",
           "sat_cycle_registry_meta:writable",
+          "sat_keeper_snapshot:writable",
           "sat_registry_reserve_v2:writable"
         ],
         "discriminant": 130,
@@ -1309,10 +1310,11 @@
       },
       {
         "accountOrder": [
-          "payer:writable+signer",
+          "keeper_fee_payer:writable+signer",
           "sat_cycle_state_v2:readonly",
           "sat_keeper_registry:readonly",
           "sat_keeper_snapshot:writable",
+          "sat_registry_reserve_v2:writable",
           "system_program:readonly"
         ],
         "discriminant": 133,

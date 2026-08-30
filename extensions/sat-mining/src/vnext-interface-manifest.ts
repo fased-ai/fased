@@ -200,19 +200,19 @@ export const SAT_VNEXT_INTERFACE = {
     closeResolvedMinerCycleStateV2: {
       discriminator: 128,
       dataLength: 9,
-      accountShape: "S-,--,-W,-W,-W,--,-W",
+      accountShape: "SW,--,-W,-W,-W,--,-W",
       repeatedAccountGroup: null,
     },
     closeResolvedCycleRegistryPageV2: {
       discriminator: 129,
       dataLength: 17,
-      accountShape: "S-,--,-W,-W,-W",
+      accountShape: "SW,--,-W,-W,-W",
       repeatedAccountGroup: null,
     },
     closeResolvedCycleArtifactsV2: {
       discriminator: 130,
       dataLength: 9,
-      accountShape: "S-,-W,-W,-W,-W",
+      accountShape: "SW,-W,-W,-W,-W,-W",
       repeatedAccountGroup: null,
     },
     setVnextEntryEnabled: {
@@ -230,7 +230,7 @@ export const SAT_VNEXT_INTERFACE = {
     snapshotKeeperCapabilitiesV2: {
       discriminator: 133,
       dataLength: 17,
-      accountShape: "SW,--,--,-W,--",
+      accountShape: "SW,--,--,-W,-W,--",
       repeatedAccountGroup: null,
     },
     recordAgentCycleReceiptV2: {
@@ -286,8 +286,8 @@ export const SAT_VNEXT_INTERFACE = {
   } as const,
   contractSha256: "09047a1f194bcb85cbf8ff34519a3be563a7cea487c48f009fa314c6254f8cba", // pragma: allowlist secret
   economicsSha256: "36ae4658a8f8d7355c4afe2d75483f03e4ae26d94864af6ce12fb6220f9a6956", // pragma: allowlist secret
-  idlSha256: "27ee632e51a711fd431e5fbb3fc93541dd75bf74a7fa68eccd614bcda983c7d0", // pragma: allowlist secret
-  accountOrderSha256: "c25a0bfc7c7bd4b8ebe859e420624b624988970bd904236ddb170766511b6857", // pragma: allowlist secret
+  idlSha256: "484f2488c643cd2234acf84f130fbc385d10f965ef0eff318027ec9c96e9038c", // pragma: allowlist secret
+  accountOrderSha256: "5724ac507fe5984490191c81968a1d891a6b5df373b953a321e36af608976626", // pragma: allowlist secret
   stateLayoutsSha256: "77717f1e06fcd37944c81a44f75e1b36490c369386090b5eb10d58f2fc63e14f", // pragma: allowlist secret
   signerCodecsSha256: "b3d2098f7b8b3d9d7e0738e281c23deb7947666c078506929bd124d400096c5e", // pragma: allowlist secret
 } as const;

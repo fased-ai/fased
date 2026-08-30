@@ -116,7 +116,8 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 		}
 		if action == "cleanupBatch" {
 			switch instruction.Codec.Action {
-			case "closeResolvedMinerCycleState", "closeResolvedCycleRegistryPage", "closeResolvedCycleArtifacts":
+			case "closeResolvedMinerCycleState", "closeResolvedCycleRegistryPage", "closeResolvedCycleArtifacts",
+				"closeResolvedMinerCycleStateV2", "closeResolvedCycleRegistryPageV2", "closeResolvedCycleArtifactsV2":
 			default:
 				return normalizedIntentV2{}, fmt.Errorf("SAT cleanupBatch rejects action %s", instruction.Codec.Action)
 			}
@@ -1036,7 +1037,8 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
 			expectSATPDAV2(ix, 2, p, "keeper registry", []byte("sat_keeper_registry")),
 			expectSATPDAV2(ix, 3, p, "keeper snapshot", []byte("sat_keeper_snapshot"), cycle),
-			expectSATKeyV2(ix, 4, system, "system program"),
+			expectSATPDAV2(ix, 4, p, "registry reserve v2", []byte("sat_registry_reserve_v2")),
+			expectSATKeyV2(ix, 5, system, "system program"),
 		)
 	case "releaseUnrevealedCommitV2":
 		cycle := satU64BytesV2(d, 1)
@@ -1146,7 +1148,8 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATPDAV2(ix, 1, p, "cycle state v2", []byte("sat_cycle_state_v2"), cycle),
 			expectSATPDAV2(ix, 2, p, "cycle settlement progress v3", []byte("sat_cycle_settlement_progress_v3"), cycle),
 			expectSATPDAV2(ix, 3, p, "cycle registry meta", []byte("sat_cycle_registry_meta"), cycle),
-			expectSATPDAV2(ix, 4, p, "registry reserve v2", []byte("sat_registry_reserve_v2")),
+			expectSATPDAV2(ix, 4, p, "keeper snapshot", []byte("sat_keeper_snapshot"), cycle),
+			expectSATPDAV2(ix, 5, p, "registry reserve v2", []byte("sat_registry_reserve_v2")),
 		)
 	case "recordAgentCycleReceiptV2":
 		cycle := satU64BytesV2(d, 1)

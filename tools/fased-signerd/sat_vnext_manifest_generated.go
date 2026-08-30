@@ -13,8 +13,8 @@ type frozenSATCodecGeneration2 struct {
 
 const (
 	satVNextInterfaceContractSHA256 = "09047a1f194bcb85cbf8ff34519a3be563a7cea487c48f009fa314c6254f8cba" // pragma: allowlist secret
-	satVNextIDLContractSHA256       = "27ee632e51a711fd431e5fbb3fc93541dd75bf74a7fa68eccd614bcda983c7d0" // pragma: allowlist secret
-	satVNextAccountOrderSHA256      = "c25a0bfc7c7bd4b8ebe859e420624b624988970bd904236ddb170766511b6857" // pragma: allowlist secret
+	satVNextIDLContractSHA256       = "484f2488c643cd2234acf84f130fbc385d10f965ef0eff318027ec9c96e9038c" // pragma: allowlist secret
+	satVNextAccountOrderSHA256      = "5724ac507fe5984490191c81968a1d891a6b5df373b953a321e36af608976626" // pragma: allowlist secret
 )
 
 var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
@@ -135,7 +135,7 @@ var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
 		Discriminator:      128,
 		DataLength:         9,
 		AllocationChannels: 0,
-		AccountShape:       "S-,--,-W,-W,-W,--,-W",
+		AccountShape:       "SW,--,-W,-W,-W,--,-W",
 		Active:             false,
 	},
 	"closeResolvedCycleRegistryPageV2": {
@@ -143,7 +143,7 @@ var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
 		Discriminator:      129,
 		DataLength:         17,
 		AllocationChannels: 0,
-		AccountShape:       "S-,--,-W,-W,-W",
+		AccountShape:       "SW,--,-W,-W,-W",
 		Active:             false,
 	},
 	"closeResolvedCycleArtifactsV2": {
@@ -151,7 +151,7 @@ var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
 		Discriminator:      130,
 		DataLength:         9,
 		AllocationChannels: 0,
-		AccountShape:       "S-,-W,-W,-W,-W",
+		AccountShape:       "SW,-W,-W,-W,-W,-W",
 		Active:             false,
 	},
 	"setVnextEntryEnabled": {
@@ -175,7 +175,7 @@ var signerSATCodecsGeneration2 = map[string]frozenSATCodecGeneration2{
 		Discriminator:      133,
 		DataLength:         17,
 		AllocationChannels: 0,
-		AccountShape:       "SW,--,--,-W,--",
+		AccountShape:       "SW,--,--,-W,-W,--",
 		Active:             false,
 	},
 	"recordAgentCycleReceiptV2": {

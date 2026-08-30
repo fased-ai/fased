@@ -375,6 +375,19 @@ export async function executeTypedSatIntent(params: {
         })()
       : keeperCapability
         ? (() => {
+            if (params.action === "cleanupBatch") {
+              if (params.instruction || !params.instructions?.length) {
+                throw new Error(
+                  "typed SAT keeper cleanup requires one to six semantic instructions",
+                );
+              }
+              return {
+                type: "solana.satKeeperAction" as const,
+                authorityWalletId: params.walletId,
+                action: "cleanupBatch" as const,
+                instructions: params.instructions,
+              };
+            }
             if (!params.instruction || params.instructions) {
               throw new Error(
                 "typed SAT keeper execution requires exactly one semantic instruction",
