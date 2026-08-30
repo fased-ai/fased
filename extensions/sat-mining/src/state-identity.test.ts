@@ -53,26 +53,24 @@ describe("SAT Mining state identity", () => {
     ).toBe("sat-v2");
   });
 
-  it("selects SAT-DEP-0009 only when the active runtime tuple is exact", () => {
+  it("keeps SAT-DEP-0010 frozen even when the runtime tuple is exact", () => {
     const release = {
       state: "EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED",
       interfaceContractSha256:
-        "sha256:74439f2033b857df0d408830fa5df1406a1c2cb5245f242bb89bdc756a960274", // pragma: allowlist secret
+        "sha256:09047a1f194bcb85cbf8ff34519a3be563a7cea487c48f009fa314c6254f8cba", // pragma: allowlist secret
     };
     const exact = {
-      FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0009",
+      FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0010",
       FASED_SAT_PROGRAM_ID: "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
       FASED_SAT_MINT_PROGRAM_ID: "71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL",
       FASED_SAT_BOND_PROGRAM_ID: "5peszKe8y7dv8KqdSse9UFxmaLxGsy7pWJBm6KpGnGA3",
       FASED_SAT_MINT_ADDRESS: "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU", // pragma: allowlist secret
     };
-    expect(resolveSatRuntimeProtocolGeneration(release, exact)).toBe(
-      release.interfaceContractSha256,
-    );
+    expect(resolveSatRuntimeProtocolGeneration(release, exact)).toBe("sat-v2");
     expect(
       resolveSatRuntimeProtocolGeneration(release, {
         ...exact,
-        FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0008",
+        FASED_SAT_DEPLOYMENT_ID: "SAT-DEP-0009",
       }),
     ).toBe("sat-v2");
   });
