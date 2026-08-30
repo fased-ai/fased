@@ -186,13 +186,18 @@ function resolveSatWalletId(cfg: FasedAgentConfig): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function resolveSatKeeperWalletId(cfg: FasedAgentConfig): string | undefined {
+  const value = cfg.plugins?.entries?.["sat-mining"]?.config?.keeperWalletId;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function resolveSatKeeperExecutionConfig(config: SatMiningConfig): SatMiningConfig {
   if (config.keeperMode !== "dedicated") return config;
   const keeperWalletId = config.keeperWalletId?.trim();
   if (!keeperWalletId) {
     throw new Error("dedicated SAT keeper mode requires one explicit Keeper walletId");
   }
-  return { ...config, walletId: keeperWalletId };
+  return config;
 }
 
 function resolveSatCluster(cfg: FasedAgentConfig): "local" | "devnet" | "mainnet-beta" {
@@ -396,12 +401,14 @@ export async function inspectSatKeeperFeePayerRuntime(_config: SatMiningConfig):
   maxPerTransactionLamports: string;
   state: string;
 } | null> {
-  const executionConfig = resolveSatKeeperExecutionConfig(_config);
-  const cfg = loadConfigForSatRuntime(executionConfig);
+  resolveSatKeeperExecutionConfig(_config);
+  const cfg = loadConfigForSatRuntime(_config);
   const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
   if (resolveSatProviderId(cfg, effectiveEnv) !== "local-socket-signer") return null;
-  const walletId = resolveSatWalletId(cfg);
-  if (!walletId) return null;
+  const miningWalletId = resolveSatWalletId(cfg);
+  const keeperWalletId = resolveSatKeeperWalletId(cfg);
+  const capabilityWalletId = keeperWalletId ?? miningWalletId;
+  if (!capabilityWalletId) return null;
   const capability = await callLocalSocketSigner<{
     miningWalletId?: string;
     feePayerWalletId?: string;
@@ -410,11 +417,12 @@ export async function inspectSatKeeperFeePayerRuntime(_config: SatMiningConfig):
     state?: string;
   }>(requireLocalSocketSignerPath(effectiveEnv), {
     op: "v2.keeperFeePayer.get",
-    walletId,
+    walletId: capabilityWalletId,
   });
   if (
     capability.state !== "ready" ||
-    capability.miningWalletId !== walletId ||
+    capability.miningWalletId !== capabilityWalletId ||
+    (keeperWalletId != null && capability.feePayerWalletId !== keeperWalletId) ||
     !capability.feePayerWalletId?.trim() ||
     !capability.feePayerPublicKey?.trim() ||
     !/^\d+$/u.test(capability.maxPerTransactionLamports ?? "")
@@ -927,10 +935,13 @@ async function submitInstructionViaLocalSigner(
 ): Promise<SatInstructionSubmitResult> {
   const context = await prepareLocalSignerSubmitContext(params.cfg, params.env);
   let instructionSigner = context.signer;
+  const explicitKeeperWalletId =
+    params.keeperFeePayer === true ? resolveSatKeeperWalletId(params.cfg) : undefined;
   if (params.keeperFeePayer === true && SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
     if (!context.walletId) {
       throw new Error("SAT generation-2 keeper work requires an explicit keeper wallet binding");
     }
+    const keeperCapabilityWalletId = explicitKeeperWalletId ?? context.walletId;
     const capability = await callLocalSocketSigner<{
       miningWalletId?: string;
       feePayerWalletId?: string;
@@ -938,13 +949,19 @@ async function submitInstructionViaLocalSigner(
       state?: string;
     }>(context.socketPath, {
       op: "v2.keeperFeePayer.get",
-      walletId: context.walletId,
+      walletId: keeperCapabilityWalletId,
     });
+    const standaloneKeeper = Boolean(
+      explicitKeeperWalletId && explicitKeeperWalletId !== context.walletId,
+    );
     if (
       capability.state !== "ready" ||
-      capability.miningWalletId !== context.walletId ||
       !capability.feePayerWalletId?.trim() ||
-      !capability.feePayerPublicKey?.trim()
+      !capability.feePayerPublicKey?.trim() ||
+      (standaloneKeeper
+        ? capability.miningWalletId !== explicitKeeperWalletId ||
+          capability.feePayerWalletId !== explicitKeeperWalletId
+        : capability.miningWalletId !== context.walletId)
     ) {
       throw new Error("native signer returned an invalid generation-2 keeper capability");
     }
@@ -979,6 +996,7 @@ async function submitInstructionViaLocalSigner(
   const submitted = await executeTypedSatIntent({
     socketPath: context.socketPath,
     walletId: context.walletId,
+    keeperWalletId: explicitKeeperWalletId,
     stateProgramId: resolveSatProgramIdFromEnv(context.effectiveEnv),
     action: request.action,
     instruction: request,
@@ -1061,6 +1079,7 @@ async function submitInstructionBatch(params: {
   }
   const context = await prepareLocalSignerSubmitContext(params.cfg, effectiveEnv);
   const keeperBatch = params.instructions.every((spec) => spec.keeperFeePayer === true);
+  const explicitKeeperWalletId = keeperBatch ? resolveSatKeeperWalletId(params.cfg) : undefined;
   if (params.instructions.some((spec) => spec.keeperFeePayer === true) && !keeperBatch) {
     throw new Error("SAT cleanup batch cannot mix mining and Keeper fee-payer authorities");
   }
@@ -1069,6 +1088,7 @@ async function submitInstructionBatch(params: {
     if (!context.walletId) {
       throw new Error("SAT generation-2 cleanup requires an explicit Keeper wallet binding");
     }
+    const keeperCapabilityWalletId = explicitKeeperWalletId ?? context.walletId;
     const capability = await callLocalSocketSigner<{
       miningWalletId?: string;
       feePayerWalletId?: string;
@@ -1076,12 +1096,18 @@ async function submitInstructionBatch(params: {
       state?: string;
     }>(context.socketPath, {
       op: "v2.keeperFeePayer.get",
-      walletId: context.walletId,
+      walletId: keeperCapabilityWalletId,
     });
+    const standaloneKeeper = Boolean(
+      explicitKeeperWalletId && explicitKeeperWalletId !== context.walletId,
+    );
     if (
       capability.state !== "ready" ||
-      capability.miningWalletId !== context.walletId ||
-      !capability.feePayerPublicKey?.trim()
+      !capability.feePayerPublicKey?.trim() ||
+      (standaloneKeeper
+        ? capability.miningWalletId !== explicitKeeperWalletId ||
+          capability.feePayerWalletId !== explicitKeeperWalletId
+        : capability.miningWalletId !== context.walletId)
     ) {
       throw new Error("native signer returned an invalid generation-2 cleanup capability");
     }
@@ -1104,6 +1130,7 @@ async function submitInstructionBatch(params: {
   const submitted = await executeTypedSatIntent({
     socketPath: context.socketPath,
     walletId: context.walletId,
+    keeperWalletId: explicitKeeperWalletId,
     stateProgramId: resolveSatProgramIdFromEnv(context.effectiveEnv),
     action: "cleanupBatch",
     instructions,
@@ -1113,7 +1140,7 @@ async function submitInstructionBatch(params: {
   });
   return {
     txHash: submitted.signature,
-    signer: context.signerAddress,
+    signer: instructionSigner.toBase58(),
     signerState: submitted.state,
     requestId: submitted.requestId,
     instructionCount: instructions.length,
@@ -4404,6 +4431,7 @@ export async function submitSatCompactPendingCycleRange(
     backCycleIds: number[];
   },
 ) {
+  const vnext = isSatVNextRuntime();
   const cfg = loadConfigForSatRuntime(_config);
   return submitInstruction({
     cfg,

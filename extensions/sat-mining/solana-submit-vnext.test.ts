@@ -133,6 +133,7 @@ import {
   submitSatCloseResolvedCleanupBatch,
   submitSatCloseCommitPhase,
   submitSatCommitCycle,
+  submitSatCompactPendingCycleRange,
   submitSatInitMinerCapital,
   submitSatOpenCycle,
   submitSatRevealCycle,
@@ -228,6 +229,8 @@ describe("SAT generation-2 transaction builders", () => {
     expect(calls[8]?.instruction.keys).toHaveLength(6);
     for (const request of calls.slice(3)) {
       expect(request.useKeeperFeePayer).toBe(true);
+      expect(request.walletId).toBe("mining-wallet");
+      expect(request.keeperWalletId).toBe("keeper-wallet");
       expect(request.instruction.keys[0]).toMatchObject({
         pubkey: ids.keeperWallet,
         isSigner: true,
@@ -275,7 +278,8 @@ describe("SAT generation-2 transaction builders", () => {
     });
     expect(executeTypedSatIntent).toHaveBeenCalledWith(
       expect.objectContaining({
-        walletId: "keeper-wallet",
+        walletId: "mining-wallet",
+        keeperWalletId: "keeper-wallet",
         useKeeperFeePayer: true,
         action: "openCycleV2",
       }),
@@ -304,13 +308,49 @@ describe("SAT generation-2 transaction builders", () => {
 
     expect(executeTypedSatIntent).toHaveBeenCalledWith(
       expect.objectContaining({
-        walletId: "keeper-wallet",
+        walletId: "mining-wallet",
+        keeperWalletId: "keeper-wallet",
         useKeeperFeePayer: true,
         action: "cleanupBatch",
         instructions: expect.arrayContaining([
           expect.objectContaining({ action: "closeResolvedCycleRegistryPageV2" }),
           expect.objectContaining({ action: "closeResolvedCycleArtifactsV2" }),
         ]),
+      }),
+    );
+  });
+
+  it("builds generation-2 pending-range compaction from the active namespace", async () => {
+    if (!SAT_VNEXT_INTERFACE.active) {
+      expect(SAT_VNEXT_INTERFACE.publicEntryEnabled).toBe(false);
+      return;
+    }
+    await submitSatCompactPendingCycleRange(
+      {
+        enabled: false,
+        network: "devnet",
+        riskMode: "balanced",
+        walletId: "mining-wallet",
+        keeperMode: "monitor-only",
+      },
+      {
+        expectedFirstPendingCycleId: 7,
+        expectedLastPendingCycleId: 7,
+        frontCycleIds: [7],
+        backCycleIds: [],
+      },
+    );
+
+    expect(executeTypedSatIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        walletId: "mining-wallet",
+        action: "compactPendingCycleRange",
+        instruction: expect.objectContaining({
+          context: { frontCycleIds: ["7"], backCycleIds: [] },
+          keys: expect.arrayContaining([
+            expect.objectContaining({ pubkey: ids.miningWallet, isSigner: true }),
+          ]),
+        }),
       }),
     );
   });
