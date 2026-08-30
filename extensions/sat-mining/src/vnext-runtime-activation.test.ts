@@ -13,11 +13,11 @@ function protocolRecord(): NonNullable<SatRpcAccountRecord> {
   Buffer.from("0100020002000300030003000300020002000200", "hex").copy(body, 4);
   Buffer.from(ECONOMICS_DIGEST_HEX, "hex").copy(body, 32);
   body[3] = 1;
-  body.writeBigUInt64LE(8n, 104);
+  body.writeBigUInt64LE(10n, 104);
   return { owner: MINING_PROGRAM, data };
 }
 
-describe("SAT-DEP-0010 active deployment binding", () => {
+describe("SAT-DEP-0011 active deployment binding", () => {
   it("rejects a disabled or generation-mismatched protocol root before program checks", () => {
     const disabled = protocolRecord();
     disabled.data[11] = 0;
@@ -34,7 +34,7 @@ describe("SAT-DEP-0010 active deployment binding", () => {
 
   it("accepts the exact active protocol fields and then fails closed on absent ProgramData", () => {
     expect(() => verifySatVNextRuntimeActivationRecords([protocolRecord()])).toThrow(
-      "mining program binding does not match SAT-DEP-0010",
+      "mining program binding does not match SAT-DEP-0011",
     );
   });
 });
