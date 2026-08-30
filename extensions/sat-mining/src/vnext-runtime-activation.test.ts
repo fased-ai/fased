@@ -17,23 +17,49 @@ function protocolRecord(): NonNullable<SatRpcAccountRecord> {
   return { owner: MINING_PROGRAM, data };
 }
 
-describe("SAT-DEP-0012 active generation-12 deployment binding", () => {
-  it("rejects a disabled or generation-mismatched protocol root before program checks", () => {
-    const disabled = protocolRecord();
-    disabled.data[11] = 0;
-    expect(() => verifySatVNextRuntimeActivationRecords([disabled])).toThrow(
-      "protocol-generation state does not match",
-    );
-
+describe("SAT-DEP-0012 activation-descendant deployment binding", () => {
+  it("rejects stale or impossible pause/resume descendants before program checks", () => {
     const staleGeneration = protocolRecord();
     staleGeneration.data.writeBigUInt64LE(10n, 112);
     expect(() => verifySatVNextRuntimeActivationRecords([staleGeneration])).toThrow(
       "protocol-generation state does not match",
     );
+
+    const disabledWithoutGenerationAdvance = protocolRecord();
+    disabledWithoutGenerationAdvance.data[11] = 0;
+    expect(() =>
+      verifySatVNextRuntimeActivationRecords([disabledWithoutGenerationAdvance]),
+    ).toThrow("protocol-generation state does not match");
+
+    const enabledAtOddGeneration = protocolRecord();
+    enabledAtOddGeneration.data.writeBigUInt64LE(13n, 112);
+    expect(() => verifySatVNextRuntimeActivationRecords([enabledAtOddGeneration])).toThrow(
+      "protocol-generation state does not match",
+    );
   });
 
-  it("accepts the exact active protocol fields and then fails closed on absent ProgramData", () => {
-    expect(() => verifySatVNextRuntimeActivationRecords([protocolRecord()])).toThrow(
+  it.each([
+    { generation: 12n, enabled: 1 },
+    { generation: 13n, enabled: 0 },
+    { generation: 14n, enabled: 1 },
+    { generation: 15n, enabled: 0 },
+  ])(
+    "accepts valid generation $generation enabled=$enabled descendants before ProgramData checks",
+    ({ generation, enabled }) => {
+      const descendant = protocolRecord();
+      descendant.data[11] = enabled;
+      descendant.data.writeBigUInt64LE(generation, 112);
+      expect(() => verifySatVNextRuntimeActivationRecords([descendant])).toThrow(
+        "mining program binding does not match SAT-DEP-0012",
+      );
+    },
+  );
+
+  it("returns the current operational entry state after immutable bindings pass", () => {
+    const protocol = protocolRecord();
+    protocol.data[11] = 0;
+    protocol.data.writeBigUInt64LE(15n, 112);
+    expect(() => verifySatVNextRuntimeActivationRecords([protocol])).toThrow(
       "mining program binding does not match SAT-DEP-0012",
     );
   });

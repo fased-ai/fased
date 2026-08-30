@@ -3018,6 +3018,7 @@ export async function inspectSatVNextKeeperChainContext(
 export type SatVNextRuntimeActivationView = {
   deploymentId: string;
   activationGeneration: number;
+  publicEntryEnabled: boolean;
   protocolStateSha256: string;
   programDataSlots: Record<"mining" | "mint" | "bond", number>;
 };
@@ -3030,17 +3031,27 @@ export function verifySatVNextRuntimeActivationRecords(
     throw new Error("SAT vNext protocol-generation state is absent or has the wrong owner");
   }
   const body = expectAccountData(protocol.data, 152, "protocol-generation-v2");
+  const publishedActivationGeneration = BigInt(
+    SAT_VNEXT_ACTIVATION.protocolGenerationState.activationGeneration,
+  );
+  const currentActivationGeneration = body.readBigUInt64LE(104);
+  const currentPublicEntryEnabled = body[3];
+  const activationDelta = currentActivationGeneration - publishedActivationGeneration;
+  const expectedPublicEntryEnabled =
+    activationDelta % 2n === 0n
+      ? Number(SAT_VNEXT_ACTIVATION.protocolGenerationState.publicEntryEnabled)
+      : Number(!SAT_VNEXT_ACTIVATION.protocolGenerationState.publicEntryEnabled);
   if (
     body.length !== 176 ||
     body[0] !== 1 ||
     body[1] !== 1 ||
-    body[3] !== Number(SAT_VNEXT_ACTIVATION.protocolGenerationState.publicEntryEnabled) ||
+    currentActivationGeneration < publishedActivationGeneration ||
+    currentPublicEntryEnabled !== expectedPublicEntryEnabled ||
     body.subarray(4, 24).toString("hex") !==
       SAT_VNEXT_ACTIVATION.protocolGenerationState.componentTupleHex ||
     `sha256:${body.subarray(32, 64).toString("hex")}` !==
       SAT_VNEXT_ACTIVATION.protocolGenerationState.economicsContractSha256 ||
-    body.readBigUInt64LE(104) !==
-      BigInt(SAT_VNEXT_ACTIVATION.protocolGenerationState.activationGeneration)
+    currentActivationGeneration > BigInt(Number.MAX_SAFE_INTEGER)
   ) {
     throw new Error("SAT vNext protocol-generation state does not match the active contract");
   }
@@ -3076,7 +3087,8 @@ export function verifySatVNextRuntimeActivationRecords(
   }
   return {
     deploymentId: SAT_VNEXT_ACTIVATION.deploymentId,
-    activationGeneration: Number(body.readBigUInt64LE(104)),
+    activationGeneration: Number(currentActivationGeneration),
+    publicEntryEnabled: currentPublicEntryEnabled === 1,
     protocolStateSha256: `sha256:${createHash("sha256").update(protocol.data).digest("hex")}`,
     programDataSlots,
   };
