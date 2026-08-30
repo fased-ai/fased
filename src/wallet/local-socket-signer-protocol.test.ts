@@ -497,8 +497,25 @@ describe("local socket signer protocol", () => {
         },
       },
     };
+    const atomic = {
+      ...base,
+      request: {
+        ...base.request,
+        requestId: "keeper-atomic-request-123",
+        intent: {
+          type: "solana.satKeeperAction" as const,
+          authorityWalletId: "mining",
+          action: "openAndCommitCycleV2" as const,
+          instructions: [
+            { ...instruction, action: "openCycleV2" as const },
+            { ...instruction, action: "commitCycleV2" as const },
+          ],
+        },
+      },
+    };
     expect(parseLocalSocketSignerRequest(single)).toEqual(single);
     expect(parseLocalSocketSignerRequest(batch)).toEqual(batch);
+    expect(parseLocalSocketSignerRequest(atomic)).toEqual(atomic);
     expect(() =>
       parseLocalSocketSignerRequest({
         ...batch,
@@ -514,6 +531,27 @@ describe("local socket signer protocol", () => {
         request: {
           ...batch.request,
           intent: { ...batch.request.intent, instructions: [] },
+        },
+      }),
+    ).toThrow("invalid signer request");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...atomic,
+        request: {
+          ...atomic.request,
+          intent: {
+            ...atomic.request.intent,
+            instructions: [...atomic.request.intent.instructions].toReversed(),
+          },
+        },
+      }),
+    ).toThrow("invalid signer request");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        ...atomic,
+        request: {
+          ...atomic.request,
+          intent: { ...atomic.request.intent, programId: instruction.programId },
         },
       }),
     ).toThrow("invalid signer request");

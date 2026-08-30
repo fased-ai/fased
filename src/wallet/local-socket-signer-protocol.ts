@@ -329,6 +329,36 @@ export const SignerIntentV2Schema = Type.Union([
       },
       { additionalProperties: false },
     ),
+    Type.Object(
+      {
+        type: Type.Literal("solana.satKeeperAction"),
+        authorityWalletId: Type.String({ minLength: 1 }),
+        action: Type.Literal("openAndCommitCycleV2"),
+        instructions: Type.Tuple([
+          Type.Object(
+            {
+              action: Type.Literal("openCycleV2"),
+              programId: Type.String(),
+              dataBase64: Type.String(),
+              keys: Type.Array(SignerSatAccountV2Schema),
+              context: Type.Optional(SignerSatContextV2Schema),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("commitCycleV2"),
+              programId: Type.String(),
+              dataBase64: Type.String(),
+              keys: Type.Array(SignerSatAccountV2Schema),
+              context: Type.Optional(SignerSatContextV2Schema),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+      },
+      { additionalProperties: false },
+    ),
   ]),
   Type.Object(
     {
