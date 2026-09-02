@@ -2,6 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { cleanAgentModelProviders } from "../../agents/agent-model-providers.js";
 import {
+  ensureAgentProfileState,
+  ensureAgentProfileStates,
+} from "../../agents/agent-profile-store.js";
+import {
   listAgentIds,
   resolveAgentDir,
   resolveAgentWorkspaceDir,
@@ -436,7 +440,7 @@ async function moveToTrashBestEffort(pathname: string): Promise<void> {
 }
 
 export const agentsHandlers: GatewayRequestHandlers = {
-  "agents.list": ({ params, respond }) => {
+  "agents.list": async ({ params, respond }) => {
     if (!validateAgentsListParams(params)) {
       respond(
         false,
@@ -450,6 +454,18 @@ export const agentsHandlers: GatewayRequestHandlers = {
     }
 
     const cfg = loadConfig();
+    const entries = listAgentEntries(cfg);
+    if (entries.length === 0) {
+      await ensureAgentProfileState({ agentId: DEFAULT_AGENT_ID, source: "legacy-migration" });
+    } else {
+      await ensureAgentProfileStates({
+        agents: entries.map((entry) => ({
+          agentId: normalizeAgentId(entry.id),
+          config: entry,
+          source: "legacy-migration",
+        })),
+      });
+    }
     const result = listAgentsForGateway(cfg);
     respond(true, result, undefined);
   },
@@ -510,6 +526,10 @@ export const agentsHandlers: GatewayRequestHandlers = {
     await fs.mkdir(resolveSessionTranscriptsDirForAgent(agentId), { recursive: true });
 
     await writeConfigFile(nextConfig);
+    const createdEntry = listAgentEntries(nextConfig).find(
+      (entry) => normalizeAgentId(entry.id) === agentId,
+    );
+    await ensureAgentProfileState({ agentId, config: createdEntry, source: "creation" });
 
     // Always write Name to IDENTITY.md; optionally include emoji/avatar.
     const safeName = sanitizeIdentityLine(rawName);
@@ -586,6 +606,14 @@ export const agentsHandlers: GatewayRequestHandlers = {
     });
 
     await writeConfigFile(nextConfig);
+    const updatedEntry = listAgentEntries(nextConfig).find(
+      (entry) => normalizeAgentId(entry.id) === agentId,
+    );
+    await ensureAgentProfileState({
+      agentId,
+      config: updatedEntry,
+      source: "legacy-migration",
+    });
 
     if (workspaceDir) {
       const skipBootstrap = Boolean(nextConfig.agents?.defaults?.skipBootstrap);
