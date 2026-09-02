@@ -26,6 +26,8 @@ export const ReconciledRiskSnapshotSchema = z
   })
   .strict();
 
+export type ReconciledRiskSnapshot = z.infer<typeof ReconciledRiskSnapshotSchema>;
+
 function digestValue(domain: string, value: unknown): string {
   return createHash("sha256")
     .update(domain)
