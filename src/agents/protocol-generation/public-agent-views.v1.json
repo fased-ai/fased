@@ -1,0 +1,338 @@
+{
+  "$schema": "fased.public-agent-view-contract.v1",
+  "contractId": "fased.public-agent-views.v1",
+  "laterPhaseFields": [
+    "agentCapital",
+    "agentMarket",
+    "agentService",
+    "agentStrategy",
+    "agentTokenMint",
+    "capitalOffer",
+    "folio",
+    "marketPrice",
+    "serviceRevenue",
+    "strategyPnl"
+  ],
+  "enums": {
+    "EvidenceSource": [
+      "agent_identity_program",
+      "satcoin_program",
+      "fased_network",
+      "fased_runtime",
+      "owner_declaration"
+    ],
+    "EvidenceTrust": ["finalized", "signed", "declared"],
+    "ViewFreshness": ["fresh", "stale"],
+    "ViewIntegrity": ["verified", "conflict"],
+    "AgentLifecycle": ["network_only", "active", "retired"],
+    "RuntimeState": ["current", "stale", "absent"],
+    "MiningLifecycle": ["active", "retired"],
+    "MiningEntryState": ["enabled", "paused", "draining", "drained"],
+    "KeeperState": ["healthy", "degraded", "offline", "unknown"],
+    "BroadcastState": ["eligible", "ineligible", "disabled", "unknown"],
+    "QualificationPurpose": ["public_identity", "mining_ready"],
+    "QualificationStatus": ["pass", "fail", "pending", "conflict"]
+  },
+  "objects": {
+    "AgentEvidenceRef": {
+      "fields": {
+        "schema": { "const": "fased.agent-evidence-ref.v1" },
+        "evidenceId": { "type": "identifier" },
+        "source": { "enum": "EvidenceSource" },
+        "trust": { "enum": "EvidenceTrust" },
+        "observedAt": { "type": "timestamp" },
+        "authority": { "type": "identifier", "optional": true },
+        "slot": { "type": "uintString", "optional": true },
+        "transactionSignature": { "type": "identifier", "optional": true },
+        "digestSha256": { "type": "sha256", "optional": true },
+        "expiresAt": { "type": "timestamp", "optional": true }
+      }
+    },
+    "AgentViewConflict": {
+      "fields": {
+        "code": { "type": "identifier" },
+        "message": { "type": "text" },
+        "evidenceIds": { "array": "identifier" }
+      }
+    },
+    "AgentNamespaceView": {
+      "fields": {
+        "binding": { "type": "solanaAddress" },
+        "networkAgentId": { "type": "hex32" },
+        "name": { "type": "agentName" },
+        "handle": { "type": "agentHandle" },
+        "ticker": { "type": "agentTicker" },
+        "boundSlot": { "type": "uintString" },
+        "recordAuthorityGeneration": { "type": "uintString" }
+      }
+    },
+    "AgentRuntimeView": {
+      "fields": {
+        "state": { "enum": "RuntimeState" },
+        "nodeId": { "type": "identifier", "optional": true },
+        "runtimeVersion": { "type": "identifier", "optional": true },
+        "coreHash": { "type": "sha256", "optional": true },
+        "attestedAt": { "type": "timestamp", "optional": true },
+        "expiresAt": { "type": "timestamp", "optional": true }
+      },
+      "variants": [
+        {
+          "when": { "field": "state", "equals": "absent" },
+          "forbidden": ["nodeId", "runtimeVersion", "coreHash", "attestedAt", "expiresAt"]
+        },
+        {
+          "when": { "field": "state", "equals": "current" },
+          "required": ["nodeId", "runtimeVersion", "coreHash", "attestedAt", "expiresAt"]
+        },
+        {
+          "when": { "field": "state", "equals": "stale" },
+          "required": ["nodeId", "runtimeVersion", "coreHash", "attestedAt", "expiresAt"]
+        }
+      ]
+    },
+    "AgentMiningBindingView": {
+      "fields": {
+        "binding": { "type": "solanaAddress" },
+        "satAgentRecord": { "type": "solanaAddress" },
+        "satcoinProgramId": { "type": "solanaAddress" },
+        "permanentMiningId": { "type": "solanaAddress" },
+        "boundSlot": { "type": "uintString" }
+      }
+    },
+    "AgentIdentityView": {
+      "fields": {
+        "schema": { "const": "fased.agent-identity-view.v1" },
+        "viewId": { "type": "sha256" },
+        "observedAt": { "type": "timestamp" },
+        "freshness": { "enum": "ViewFreshness" },
+        "integrity": { "enum": "ViewIntegrity" },
+        "lifecycle": { "enum": "AgentLifecycle" },
+        "fasedAgentRecord": { "type": "solanaAddress", "optional": true },
+        "networkAgentId": { "type": "hex32", "optional": true },
+        "controller": { "type": "solanaAddress", "optional": true },
+        "recoveryAuthority": { "type": "solanaAddress", "optional": true },
+        "authorityGeneration": { "type": "uintString", "optional": true },
+        "createdSlot": { "type": "uintString", "optional": true },
+        "createdUnixTimestamp": { "type": "intString", "optional": true },
+        "namespace": { "ref": "AgentNamespaceView", "optional": true },
+        "miningBinding": { "ref": "AgentMiningBindingView", "optional": true },
+        "runtime": { "ref": "AgentRuntimeView", "optional": true },
+        "conflicts": { "arrayRef": "AgentViewConflict" },
+        "evidence": { "arrayRef": "AgentEvidenceRef" }
+      },
+      "variants": [
+        {
+          "when": { "field": "lifecycle", "equals": "network_only" },
+          "required": ["networkAgentId", "runtime"],
+          "forbidden": [
+            "fasedAgentRecord",
+            "controller",
+            "recoveryAuthority",
+            "authorityGeneration",
+            "createdSlot",
+            "createdUnixTimestamp",
+            "namespace",
+            "miningBinding"
+          ]
+        },
+        {
+          "when": { "field": "lifecycle", "equals": "active" },
+          "required": [
+            "fasedAgentRecord",
+            "controller",
+            "recoveryAuthority",
+            "authorityGeneration",
+            "createdSlot",
+            "createdUnixTimestamp"
+          ]
+        },
+        {
+          "when": { "field": "lifecycle", "equals": "retired" },
+          "required": [
+            "fasedAgentRecord",
+            "controller",
+            "recoveryAuthority",
+            "authorityGeneration",
+            "createdSlot",
+            "createdUnixTimestamp"
+          ]
+        },
+        {
+          "when": { "field": "integrity", "equals": "verified" },
+          "maxItems": { "field": "conflicts", "value": 0 }
+        },
+        {
+          "when": { "field": "integrity", "equals": "conflict" },
+          "minItems": { "field": "conflicts", "value": 1 }
+        }
+      ]
+    },
+    "AgentComponentGenerations": {
+      "fields": {
+        "tupleFormat": { "type": "uintString" },
+        "schema": { "type": "uintString" },
+        "protocol": { "type": "uintString" },
+        "cycle": { "type": "uintString" },
+        "economics": { "type": "uintString" },
+        "penalty": { "type": "uintString" },
+        "bond": { "type": "uintString" },
+        "keeper": { "type": "uintString" },
+        "receipt": { "type": "uintString" },
+        "signerCapability": { "type": "uintString" }
+      }
+    },
+    "AgentMiningCounters": {
+      "fields": {
+        "entered": { "type": "uintString" },
+        "valid": { "type": "uintString" },
+        "missed": { "type": "uintString" },
+        "penalized": { "type": "uintString" },
+        "protocolFault": { "type": "uintString" }
+      }
+    },
+    "AgentMiningRewards": {
+      "fields": {
+        "baseSatRaw": { "type": "uintString" },
+        "performanceSatRaw": { "type": "uintString" },
+        "deterministicSolLamports": { "type": "uintString" },
+        "performanceSolLamports": { "type": "intString" },
+        "treasurySolLamports": { "type": "uintString" },
+        "penaltySolLamports": { "type": "uintString" },
+        "keeperCostLamports": { "type": "uintString" }
+      }
+    },
+    "AgentMiningCapitalView": {
+      "fields": {
+        "activeCapitalLamports": { "type": "uintString" },
+        "committedCapitalLamports": { "type": "uintString" },
+        "operatingReserveLamports": { "type": "uintString" },
+        "capitalTimeLamportCycles": { "type": "uintString" }
+      }
+    },
+    "AgentMiningOperationsView": {
+      "fields": {
+        "pendingCommitCount": { "type": "uintString" },
+        "pendingClaimCount": { "type": "uintString" },
+        "unresolvedCycleCount": { "type": "uintString" },
+        "keeperMonitor": { "enum": "KeeperState" },
+        "keeperBroadcast": { "enum": "BroadcastState" }
+      }
+    },
+    "AgentMiningReceiptView": {
+      "fields": {
+        "lastRecordedCycleId": { "type": "uintString" },
+        "receiptSequence": { "type": "uintString" },
+        "currentEconomicEpochId": { "type": "uintString" },
+        "currentEconomicEpochReceiptRoot": { "type": "sha256" },
+        "closedEconomicEpochsRoot": { "type": "sha256" }
+      }
+    },
+    "AgentMiningStrikeView": {
+      "fields": {
+        "rollingStrikeCount": { "type": "uintString" },
+        "cleanActiveDays": { "type": "uintString" }
+      }
+    },
+    "AgentMiningView": {
+      "fields": {
+        "schema": { "const": "fased.agent-mining-view.v1" },
+        "viewId": { "type": "sha256" },
+        "observedAt": { "type": "timestamp" },
+        "freshness": { "enum": "ViewFreshness" },
+        "integrity": { "enum": "ViewIntegrity" },
+        "lifecycle": { "enum": "MiningLifecycle" },
+        "entryState": { "enum": "MiningEntryState" },
+        "satAgentRecord": { "type": "solanaAddress" },
+        "satcoinProgramId": { "type": "solanaAddress" },
+        "permanentMiningId": { "type": "solanaAddress" },
+        "controller": { "type": "solanaAddress" },
+        "activeMinerAuthority": { "type": "solanaAddress" },
+        "runtimeExecutor": { "type": "solanaAddress" },
+        "keeperFeePayer": { "type": "solanaAddress" },
+        "authorityGeneration": { "type": "uintString" },
+        "runtimeGeneration": { "type": "uintString" },
+        "policyGeneration": { "type": "uintString" },
+        "componentGenerations": { "ref": "AgentComponentGenerations" },
+        "lifetimeCounters": { "ref": "AgentMiningCounters" },
+        "currentEconomicEpochCounters": { "ref": "AgentMiningCounters" },
+        "lifetimeRewards": { "ref": "AgentMiningRewards" },
+        "currentEconomicEpochRewards": { "ref": "AgentMiningRewards" },
+        "capital": { "ref": "AgentMiningCapitalView" },
+        "operations": { "ref": "AgentMiningOperationsView" },
+        "receipts": { "ref": "AgentMiningReceiptView" },
+        "strikes": { "ref": "AgentMiningStrikeView" },
+        "conflicts": { "arrayRef": "AgentViewConflict" },
+        "evidence": { "arrayRef": "AgentEvidenceRef" }
+      },
+      "variants": [
+        {
+          "when": { "field": "integrity", "equals": "verified" },
+          "maxItems": { "field": "conflicts", "value": 0 }
+        },
+        {
+          "when": { "field": "integrity", "equals": "conflict" },
+          "minItems": { "field": "conflicts", "value": 1 }
+        },
+        {
+          "when": { "field": "entryState", "equals": "drained" },
+          "equals": [
+            { "field": "capital.activeCapitalLamports", "value": "0" },
+            { "field": "capital.committedCapitalLamports", "value": "0" },
+            { "field": "operations.unresolvedCycleCount", "value": "0" }
+          ]
+        }
+      ]
+    },
+    "AgentQualificationSubject": {
+      "fields": {
+        "fasedAgentRecord": { "type": "solanaAddress", "optional": true },
+        "satAgentRecord": { "type": "solanaAddress", "optional": true }
+      }
+    },
+    "AgentQualificationGate": {
+      "fields": {
+        "gate": { "type": "identifier" },
+        "status": { "enum": "QualificationStatus" },
+        "observed": { "type": "text", "optional": true },
+        "required": { "type": "text", "optional": true },
+        "evidenceIds": { "array": "identifier" }
+      }
+    },
+    "AgentQualificationView": {
+      "fields": {
+        "schema": { "const": "fased.agent-qualification-view.v1" },
+        "viewId": { "type": "sha256" },
+        "evaluatedAt": { "type": "timestamp" },
+        "purpose": { "enum": "QualificationPurpose" },
+        "status": { "enum": "QualificationStatus" },
+        "policyId": { "type": "identifier" },
+        "policyGeneration": { "type": "uintString" },
+        "policyDigestSha256": { "type": "sha256" },
+        "subject": { "ref": "AgentQualificationSubject" },
+        "gates": { "arrayRef": "AgentQualificationGate", "minItems": 1 },
+        "conflicts": { "arrayRef": "AgentViewConflict" },
+        "evidence": { "arrayRef": "AgentEvidenceRef" }
+      },
+      "variants": [
+        {
+          "when": { "field": "purpose", "equals": "public_identity" },
+          "requiredPath": ["subject.fasedAgentRecord"]
+        },
+        {
+          "when": { "field": "purpose", "equals": "mining_ready" },
+          "requiredPath": ["subject.satAgentRecord"]
+        },
+        {
+          "when": { "field": "status", "equals": "conflict" },
+          "minItems": { "field": "conflicts", "value": 1 }
+        }
+      ]
+    }
+  },
+  "publicViews": [
+    "AgentEvidenceRef",
+    "AgentIdentityView",
+    "AgentMiningView",
+    "AgentQualificationView"
+  ]
+}

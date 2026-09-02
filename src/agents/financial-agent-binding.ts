@@ -39,6 +39,8 @@ export type FinalizedFinancialAgentReadback = {
   controller: string;
   recoveryAuthority: string;
   authorityGeneration: string;
+  createdSlot: string;
+  createdUnixTimestamp: string;
   finalizedSlot: number;
   namespaceBinding?: FinalizedAgentNamespaceBinding;
   miningBinding?: FinalizedAgentMiningBinding;
@@ -117,6 +119,19 @@ function requireUnsignedIntegerString(value: unknown, label: string): string {
   return normalized;
 }
 
+function requireSignedIntegerString(value: unknown, label: string): string {
+  const normalized =
+    typeof value === "bigint"
+      ? value.toString()
+      : typeof value === "number" || typeof value === "string"
+        ? String(value).trim()
+        : "";
+  if (!/^(0|-?[1-9]\d*)$/u.test(normalized)) {
+    throw new Error(`${label} must be a signed integer string`);
+  }
+  return normalized;
+}
+
 function requireSlot(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative safe integer`);
@@ -129,6 +144,11 @@ function validateReadback(value: FinalizedFinancialAgentReadback): FinalizedFina
   const authorityGeneration = requireUnsignedIntegerString(
     value.authorityGeneration,
     "authority generation",
+  );
+  const createdSlot = requireUnsignedIntegerString(value.createdSlot, "Agent created slot");
+  const createdUnixTimestamp = requireSignedIntegerString(
+    value.createdUnixTimestamp,
+    "Agent created timestamp",
   );
   if (value.status !== "active" && value.status !== "retired") {
     throw new Error("FasedAgentRecord status is invalid");
@@ -168,6 +188,8 @@ function validateReadback(value: FinalizedFinancialAgentReadback): FinalizedFina
     controller: requireAddress(value.controller, "controller"),
     recoveryAuthority: requireAddress(value.recoveryAuthority, "recovery authority"),
     authorityGeneration,
+    createdSlot,
+    createdUnixTimestamp,
     finalizedSlot: requireSlot(value.finalizedSlot, "finalized slot"),
     ...(namespaceBinding ? { namespaceBinding } : {}),
     ...(miningBinding ? { miningBinding } : {}),

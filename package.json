@@ -126,6 +126,8 @@
   "scripts": {
     "agent:identity-interface:check": "node scripts/generate-fased-agent-identity-interface.mjs --check",
     "agent:identity-interface:import": "node scripts/generate-fased-agent-identity-interface.mjs --import",
+    "agent:public-views:check": "node scripts/generate-fased-agent-public-views.mjs --check",
+    "agent:public-views:import": "node scripts/generate-fased-agent-public-views.mjs --import",
     "android:assemble": "cd apps/android && ./gradlew :app:assembleDebug",
     "android:install": "cd apps/android && ./gradlew :app:installDebug",
     "android:run": "cd apps/android && ./gradlew :app:installDebug && adb shell am start -n ai.fased.android/.MainActivity",
