@@ -12,6 +12,8 @@ const SignerWalletRoleSchema = Type.Union([
   Type.Literal("agent"),
   Type.Literal("mining"),
   Type.Literal("vault"),
+  Type.Literal("profile"),
+  Type.Literal("strategy"),
   Type.Literal("keeper"),
 ]);
 
@@ -638,6 +640,48 @@ export type LocalSocketSignerNetworkSummaryV2 = Static<
   typeof LocalSocketSignerNetworkSummaryV2Schema
 >;
 
+export const LocalSocketSignerRPCProfileSummaryV1Schema = Type.Object(
+  {
+    profileId: Type.String({ pattern: "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$" }),
+    name: Type.String({ minLength: 1, maxLength: 80 }),
+    chain: Type.Literal("solana"),
+    cluster: Type.Union([
+      Type.Literal("mainnet-beta"),
+      Type.Literal("devnet"),
+      Type.Literal("custom"),
+    ]),
+    genesisHash: Type.String({ minLength: 32, maxLength: 64 }),
+    commitment: Type.Literal("finalized"),
+    version: Type.Literal(1),
+    hash: Type.String({ pattern: "^hmac-sha256:[0-9a-f]{64}$" }),
+    endpointCount: Type.Integer({ minimum: 1, maximum: 4 }),
+    ready: Type.Literal(true),
+  },
+  { additionalProperties: false },
+);
+
+export type LocalSocketSignerRPCProfileSummaryV1 = Static<
+  typeof LocalSocketSignerRPCProfileSummaryV1Schema
+>;
+
+export const LocalSocketSignerRPCProfileBindingV1Schema = Type.Object(
+  {
+    walletId: Type.String({ minLength: 1, maxLength: 64 }),
+    profileId: Type.String({ pattern: "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$" }),
+    profileVersion: Type.Literal(1),
+    profileHash: Type.String({ pattern: "^hmac-sha256:[0-9a-f]{64}$" }),
+    networkVersion: Type.Integer({ minimum: 1 }),
+    networkHash: Type.String({ pattern: "^hmac-sha256:[0-9a-f]{64}$" }),
+    genesisHash: Type.String({ minLength: 32, maxLength: 64 }),
+    ready: Type.Literal(true),
+  },
+  { additionalProperties: false },
+);
+
+export type LocalSocketSignerRPCProfileBindingV1 = Static<
+  typeof LocalSocketSignerRPCProfileBindingV1Schema
+>;
+
 export const LocalSocketSignerRequestSchema = Type.Union(
   [
     Type.Object({ op: Type.Literal("health") }, { additionalProperties: false }),
@@ -652,6 +696,51 @@ export const LocalSocketSignerRequestSchema = Type.Union(
     ),
     Type.Object(
       { op: Type.Literal("v2.network.get"), walletId: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object({ op: Type.Literal("v2.rpcProfile.list") }, { additionalProperties: false }),
+    Type.Object(
+      {
+        op: Type.Literal("v2.rpcProfile.get"),
+        request: Type.Object(
+          { profileId: Type.String({ minLength: 1, maxLength: 64 }) },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.rpcProfile.create"),
+        request: Type.Object(
+          {
+            profileId: Type.String({ minLength: 1, maxLength: 64 }),
+            name: Type.String({ minLength: 1, maxLength: 80 }),
+            primaryRpcUrl: Type.String({ minLength: 1, maxLength: 2048 }),
+            websocketRpcUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+            executionFallbackRpcUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+            verificationRpcUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+            commitment: Type.Literal("finalized"),
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.rpcProfile.bind"),
+        walletId: Type.String(),
+        request: Type.Object(
+          {
+            profileId: Type.String({ minLength: 1, maxLength: 64 }),
+            expectedProfileVersion: Type.Literal(1),
+            expectedProfileHash: Type.String({ pattern: "^hmac-sha256:[0-9a-f]{64}$" }),
+            expectedNetworkVersion: Type.Integer({ minimum: 0 }),
+          },
+          { additionalProperties: false },
+        ),
+      },
       { additionalProperties: false },
     ),
     Type.Object(
@@ -1396,6 +1485,13 @@ export function validateLocalSocketSignerResult(
     case "v2.network.get":
     case "v2.network.bootstrap":
       return Value.Check(LocalSocketSignerNetworkSummaryV2Schema, result);
+    case "v2.rpcProfile.list":
+      return Value.Check(Type.Array(LocalSocketSignerRPCProfileSummaryV1Schema), result);
+    case "v2.rpcProfile.get":
+    case "v2.rpcProfile.create":
+      return Value.Check(LocalSocketSignerRPCProfileSummaryV1Schema, result);
+    case "v2.rpcProfile.bind":
+      return Value.Check(LocalSocketSignerRPCProfileBindingV1Schema, result);
     case "v2.policy.get":
     case "v2.policy.put":
     case "v2.policy.tighten":

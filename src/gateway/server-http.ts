@@ -5779,16 +5779,13 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             typeof payload.walletId === "string" ? payload.walletId.trim() : "";
           const roleProvided = Object.prototype.hasOwnProperty.call(payload, "role");
           const normalizedRole = roleProvided ? normalizeWalletUserRole(payload.role) : undefined;
-          const requestedRole =
-            normalizedRole === "agent" || normalizedRole === "mining" || normalizedRole === "vault"
-              ? normalizedRole
-              : undefined;
+          const requestedRole = normalizedRole;
           if (roleProvided && !requestedRole) {
             sendLoginResponse(400, {
               ok: false,
               error: {
                 code: "invalid_wallet_role",
-                message: "role must be agent, mining, or vault",
+                message: "role must be agent, mining, vault, profile, or strategy",
               },
             });
             return;
@@ -5892,7 +5889,8 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 ok: false,
                 error: {
                   code: "invalid_wallet_role",
-                  message: "choose agent, mining, or vault; the native signer never infers a role",
+                  message:
+                    "choose agent, mining, vault, profile, or strategy; the native signer never infers a role",
                 },
               });
               return;
@@ -5914,13 +5912,15 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               return;
             }
             const rpcUrl = typeof payload.rpcUrl === "string" ? payload.rpcUrl.trim() : "";
-            if (!rpcUrl) {
+            const rpcProfileId =
+              typeof payload.rpcProfileId === "string" ? payload.rpcProfileId.trim() : "";
+            if (Boolean(rpcUrl) === Boolean(rpcProfileId)) {
               sendLoginResponse(400, {
                 ok: false,
                 error: {
                   code: "invalid_request",
                   message:
-                    "one primary Solana RPC URL is required for native signer wallet creation",
+                    "choose exactly one primary Solana RPC URL or one signer-owned RPC profile",
                 },
               });
               return;
@@ -5935,7 +5935,8 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 chain,
                 walletId: localSignerWalletId,
                 walletName,
-                rpcUrl,
+                rpcUrl: rpcUrl || undefined,
+                rpcProfileId: rpcProfileId || undefined,
                 role: requestedRole,
                 // Resume an exact deny-all signer wallet if a prior RPC/bootstrap
                 // attempt failed after durable key creation. The signer validates
@@ -6063,10 +6064,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               : undefined;
           const roleProvided = Object.prototype.hasOwnProperty.call(payload, "role");
           const normalizedRole = roleProvided ? normalizeWalletUserRole(payload.role) : undefined;
-          const requestedRole =
-            normalizedRole === "agent" || normalizedRole === "mining" || normalizedRole === "vault"
-              ? normalizedRole
-              : undefined;
+          const requestedRole = normalizedRole;
           const rpcUrl = typeof payload.rpcUrl === "string" ? payload.rpcUrl.trim() : "";
           const rpcProvided = Object.prototype.hasOwnProperty.call(payload, "rpcUrl");
           if (!walletId || (!name && !roleProvided && !rpcProvided)) {
@@ -6084,7 +6082,7 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               ok: false,
               error: {
                 code: "invalid_wallet_role",
-                message: "role must be agent, mining, or vault",
+                message: "role must be agent, mining, vault, profile, or strategy",
               },
             });
             return;

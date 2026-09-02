@@ -32,6 +32,7 @@
     "permanentRetiredWalletPolicies",
     "signerOwnedRPC",
     "applicationNetworkBootstrap",
+    "signerOwnedRPCProfiles",
     "signerOwnedEncryptedRecovery",
     "signerOwnedRawExport",
     "restrictedOperatorLifecycle",

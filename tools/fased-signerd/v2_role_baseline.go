@@ -191,10 +191,10 @@ func normalizeRoleBaselineRequestV1(input signerRoleBaselineRequestV1) (signerRo
 		)
 	}
 	switch input.Role {
-	case "agent", "mining", "vault", "keeper":
+	case "agent", "mining", "vault", "profile", "strategy", "keeper":
 		return input, nil
 	default:
-		return signerRoleBaselineRequestV1{}, errors.New("role baseline must be agent, mining, vault, or keeper")
+		return signerRoleBaselineRequestV1{}, errors.New("role baseline must be agent, mining, vault, profile, strategy, or keeper")
 	}
 }
 
@@ -240,6 +240,12 @@ func compileSignerRoleBaselineV1(
 				ReviewedDestinations: true,
 			},
 		},
+	}
+	if request.Role == "profile" || request.Role == "strategy" {
+		policy.Operations = nil
+		policy.Programs = nil
+		policy.Assets = nil
+		return normalizeSignerPolicyV2(policy)
 	}
 	if request.Role == "keeper" {
 		if !runtime.Verified {
@@ -458,7 +464,8 @@ func (s *signerServiceV2) walletReadinessV2(walletID string) (signerWalletReadin
 		zeroBytes(privateKey)
 	}
 	policyReady := policy.BaselineVersion == signerRoleBaselineVersionV1 &&
-		len(policy.Operations) > 0 && len(policy.Programs) > 0 && len(policy.Assets) > 0
+		((len(policy.Operations) > 0 && len(policy.Programs) > 0 && len(policy.Assets) > 0) ||
+			((policy.Role == "profile" || policy.Role == "strategy") && len(policy.Operations) == 0 && len(policy.Programs) == 0 && len(policy.Assets) == 0))
 	operationLane := "blocked"
 	if policyReady {
 		switch policy.Role {

@@ -38,6 +38,68 @@ describe("wallet-provider-registry", () => {
       walletName: "Mining",
       walletId: "mining",
     });
+    expect(nextRoleWalletIdentity("profile", [{ id: "profile" }])).toEqual({
+      walletName: "Profile",
+      walletId: "profile",
+    });
+    expect(nextRoleWalletIdentity("strategy", [], "solana")).toEqual({
+      walletName: "Strategy Solana",
+      walletId: "strategy-solana",
+    });
+    expect(nextRoleWalletIdentity("strategy", [], "evm")).toEqual({
+      walletName: "Strategy EVM",
+      walletId: "strategy-evm",
+    });
+  });
+
+  it("enforces singleton Profile and per-chain Strategy cardinality at registry writes", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-registry-"));
+    vi.stubEnv("FASED_STATE_DIR", stateDir);
+    try {
+      upsertNamedWallet({
+        walletId: "profile",
+        name: "Profile",
+        providerId: "local-socket-signer",
+        metadata: { role: "profile", roleChain: "solana" },
+      });
+      expect(() =>
+        upsertNamedWallet({
+          walletId: "profile-2",
+          name: "Other Profile",
+          providerId: "local-socket-signer",
+          metadata: { role: "profile", roleChain: "solana" },
+        }),
+      ).toThrow(/only one Profile wallet/i);
+
+      upsertNamedWallet({
+        walletId: "strategy-solana",
+        name: "Strategy Solana",
+        providerId: "local-socket-signer",
+        metadata: { role: "strategy", roleChain: "solana" },
+      });
+      expect(() =>
+        upsertNamedWallet({
+          walletId: "strategy-solana-2",
+          name: "Other Strategy Solana",
+          providerId: "local-socket-signer",
+          metadata: { role: "strategy", roleChain: "solana" },
+        }),
+      ).toThrow(/one Strategy wallet per chain/i);
+
+      upsertNamedWallet({
+        walletId: "strategy-evm",
+        name: "Strategy EVM",
+        providerId: "local-socket-signer",
+        metadata: { role: "strategy", roleChain: "evm" },
+      });
+      expect(readWalletProviderRegistry(process.env).wallets.map((wallet) => wallet.id)).toEqual([
+        "profile",
+        "strategy-solana",
+        "strategy-evm",
+      ]);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("preserves caller-supplied walletId without making it Agent by default", async () => {

@@ -49,6 +49,24 @@ func TestSignerRoleBaselineV1CompilesUsefulImmutableRoles(t *testing.T) {
 	}
 }
 
+func TestSignerProfileAndStrategyBaselinesAreExplicitDenyAll(t *testing.T) {
+	wallet := solana.NewWallet().PublicKey().String()
+	for _, role := range []string{"profile", "strategy"} {
+		policy, err := compileSignerRoleBaselineV1(
+			role,
+			wallet,
+			signerRoleBaselineRequestV1{Version: 1, Role: role},
+			signerRoleBaselineRuntimeV1{},
+		)
+		if err != nil {
+			t.Fatalf("compile %s deny-all baseline: %v", role, err)
+		}
+		if policy.BaselineVersion != 1 || policy.Role != role || policy.Hash == "" || len(policy.Operations) != 0 || len(policy.Programs) != 0 || len(policy.Assets) != 0 {
+			t.Fatalf("%s baseline is not exact deny-all: %#v", role, policy)
+		}
+	}
+}
+
 func TestSignerMiningRoleBaselineV1UsesReleaseRuntimeAndAllTypedActions(t *testing.T) {
 	wallet := solana.NewWallet().PublicKey().String()
 	program := solana.NewWallet().PublicKey().String()

@@ -198,7 +198,7 @@ func normalizeWalletID(walletID string) string {
 
 func mustValidate(req request, cfg signerConfig) error {
 	switch req.Op {
-	case "health", "v2.capabilities", "v2.webauthn.credentials.list":
+	case "health", "v2.capabilities", "v2.webauthn.credentials.list", "v2.rpcProfile.list":
 		if len(req.Request) > 0 || req.Chain != "" || req.WalletID != "" {
 			return errors.New("invalid signer request")
 		}
@@ -210,6 +210,10 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
+	case "v2.rpcProfile.get", "v2.rpcProfile.create":
+		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" {
+			return errors.New("invalid signer request")
+		}
 	case "v2.lifecycle.upgrade.prepare", "v2.lifecycle.upgrade.verify", "v2.lifecycle.upgrade.commit", "v2.lifecycle.upgrade.abort":
 		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" || req.Operator != nil {
 			return errors.New("invalid signer request")
@@ -218,7 +222,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.network.put", "v2.network.bootstrap", "v2.network.setPrimary", "v2.network.repairMigratedPrimary", "v2.policy.put", "v2.policy.tighten", "v2.policy.activateBaseline", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get", "v2.satCommitment.allocate", "v2.satCommitment.binding.get", "v2.keeperFeePayer.ensure":
+	case "v2.network.put", "v2.network.bootstrap", "v2.network.setPrimary", "v2.network.repairMigratedPrimary", "v2.rpcProfile.bind", "v2.policy.put", "v2.policy.tighten", "v2.policy.activateBaseline", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get", "v2.satCommitment.allocate", "v2.satCommitment.binding.get", "v2.keeperFeePayer.ensure":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -365,6 +369,10 @@ func parseArgs() signerConfig {
 		"v2.network.bootstrap":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
 		"v2.network.setPrimary":            getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
 		"v2.network.repairMigratedPrimary": getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 6),
+		"v2.rpcProfile.list":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 120),
+		"v2.rpcProfile.get":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 120),
+		"v2.rpcProfile.create":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 12),
+		"v2.rpcProfile.bind":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
 		"v2.policy.get":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.put":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.tighten":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),

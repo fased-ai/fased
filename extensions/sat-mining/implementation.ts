@@ -4114,7 +4114,10 @@ const satMiningPlugin = {
         walletId: wallet.id,
         walletName: wallet.name,
         providerId: wallet.providerId,
-        role: resolveWalletUserRole(wallet),
+        role: (() => {
+          const role = resolveWalletUserRole(wallet);
+          return role === "agent" || role === "mining" || role === "vault" ? role : undefined;
+        })(),
         address: addresses.solana,
         rpcReady: doctorEntry?.readiness?.rpc ?? resolveWalletRpcReady(effectiveEnv, wallet.id),
         signerCapability: capability.signerCapability,

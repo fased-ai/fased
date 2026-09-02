@@ -127,7 +127,7 @@ func Validate(pkg PackageV1) error {
 		return errors.New("recovery package walletId is invalid")
 	}
 	switch pkg.Role {
-	case "agent", "mining", "vault":
+	case "agent", "mining", "vault", "profile", "strategy":
 	default:
 		return errors.New("recovery package role is invalid")
 	}

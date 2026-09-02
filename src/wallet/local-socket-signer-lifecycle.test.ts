@@ -5,8 +5,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   activateSignerOwnedRoleBaseline,
+  bindSignerOwnedRPCProfile,
+  createSignerOwnedRPCProfile,
   createLockedSignerOwnedWallet,
   createRoleReadySignerOwnedWallet,
+  listSignerOwnedRPCProfiles,
   readSignerOwnedWalletReadiness,
 } from "./local-socket-signer-lifecycle.js";
 
@@ -43,6 +46,7 @@ function capabilityResult() {
         "signerOwnedRoleBaselines",
         "liveWalletReadiness",
         "applicationNetworkBootstrap",
+        "signerOwnedRPCProfiles",
         "atomicMultiAssetCaps",
         "signerControlledNativeFeeCaps",
       ],
@@ -90,6 +94,88 @@ async function createServer(
 }
 
 describe("signer-owned wallet lifecycle", () => {
+  it("creates one signer-owned RPC profile and reuses its fenced identity", async () => {
+    const hash = `hmac-sha256:${"a".repeat(64)}`;
+    const networkHash = `hmac-sha256:${"b".repeat(64)}`;
+    const profile = {
+      profileId: "mainnet-primary",
+      name: "Mainnet Primary",
+      chain: "solana" as const,
+      cluster: "mainnet-beta" as const,
+      genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+      commitment: "finalized" as const,
+      version: 1 as const,
+      hash,
+      endpointCount: 2,
+      ready: true as const,
+    };
+    const server = await createServer((request) => {
+      if (request.op === "v2.capabilities") {
+        return { ok: true, result: capabilityResult() };
+      }
+      if (request.op === "v2.rpcProfile.create") {
+        return { ok: true, result: profile };
+      }
+      if (request.op === "v2.rpcProfile.list") {
+        return { ok: true, result: [profile] };
+      }
+      if (request.op === "v2.network.get") {
+        return {
+          ok: true,
+          result: { walletId: "profile", configured: false, version: 0, ready: false },
+        };
+      }
+      if (request.op === "v2.rpcProfile.bind") {
+        return {
+          ok: true,
+          result: {
+            walletId: "profile",
+            profileId: profile.profileId,
+            profileVersion: 1,
+            profileHash: hash,
+            networkVersion: 1,
+            networkHash,
+            genesisHash: profile.genesisHash,
+            ready: true,
+          },
+        };
+      }
+      return { ok: false, error: "unexpected operation" };
+    });
+    try {
+      const created = await createSignerOwnedRPCProfile({
+        socketPath: server.socketPath,
+        profileId: "mainnet-primary",
+        name: "Mainnet Primary",
+        primaryRpcUrl: "https://primary.example/rpc?token=secret",
+        websocketRpcUrl: "wss://primary.example/ws?token=secret",
+      });
+      expect(created).toEqual(profile);
+      expect(await listSignerOwnedRPCProfiles({ socketPath: server.socketPath })).toEqual([
+        profile,
+      ]);
+      expect(
+        await bindSignerOwnedRPCProfile({
+          socketPath: server.socketPath,
+          walletId: "profile",
+          profile: created,
+        }),
+      ).toMatchObject({ walletId: "profile", profileId: "mainnet-primary", ready: true });
+      expect(server.requests.at(-1)).toEqual({
+        op: "v2.rpcProfile.bind",
+        walletId: "profile",
+        request: {
+          profileId: "mainnet-primary",
+          expectedProfileVersion: 1,
+          expectedProfileHash: hash,
+          expectedNetworkVersion: 0,
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it("creates and reads a signer-owned role-ready baseline without policy JSON", async () => {
     const server = await createServer((request) => {
       if (request.op === "v2.capabilities") {

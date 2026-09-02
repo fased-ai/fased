@@ -137,6 +137,30 @@ const signerMocks = vi.hoisted(() => ({
       ready: true,
     }),
   ),
+  listRPCProfiles: vi.fn(async () => [
+    {
+      profileId: "mainnet-primary",
+      name: "Mainnet Primary",
+      chain: "solana",
+      cluster: "mainnet-beta",
+      genesisHash: "11111111111111111111111111111111",
+      commitment: "finalized",
+      version: 1,
+      hash: `hmac-sha256:${"c".repeat(64)}`,
+      endpointCount: 2,
+      ready: true,
+    },
+  ]),
+  bindRPCProfile: vi.fn(async (params: { walletId: string; profile: { profileId: string } }) => ({
+    walletId: params.walletId,
+    profileId: params.profile.profileId,
+    profileVersion: 1,
+    profileHash: `hmac-sha256:${"c".repeat(64)}`,
+    networkVersion: 1,
+    networkHash: `hmac-sha256:${"b".repeat(64)}`,
+    genesisHash: "11111111111111111111111111111111",
+    ready: true,
+  })),
   importProcess: vi.fn((_command: string, args: string[], options?: { input?: string }) => {
     const walletId = args[args.indexOf("--wallet-id") + 1] || "mining";
     if (signerMocks.retirement.enabled) {
@@ -378,7 +402,9 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 vi.mock("../wallet/local-socket-signer-lifecycle.js", () => ({
   activateSignerOwnedRoleBaseline: signerMocks.activate,
+  bindSignerOwnedRPCProfile: signerMocks.bindRPCProfile,
   createRoleReadySignerOwnedWallet: signerMocks.create,
+  listSignerOwnedRPCProfiles: signerMocks.listRPCProfiles,
   readSignerOwnedWallet: signerMocks.read,
   readSignerOwnedWalletReadiness: signerMocks.readiness,
 }));
@@ -447,6 +473,8 @@ describe("walletSetupCommand native signer boundary", () => {
     signerMocks.retirement.networkReady = false;
     signerMocks.retirement.rotation = null;
     signerMocks.networkPut.mockClear();
+    signerMocks.listRPCProfiles.mockClear();
+    signerMocks.bindRPCProfile.mockClear();
     signerMocks.importProcess.mockClear();
     signerMocks.socketCall.mockReset();
     vi.unstubAllEnvs();
@@ -528,6 +556,48 @@ describe("walletSetupCommand native signer boundary", () => {
       expect(logs.join("\n")).toContain("Wallet handle: @wallet:solana-1");
       expect(logs.join("\n")).toContain("Internal wallet ID: solana-1");
       expect(logs.join("\n")).not.toMatch(/PRIVATE KEY|PASSPHRASE|SEED/i);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a singleton Profile wallet from a reusable signer-owned RPC profile", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-rpc-profile-"));
+    const configPath = path.join(root, "fased.json");
+    await fs.writeFile(configPath, "{}\n", "utf8");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+
+    try {
+      await walletSetupCommand({ log: vi.fn() } as never, {
+        mode: "local-signer-create",
+        chain: "solana",
+        role: "profile",
+        rpcProfileId: "mainnet-primary",
+        nonInteractive: true,
+        noDoctor: true,
+        noSignerHints: true,
+        force: true,
+      });
+
+      const wallet = readWalletProviderRegistry(process.env).wallets.find(
+        (entry) => entry.id === "profile",
+      );
+      expect(signerMocks.networkPut).not.toHaveBeenCalled();
+      expect(signerMocks.bindRPCProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ walletId: "profile" }),
+      );
+      expect(wallet?.metadata).toEqual(
+        expect.objectContaining({
+          role: "profile",
+          roleChain: "solana",
+          rpcProfileId: "mainnet-primary",
+          rpcProfileVersion: 1,
+        }),
+      );
+      expect(loadConfig().env?.vars?.FASED_WALLET_SOLANA_RPC_URL__PROFILE).toBeUndefined();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

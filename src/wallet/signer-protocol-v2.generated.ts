@@ -37,6 +37,7 @@ export const SIGNER_PROTOCOL_V2 = {
     "permanentRetiredWalletPolicies",
     "signerOwnedRPC",
     "applicationNetworkBootstrap",
+    "signerOwnedRPCProfiles",
     "signerOwnedEncryptedRecovery",
     "signerOwnedRawExport",
     "restrictedOperatorLifecycle",

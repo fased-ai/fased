@@ -6,6 +6,8 @@ export type WalletProviderId =
   | "wallet-standard"
   | "privy";
 
+export type WalletUserRole = "agent" | "mining" | "vault" | "profile" | "strategy";
+
 export type WalletStatus = {
   capabilities?: {
     canEditPolicy: boolean;
@@ -36,7 +38,7 @@ export type WalletStatus = {
       signer?: {
         walletId: string;
         publicKey: string;
-        role: "agent" | "mining" | "vault";
+        role: WalletUserRole;
         baselineVersion: number;
         policyVersion: number;
         policyHash: string;
@@ -409,7 +411,7 @@ export type WalletSettings = {
   signerPolicy?: {
     state: "locked" | "acknowledged" | "unavailable";
     walletId: string;
-    role?: "agent" | "mining" | "vault";
+    role?: WalletUserRole;
     version?: number;
     hash?: string;
     operations?: string[];
@@ -1289,9 +1291,10 @@ export async function createWalletNamedWallet(input: {
   name?: string;
   walletId?: string;
   providerId?: WalletProviderId;
-  role?: "agent" | "mining" | "vault";
+  role?: WalletUserRole;
   chain?: "solana";
   rpcUrl?: string;
+  rpcProfileId?: string;
   address?: string;
 }): Promise<{ ok: true; wallet: WalletNamedWallet }> {
   return await fetchJson<{ ok: true; wallet: WalletNamedWallet }>("/api/wallet/wallets", {
@@ -1306,7 +1309,7 @@ export async function createWalletNamedWallet(input: {
 export async function updateWalletNamedWallet(
   input: {
     walletId: string;
-    role?: "agent" | "mining" | "vault";
+    role?: WalletUserRole;
     rpcUrl?: string;
   },
   approvalToken?: string,
@@ -1585,7 +1588,7 @@ export type WalletSignerReviewAuthorizationBegin = {
   binding: {
     requestId: string;
     walletId: string;
-    role: "agent" | "mining" | "vault";
+    role: WalletUserRole;
     walletPublicKey?: string;
     intentType: string;
     intentDigest: string;

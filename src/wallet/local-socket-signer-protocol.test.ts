@@ -1117,6 +1117,53 @@ describe("local socket signer protocol", () => {
     ).toBe(false);
   });
 
+  it("accepts reusable RPC profile requests but never profile endpoint secrets in results", () => {
+    const hash = `hmac-sha256:${"a".repeat(64)}`;
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.rpcProfile.create",
+        request: {
+          profileId: "mainnet-primary",
+          name: "Mainnet Primary",
+          primaryRpcUrl: "https://primary.example/rpc?token=secret",
+          websocketRpcUrl: "wss://primary.example/ws?token=secret",
+          commitment: "finalized",
+        },
+      }),
+    ).toMatchObject({ op: "v2.rpcProfile.create" });
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.rpcProfile.bind",
+        walletId: "profile",
+        request: {
+          profileId: "mainnet-primary",
+          expectedProfileVersion: 1,
+          expectedProfileHash: hash,
+          expectedNetworkVersion: 0,
+        },
+      }),
+    ).toMatchObject({ op: "v2.rpcProfile.bind", walletId: "profile" });
+    const summary = {
+      profileId: "mainnet-primary",
+      name: "Mainnet Primary",
+      chain: "solana",
+      cluster: "mainnet-beta",
+      genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+      commitment: "finalized",
+      version: 1,
+      hash,
+      endpointCount: 2,
+      ready: true,
+    };
+    expect(validateLocalSocketSignerResult("v2.rpcProfile.create", summary)).toBe(true);
+    expect(
+      validateLocalSocketSignerResult("v2.rpcProfile.get", {
+        ...summary,
+        primaryRpcUrl: "https://secret.example/rpc",
+      }),
+    ).toBe(false);
+  });
+
   it.each([
     "prepareTx",
     "signTx",

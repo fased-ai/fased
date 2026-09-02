@@ -204,7 +204,7 @@ func validateSignerWalletRotationRecordV2(rotation signerWalletRotationV2, sourc
 	) {
 		return errors.New("stored signer wallet successor rotation digest is invalid")
 	}
-	if rotation.Role != "agent" && rotation.Role != "mining" && rotation.Role != "vault" {
+	if rotation.Role != "agent" && rotation.Role != "mining" && rotation.Role != "vault" && rotation.Role != "profile" && rotation.Role != "strategy" {
 		return errors.New("stored signer wallet successor rotation role is invalid")
 	}
 	if rotation.PrepareExpectedSourceWalletVersion == 0 || rotation.PrepareExpectedSourcePolicyVersion == 0 {

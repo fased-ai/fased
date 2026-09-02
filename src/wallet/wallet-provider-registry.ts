@@ -21,19 +21,28 @@ const WALLET_PROVIDER_REGISTRY_IDS: WalletProviderId[] = [
   "privy",
 ];
 
-export type WalletUserRole = "agent" | "vault" | "mining";
+export type WalletUserRole = "agent" | "vault" | "mining" | "profile" | "strategy";
+export type WalletRoleAccountChain = "solana" | "evm";
 
 export function nextRoleWalletIdentity(
   role: WalletUserRole,
   wallets: ReadonlyArray<Pick<WalletNamedWallet, "id">>,
+  chain: WalletRoleAccountChain = "solana",
 ): { walletName: string; walletId: string } {
   const base =
     role === "agent"
       ? { walletName: "Agent", walletId: "agent" }
       : role === "mining"
         ? { walletName: "Mining", walletId: "mining" }
-        : { walletName: "Vault", walletId: "vault" };
-  if (role === "mining") {
+        : role === "profile"
+          ? { walletName: "Profile", walletId: "profile" }
+          : role === "strategy"
+            ? {
+                walletName: chain === "evm" ? "Strategy EVM" : "Strategy Solana",
+                walletId: chain === "evm" ? "strategy-evm" : "strategy-solana",
+              }
+            : { walletName: "Vault", walletId: "vault" };
+  if (role === "mining" || role === "profile" || role === "strategy") {
     return base;
   }
   const existingIds = new Set(wallets.map((wallet) => wallet.id));
@@ -56,6 +65,7 @@ export type WalletNamedWallet = {
   providerId: WalletProviderId;
   addresses?: {
     solana?: string;
+    evm?: string;
   };
   metadata?: Record<string, unknown>;
   createdAt: string;
@@ -71,9 +81,20 @@ export function normalizeWalletUserRole(value: unknown): WalletUserRole | undefi
       return "vault";
     case "mining":
       return "mining";
+    case "profile":
+      return "profile";
+    case "strategy":
+      return "strategy";
     default:
       return undefined;
   }
+}
+
+export function normalizeWalletRoleAccountChain(
+  value: unknown,
+): WalletRoleAccountChain | undefined {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return raw === "solana" || raw === "evm" ? raw : undefined;
 }
 
 export function resolveWalletUserRole(
@@ -86,6 +107,57 @@ export function resolveWalletUserRole(
     normalizeWalletUserRole(wallet.metadata.purpose) ??
     normalizeWalletUserRole(wallet.metadata.role)
   );
+}
+
+export function resolveWalletRoleAccountChain(
+  wallet: WalletNamedWallet | undefined,
+): WalletRoleAccountChain | undefined {
+  if (!wallet) {
+    return undefined;
+  }
+  const explicit = normalizeWalletRoleAccountChain(wallet.metadata?.roleChain);
+  if (explicit) {
+    return explicit;
+  }
+  if (wallet.addresses?.evm && !wallet.addresses.solana) {
+    return "evm";
+  }
+  return wallet.addresses?.solana || resolveWalletUserRole(wallet) !== "strategy"
+    ? "solana"
+    : undefined;
+}
+
+function assertWalletRoleCardinality(
+  wallets: ReadonlyArray<WalletNamedWallet>,
+  candidate: WalletNamedWallet,
+): void {
+  const role = resolveWalletUserRole(candidate);
+  const peers = wallets.filter((wallet) => wallet.id !== candidate.id);
+  if (
+    (role === "mining" || role === "profile") &&
+    peers.some((wallet) => resolveWalletUserRole(wallet) === role)
+  ) {
+    throw new Error(
+      role === "profile"
+        ? "Only one Profile wallet may be registered"
+        : "Only one Mining wallet may be registered",
+    );
+  }
+  if (role === "strategy") {
+    const chain = resolveWalletRoleAccountChain(candidate);
+    if (!chain) {
+      throw new Error("Strategy wallet requires an explicit Solana or EVM role chain");
+    }
+    if (
+      peers.some(
+        (wallet) =>
+          resolveWalletUserRole(wallet) === "strategy" &&
+          resolveWalletRoleAccountChain(wallet) === chain,
+      )
+    ) {
+      throw new Error(`Only one Strategy wallet per chain may be registered (${chain})`);
+    }
+  }
 }
 
 export type WalletProviderConfigEntry = {
@@ -392,6 +464,8 @@ function normalizeWalletEntry(raw: unknown): WalletNamedWallet | null {
           typeof addressesRaw.solana === "string"
             ? addressesRaw.solana.trim() || undefined
             : undefined,
+        evm:
+          typeof addressesRaw.evm === "string" ? addressesRaw.evm.trim() || undefined : undefined,
       }
     : undefined;
   return {
@@ -639,7 +713,7 @@ export function upsertNamedWallet(params: {
   walletId?: string;
   name: string;
   providerId: WalletProviderId;
-  addresses?: { solana?: string };
+  addresses?: { solana?: string; evm?: string };
   metadata?: Record<string, unknown>;
   env?: NodeJS.ProcessEnv;
 }): WalletNamedWallet {
@@ -672,6 +746,7 @@ export function upsertNamedWallet(params: {
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
+  assertWalletRoleCardinality(registry.wallets, next);
   registry.wallets = [...registry.wallets.filter((entry) => entry.id !== next.id), next].toSorted(
     (a, b) => a.createdAt.localeCompare(b.createdAt),
   );
@@ -852,18 +927,23 @@ export function setNamedWalletRole(params: {
   if (!registry.wallets.some((wallet) => wallet.id === walletId)) {
     throw new Error("walletId does not exist");
   }
+  const current = registry.wallets.find((wallet) => wallet.id === walletId)!;
+  const inferredStrategyChain = resolveWalletRoleAccountChain(current) ?? "solana";
+  const candidate: WalletNamedWallet = {
+    ...current,
+    metadata: {
+      ...current.metadata,
+      role: params.role,
+      purpose: params.role,
+      ...(params.role === "strategy" && !current.metadata?.roleChain
+        ? { roleChain: inferredStrategyChain }
+        : {}),
+    },
+    updatedAt: nowIso(),
+  };
+  assertWalletRoleCardinality(registry.wallets, candidate);
   registry.wallets = registry.wallets.map((wallet) =>
-    wallet.id === walletId
-      ? {
-          ...wallet,
-          metadata: {
-            ...wallet.metadata,
-            role: params.role,
-            purpose: params.role,
-          },
-          updatedAt: nowIso(),
-        }
-      : wallet,
+    wallet.id === walletId ? candidate : wallet,
   );
   if (params.role !== "agent" && registry.defaultWalletId === walletId) {
     registry.defaultWalletId = undefined;
