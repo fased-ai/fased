@@ -611,13 +611,6 @@ export function renderAgentSkills(params: {
         >
           Skills
         </button>
-        <button
-          class="agent-tab ${activePanel === "clawhub" ? "active" : ""}"
-          type="button"
-          @click=${() => params.skillsLibrary?.onLibraryPanelChange?.("clawhub")}
-        >
-          ClawHub
-        </button>
       </div>
 
       ${

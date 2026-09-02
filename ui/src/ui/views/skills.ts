@@ -731,14 +731,6 @@ export function renderSkillsSurface(
         >
           Skills
         </button>
-        <button
-          class="btn"
-          role="tab"
-          aria-selected=${activePanel === "clawhub" ? "true" : "false"}
-          @click=${() => props.onLibraryPanelChange?.("clawhub")}
-        >
-          ClawHub
-        </button>
       </div>
 
       ${

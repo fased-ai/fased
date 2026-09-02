@@ -6,14 +6,7 @@ import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { theme } from "../terminal/theme.js";
 import { formatSkillInfo, formatSkillsCheck, formatSkillsList } from "./skills-cli.format.js";
-import {
-  runSkillsMarketplaceInstall,
-  runSkillsMarketplaceUpdate,
-} from "./skills-marketplace-actions.js";
-import {
-  runSkillsMarketplaceInspect,
-  runSkillsMarketplaceList,
-} from "./skills-marketplace-list.js";
+import { runSkillsMarketplaceInspect } from "./skills-marketplace-list.js";
 import { runSkillsWalletGrant } from "./skills-wallet-grant.js";
 
 export type {
@@ -72,7 +65,7 @@ export function registerSkillsCli(program: Command) {
 
   skills
     .command("inspect")
-    .description("Inspect a skill, including marketplace source and permissions when tracked")
+    .description("Inspect a first-party or owner-local skill")
     .argument("<name>", "Skill name")
     .option("--json", "Output as JSON", false)
     .action(async (name, opts) => {
@@ -81,7 +74,7 @@ export function registerSkillsCli(program: Command) {
 
   skills
     .command("permissions")
-    .description("Show marketplace source, requested permissions, grants, and update review")
+    .description("Inspect legacy source and permission state for migration")
     .argument("<skill-id>", "Skill id")
     .option("--json", "Output JSON", false)
     .action(async (skillId: string, opts) => {
@@ -106,48 +99,6 @@ export function registerSkillsCli(program: Command) {
     });
 
   const wallet = skills.command("wallet").description("Manage skill wallet-action permissions");
-
-  const marketplace = skills
-    .command("marketplace")
-    .description("Inspect installed marketplace skill sources and permissions");
-
-  marketplace
-    .command("list")
-    .description("List tracked ClawHub skills, requested permissions, and wallet grants")
-    .option("--json", "Output JSON", false)
-    .action(async (opts) => {
-      await runSkillsMarketplaceList({ opts });
-    });
-
-  marketplace
-    .command("install")
-    .description("Install a skill from ClawHub with Fased marketplace safety checks")
-    .argument("<slug>", "ClawHub skill slug")
-    .option("--version <version>", "Install a specific ClawHub skill version")
-    .option("--registry <url>", "ClawHub registry URL", undefined)
-    .option("--force", "Replace an existing installed skill", false)
-    .option("--dry-run", "Preview install permission review without installing", false)
-    .option(
-      "--approve-permission-change",
-      "Explicitly approve risky permission changes when --force updates an existing skill",
-      false,
-    )
-    .option("--json", "Output JSON", false)
-    .action(async (slug: string, opts) => {
-      await runSkillsMarketplaceInstall({ slug, opts });
-    });
-
-  marketplace
-    .command("update")
-    .description("Update tracked ClawHub skills with permission-review enforcement")
-    .argument("[slug]", "Optional tracked ClawHub skill slug")
-    .option("--registry <url>", "ClawHub registry URL for legacy lockfile-only entries", undefined)
-    .option("--dry-run", "Preview update permission review without installing", false)
-    .option("--approve-permission-change", "Explicitly approve risky permission changes", false)
-    .option("--json", "Output JSON", false)
-    .action(async (slug: string | undefined, opts) => {
-      await runSkillsMarketplaceUpdate({ slug, opts });
-    });
 
   wallet
     .command("grant")

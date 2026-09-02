@@ -462,7 +462,7 @@ describe("agents tools panel (browser)", () => {
     expect(opened).toEqual(["wallet"]);
   });
 
-  it("keeps Agent Skills as one Agent-scoped list and moves ClawHub into the tab", async () => {
+  it("keeps Agent Skills as one Agent-scoped list without a remote catalog tab", async () => {
     const panelChanges: string[] = [];
     const container = document.createElement("div");
     render(
@@ -480,26 +480,10 @@ describe("agents tools panel (browser)", () => {
     expect(container.querySelectorAll('[data-testid^="agent-skill-row-"]')).toHaveLength(2);
     expect(container.querySelectorAll('[data-testid^="skill-row-"]')).toHaveLength(0);
 
-    Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "ClawHub")
-      ?.click();
-    expect(panelChanges).toEqual(["clawhub"]);
-
-    render(
-      renderAgentSkills(
-        createSkillsParams({
-          skillsLibrary: createSkillLibraryProps({ libraryPanel: "clawhub" }),
-        }),
-      ),
-      container,
-    );
-    await Promise.resolve();
-
-    expect(container.querySelectorAll('[data-testid^="agent-skill-row-"]')).toHaveLength(0);
-    expect(container.textContent ?? "").not.toContain("Install target Assistant");
-    expect(container.textContent ?? "").not.toContain(
-      "Search, review, and install skills for this Agent.",
-    );
-    expect(container.querySelector<HTMLInputElement>('input[name="clawhub-search"]')).toBeTruthy();
+    expect(
+      Array.from(container.querySelectorAll("button")).map((button) => button.textContent),
+    ).not.toContain("ClawHub");
+    expect(panelChanges).toEqual([]);
+    expect(container.querySelector<HTMLInputElement>('input[name="clawhub-search"]')).toBeNull();
   });
 });
