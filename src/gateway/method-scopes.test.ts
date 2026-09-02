@@ -179,7 +179,7 @@ describe("method scope resolution", () => {
     }
   });
 
-  it("keeps remote skill catalog and mutation RPCs closed", () => {
+  it("keeps remote skill and direct skill-wallet authority RPCs closed", () => {
     const removedMethods = [
       "skills.search",
       "skills.detail",
@@ -187,6 +187,9 @@ describe("method scope resolution", () => {
       "skills.marketplace.install",
       "skills.marketplace.update.preview",
       "skills.marketplace.update",
+      "skills.wallet.grants",
+      "skills.wallet.grant.set",
+      "skills.wallet.grant.clear",
     ];
     const listedMethods = listGatewayMethods();
 

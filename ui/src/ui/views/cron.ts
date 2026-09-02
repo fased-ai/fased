@@ -389,7 +389,7 @@ function setupTargetForAccess(
     return { tab: "agents", label: "Open Agent > Models" };
   }
   if (setupPath === "/wallet#wallet-skill-grants" || service === "wallet_grants") {
-    return { tab: "wallet", label: "Open Skill Grants", hash: "wallet-skill-grants" };
+    return { tab: "wallet", label: "Open Wallet Policies", hash: "wallet-access" };
   }
   if (setupPath === "/wallet" || service === "wallet") {
     return { tab: "wallet", label: "Open Wallet" };

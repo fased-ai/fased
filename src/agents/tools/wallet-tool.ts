@@ -37,7 +37,6 @@ import { type AnyAgentTool, jsonResult, readStringParam } from "./common.js";
 import {
   enforceWalletSkillAccessEnabled,
   enforceWalletSkillPolicy,
-  readSkillWalletActionPermissions,
 } from "./wallet-skill-policy.js";
 
 const { createAdapter: createWalletProviderAdapter, resolveRpcUrl: resolveScopedRpcUrlForWallet } =
@@ -529,9 +528,6 @@ export function createWalletTool(opts?: {
       const selectedWalletId = walletIdFromHandle ?? explicitWalletId;
       const explicitWalletName = readStringParam(params, "walletName");
       const requesterSkillId = opts?.requesterSkillId?.trim() || null;
-      const permissions = readSkillWalletActionPermissions(cfg, requesterSkillId);
-      const skillWalletId =
-        permissions?.walletIds?.length === 1 ? permissions.walletIds[0] : undefined;
       const walletSelection = riskyWalletAction
         ? resolveAgentWalletSelection({
             config: cfg,
@@ -540,7 +536,6 @@ export function createWalletTool(opts?: {
             walletId: explicitWalletId,
             walletName: explicitWalletName,
             agentId: requesterAgentId ?? ownerAgentId ?? undefined,
-            skillWalletId,
             env: process.env,
           })
         : resolveWalletSelection({
@@ -805,7 +800,7 @@ export function createWalletTool(opts?: {
       }
       await enforceWalletSkillPolicy({
         cfg,
-        permissions,
+        permissions: null,
         requesterAgentId,
         requesterSkillId,
         action,

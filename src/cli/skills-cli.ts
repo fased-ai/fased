@@ -7,7 +7,6 @@ import { formatDocsLink } from "../terminal/links.js";
 import { theme } from "../terminal/theme.js";
 import { formatSkillInfo, formatSkillsCheck, formatSkillsList } from "./skills-cli.format.js";
 import { runSkillsMarketplaceInspect } from "./skills-marketplace-list.js";
-import { runSkillsWalletGrant } from "./skills-wallet-grant.js";
 
 export type {
   SkillInfoOptions,
@@ -96,63 +95,6 @@ export function registerSkillsCli(program: Command) {
     .option("--json", "Output as JSON", false)
     .action(async (opts) => {
       await runSkillsAction((report) => formatSkillsCheck(report, opts));
-    });
-
-  const wallet = skills.command("wallet").description("Manage skill wallet-action permissions");
-
-  wallet
-    .command("grant")
-    .description("Grant a skill narrow wallet-action permissions")
-    .argument("<skill-id>", "Skill id")
-    .option(
-      "--actions <list>",
-      "Comma-separated wallet actions such as quote,swap,schedule_plan,schedule_send",
-    )
-    .option(
-      "--action <name>",
-      "Wallet action to allow; repeatable",
-      (value, previous: string[]) => [...previous, value],
-      [] as string[],
-    )
-    .option(
-      "--registry <url>",
-      "Allowed ClawHub registry origin; repeatable",
-      (value, previous: string[]) => [...previous, value],
-      [] as string[],
-    )
-    .option("--role <role>", "Wallet role to allow; only agent is supported", "agent")
-    .option(
-      "--wallet-id <id>",
-      "Agent wallet id this skill may use; repeatable",
-      (value, previous: string[]) => [...previous, value],
-      [] as string[],
-    )
-    .option(
-      "--chain <chain>",
-      "Wallet chain to allow; repeatable or comma-separated",
-      (value, previous: string[]) => [...previous, value],
-      [] as string[],
-    )
-    .option(
-      "--input-mint <mint>",
-      "Allowed input mint; repeatable",
-      (value, previous: string[]) => [...previous, value],
-      [] as string[],
-    )
-    .option(
-      "--output-mint <mint>",
-      "Allowed output mint; repeatable",
-      (value, previous: string[]) => [...previous, value],
-      [] as string[],
-    )
-    .option("--max-amount <base-units>", "Maximum input amount in base units")
-    .option("--max-slippage-bps <bps>", "Maximum slippage in basis points")
-    .option("--autonomous", "Allow autonomous execution", false)
-    .option("--cron", "Allow scheduled wallet-action plans", false)
-    .option("--dry-run", "Print/write nothing; use with --json to preview", false)
-    .option("--json", "Output JSON", false)
-    .action(async (skillId: string, opts) => {
-      await runSkillsWalletGrant({ skillId, opts });
     });
 
   // Default action (no subcommand) - show list

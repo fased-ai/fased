@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveSatBondProgramIdFromEnv } from "../config/sat-runtime-ids.js";
 import {
   enforceWalletDailyCap,
+  isWalletToolAllowed,
   resolveWalletPolicyConfig,
   resolveWalletRecurringTransferPolicy,
   resolveWalletRoleForId,
@@ -80,7 +81,7 @@ describe("wallet-policy", () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wallet-policy-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
     vi.stubEnv("FASED_SAT_PROGRAM_ID", "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75");
-    vi.stubEnv("FASED_SAT_MINT_ADDRESS", "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa");
+    vi.stubEnv("FASED_SAT_MINT_ADDRESS", "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"); // pragma: allowlist secret
     vi.stubEnv("FASED_SAT_MINT_PROGRAM_ID", "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C");
   });
 
@@ -89,6 +90,23 @@ describe("wallet-policy", () => {
     if (tempDir) {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects direct skill authority even when a legacy allowlist names the skill", () => {
+    expect(
+      isWalletToolAllowed({
+        config: {
+          ...runtimeConfig,
+          toolAccess: {
+            ...runtimeConfig.toolAccess,
+            allowSkills: ["owner-local-skill"],
+          },
+        } as never,
+        requesterAgentId: "owner",
+        ownerAgentId: "owner",
+        requesterSkillId: "owner-local-skill",
+      }),
+    ).toEqual({ ok: false, code: "wallet_tool_skill_authority_removed" });
   });
 
   it("keeps native Solana per-tx caps for SOL sends", () => {

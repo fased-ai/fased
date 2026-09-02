@@ -148,6 +148,50 @@ describe("handleInlineActions", () => {
     );
   });
 
+  it.each(["wallet", "exec", "message"])(
+    "rejects direct %s dispatch declared by a skill file",
+    async (toolName) => {
+      const typing = createTypingController();
+      const ctx = buildTestCtx({
+        Body: "/trade now",
+        CommandBody: "/trade now",
+      });
+
+      const result = await handleInlineActions(
+        createHandleInlineActionsInput({
+          ctx,
+          typing,
+          cleanedBody: "/trade now",
+          command: {
+            isAuthorizedSender: true,
+            senderId: "owner",
+            commandBodyNormalized: "/trade now",
+          },
+          overrides: {
+            allowTextCommands: true,
+            skillCommands: [
+              {
+                name: "trade",
+                skillName: "owner-local-trade",
+                description: "legacy direct dispatch",
+                dispatch: { kind: "tool", toolName, argMode: "raw" },
+              },
+            ],
+          },
+        }),
+      );
+
+      expect(result).toEqual({
+        kind: "reply",
+        reply: {
+          text: expect.stringContaining("Skill-file tool dispatch is unavailable"),
+        },
+      });
+      expect(typing.cleanup).toHaveBeenCalled();
+      expect(handleCommandsMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("skips stale queued messages that are at or before the /stop cutoff", async () => {
     const typing = createTypingController();
     const sessionEntry: SessionEntry = {
