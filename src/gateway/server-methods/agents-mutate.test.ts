@@ -7,7 +7,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   loadConfigReturn: {} as Record<string, unknown>,
-  listAgentEntries: vi.fn(() => [] as Array<{ agentId: string }>),
+  listAgentEntries: vi.fn(() => [] as Array<{ id: string; name?: string }>),
   findAgentEntryIndex: vi.fn(() => -1),
   applyAgentConfig: vi.fn((_cfg: unknown, _opts: unknown) => ({})),
   pruneAgentConfig: vi.fn(() => ({ config: {}, removedBindings: 0 })),
@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
     detached: false,
   })),
   findFinancialAgentBindingForLocalAgent: vi.fn(() => null),
+  ensureAgentProfileState: vi.fn(async () => ({ agentId: "test-agent" })),
+  ensureAgentProfileStates: vi.fn(async () => ({})),
 }));
 
 vi.mock("../../config/config.js", () => ({
@@ -78,6 +80,11 @@ vi.mock("../../browser/trash.js", () => ({
 vi.mock("../../agents/financial-agent-binding.js", () => ({
   detachFinancialAgentWorkspace: mocks.detachFinancialAgentWorkspace,
   findFinancialAgentBindingForLocalAgent: mocks.findFinancialAgentBindingForLocalAgent,
+}));
+
+vi.mock("../../agents/agent-profile-store.js", () => ({
+  ensureAgentProfileState: mocks.ensureAgentProfileState,
+  ensureAgentProfileStates: mocks.ensureAgentProfileStates,
 }));
 
 vi.mock("../../utils.js", () => ({
@@ -250,10 +257,55 @@ beforeEach(() => {
 /* Tests                                                              */
 /* ------------------------------------------------------------------ */
 
+describe("agents.list", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.loadConfigReturn = {};
+    mocks.listAgentEntries.mockReturnValue([]);
+  });
+
+  it("migrates the implicit main Agent before returning the list", async () => {
+    const { respond, promise } = makeCall("agents.list", {});
+    await promise;
+
+    expect(mocks.ensureAgentProfileState).toHaveBeenCalledWith({
+      agentId: "main",
+      source: "legacy-migration",
+    });
+    expect(respond).toHaveBeenCalledWith(true, expect.anything(), undefined);
+  });
+
+  it("migrates every configured Agent without merging their profile histories", async () => {
+    mocks.listAgentEntries.mockReturnValue([
+      { id: "alpha", name: "Alpha" },
+      { id: "beta", name: "Beta" },
+    ]);
+
+    const { promise } = makeCall("agents.list", {});
+    await promise;
+
+    expect(mocks.ensureAgentProfileStates).toHaveBeenCalledWith({
+      agents: [
+        {
+          agentId: "alpha",
+          config: { id: "alpha", name: "Alpha" },
+          source: "legacy-migration",
+        },
+        {
+          agentId: "beta",
+          config: { id: "beta", name: "Beta" },
+          source: "legacy-migration",
+        },
+      ],
+    });
+  });
+});
+
 describe("agents.create", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.loadConfigReturn = {};
+    mocks.listAgentEntries.mockReturnValue([]);
     mocks.findAgentEntryIndex.mockReturnValue(-1);
     mocks.applyAgentConfig.mockImplementation((_cfg, _opts) => ({}));
   });
@@ -276,6 +328,9 @@ describe("agents.create", () => {
     );
     expect(mocks.ensureAgentWorkspace).toHaveBeenCalled();
     expect(mocks.writeConfigFile).toHaveBeenCalled();
+    expect(mocks.ensureAgentProfileState).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "test-agent", source: "creation" }),
+    );
   });
 
   it("ensures workspace is set up before writing config", async () => {
@@ -400,6 +455,7 @@ describe("agents.update", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.loadConfigReturn = {};
+    mocks.listAgentEntries.mockReturnValue([]);
     mocks.findAgentEntryIndex.mockReturnValue(0);
     mocks.applyAgentConfig.mockImplementation((_cfg, _opts) => ({}));
   });
