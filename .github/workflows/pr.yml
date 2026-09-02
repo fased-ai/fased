@@ -92,6 +92,7 @@ jobs:
           go-version-file: tools/fased-signerd/go.mod
           cache-dependency-path: |
             tools/fased-signerd/go.sum
+            tools/fased-evm-signerd/go.sum
             tools/fased-lifecycled/go.mod
 
       - name: Prove exact dependency remediation

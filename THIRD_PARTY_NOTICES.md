@@ -47,6 +47,12 @@ repository is published or redistributed.
    - License file:
      [tools/fased-signerd/THIRD_PARTY_LICENSES/go-webauthn-BSD-3-Clause.txt](./tools/fased-signerd/THIRD_PARTY_LICENSES/go-webauthn-BSD-3-Clause.txt)
 
+7. `github.com/decred/dcrd/dcrec/secp256k1/v4`
+   - Compiled into `fased-evm-signerd` for secp256k1 key and public-key operations
+   - License: ISC
+   - License file:
+     [tools/fased-evm-signerd/THIRD_PARTY_LICENSES/decred-secp256k1-ISC.txt](./tools/fased-evm-signerd/THIRD_PARTY_LICENSES/decred-secp256k1-ISC.txt)
+
 ## Notes
 
 - This file covers bundled third-party material checked into the repository itself.

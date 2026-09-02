@@ -64,6 +64,7 @@ describe("lean CI and release workflow contracts", () => {
     expect(source).toContain("ci-run-changed-tests.mjs");
     expect(source).toContain("if [[ -f tools/fased-evm-signerd/go.mod ]]; then");
     expect(source).toContain("(cd tools/fased-evm-signerd && go test ./...)");
+    expect(source).toContain("tools/fased-evm-signerd/go.sum");
     expect(source).not.toContain("build-linux-x64-release-artifact.sh");
     expect(source).not.toContain("run-lifecycle-local0.sh");
     expect(source).not.toContain("test-lifecycle-hosting-acceptance.sh");
