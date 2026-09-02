@@ -51,7 +51,7 @@ export const AgentPublicViewSourceEventSchema = z
 
 export type AgentPublicViewSourceEvent = z.infer<typeof AgentPublicViewSourceEventSchema>;
 
-type IndexedRecord = {
+export type AgentPublicViewIndexedRecord = {
   subjectId: string;
   viewKind: z.infer<typeof ViewKindSchema>;
   source: z.infer<typeof SourceSchema>;
@@ -64,7 +64,7 @@ type IndexedRecord = {
   view: unknown;
 };
 
-type IndexConflict = {
+export type AgentPublicViewIndexConflict = {
   conflictId: string;
   subjectId: string;
   viewKind: z.infer<typeof ViewKindSchema>;
@@ -76,8 +76,8 @@ type IndexConflict = {
 export type AgentPublicViewIndex = {
   schema: "fased.agent-public-view-index.v1";
   cursors: Record<z.infer<typeof SourceSchema>, string>;
-  records: Record<string, IndexedRecord>;
-  conflicts: IndexConflict[];
+  records: Record<string, AgentPublicViewIndexedRecord>;
+  conflicts: AgentPublicViewIndexConflict[];
   events: Array<AgentPublicViewSourceEvent & { eventDigest: string }>;
   indexDigest: string;
 };
@@ -116,7 +116,7 @@ function indexWithoutDigest(index: AgentPublicViewIndex) {
   return value;
 }
 
-function assertIndexDigest(index: AgentPublicViewIndex): void {
+export function assertAgentPublicViewIndex(index: AgentPublicViewIndex): void {
   if (digest("fased.agent-public-view-index.v1", indexWithoutDigest(index)) !== index.indexDigest) {
     throw new Error("Agent public-view index digest is invalid");
   }
@@ -165,10 +165,10 @@ function assertEvidenceTrustMatchesSource(event: AgentPublicViewSourceEvent): vo
 }
 
 function conflictFor(params: {
-  winner: IndexedRecord;
-  other: IndexedRecord;
-  reason: IndexConflict["reason"];
-}): IndexConflict {
+  winner: AgentPublicViewIndexedRecord;
+  other: AgentPublicViewIndexedRecord;
+  reason: AgentPublicViewIndexConflict["reason"];
+}): AgentPublicViewIndexConflict {
   const ordered = [params.winner.eventDigest, params.other.eventDigest].toSorted();
   return {
     conflictId: digest("fased.agent-public-view-conflict.v1", {
@@ -186,8 +186,8 @@ function conflictFor(params: {
 function applyInMemory(
   current: AgentPublicViewIndex,
   rawEvent: unknown,
-): { index: AgentPublicViewIndex; record: IndexedRecord; replay: boolean } {
-  assertIndexDigest(current);
+): { index: AgentPublicViewIndex; record: AgentPublicViewIndexedRecord; replay: boolean } {
+  assertAgentPublicViewIndex(current);
   const event = AgentPublicViewSourceEventSchema.parse(rawEvent);
   assertEvidenceTrustMatchesSource(event);
   const eventDigest = digest("fased.agent-public-view-source-event.v1", event);
@@ -210,7 +210,7 @@ function applyInMemory(
   }
 
   const next: AgentPublicViewIndex = structuredClone(current);
-  const record: IndexedRecord = {
+  const record: AgentPublicViewIndexedRecord = {
     subjectId: event.subjectId,
     viewKind: event.viewKind,
     source: event.source,
@@ -270,7 +270,7 @@ function readIndexFile(env: NodeJS.ProcessEnv): AgentPublicViewIndex {
     return emptyIndex();
   }
   const index = JSON.parse(fs.readFileSync(filePath, "utf8")) as AgentPublicViewIndex;
-  assertIndexDigest(index);
+  assertAgentPublicViewIndex(index);
   return index;
 }
 
@@ -283,7 +283,11 @@ export function readAgentPublicViewIndex(params: {
 export async function applyAgentPublicViewSourceEvent(params: {
   event: unknown;
   env?: NodeJS.ProcessEnv;
-}): Promise<{ record: IndexedRecord; replay: boolean; indexDigest: string }> {
+}): Promise<{
+  record: AgentPublicViewIndexedRecord;
+  replay: boolean;
+  indexDigest: string;
+}> {
   const env = params.env ?? process.env;
   const filePath = indexPath(env);
   return await withFileLock(filePath, LOCK_OPTIONS, async () => {
