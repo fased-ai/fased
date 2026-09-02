@@ -26,6 +26,19 @@ export const ResearchProfileSchema = z
   })
   .strict();
 
+export const AGENT_CAPABILITY_PACK_IDS = [
+  "miner",
+  "scout",
+  "analyst",
+  "risk-officer",
+  "allocator",
+  "trader",
+  "prediction-analyst",
+  "public-host",
+] as const;
+
+export const AgentCapabilityPackIdSchema = z.enum(AGENT_CAPABILITY_PACK_IDS);
+
 export const StrategyProfileSchema = z
   .object({
     schema: z.literal("fased.agent.strategy-profile.v1"),
@@ -33,7 +46,10 @@ export const StrategyProfileSchema = z
     watchlists: BoundedShortList,
     hypotheses: BoundedShortList,
     entryExitRules: BoundedShortList,
-    capabilityPacks: BoundedShortList,
+    capabilityPacks: z
+      .array(AgentCapabilityPackIdSchema)
+      .max(AGENT_CAPABILITY_PACK_IDS.length)
+      .refine((value) => new Set(value).size === value.length, "capability packs must be unique"),
     taskModelRoutes: z
       .record(z.string().trim().min(1).max(64), ShortText)
       .refine(
@@ -94,6 +110,7 @@ export type PersonaProfile = z.infer<typeof PersonaProfileSchema>;
 export type ResearchProfile = z.infer<typeof ResearchProfileSchema>;
 export type StrategyProfile = z.infer<typeof StrategyProfileSchema>;
 export type CapitalPolicy = z.infer<typeof CapitalPolicySchema>;
+export type AgentCapabilityPackId = z.infer<typeof AgentCapabilityPackIdSchema>;
 
 export const AGENT_PROFILE_KINDS = ["persona", "research", "strategy", "capitalPolicy"] as const;
 
