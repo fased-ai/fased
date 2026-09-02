@@ -317,6 +317,7 @@ import {
   type WalletSolanaTokenSearchResult,
   type WalletSettingsValidateResponse,
   type WalletStatus,
+  type WalletUserRole,
 } from "./wallet-api.ts";
 import {
   authorizeSignerReviewWithPasskey,
@@ -1692,8 +1693,9 @@ export class FasedAgentApp extends LitElement {
   @state() walletCreateName = "";
   @state() walletCreateId = "";
   @state() walletCreateProvider: WalletProviderInfo["id"] = "local-socket-signer";
-  @state() walletCreateRole: "" | "agent" | "mining" | "vault" = "";
+  @state() walletCreateRole: "" | WalletUserRole = "";
   @state() walletCreateRpcUrl = "";
+  @state() walletCreateRpcProfileId = "";
   @state() walletCreateBusy = false;
   @state() walletAssignAgentId = "";
   @state() walletAssignWalletId = "";
@@ -5495,11 +5497,13 @@ export class FasedAgentApp extends LitElement {
     const name = this.walletCreateName.trim();
     if (!this.walletCreateRole) {
       this.walletSettingsError =
-        "Choose Agent, Mining, or Vault. No wallet role is selected automatically.";
+        "Choose Agent, Mining, Vault, Profile, or Strategy. No wallet role is selected automatically.";
       return;
     }
-    if (!this.walletCreateRpcUrl.trim()) {
-      this.walletSettingsError = "Enter an RPC.";
+    const rpcUrl = this.walletCreateRpcUrl.trim();
+    const rpcProfileId = this.walletCreateRpcProfileId.trim();
+    if (Boolean(rpcUrl) === Boolean(rpcProfileId)) {
+      this.walletSettingsError = "Choose exactly one reusable RPC profile or one direct RPC.";
       return;
     }
     this.walletCreateBusy = true;
@@ -5512,12 +5516,13 @@ export class FasedAgentApp extends LitElement {
         providerId,
         role: this.walletCreateRole,
         chain: "solana",
-        rpcUrl: this.walletCreateRpcUrl.trim(),
+        ...(rpcUrl ? { rpcUrl } : { rpcProfileId }),
       });
       this.walletProviderTab = providerId;
       this.walletCreateName = "";
       this.walletCreateRole = "";
       this.walletCreateRpcUrl = "";
+      this.walletCreateRpcProfileId = "";
       this.walletSendCreateForm = {
         ...this.walletSendCreateForm,
         walletId: created.wallet.id,

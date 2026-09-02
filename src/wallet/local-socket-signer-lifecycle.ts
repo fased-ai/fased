@@ -1,6 +1,8 @@
 import { LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 } from "./local-socket-signer-protocol.js";
 import type {
   LocalSocketSignerNetworkSummaryV2,
+  LocalSocketSignerRPCProfileBindingV1,
+  LocalSocketSignerRPCProfileSummaryV1,
   LocalSocketSignerWalletReadinessV2,
 } from "./local-socket-signer-protocol.js";
 import {
@@ -8,7 +10,7 @@ import {
   type LocalSocketSignerHealthProbe,
 } from "./providers/local-socket-signer-adapter.js";
 
-export type LocalSignerWalletRole = "agent" | "mining" | "vault";
+export type LocalSignerWalletRole = "agent" | "mining" | "vault" | "profile" | "strategy";
 
 export type LocalSignerWalletPublicRecord = {
   walletId: string;
@@ -93,12 +95,18 @@ function assertRoleBaselineRecord(
       `signer-owned wallet ${record.wallet.walletId} has role=${record.policy.role}, not ${role}`,
     );
   }
-  if (
-    record.policy.baselineVersion !== 1 ||
-    record.policy.operations.length === 0 ||
-    record.policy.programs.length === 0 ||
-    record.policy.assets.length === 0
-  ) {
+  const denyAllRole = role === "profile" || role === "strategy";
+  const exactDenyAll =
+    denyAllRole &&
+    record.policy.operations.length === 0 &&
+    record.policy.programs.length === 0 &&
+    record.policy.assets.length === 0;
+  const activeBaseline =
+    !denyAllRole &&
+    record.policy.operations.length > 0 &&
+    record.policy.programs.length > 0 &&
+    record.policy.assets.length > 0;
+  if (record.policy.baselineVersion !== 1 || (!exactDenyAll && !activeBaseline)) {
     throw new Error(
       `signer-owned wallet ${record.wallet.walletId} is not role-ready; select Activate role baseline before using it`,
     );
@@ -292,4 +300,61 @@ export async function configureSignerOwnedWalletPrimaryRpc(params: {
     throw new Error("signer-owned RPC activation did not return the exact next ready version");
   }
   return updated;
+}
+
+export async function createSignerOwnedRPCProfile(params: {
+  socketPath: string;
+  profileId: string;
+  name: string;
+  primaryRpcUrl: string;
+  websocketRpcUrl?: string;
+  executionFallbackRpcUrl?: string;
+  verificationRpcUrl?: string;
+}): Promise<LocalSocketSignerRPCProfileSummaryV1> {
+  await requireSignerOwnedProtocolV2(params.socketPath, ["signerOwnedRPCProfiles"]);
+  return await callLocalSocketSigner<LocalSocketSignerRPCProfileSummaryV1>(params.socketPath, {
+    op: "v2.rpcProfile.create",
+    request: {
+      profileId: params.profileId,
+      name: params.name,
+      primaryRpcUrl: params.primaryRpcUrl,
+      ...(params.websocketRpcUrl ? { websocketRpcUrl: params.websocketRpcUrl } : {}),
+      ...(params.executionFallbackRpcUrl
+        ? { executionFallbackRpcUrl: params.executionFallbackRpcUrl }
+        : {}),
+      ...(params.verificationRpcUrl ? { verificationRpcUrl: params.verificationRpcUrl } : {}),
+      commitment: "finalized",
+    },
+  });
+}
+
+export async function listSignerOwnedRPCProfiles(params: {
+  socketPath: string;
+}): Promise<LocalSocketSignerRPCProfileSummaryV1[]> {
+  await requireSignerOwnedProtocolV2(params.socketPath, ["signerOwnedRPCProfiles"]);
+  return await callLocalSocketSigner<LocalSocketSignerRPCProfileSummaryV1[]>(params.socketPath, {
+    op: "v2.rpcProfile.list",
+  });
+}
+
+export async function bindSignerOwnedRPCProfile(params: {
+  socketPath: string;
+  walletId: string;
+  profile: Pick<LocalSocketSignerRPCProfileSummaryV1, "profileId" | "version" | "hash">;
+}): Promise<LocalSocketSignerRPCProfileBindingV1> {
+  await requireSignerOwnedProtocolV2(params.socketPath, ["signerOwnedRPCProfiles"]);
+  const current = await callLocalSocketSigner<LocalSocketSignerNetworkSummaryV2>(
+    params.socketPath,
+    { op: "v2.network.get", walletId: params.walletId },
+  );
+  return await callLocalSocketSigner<LocalSocketSignerRPCProfileBindingV1>(params.socketPath, {
+    op: "v2.rpcProfile.bind",
+    walletId: params.walletId,
+    request: {
+      profileId: params.profile.profileId,
+      expectedProfileVersion: params.profile.version,
+      expectedProfileHash: params.profile.hash,
+      expectedNetworkVersion: current.version,
+    },
+  });
 }

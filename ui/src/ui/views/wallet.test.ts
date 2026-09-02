@@ -248,7 +248,10 @@ describe("wallet creation", () => {
     const text = flattenTemplateText(rendered);
     expect(text).toContain("Create wallet");
     expect(text).toContain("Name (optional)");
-    expect(text).toContain("Select a role Agent Mining Vault RPC");
+    expect(text).toContain(
+      "Select a role Agent Mining Vault Profile Strategy (deny-all) Reusable RPC profile",
+    );
+    expect(text).toContain("Use a signer-owned verified profile, or enter a direct RPC below");
     expect(text).not.toContain("capped automation");
     expect(text).not.toContain("singleton SAT operations");
     expect(text).not.toContain("reviewed operations only");

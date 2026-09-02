@@ -12,6 +12,9 @@ import {
   walletProviderConfigureCommand,
   walletRotateKeysCommand,
   walletRpcSetCommand,
+  walletRpcProfileBindCommand,
+  walletRpcProfileCreateCommand,
+  walletRpcProfileListCommand,
   walletRoleSetCommand,
   walletSetupCommand,
   walletSignerServeCommand,
@@ -68,9 +71,10 @@ export function registerWalletCommands(program: Command) {
     .description("Restore an encrypted signer recovery package into a new signer-owned wallet")
     .requiredOption("--wallet-id <id>", "New registered signer-owned wallet id")
     .requiredOption("--wallet-name <name>", "Wallet display name")
-    .requiredOption("--role <role>", "Permanent signer role: agent|mining|vault")
+    .requiredOption("--role <role>", "Permanent signer role: agent|mining|vault|profile|strategy")
     .requiredOption("--file <absolute-path>", "Owner-only encrypted recovery package")
-    .requiredOption("--rpc-url <url>", "One primary Solana RPC URL")
+    .option("--rpc-url <url>", "One primary Solana RPC URL")
+    .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
     .action(async (opts) => {
       await runCommandWithRuntime(defaultRuntime, async () => {
         await walletRecoveryFacade.restoreEncrypted(defaultRuntime, {
@@ -78,7 +82,8 @@ export function registerWalletCommands(program: Command) {
           walletName: String(opts.walletName),
           role: String(opts.role),
           recoveryFile: String(opts.file),
-          rpcUrl: String(opts.rpcUrl),
+          rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
+          rpcProfileId: typeof opts.rpcProfile === "string" ? opts.rpcProfile : undefined,
         });
       });
     });
@@ -126,8 +131,9 @@ export function registerWalletCommands(program: Command) {
     .description("Create a role-ready signer-owned Solana wallet")
     .option("--wallet-id <id>", "Named wallet id")
     .option("--wallet-name <name>", "Wallet display name")
-    .option("--role <role>", "Permanent signer role: agent|mining|vault")
+    .option("--role <role>", "Permanent signer role: agent|mining|vault|profile|strategy")
     .option("--rpc-url <url>", "One primary Solana RPC URL")
+    .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
     .option("--force", "Resume only the same existing signer wallet and role", false)
     .option("--non-interactive", "Do not prompt; require all inputs", false)
     .option("--json", "Print JSON output", false)
@@ -140,6 +146,7 @@ export function registerWalletCommands(program: Command) {
           walletName: typeof opts.walletName === "string" ? opts.walletName : undefined,
           role: typeof opts.role === "string" ? opts.role : undefined,
           rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
+          rpcProfileId: typeof opts.rpcProfile === "string" ? opts.rpcProfile : undefined,
           force: Boolean(opts.force),
           nonInteractive: Boolean(opts.nonInteractive),
           json: Boolean(opts.json),
@@ -152,9 +159,10 @@ export function registerWalletCommands(program: Command) {
     .description("Import an owner-only Solana keypair through the native signer lifecycle")
     .option("--wallet-id <id>", "Named wallet id")
     .option("--wallet-name <name>", "Wallet display name")
-    .option("--role <role>", "Permanent signer role: agent|mining|vault")
+    .option("--role <role>", "Permanent signer role: agent|mining|vault|profile|strategy")
     .option("--file <absolute-path>", "Owner-only Solana keypair JSON")
     .option("--rpc-url <url>", "One primary Solana RPC URL")
+    .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
     .option("--non-interactive", "Do not prompt; require all inputs", false)
     .option("--json", "Print JSON output", false)
     .action(async (opts) => {
@@ -167,6 +175,7 @@ export function registerWalletCommands(program: Command) {
           role: typeof opts.role === "string" ? opts.role : undefined,
           importFile: typeof opts.file === "string" ? opts.file : undefined,
           rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
+          rpcProfileId: typeof opts.rpcProfile === "string" ? opts.rpcProfile : undefined,
           nonInteractive: Boolean(opts.nonInteractive),
           json: Boolean(opts.json),
         });
@@ -217,6 +226,55 @@ export function registerWalletCommands(program: Command) {
   });
 
   const rpc = wallet.command("rpc").description("Signer-owned Solana RPC configuration");
+  const rpcProfiles = rpc
+    .command("profile")
+    .description("Reusable signer-owned, genesis-verified RPC profiles");
+  rpcProfiles
+    .command("create")
+    .requiredOption("--profile-id <id>", "Stable lowercase profile id")
+    .requiredOption("--name <name>", "Profile display name")
+    .requiredOption("--rpc-url <url>", "Primary Solana HTTP RPC URL")
+    .option("--websocket-url <url>", "Same-origin Solana WebSocket URL")
+    .option("--fallback-rpc-url <url>", "Same-genesis execution fallback HTTP RPC")
+    .option("--verification-rpc-url <url>", "Same-genesis independent verification HTTP RPC")
+    .option("--json", "Print JSON output", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletRpcProfileCreateCommand(defaultRuntime, {
+          profileId: String(opts.profileId),
+          name: String(opts.name),
+          primaryRpcUrl: String(opts.rpcUrl),
+          websocketRpcUrl: typeof opts.websocketUrl === "string" ? opts.websocketUrl : undefined,
+          executionFallbackRpcUrl:
+            typeof opts.fallbackRpcUrl === "string" ? opts.fallbackRpcUrl : undefined,
+          verificationRpcUrl:
+            typeof opts.verificationRpcUrl === "string" ? opts.verificationRpcUrl : undefined,
+          json: Boolean(opts.json),
+        });
+      });
+    });
+  rpcProfiles
+    .command("list")
+    .option("--json", "Print JSON output", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletRpcProfileListCommand(defaultRuntime, { json: Boolean(opts.json) });
+      });
+    });
+  rpcProfiles
+    .command("bind")
+    .requiredOption("--profile-id <id>", "Existing verified profile id")
+    .requiredOption("--wallet-id <id>", "Unconfigured signer-owned wallet id")
+    .option("--json", "Print JSON output", false)
+    .action(async (opts) => {
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        await walletRpcProfileBindCommand(defaultRuntime, {
+          profileId: String(opts.profileId),
+          walletId: String(opts.walletId),
+          json: Boolean(opts.json),
+        });
+      });
+    });
   rpc
     .command("set")
     .description("Verify and set one primary Solana RPC")
@@ -243,7 +301,7 @@ export function registerWalletCommands(program: Command) {
     .option("--chain <chain>", "solana", "solana")
     .option("--wallet-id <id>", "Named wallet id (examples: agent, mining, vault)")
     .option("--wallet-name <value>", "Friendly wallet display name (for UI/skills/plugins)")
-    .option("--role <role>", "Permanent signer role: agent|mining|vault")
+    .option("--role <role>", "Permanent signer role: agent|mining|vault|profile|strategy")
     .option(
       "--import-file <absolute-path>",
       "Owner-only Solana keypair JSON for local-signer-import; secret is passed by file descriptor, never argv/env",
@@ -254,6 +312,7 @@ export function registerWalletCommands(program: Command) {
     )
     .option("--api-key <value>", "Alchemy API key")
     .option("--rpc-url <url>", "Solana RPC URL")
+    .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
     .option("--turnkey-api-public-key <value>", "Turnkey API public key (turnkey mode)")
     .option("--turnkey-api-private-key <value>", "Turnkey API private key (turnkey mode)")
     .option("--turnkey-organization-id <value>", "Turnkey organization ID (turnkey mode)")
@@ -279,6 +338,7 @@ export function registerWalletCommands(program: Command) {
           role: typeof opts.role === "string" ? opts.role : undefined,
           apiKey: typeof opts.apiKey === "string" ? opts.apiKey : undefined,
           rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
+          rpcProfileId: typeof opts.rpcProfile === "string" ? opts.rpcProfile : undefined,
           importFile: typeof opts.importFile === "string" ? opts.importFile : undefined,
           recoveryFile: typeof opts.recoveryFile === "string" ? opts.recoveryFile : undefined,
           turnkeyApiPublicKey:

@@ -46,6 +46,7 @@ var signerV2Capabilities = signerCapabilitiesV2{
 		"permanentRetiredWalletPolicies",
 		"signerOwnedRPC",
 		"applicationNetworkBootstrap",
+		"signerOwnedRPCProfiles",
 		"signerOwnedEncryptedRecovery",
 		"signerOwnedRawExport",
 		"restrictedOperatorLifecycle",

@@ -322,6 +322,48 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(summary)
+	case "v2.rpcProfile.list":
+		profiles, err := s.keys.ListRPCProfilesV1()
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(profiles)
+	case "v2.rpcProfile.get":
+		var body signerRPCProfileGetRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, errors.New("invalid signer-v2 request")
+		}
+		profile, err := s.keys.RPCProfileSummaryV1(body.ProfileID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(profile)
+	case "v2.rpcProfile.create":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerRPCProfileCreateRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, errors.New("invalid signer-v2 request")
+		}
+		profile, err := s.keys.CreateRPCProfileV1(body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(profile)
+	case "v2.rpcProfile.bind":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerRPCProfileBindRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, errors.New("invalid signer-v2 request")
+		}
+		binding, err := s.keys.BindRPCProfileV1(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(binding)
 	case "v2.network.bootstrap":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")

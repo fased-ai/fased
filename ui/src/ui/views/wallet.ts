@@ -20,6 +20,7 @@ import type {
   WalletProviderInfo,
   WalletSolanaTokenSearchResult,
   WalletStatus,
+  WalletUserRole,
 } from "../wallet-api.ts";
 import {
   buildRecurringTransferCron,
@@ -67,8 +68,9 @@ export type WalletViewProps = {
   assignWalletId?: string;
   providers?: WalletProviderInfo[];
   createName?: string;
-  createRole?: "" | "agent" | "mining" | "vault";
+  createRole?: "" | WalletUserRole;
   createRpcUrl?: string;
+  createRpcProfileId?: string;
   createBusy?: boolean;
   settingsBusy: boolean;
   settingsError: string | null;
@@ -141,8 +143,9 @@ export type WalletViewProps = {
   onApprovalsFilterChange: (filter: WalletApprovalFilter) => void;
   onAttachWalletStandardVault?: () => void;
   onCreateNameChange?: (next: string) => void;
-  onCreateRoleChange?: (next: "" | "agent" | "mining" | "vault") => void;
+  onCreateRoleChange?: (next: "" | WalletUserRole) => void;
   onCreateRpcUrlChange?: (next: string) => void;
+  onCreateRpcProfileIdChange?: (next: string) => void;
   rpcUrl?: string;
   rpcEditorWalletId?: string;
   revealedAddressWalletId?: string;
@@ -234,7 +237,7 @@ export type OperatorWalletRoles = {
   bondWalletId: string | null;
 };
 
-type DisplayedWalletRole = "mining" | "agent" | "vault";
+type DisplayedWalletRole = WalletUserRole;
 export type WalletPolicyPanel = "caps" | "schedule" | "automation" | "skills" | "sweep";
 
 const WALLET_ACTIVITY_PAGE_SIZE = 8;
@@ -489,7 +492,7 @@ function formatRequestedWalletActions(requested: WalletSkillGrantRow["requestedW
 
 function resolveWalletMetadataRole(
   wallet: WalletViewProps["namedWallets"][number] | undefined,
-): "agent" | "vault" | "mining" | undefined {
+): WalletUserRole | undefined {
   const roleRaw =
     typeof wallet?.metadata?.purpose === "string"
       ? wallet.metadata.purpose
@@ -505,6 +508,12 @@ function resolveWalletMetadataRole(
   }
   if (role === "mining") {
     return "mining";
+  }
+  if (role === "profile") {
+    return "profile";
+  }
+  if (role === "strategy") {
+    return "strategy";
   }
   return undefined;
 }
@@ -906,6 +915,9 @@ function resolveDisplayedWalletRole(
   if (metadataRole === "mining") {
     return "mining";
   }
+  if (metadataRole === "profile" || metadataRole === "strategy") {
+    return metadataRole;
+  }
   if (isAgentWallet(wallet, props.defaultWalletId)) {
     return "agent";
   }
@@ -918,8 +930,12 @@ function walletRoleRank(role: DisplayedWalletRole): number {
       return 0;
     case "vault":
       return 1;
-    case "agent":
+    case "profile":
       return 2;
+    case "strategy":
+      return 3;
+    case "agent":
+      return 4;
   }
 }
 
@@ -2966,8 +2982,10 @@ export function renderWallet(props: WalletViewProps) {
     (wallet) => resolveDisplayedWalletRole(wallet.id, props) === "mining" || wallet.id === "mining",
   );
   const miningCreationBlocked = props.createRole === "mining" && Boolean(existingMiningWallet);
+  const rpcSelectionCount =
+    Number(Boolean(props.createRpcUrl?.trim())) + Number(Boolean(props.createRpcProfileId?.trim()));
   const createInputReady = Boolean(
-    props.createRole && props.createRpcUrl?.trim() && !miningCreationBlocked,
+    props.createRole && rpcSelectionCount === 1 && !miningCreationBlocked,
   );
   const setMainPanel = (panel: "wallets" | "access" | "skill-grants") => {
     props.onMainPanelChange?.(panel);
@@ -4340,14 +4358,32 @@ export function renderWallet(props: WalletViewProps) {
                         | ""
                         | "agent"
                         | "mining"
-                        | "vault",
+                        | "vault"
+                        | "profile"
+                        | "strategy",
                     )}
                 >
                   <option value="" disabled>Select a role</option>
                   <option value="agent">Agent</option>
                   <option value="mining">Mining</option>
                   <option value="vault">Vault</option>
+                  <option value="profile">Profile</option>
+                  <option value="strategy">Strategy (deny-all)</option>
                 </select>
+              </label>
+              <label class="field">
+                <span>Reusable RPC profile (optional)</span>
+                <input
+                  .value=${props.createRpcProfileId ?? ""}
+                  placeholder="mainnet-primary"
+                  autocomplete="off"
+                  spellcheck="false"
+                  @input=${(event: Event) =>
+                    props.onCreateRpcProfileIdChange?.((event.target as HTMLInputElement).value)}
+                />
+                <span class="muted" style="font-size: 0.78em;">
+                  Use a signer-owned verified profile, or enter a direct RPC below—not both.
+                </span>
               </label>
               <label class="field">
                 <span class="row" style="gap: 6px;">RPC ${renderInfoButton(
@@ -4379,7 +4415,7 @@ export function renderWallet(props: WalletViewProps) {
                   props.createBusy ||
                   miningCreationBlocked ||
                   !props.createRole ||
-                  !props.createRpcUrl?.trim()
+                  rpcSelectionCount !== 1
                     ? html`<span class="muted">
                   ${
                     props.createBusy
@@ -4388,7 +4424,7 @@ export function renderWallet(props: WalletViewProps) {
                         ? `Mining already uses ${existingMiningWallet?.name ?? existingMiningWallet?.id}. Only one Mining wallet is allowed.`
                         : !props.createRole
                           ? "Select a wallet role."
-                          : "Enter an RPC."
+                          : "Choose one RPC profile or one direct RPC."
                   }
                     </span>`
                     : !createProvider?.enabled || !createProvider.health.ok
@@ -5114,7 +5150,9 @@ export function renderWallet(props: WalletViewProps) {
                                   : nothing
                                 : html`
                                     ${
-                                      settings && activePolicyPanel === "caps"
+                                      settings &&
+                                      activePolicyPanel === "caps" &&
+                                      (cardRole === "agent" || cardRole === "vault")
                                         ? renderWalletCapsPanel({
                                             props,
                                             settings,

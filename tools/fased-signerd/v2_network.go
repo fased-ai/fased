@@ -693,7 +693,7 @@ func (m *signerKeyManagerV2) PutApplicationNetworkV2(walletID string, request si
 	if err != nil {
 		return signerNetworkSummaryV2{}, err
 	}
-	if policy.Role != "agent" && policy.Role != "mining" && policy.Role != "vault" {
+	if policy.Role != "agent" && policy.Role != "mining" && policy.Role != "vault" && policy.Role != "profile" && policy.Role != "strategy" {
 		return signerNetworkSummaryV2{}, errors.New("signer wallet role is invalid")
 	}
 	freshDenyAll := policy.Version == 1 && policy.BaselineVersion == 0 &&

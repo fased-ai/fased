@@ -77,9 +77,9 @@ func Normalize(input Policy) (Policy, error) {
 		return Policy{}, errors.New("walletId is required")
 	}
 	switch policy.Role {
-	case "agent", "mining", "vault", "keeper":
+	case "agent", "mining", "vault", "profile", "strategy", "keeper":
 	default:
-		return Policy{}, errors.New("policy role must be agent, mining, vault, or keeper")
+		return Policy{}, errors.New("policy role must be agent, mining, vault, profile, strategy, or keeper")
 	}
 	var err error
 	policy.Operations, err = normalizeSortedStrings(input.Operations, func(raw string) (string, error) {

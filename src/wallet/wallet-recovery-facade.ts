@@ -10,7 +10,8 @@ export type WalletRecoveryImportOptions = {
   walletName?: string;
   role: string;
   recoveryFile: string;
-  rpcUrl: string;
+  rpcUrl?: string;
+  rpcProfileId?: string;
 };
 
 export type WalletRawExportOptions = {

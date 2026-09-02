@@ -11,7 +11,10 @@ import {
   throwLegacyEmbeddedKeystoreMigrationRequired,
 } from "../wallet/legacy-embedded-keystore.js";
 import {
+  bindSignerOwnedRPCProfile,
+  createSignerOwnedRPCProfile,
   createRoleReadySignerOwnedWallet,
+  listSignerOwnedRPCProfiles,
   readSignerOwnedWallet,
   readSignerOwnedWalletReadiness,
   type LocalSignerPolicyRecord,
@@ -107,6 +110,7 @@ export type WalletSetupOptions = {
   walletName?: string;
   apiKey?: string;
   rpcUrl?: string;
+  rpcProfileId?: string;
   importFile?: string;
   recoveryFile?: string;
   noDoctor?: boolean;
@@ -258,6 +262,22 @@ export type WalletRoleSetOptions = {
   walletId: string;
   role: string;
   primary?: boolean;
+  json?: boolean;
+};
+
+export type WalletRpcProfileCreateOptions = {
+  profileId: string;
+  name: string;
+  primaryRpcUrl: string;
+  websocketRpcUrl?: string;
+  executionFallbackRpcUrl?: string;
+  verificationRpcUrl?: string;
+  json?: boolean;
+};
+
+export type WalletRpcProfileBindOptions = {
+  profileId: string;
+  walletId: string;
   json?: boolean;
 };
 
@@ -751,11 +771,15 @@ async function createSignerOwnedWalletForSetup(params: {
   env: NodeJS.ProcessEnv;
   chain: WalletChain;
   walletId?: string;
-  rpcUrl: string;
-  role: "agent" | "mining" | "vault";
+  rpcUrl?: string;
+  rpcProfileId?: string;
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
 }) {
   if (params.chain !== "solana") {
     throw new Error("fased-signerd protocol v2 currently supports Solana wallet creation only");
+  }
+  if (Boolean(params.rpcUrl?.trim()) === Boolean(params.rpcProfileId?.trim())) {
+    throw new Error("wallet creation requires exactly one of rpcUrl or rpcProfileId");
   }
   const registeredWallets = readWalletProviderRegistry(params.env).wallets;
   const generatedIdentity = nextRoleWalletIdentity(params.role, registeredWallets);
@@ -853,27 +877,50 @@ async function createSignerOwnedWalletForSetup(params: {
     );
   }
 
-  const network = operatorLifecycle
-    ? invokeNativeSignerNetworkSetPrimary({
-        signerBinPath: operatorLifecycle.signerBinPath,
-        socketFlag: "--operator-socket",
-        socketPath: operatorLifecycle.operatorSocketPath,
-        walletId: signerWalletId,
-        primaryRpcUrl: params.rpcUrl,
-        expectedVersion: 0,
-        env: mergedEnv,
-      })
-    : await configureSignerOwnedWalletNetwork({
-        walletId: signerWalletId,
-        primaryRpcUrl: params.rpcUrl,
-        env: mergedEnv,
+  const selectedProfile = params.rpcProfileId
+    ? (await listSignerOwnedRPCProfiles({ socketPath })).find(
+        (entry) => entry.profileId === params.rpcProfileId,
+      )
+    : undefined;
+  if (params.rpcProfileId && !selectedProfile) {
+    throw new Error(`signer-owned RPC profile not found: ${params.rpcProfileId}`);
+  }
+  const profileBinding = selectedProfile
+    ? await bindSignerOwnedRPCProfile({
         socketPath,
-      });
+        walletId: signerWalletId,
+        profile: selectedProfile,
+      })
+    : undefined;
+  const network = profileBinding
+    ? {
+        hash: profileBinding.networkHash,
+        version: profileBinding.networkVersion,
+        ready: profileBinding.ready,
+      }
+    : operatorLifecycle
+      ? invokeNativeSignerNetworkSetPrimary({
+          signerBinPath: operatorLifecycle.signerBinPath,
+          socketFlag: "--operator-socket",
+          socketPath: operatorLifecycle.operatorSocketPath,
+          walletId: signerWalletId,
+          primaryRpcUrl: params.rpcUrl!,
+          expectedVersion: 0,
+          env: mergedEnv,
+        })
+      : await configureSignerOwnedWalletNetwork({
+          walletId: signerWalletId,
+          primaryRpcUrl: params.rpcUrl!,
+          env: mergedEnv,
+          socketPath,
+        });
 
   // The signer owns RPC validation (including SSRF and genesis checks). Persist the
   // endpoint for Gateway read paths only after that boundary has accepted it.
-  cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, walletId), params.rpcUrl);
-  await writeConfigFile(cfg);
+  if (params.rpcUrl) {
+    cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, walletId), params.rpcUrl);
+    await writeConfigFile(cfg);
+  }
 
   const readiness = operatorLifecycle
     ? invokeNativeSignerWalletReadiness({
@@ -911,6 +958,7 @@ async function createSignerOwnedWalletForSetup(params: {
     metadata: {
       role: params.role,
       purpose: params.role,
+      ...(params.role === "profile" || params.role === "strategy" ? { roleChain: "solana" } : {}),
       keyAuthority: "signer-owned-v2",
       signerWalletId,
       policyHash: result.policy.hash,
@@ -920,6 +968,13 @@ async function createSignerOwnedWalletForSetup(params: {
       networkHash: network.hash,
       networkVersion: network.version,
       networkReady: network.ready,
+      ...(profileBinding
+        ? {
+            rpcProfileId: profileBinding.profileId,
+            rpcProfileVersion: profileBinding.profileVersion,
+            rpcProfileHash: profileBinding.profileHash,
+          }
+        : {}),
       operationLane: readiness.operationLane,
       roleReady: readiness.ready,
     },
@@ -1028,7 +1083,7 @@ function requireOwnerOnlySignerImportFile(rawPath: string): { path: string; fd: 
 function parseNativeSignerImportResult(params: {
   stdout: string;
   walletId: string;
-  role: "agent" | "mining" | "vault";
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
 }): LocalSignerWalletPolicyRecord {
   let value: unknown;
   try {
@@ -1040,6 +1095,16 @@ function parseNativeSignerImportResult(params: {
     throw new Error("native signer import returned an invalid result");
   }
   const result = value as Partial<LocalSignerWalletPolicyRecord>;
+  const denyAllRole = params.role === "profile" || params.role === "strategy";
+  const policyShapeReady = denyAllRole
+    ? result.policy?.operations?.length === 0 &&
+      result.policy?.programs?.length === 0 &&
+      result.policy?.assets?.length === 0
+    : Boolean(
+        result.policy?.operations?.length &&
+        result.policy?.programs?.length &&
+        result.policy?.assets?.length,
+      );
   if (
     result.wallet?.walletId !== params.walletId ||
     typeof result.wallet.publicKey !== "string" ||
@@ -1049,9 +1114,7 @@ function parseNativeSignerImportResult(params: {
     result.policy.role !== params.role ||
     result.policy.version !== 1 ||
     result.policy.baselineVersion !== 1 ||
-    !result.policy.operations?.length ||
-    !result.policy.programs?.length ||
-    !result.policy.assets?.length ||
+    !policyShapeReady ||
     typeof result.policy.hash !== "string" ||
     !/^sha256:[0-9a-f]{64}$/.test(result.policy.hash)
   ) {
@@ -1065,7 +1128,7 @@ function invokeNativeSignerWalletImport(params: {
   signerBinPath: string;
   controlSocketPath: string;
   walletId: string;
-  role: "agent" | "mining" | "vault";
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
   importFile: string;
   env: NodeJS.ProcessEnv;
 }): LocalSignerWalletPolicyRecord {
@@ -1129,7 +1192,7 @@ function invokeNativeSignerWalletCreate(params: {
   signerBinPath: string;
   operatorSocketPath: string;
   walletId: string;
-  role: "agent" | "mining" | "vault";
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
   allowExisting?: boolean;
   env: NodeJS.ProcessEnv;
 }): LocalSignerWalletPolicyRecord {
@@ -1242,7 +1305,7 @@ function invokeNativeSignerPolicyActivateBaseline(params: {
   socketFlag: "--control-socket" | "--operator-socket";
   socketPath: string;
   walletId: string;
-  role: "agent" | "mining" | "vault";
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
   expectedVersion: number;
   env: NodeJS.ProcessEnv;
 }): LocalSignerPolicyRecord {
@@ -1286,6 +1349,12 @@ function invokeNativeSignerPolicyActivateBaseline(params: {
     throw new Error("native signer role-baseline activation returned invalid JSON");
   }
   const policy = result as Partial<LocalSignerPolicyRecord>;
+  const denyAllRole = params.role === "profile" || params.role === "strategy";
+  const policyShapeReady = denyAllRole
+    ? policy.operations?.length === 0 &&
+      policy.programs?.length === 0 &&
+      policy.assets?.length === 0
+    : Boolean(policy.operations?.length && policy.programs?.length && policy.assets?.length);
   if (
     !policy ||
     policy.walletId !== params.walletId ||
@@ -1293,11 +1362,9 @@ function invokeNativeSignerPolicyActivateBaseline(params: {
     policy.version !== params.expectedVersion + 1 ||
     policy.baselineVersion !== 1 ||
     !Array.isArray(policy.operations) ||
-    policy.operations.length === 0 ||
     !Array.isArray(policy.programs) ||
-    policy.programs.length === 0 ||
     !Array.isArray(policy.assets) ||
-    policy.assets.length === 0 ||
+    !policyShapeReady ||
     typeof policy.hash !== "string" ||
     !/^sha256:[0-9a-f]{64}$/.test(policy.hash)
   ) {
@@ -1599,7 +1666,7 @@ function invokeNativeSignerRecoveryImport(params: {
   signerBinPath: string;
   controlSocketPath: string;
   walletId: string;
-  role: "agent" | "mining" | "vault";
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
   recoveryFile: string;
   env: NodeJS.ProcessEnv;
 }): LocalSignerWalletPolicyRecord {
@@ -1655,12 +1722,16 @@ async function importSignerOwnedWalletForSetup(params: {
   env: NodeJS.ProcessEnv;
   chain: WalletChain;
   walletId: string;
-  rpcUrl: string;
-  role: "agent" | "mining" | "vault";
+  rpcUrl?: string;
+  rpcProfileId?: string;
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
   importFile: string;
 }) {
   if (params.chain !== "solana") {
     throw new Error("fased-signerd protocol v2 currently supports Solana wallet import only");
+  }
+  if (Boolean(params.rpcUrl?.trim()) === Boolean(params.rpcProfileId?.trim())) {
+    throw new Error("wallet import requires exactly one of rpcUrl or rpcProfileId");
   }
   let cfg = ensureLocalSignerProviderConfig(loadConfig(), params.env);
   const mergedEnv = { ...params.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
@@ -1728,26 +1799,49 @@ async function importSignerOwnedWalletForSetup(params: {
           importFile: params.importFile,
           env: mergedEnv,
         });
-  const network = operatorLifecycle
-    ? invokeNativeSignerNetworkSetPrimary({
-        signerBinPath,
-        socketFlag: "--operator-socket",
-        socketPath: controlSocketPath,
-        walletId: signerWalletId,
-        primaryRpcUrl: params.rpcUrl,
-        expectedVersion: 0,
-        env: mergedEnv,
-      })
-    : await configureSignerOwnedWalletNetwork({
-        walletId: signerWalletId,
-        primaryRpcUrl: params.rpcUrl,
-        env: mergedEnv,
+  const selectedProfile = params.rpcProfileId
+    ? (await listSignerOwnedRPCProfiles({ socketPath })).find(
+        (entry) => entry.profileId === params.rpcProfileId,
+      )
+    : undefined;
+  if (params.rpcProfileId && !selectedProfile) {
+    throw new Error(`signer-owned RPC profile not found: ${params.rpcProfileId}`);
+  }
+  const profileBinding = selectedProfile
+    ? await bindSignerOwnedRPCProfile({
         socketPath,
-      });
+        walletId: signerWalletId,
+        profile: selectedProfile,
+      })
+    : undefined;
+  const network = profileBinding
+    ? {
+        hash: profileBinding.networkHash,
+        version: profileBinding.networkVersion,
+        ready: profileBinding.ready,
+      }
+    : operatorLifecycle
+      ? invokeNativeSignerNetworkSetPrimary({
+          signerBinPath,
+          socketFlag: "--operator-socket",
+          socketPath: controlSocketPath,
+          walletId: signerWalletId,
+          primaryRpcUrl: params.rpcUrl!,
+          expectedVersion: 0,
+          env: mergedEnv,
+        })
+      : await configureSignerOwnedWalletNetwork({
+          walletId: signerWalletId,
+          primaryRpcUrl: params.rpcUrl!,
+          env: mergedEnv,
+          socketPath,
+        });
   // Do not leave a rejected endpoint in Gateway config when signer-side RPC or
   // genesis validation fails.
-  cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, params.walletId), params.rpcUrl);
-  await writeConfigFile(cfg);
+  if (params.rpcUrl) {
+    cfg = setConfigEnvVar(cfg, rpcEnvKeyFor(params.chain, params.walletId), params.rpcUrl);
+    await writeConfigFile(cfg);
+  }
   const readiness = operatorLifecycle
     ? invokeNativeSignerWalletReadiness({
         signerBinPath,
@@ -1779,6 +1873,7 @@ async function importSignerOwnedWalletForSetup(params: {
     metadata: {
       role: params.role,
       purpose: params.role,
+      ...(params.role === "profile" || params.role === "strategy" ? { roleChain: "solana" } : {}),
       keyAuthority: "signer-owned-v2",
       signerWalletId,
       policyHash: result.policy.hash,
@@ -1788,6 +1883,13 @@ async function importSignerOwnedWalletForSetup(params: {
       networkHash: network.hash,
       networkVersion: network.version,
       networkReady: network.ready,
+      ...(profileBinding
+        ? {
+            rpcProfileId: profileBinding.profileId,
+            rpcProfileVersion: profileBinding.profileVersion,
+            rpcProfileHash: profileBinding.profileHash,
+          }
+        : {}),
       operationLane: readiness.operationLane,
       roleReady: readiness.ready,
     },
@@ -1869,7 +1971,10 @@ export async function walletSetupCommand(
     throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet setup state detected");
   }
   if (options.role && !normalizeWalletUserRole(options.role)) {
-    throw new Error("wallet role must be agent, mining, or vault");
+    throw new Error("wallet role must be agent, mining, vault, profile, or strategy");
+  }
+  if (options.rpcUrl?.trim() && options.rpcProfileId?.trim()) {
+    throw new Error("choose either --rpc-url or --rpc-profile, not both");
   }
 
   const configureLimitOrdersIfRequested = async () => {
@@ -1988,26 +2093,39 @@ export async function walletSetupCommand(
   if (mode === "local-signer-create") {
     const chain = options.chain ?? "solana";
     const roleInput =
-      options.role ?? (interactive ? await prompt("Wallet role (agent|mining|vault)", "") : "");
+      options.role ??
+      (interactive ? await prompt("Wallet role (agent|mining|vault|profile|strategy)", "") : "");
     const role = normalizeWalletUserRole(roleInput);
     if (!role) {
       throw new Error(
-        "--role is required for non-interactive wallet creation and must be agent, mining, or vault",
+        "--role is required for non-interactive wallet creation and must be agent, mining, vault, profile, or strategy",
       );
     }
-    const generatedIdentity = nextRoleWalletIdentity(role, readWalletProviderRegistry(env).wallets);
+    const generatedIdentity = nextRoleWalletIdentity(
+      role,
+      readWalletProviderRegistry(env).wallets,
+      chain === "solana" ? "solana" : "evm",
+    );
     const walletId = options.walletId?.trim() || generatedIdentity.walletId;
-    const rpcUrlFallback = resolveRpcUrlForChain(env, chain, walletId, options.rpcUrl);
-    const rpcUrl = (
-      await prompt(
-        `${chain.toUpperCase()} RPC URL (required for balances/readiness/send)`,
-        rpcUrlFallback,
-      )
+    const rpcProfileId = (
+      options.rpcProfileId ??
+      (interactive ? await prompt("Reusable RPC profile id (blank to enter a URL)", "") : "")
     ).trim();
-    if (!rpcUrl) {
+    const rpcUrlFallback = rpcProfileId
+      ? ""
+      : resolveRpcUrlForChain(env, chain, walletId, options.rpcUrl);
+    const rpcUrl = rpcProfileId
+      ? ""
+      : (
+          await prompt(
+            `${chain.toUpperCase()} RPC URL (required for balances/readiness/send)`,
+            rpcUrlFallback,
+          )
+        ).trim();
+    if (!rpcUrl && !rpcProfileId) {
       throw new Error(
-        `${chain.toUpperCase()} RPC URL is required for self-hosted wallet setup. ` +
-          "Pass --rpc-url or set FASED_WALLET_<CHAIN>_RPC_URL.",
+        `${chain.toUpperCase()} RPC configuration is required for self-hosted wallet setup. ` +
+          "Pass --rpc-profile, pass --rpc-url, or set FASED_WALLET_<CHAIN>_RPC_URL.",
       );
     }
     await createSignerOwnedWalletForSetup({
@@ -2016,7 +2134,8 @@ export async function walletSetupCommand(
       env,
       chain,
       walletId,
-      rpcUrl,
+      rpcUrl: rpcUrl || undefined,
+      rpcProfileId: rpcProfileId || undefined,
       role,
     });
     if (!options.noSignerHints && !options.json) {
@@ -2028,11 +2147,12 @@ export async function walletSetupCommand(
 
   if (mode === "local-signer-import" || mode === "local-signer-recovery-import") {
     const roleInput =
-      options.role ?? (interactive ? await prompt("Wallet role (agent|mining|vault)", "") : "");
+      options.role ??
+      (interactive ? await prompt("Wallet role (agent|mining|vault|profile|strategy)", "") : "");
     const role = normalizeWalletUserRole(roleInput);
     if (!role) {
       throw new Error(
-        "--role is required for non-interactive wallet import and must be agent, mining, or vault",
+        "--role is required for non-interactive wallet import and must be agent, mining, vault, profile, or strategy",
       );
     }
     const friendlyWalletId =
@@ -2058,12 +2178,22 @@ export async function walletSetupCommand(
       );
     }
     const chain = options.chain ?? "solana";
-    const rpcUrlFallback = resolveRpcUrlForChain(env, chain, walletId, options.rpcUrl);
-    const rpcUrl = (
-      await prompt(`${chain.toUpperCase()} RPC URL (one primary execution RPC)`, rpcUrlFallback)
+    const rpcProfileId = (
+      options.rpcProfileId ??
+      (interactive ? await prompt("Reusable RPC profile id (blank to enter a URL)", "") : "")
     ).trim();
-    if (!rpcUrl) {
-      throw new Error("--rpc-url is required for non-interactive native wallet import");
+    const rpcUrlFallback = rpcProfileId
+      ? ""
+      : resolveRpcUrlForChain(env, chain, walletId, options.rpcUrl);
+    const rpcUrl = rpcProfileId
+      ? ""
+      : (
+          await prompt(`${chain.toUpperCase()} RPC URL (one primary execution RPC)`, rpcUrlFallback)
+        ).trim();
+    if (!rpcUrl && !rpcProfileId) {
+      throw new Error(
+        "--rpc-profile or --rpc-url is required for non-interactive native wallet import",
+      );
     }
     await importSignerOwnedWalletForSetup({
       runtime,
@@ -2071,7 +2201,8 @@ export async function walletSetupCommand(
       env,
       chain,
       walletId,
-      rpcUrl,
+      rpcUrl: rpcUrl || undefined,
+      rpcProfileId: rpcProfileId || undefined,
       role,
       importFile,
     });
@@ -2278,6 +2409,9 @@ export async function walletRpcSetCommand(
           ...entry,
           metadata: {
             ...entry.metadata,
+            rpcProfileId: undefined,
+            rpcProfileVersion: undefined,
+            rpcProfileHash: undefined,
             networkHash: network.hash,
             networkVersion: network.version,
             networkReady: network.ready,
@@ -2293,6 +2427,105 @@ export async function walletRpcSetCommand(
   }
   runtime.log(
     `Primary Solana RPC verified for ${wallet.name} (${wallet.id}); signer network v${network.version} is ready.`,
+  );
+}
+
+export async function walletRpcProfileCreateCommand(
+  runtime: RuntimeEnv = defaultRuntime,
+  options: WalletRpcProfileCreateOptions,
+) {
+  const cfg = loadConfig();
+  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const socketPath = resolveLocalSignerSocketPath(effectiveEnv);
+  const profile = await createSignerOwnedRPCProfile({
+    socketPath,
+    profileId: options.profileId,
+    name: options.name,
+    primaryRpcUrl: options.primaryRpcUrl,
+    websocketRpcUrl: options.websocketRpcUrl,
+    executionFallbackRpcUrl: options.executionFallbackRpcUrl,
+    verificationRpcUrl: options.verificationRpcUrl,
+  });
+  runtime.log(
+    options.json
+      ? JSON.stringify({ ok: true, profile }, null, 2)
+      : `Created verified RPC profile ${profile.profileId} (${profile.cluster}, ${profile.endpointCount} endpoint(s)).`,
+  );
+}
+
+export async function walletRpcProfileListCommand(
+  runtime: RuntimeEnv = defaultRuntime,
+  options: { json?: boolean } = {},
+) {
+  const cfg = loadConfig();
+  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const profiles = await listSignerOwnedRPCProfiles({
+    socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+  });
+  if (options.json) {
+    runtime.log(JSON.stringify({ ok: true, profiles }, null, 2));
+    return;
+  }
+  if (profiles.length === 0) {
+    runtime.log("No signer-owned RPC profiles are configured.");
+    return;
+  }
+  for (const profile of profiles) {
+    runtime.log(
+      `${profile.profileId}: ${profile.name} · ${profile.cluster} · ${profile.commitment} · ${profile.endpointCount} endpoint(s)`,
+    );
+  }
+}
+
+export async function walletRpcProfileBindCommand(
+  runtime: RuntimeEnv = defaultRuntime,
+  options: WalletRpcProfileBindOptions,
+) {
+  const cfg = loadConfig();
+  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const registry = readWalletProviderRegistry(effectiveEnv);
+  const wallet = registry.wallets.find((entry) => entry.id === options.walletId.trim());
+  if (!wallet || wallet.providerId !== "local-socket-signer") {
+    throw new Error(`native signer wallet not found: ${options.walletId}`);
+  }
+  const profiles = await listSignerOwnedRPCProfiles({
+    socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+  });
+  const profile = profiles.find((entry) => entry.profileId === options.profileId.trim());
+  if (!profile) {
+    throw new Error(`signer-owned RPC profile not found: ${options.profileId}`);
+  }
+  const signerWalletId =
+    typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
+      ? wallet.metadata.signerWalletId.trim()
+      : normalizeNativeSignerWalletId(wallet.id);
+  const binding = await bindSignerOwnedRPCProfile({
+    socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+    walletId: signerWalletId,
+    profile,
+  });
+  registry.wallets = registry.wallets.map((entry) =>
+    entry.id === wallet.id
+      ? {
+          ...entry,
+          metadata: {
+            ...entry.metadata,
+            rpcProfileId: binding.profileId,
+            rpcProfileVersion: binding.profileVersion,
+            rpcProfileHash: binding.profileHash,
+            networkHash: binding.networkHash,
+            networkVersion: binding.networkVersion,
+            networkReady: binding.ready,
+          },
+          updatedAt: new Date().toISOString(),
+        }
+      : entry,
+  );
+  writeWalletProviderRegistry(registry, effectiveEnv);
+  runtime.log(
+    options.json
+      ? JSON.stringify({ ok: true, binding }, null, 2)
+      : `Bound ${wallet.id} to verified RPC profile ${binding.profileId}.`,
   );
 }
 
@@ -2392,7 +2625,7 @@ export async function walletRecoveryImportCommand(
       [
         `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} recovery import requires a one-shot signer-owner ceremony.`,
         `First run: ${ownerCommand} wallet recovery-import --wallet-id ${signerWalletId} --baseline-role ${options.role} --recovery-file ${options.recoveryFile}`,
-        `Then return to the app account and run: fased wallet create --wallet-id ${options.walletId} --wallet-name <NAME> --role ${options.role} --rpc-url <RPC_URL> --force --non-interactive`,
+        `Then return to the app account and run: fased wallet create --wallet-id ${options.walletId} --wallet-name <NAME> --role ${options.role} (--rpc-profile <ID> | --rpc-url <RPC_URL>) --force --non-interactive`,
       ].join("\n"),
     );
   }
@@ -2404,6 +2637,7 @@ export async function walletRecoveryImportCommand(
     role: options.role,
     recoveryFile: options.recoveryFile,
     rpcUrl: options.rpcUrl,
+    rpcProfileId: options.rpcProfileId,
     nonInteractive: true,
     noDoctor: true,
     noSignerHints: true,

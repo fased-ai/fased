@@ -74,6 +74,8 @@ func requirePolicyTighteningV2(current, candidate signerPolicyV2) error {
 
 func requireAutonomousRoleV2(policy signerPolicyV2, intent normalizedIntentV2) error {
 	switch policy.Role {
+	case "profile", "strategy":
+		return errors.New("Profile and Strategy wallets remain deny-all until a separately reviewed policy generation")
 	case "vault":
 		return errors.New("Vault execution requires signer-reviewed authorization")
 	case "mining":
