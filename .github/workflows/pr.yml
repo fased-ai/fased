@@ -225,6 +225,9 @@ jobs:
         if: needs.classify.outputs.run_native_signer == 'true'
         run: |
           (cd tools/fased-signerd && go test ./...)
+          if [[ -f tools/fased-evm-signerd/go.mod ]]; then
+            (cd tools/fased-evm-signerd && go test ./...)
+          fi
           (cd tools/fased-lifecycled && go test ./...)
           bash scripts/test-build-lifecycle-generation.sh
 

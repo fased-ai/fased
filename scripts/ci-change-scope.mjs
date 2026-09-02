@@ -28,7 +28,7 @@ const laneManifest = Object.freeze({
     },
     {
       id: "signer",
-      prefixes: ["tools/fased-signerd/"],
+      prefixes: ["tools/fased-evm-signerd/", "tools/fased-signerd/"],
       contains: ["signer"],
     },
     {

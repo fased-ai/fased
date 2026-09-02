@@ -78,6 +78,12 @@ describe("lean CI changed-surface classification", () => {
     expect(classifyChangedPaths(["tools/fased-signerd/v2_schema.go"])).toMatchObject({
       runSignerDarwinIntegration: true,
     });
+    expect(classifyChangedPaths(["tools/fased-evm-signerd/keystore.go"])).toMatchObject({
+      privilegeChanged: true,
+      runNativeSigner: true,
+      runSignerDarwinIntegration: true,
+      runSignerIntegration: true,
+    });
     expect(() => classifyChangedPaths(["release/channel-policy.json"])).toThrow(
       /no directly changed focused test/u,
     );
