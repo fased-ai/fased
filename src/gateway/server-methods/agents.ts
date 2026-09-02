@@ -7,6 +7,10 @@ import {
   resolveAgentWorkspaceDir,
 } from "../../agents/agent-scope.js";
 import {
+  detachFinancialAgentWorkspace,
+  findFinancialAgentBindingForLocalAgent,
+} from "../../agents/financial-agent-binding.js";
+import {
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
@@ -636,6 +640,11 @@ export const agentsHandlers: GatewayRequestHandlers = {
     const agentDir = resolveAgentDir(cfg, agentId);
     const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId);
 
+    // Fail closed before removing local state if the durable identity cache is
+    // unreadable. Detach first so a later config-write failure leaves a
+    // recoverable workspace that can be explicitly reattached.
+    findFinancialAgentBindingForLocalAgent(agentId);
+    const financialDetach = detachFinancialAgentWorkspace({ localAgentId: agentId });
     const result = pruneAgentConfig(cfg, agentId);
     await writeConfigFile(result.config);
 
@@ -647,7 +656,21 @@ export const agentsHandlers: GatewayRequestHandlers = {
       ]);
     }
 
-    respond(true, { ok: true, agentId, removedBindings: result.removedBindings }, undefined);
+    respond(
+      true,
+      {
+        ok: true,
+        agentId,
+        removedBindings: result.removedBindings,
+        financialIdentity: financialDetach.detached
+          ? {
+              action: "detached",
+              fasedAgentRecord: financialDetach.fasedAgentRecord,
+            }
+          : { action: "none" },
+      },
+      undefined,
+    );
   },
   "agents.files.list": async ({ params, respond }) => {
     if (!validateAgentsFilesListParams(params)) {

@@ -5,6 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { Keypair } from "@solana/web3.js";
 import { describe, expect, test, vi } from "vitest";
 import { clearRuntimeConfigSnapshot } from "../config/config.js";
 import {
@@ -2045,6 +2046,78 @@ describe("wallet providers HTTP", () => {
         } finally {
           await signer.close();
         }
+      },
+    });
+  });
+
+  test("rejects a finalized financial Agent controller archive before signer mutation", async () => {
+    await withTempConfig({
+      cfg: baseConfig,
+      run: async () => {
+        const controller = Keypair.generate().publicKey.toBase58();
+        const record = Keypair.generate().publicKey.toBase58();
+        upsertNamedWallet({
+          walletId: "profile",
+          name: "Profile",
+          providerId: "local-socket-signer",
+          addresses: { solana: controller },
+          metadata: { role: "profile", purpose: "profile", signerWalletId: "profile" },
+          env: process.env,
+        });
+        const bindingDir = path.join(String(process.env.FASED_STATE_DIR), "financial-agents");
+        await mkdir(bindingDir, { recursive: true });
+        await writeFile(
+          path.join(bindingDir, "bindings.v1.json"),
+          `${JSON.stringify({
+            version: 1,
+            bindings: {
+              [record]: {
+                programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev", // pragma: allowlist secret
+                genesisHash: Keypair.generate().publicKey.toBase58(),
+                fasedAgentRecord: record,
+                status: "active",
+                controller,
+                recoveryAuthority: Keypair.generate().publicKey.toBase58(),
+                authorityGeneration: "4",
+                finalizedSlot: 99,
+                attachments: [],
+                updatedAt: new Date().toISOString(),
+              },
+            },
+            pendingChallenges: {},
+            consumedChallengeDigests: [],
+            updatedAt: new Date().toISOString(),
+          })}\n`,
+        );
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/ui",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          resolvedAuth,
+        });
+        const response = createResponse();
+        await dispatch(
+          server,
+          createRequest({
+            method: "DELETE",
+            path: "/api/wallet/wallets",
+            authorization: "Bearer root-token",
+            body: { walletId: "profile", archive: true, confirmWalletId: "profile" },
+          }),
+          response.res,
+        );
+        expect(response.res.statusCode).toBe(409);
+        expect(JSON.parse(response.getBody())).toMatchObject({
+          ok: false,
+          error: {
+            code: "wallet_financial_authority_rotation_required",
+            message: expect.stringContaining("finalize and read back"),
+          },
+        });
       },
     });
   });

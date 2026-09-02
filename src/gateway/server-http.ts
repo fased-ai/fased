@@ -131,6 +131,7 @@ import {
 import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import {
   WALLET_PROVIDER_IDS,
+  checkNamedWalletFinancialAuthority,
   checkNamedWalletDeletionSafety,
   deleteNamedWallet,
   nextRoleWalletIdentity,
@@ -6280,6 +6281,20 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 code: "mining_retirement_required",
                 message:
                   "Mining wallets cannot be deleted directly; use Retire and replace Mining wallet so signer acknowledgement precedes registry detachment",
+              },
+            });
+            return;
+          }
+          const financialAuthority = checkNamedWalletFinancialAuthority({
+            walletId,
+            env: process.env,
+          });
+          if (financialAuthority) {
+            sendLoginResponse(409, {
+              ok: false,
+              error: {
+                code: "wallet_financial_authority_rotation_required",
+                message: `This wallet is the current ${financialAuthority.role} for financial Agent ${financialAuthority.fasedAgentRecord}; finalize and read back the authority rotation before archiving it`,
               },
             });
             return;

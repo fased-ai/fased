@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Keypair } from "@solana/web3.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WALLET_PROVIDER_IDS,
@@ -350,6 +351,69 @@ describe("wallet-provider-registry", () => {
       );
       expect(
         readWalletProviderRegistry(process.env).wallets.some((wallet) => wallet.id === "mining"),
+      ).toBe(true);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects deleting a wallet that is a finalized financial Agent authority", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-registry-"));
+    vi.stubEnv("FASED_STATE_DIR", stateDir);
+    try {
+      const controller = Keypair.generate().publicKey.toBase58();
+      const recovery = Keypair.generate().publicKey.toBase58();
+      const record = Keypair.generate().publicKey.toBase58();
+      upsertNamedWallet({
+        walletId: "profile",
+        name: "Profile",
+        providerId: "local-socket-signer",
+        addresses: { solana: controller },
+        metadata: { role: "profile", purpose: "profile" },
+      });
+      const bindingDir = path.join(stateDir, "financial-agents");
+      await fs.mkdir(bindingDir, { recursive: true });
+      await fs.writeFile(
+        path.join(bindingDir, "bindings.v1.json"),
+        `${JSON.stringify({
+          version: 1,
+          bindings: {
+            [record]: {
+              programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev", // pragma: allowlist secret
+              genesisHash: Keypair.generate().publicKey.toBase58(),
+              fasedAgentRecord: record,
+              status: "active",
+              controller,
+              recoveryAuthority: recovery,
+              authorityGeneration: "1",
+              finalizedSlot: 5,
+              updatedAt: new Date().toISOString(),
+              attachments: [],
+            },
+          },
+          pendingChallenges: {},
+          consumedChallengeDigests: [],
+          updatedAt: new Date().toISOString(),
+        })}\n`,
+      );
+
+      expect(() => setNamedWalletRole({ walletId: "profile", role: "agent" })).toThrow(
+        /finalize and read back the authority rotation/u,
+      );
+      expect(() =>
+        upsertNamedWallet({
+          walletId: "profile",
+          name: "Profile",
+          providerId: "local-socket-signer",
+          addresses: { solana: Keypair.generate().publicKey.toBase58() },
+          metadata: { role: "profile", purpose: "profile" },
+        }),
+      ).toThrow(/finalize and read back the authority rotation/u);
+      expect(() => deleteNamedWallet({ walletId: "profile", env: process.env })).toThrow(
+        /finalize and read back the authority rotation/u,
+      );
+      expect(
+        readWalletProviderRegistry(process.env).wallets.some((wallet) => wallet.id === "profile"),
       ).toBe(true);
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true });

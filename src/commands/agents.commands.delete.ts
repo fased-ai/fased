@@ -1,4 +1,8 @@
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
+import {
+  detachFinancialAgentWorkspace,
+  findFinancialAgentBindingForLocalAgent,
+} from "../agents/financial-agent-binding.js";
 import { writeConfigFile } from "../config/config.js";
 import { logConfigUpdated } from "../config/logging.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
@@ -69,6 +73,10 @@ export async function agentsDeleteCommand(
   const agentDir = resolveAgentDir(cfg, agentId);
   const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId);
 
+  // A financially enrolled Agent is permanent. The CLI may remove only the
+  // local attachment and recoverable workspace copy.
+  findFinancialAgentBindingForLocalAgent(agentId);
+  const financialDetach = detachFinancialAgentWorkspace({ localAgentId: agentId });
   const result = pruneAgentConfig(cfg, agentId);
   await writeConfigFile(result.config);
   if (!opts.json) {
@@ -90,12 +98,22 @@ export async function agentsDeleteCommand(
           sessionsDir,
           removedBindings: result.removedBindings,
           removedAllow: result.removedAllow,
+          financialIdentity: financialDetach.detached
+            ? {
+                action: "detached",
+                fasedAgentRecord: financialDetach.fasedAgentRecord,
+              }
+            : { action: "none" },
         },
         null,
         2,
       ),
     );
   } else {
-    runtime.log(`Deleted agent: ${agentId}`);
+    runtime.log(
+      financialDetach.detached
+        ? `Detached local agent: ${agentId} (financial identity preserved)`
+        : `Deleted agent: ${agentId}`,
+    );
   }
 }
