@@ -4,11 +4,11 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
   $schema: "fased.agent-identity-interface.v1",
   source: {
     repository: "https://github.com/fased-ai/agent-protocol",
-    commit: "7023952bc23b594bdb0813182768ffbf34a23a12",
-    tree: "716ecfe5a1def077b4261fa983a8b9e0f3635871",
-    idlSha256: "sha256:fdf5803dbbbabab6c6427001c013225dc106acfae4bfb93db0abbfc35a93952e",
+    commit: "7023952bc23b594bdb0813182768ffbf34a23a12", // pragma: allowlist secret
+    tree: "716ecfe5a1def077b4261fa983a8b9e0f3635871", // pragma: allowlist secret
+    idlSha256: "sha256:fdf5803dbbbabab6c6427001c013225dc106acfae4bfb93db0abbfc35a93952e", // pragma: allowlist secret
   },
-  programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+  programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev", // pragma: allowlist secret
   accounts: {
     fasedAgentRecord: {
       discriminator: [164, 123, 4, 229, 103, 117, 40, 238],
@@ -32,8 +32,8 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
     },
   },
   approvedSatcoinPrograms: [
-    "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
-    "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT",
+    "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF", // pragma: allowlist secret
+    "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT", // pragma: allowlist secret
   ],
   recoveryRotationDelaySeconds: 172800,
   instructions: [

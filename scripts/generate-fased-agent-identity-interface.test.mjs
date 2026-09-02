@@ -47,6 +47,18 @@ void test("Fased consumes one generated Agent identity contract", () => {
     "set_namespace_authority",
   ]);
 
+  const generated = fs.readFileSync(
+    path.join(root, "src/agents/fased-agent-identity-contract.generated.ts"),
+    "utf8",
+  );
+  assert.equal(generated.match(/pragma: allowlist secret/gu)?.length, 6);
+
+  const preCommit = fs.readFileSync(path.join(root, ".pre-commit-config.yaml"), "utf8");
+  assert.match(
+    preCommit,
+    /src\/agents\/protocol-generation\/fased-agent-identity-interface\\\.v1\\\.json/u,
+  );
+
   const readback = fs.readFileSync(
     path.join(root, "src/agents/financial-agent-readback.ts"),
     "utf8",
