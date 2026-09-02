@@ -2072,7 +2072,7 @@ describe("wallet providers HTTP", () => {
             version: 1,
             bindings: {
               [record]: {
-                programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+                programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev", // pragma: allowlist secret
                 genesisHash: Keypair.generate().publicKey.toBase58(),
                 fasedAgentRecord: record,
                 status: "active",

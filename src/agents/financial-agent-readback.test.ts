@@ -90,7 +90,9 @@ function miningFixture(record: PublicKey): Buffer {
   )[1];
   record.toBuffer().copy(data, 10);
   Keypair.generate().publicKey.toBuffer().copy(data, 42);
-  new PublicKey("H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF").toBuffer().copy(data, 74);
+  new PublicKey("H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF") // pragma: allowlist secret
+    .toBuffer()
+    .copy(data, 74);
   Keypair.generate().publicKey.toBuffer().copy(data, 106);
   data.writeBigUInt64LE(99n, 218);
   return data;

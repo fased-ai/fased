@@ -39,7 +39,7 @@ function address(): string {
 
 function readback(controller: string, recoveryAuthority: string): FinalizedFinancialAgentReadback {
   return {
-    programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+    programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev", // pragma: allowlist secret
     genesisHash: address(),
     fasedAgentRecord: address(),
     status: "active",

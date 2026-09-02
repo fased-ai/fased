@@ -20,8 +20,8 @@ const MINING_BINDING_DISCRIMINATOR = Buffer.from([39, 109, 166, 142, 221, 165, 6
 const FASED_AGENT_RECORD_SIZE = 219;
 const MINING_BINDING_SIZE = 234;
 const APPROVED_SATCOIN_PROGRAM_IDS = new Set([
-  "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
-  "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT",
+  "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF", // pragma: allowlist secret
+  "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT", // pragma: allowlist secret
 ]);
 
 type RpcAccount = { data?: [string, string]; executable?: boolean; owner?: string };

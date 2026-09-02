@@ -42,7 +42,7 @@ describe("agents delete command", () => {
   it("detaches a financial identity before removing local Agent state", async () => {
     financialMocks.detach.mockReturnValue({
       detached: true,
-      fasedAgentRecord: "8opHzTAnfzRpPEx21XtnrVTX28YQuCpAjcn1PczScKh",
+      fasedAgentRecord: "8opHzTAnfzRpPEx21XtnrVTX28YQuCpAjcn1PczScKh", // pragma: allowlist secret
     });
 
     await agentsDeleteCommand({ id: "wally", force: true, json: true }, runtime);
