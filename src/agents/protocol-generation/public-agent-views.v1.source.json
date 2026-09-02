@@ -1,0 +1,15 @@
+{
+  "schema": "fased.agent-public-view-source.v1",
+  "repository": "fased-ai/agent-protocol",
+  "commit": "9c1370d6d25248a796cc97817c133fa64e6ce193",
+  "tree": "de09d8b414c8fa733b3cc67be9321731d5ea3f89",
+  "contractSha256": "364e38cae0ae90e927af5c7a80a95ced47adbdfa46acb7ed91e0db0489aa9a3a",
+  "upstreamGeneratedTypeScriptSha256": "7afde928a7e0714f504e41a49fe0b0a8789ffe5a6a768982dd3f12fce8da9ad6",
+  "generatedTypeScriptSha256": "f62bc40feeda240b9fac36511b544a6d917e258b162178b1a5546941f07adf36",
+  "publicViews": [
+    "AgentEvidenceRef",
+    "AgentIdentityView",
+    "AgentMiningView",
+    "AgentQualificationView"
+  ]
+}

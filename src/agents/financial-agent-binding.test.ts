@@ -46,6 +46,8 @@ function readback(controller: string, recoveryAuthority: string): FinalizedFinan
     controller,
     recoveryAuthority,
     authorityGeneration: "3",
+    createdSlot: "40",
+    createdUnixTimestamp: "1788350400",
     finalizedSlot: 42,
   };
 }

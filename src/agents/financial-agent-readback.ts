@@ -95,6 +95,8 @@ function decodeRecord(params: { address: string; account: RpcAccount; finalizedS
     controller: readAddress(data, 67),
     recoveryAuthority: readAddress(data, 99),
     authorityGeneration,
+    createdSlot: readU64(data, 19).toString(),
+    createdUnixTimestamp: data.readBigInt64LE(27).toString(),
     finalizedSlot: params.finalizedSlot,
   } as const;
 }

@@ -43,6 +43,8 @@ function recordFixture(authorities?: { controller: PublicKey; recovery: PublicKe
   data[9] = 0;
   data[10] = bump;
   data.writeBigUInt64LE(7n, 11);
+  data.writeBigUInt64LE(100n, 19);
+  data.writeBigInt64LE(1_788_350_400n, 27);
   founding.toBuffer().copy(data, 35);
   controller.toBuffer().copy(data, 67);
   recovery.toBuffer().copy(data, 99);
@@ -151,6 +153,8 @@ describe("finalized financial Agent readback", () => {
         controller: fixture.controller.toBase58(),
         recoveryAuthority: fixture.recovery.toBase58(),
         authorityGeneration: "7",
+        createdSlot: "100",
+        createdUnixTimestamp: "1788350400",
         finalizedSlot: 1234,
         namespaceBinding: expect.objectContaining({
           address: namespace.toBase58(),
