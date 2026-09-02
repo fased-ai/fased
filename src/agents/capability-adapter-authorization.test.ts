@@ -57,6 +57,7 @@ function fixture() {
   };
   const request = {
     schema: "fased.first-party-adapter-signer-request.v1" as const,
+    requestId: "request-1",
     capabilityId: "fased.mining",
     adapterId: "fased.mining-adapter",
     operation: "cycle.commit",
@@ -70,7 +71,12 @@ function fixture() {
     amountAtoms: "1000000",
     slippageBps: 0,
     ownerApproved: true,
+    policyGeneration: 2,
+    policyDigest: "c".repeat(64),
+    signerPolicyVersion: 7,
+    signerPolicyHash: `sha256:${"d".repeat(64)}`,
     requestedAt: "2026-09-03T00:00:00.000Z",
+    expiresAt: "2026-09-03T00:05:00.000Z",
   };
   return { publicKeyPem, signerKeyId, envelope, policy, request };
 }
@@ -83,6 +89,13 @@ describe("typed first-party adapter signer authorization", () => {
       trustedSignerKeys: { [value.signerKeyId]: value.publicKeyPem },
       request: value.request,
       capitalPolicy: value.policy,
+      capitalPolicyRef: { generation: 2, digest: "c".repeat(64) },
+      usage: {
+        dailySpentAtoms: "0",
+        rollingSpentAtoms: "0",
+        cadenceToday: 0,
+        currentDrawdownBps: 0,
+      },
       now: new Date("2026-09-03T00:00:00.000Z"),
     });
     expect(result.manifestDigest).toMatch(/^[a-f0-9]{64}$/u);
@@ -97,6 +110,13 @@ describe("typed first-party adapter signer authorization", () => {
         trustedSignerKeys: { [value.signerKeyId]: value.publicKeyPem },
         request: { ...value.request, ...patch },
         capitalPolicy: value.policy,
+        capitalPolicyRef: { generation: 2, digest: "c".repeat(64) },
+        usage: {
+          dailySpentAtoms: "0",
+          rollingSpentAtoms: "0",
+          cadenceToday: 0,
+          currentDrawdownBps: 0,
+        },
         now: new Date("2026-09-03T00:00:00.000Z"),
       });
     expect(() => authorize({ operation: "cycle.withdraw" })).toThrow("not declared");
@@ -114,10 +134,75 @@ describe("typed first-party adapter signer authorization", () => {
         trustedSignerKeys: { [value.signerKeyId]: value.publicKeyPem },
         request: { ...value.request, ...requestPatch },
         capitalPolicy: { ...value.policy, ...policyPatch },
+        capitalPolicyRef: { generation: 2, digest: "c".repeat(64) },
+        usage: {
+          dailySpentAtoms: "0",
+          rollingSpentAtoms: "0",
+          cadenceToday: 0,
+          currentDrawdownBps: 0,
+        },
         now: new Date("2026-09-03T00:00:00.000Z"),
       });
     expect(() => authorize({}, { mode: "deny-all" })).toThrow();
     expect(() => authorize({ amountAtoms: "1000001" })).toThrow("per-action limit exceeded");
     expect(() => authorize({ ownerApproved: false })).toThrow("requires owner approval");
+  });
+
+  it("rejects stale policy generations, expired requests, budgets, cadence, and drawdown", () => {
+    const value = fixture();
+    const authorize = (overrides: Record<string, unknown>) =>
+      authorizeFirstPartyAdapterSignerRequest({
+        envelope: value.envelope,
+        trustedSignerKeys: { [value.signerKeyId]: value.publicKeyPem },
+        request: value.request,
+        capitalPolicy: value.policy,
+        capitalPolicyRef: { generation: 2, digest: "c".repeat(64) },
+        usage: {
+          dailySpentAtoms: "0",
+          rollingSpentAtoms: "0",
+          cadenceToday: 0,
+          currentDrawdownBps: 0,
+          ...overrides,
+        },
+        now: new Date("2026-09-03T00:00:00.000Z"),
+      });
+    expect(() => authorize({ dailySpentAtoms: "5000000" })).toThrow("daily limit");
+    expect(() => authorize({ rollingSpentAtoms: "10000000" })).toThrow("rolling limit");
+    expect(() => authorize({ cadenceToday: 288 })).toThrow("cadence limit");
+    expect(() => authorize({ currentDrawdownBps: 1001 })).toThrow("drawdown limit");
+
+    expect(() =>
+      authorizeFirstPartyAdapterSignerRequest({
+        envelope: value.envelope,
+        trustedSignerKeys: { [value.signerKeyId]: value.publicKeyPem },
+        request: { ...value.request, policyGeneration: 1 },
+        capitalPolicy: value.policy,
+        capitalPolicyRef: { generation: 2, digest: "c".repeat(64) },
+        usage: {
+          dailySpentAtoms: "0",
+          rollingSpentAtoms: "0",
+          cadenceToday: 0,
+          currentDrawdownBps: 0,
+        },
+        now: new Date("2026-09-03T00:00:00.000Z"),
+      }),
+    ).toThrow("active CapitalPolicy generation");
+
+    expect(() =>
+      authorizeFirstPartyAdapterSignerRequest({
+        envelope: value.envelope,
+        trustedSignerKeys: { [value.signerKeyId]: value.publicKeyPem },
+        request: value.request,
+        capitalPolicy: value.policy,
+        capitalPolicyRef: { generation: 2, digest: "c".repeat(64) },
+        usage: {
+          dailySpentAtoms: "0",
+          rollingSpentAtoms: "0",
+          cadenceToday: 0,
+          currentDrawdownBps: 0,
+        },
+        now: new Date("2026-09-03T00:05:00.000Z"),
+      }),
+    ).toThrow("bounded execution window");
   });
 });
