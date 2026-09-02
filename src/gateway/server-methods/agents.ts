@@ -10,6 +10,7 @@ import {
   resolveAgentDir,
   resolveAgentWorkspaceDir,
 } from "../../agents/agent-scope.js";
+import { ensureAgentTruthStores } from "../../agents/agent-truth-store.js";
 import {
   detachFinancialAgentWorkspace,
   findFinancialAgentBindingForLocalAgent,
@@ -462,6 +463,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
     const entries = listAgentEntries(cfg);
     if (entries.length === 0) {
       await ensureAgentProfileState({ agentId: DEFAULT_AGENT_ID, source: "legacy-migration" });
+      await ensureAgentTruthStores({ agentId: DEFAULT_AGENT_ID, source: "legacy-migration" });
     } else {
       await ensureAgentProfileStates({
         agents: entries.map((entry) => ({
@@ -470,6 +472,14 @@ export const agentsHandlers: GatewayRequestHandlers = {
           source: "legacy-migration",
         })),
       });
+      await Promise.all(
+        entries.map((entry) =>
+          ensureAgentTruthStores({
+            agentId: normalizeAgentId(entry.id),
+            source: "legacy-migration",
+          }),
+        ),
+      );
     }
     const result = listAgentsForGateway(cfg);
     respond(true, result, undefined);
@@ -551,6 +561,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
       source: "creation",
       initialPayloads,
     });
+    await ensureAgentTruthStores({ agentId, source: "creation" });
 
     // Always write Name to IDENTITY.md; optionally include emoji/avatar.
     const safeName = sanitizeIdentityLine(rawName);
@@ -642,6 +653,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
       config: updatedEntry,
       source: "legacy-migration",
     });
+    await ensureAgentTruthStores({ agentId, source: "legacy-migration" });
 
     if (workspaceDir) {
       const skipBootstrap = Boolean(nextConfig.agents?.defaults?.skipBootstrap);

@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   findFinancialAgentBindingForLocalAgent: vi.fn(() => null),
   ensureAgentProfileState: vi.fn(async () => ({ agentId: "test-agent" })),
   ensureAgentProfileStates: vi.fn(async () => ({})),
+  ensureAgentTruthStores: vi.fn(async () => ({ agentId: "test-agent" })),
 }));
 
 vi.mock("../../config/config.js", () => ({
@@ -85,6 +86,10 @@ vi.mock("../../agents/financial-agent-binding.js", () => ({
 vi.mock("../../agents/agent-profile-store.js", () => ({
   ensureAgentProfileState: mocks.ensureAgentProfileState,
   ensureAgentProfileStates: mocks.ensureAgentProfileStates,
+}));
+
+vi.mock("../../agents/agent-truth-store.js", () => ({
+  ensureAgentTruthStores: mocks.ensureAgentTruthStores,
 }));
 
 vi.mock("../../utils.js", () => ({
@@ -272,6 +277,10 @@ describe("agents.list", () => {
       agentId: "main",
       source: "legacy-migration",
     });
+    expect(mocks.ensureAgentTruthStores).toHaveBeenCalledWith({
+      agentId: "main",
+      source: "legacy-migration",
+    });
     expect(respond).toHaveBeenCalledWith(true, expect.anything(), undefined);
   });
 
@@ -297,6 +306,15 @@ describe("agents.list", () => {
           source: "legacy-migration",
         },
       ],
+    });
+    expect(mocks.ensureAgentTruthStores).toHaveBeenCalledTimes(2);
+    expect(mocks.ensureAgentTruthStores).toHaveBeenCalledWith({
+      agentId: "alpha",
+      source: "legacy-migration",
+    });
+    expect(mocks.ensureAgentTruthStores).toHaveBeenCalledWith({
+      agentId: "beta",
+      source: "legacy-migration",
     });
   });
 });
@@ -337,6 +355,10 @@ describe("agents.create", () => {
         }),
       }),
     );
+    expect(mocks.ensureAgentTruthStores).toHaveBeenCalledWith({
+      agentId: "test-agent",
+      source: "creation",
+    });
     expect(mocks.ensureAgentWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({
         bootstrapFileOverrides: expect.objectContaining({
@@ -529,6 +551,10 @@ describe("agents.update", () => {
 
     expect(respond).toHaveBeenCalledWith(true, { ok: true, agentId: "test-agent" }, undefined);
     expect(mocks.writeConfigFile).toHaveBeenCalled();
+    expect(mocks.ensureAgentTruthStores).toHaveBeenCalledWith({
+      agentId: "test-agent",
+      source: "legacy-migration",
+    });
   });
 
   it("rejects updating a nonexistent agent", async () => {
