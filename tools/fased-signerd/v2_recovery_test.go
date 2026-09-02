@@ -78,6 +78,114 @@ func TestSignerRecoveryPackageRoundTripAndAuthenticationV1(t *testing.T) {
 	}
 }
 
+func TestSignerRecoveryRoundTripReexportAndRawExportForEverySolanaRoleV1(t *testing.T) {
+	roles := []string{"agent", "vault", "mining", "profile", "strategy"}
+	for _, role := range roles {
+		t.Run(role, func(t *testing.T) {
+			_, keys := openTestSignerV2(t)
+			walletID := role + "_source"
+			policy, err := lockedSignerAdminPolicy(walletID, role)
+			if err != nil {
+				t.Fatalf("create %s policy: %v", role, err)
+			}
+			wallet, _, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
+				WalletID: walletID, ExpectedVersion: 0, Policy: policy,
+			})
+			if err != nil {
+				t.Fatalf("create %s wallet: %v", role, err)
+			}
+
+			directory := t.TempDir()
+			password := []byte("correct horse battery staple")
+			exportPasswordPath := filepath.Join(directory, "password-export")
+			writeOwnerOnlyRecoveryTestFileV1(t, exportPasswordPath, password)
+			exported, err := keys.ExportRecoveryV1(walletID, signerWalletRecoveryExportRequestV2{
+				ExpectedPublicKey: wallet.PublicKey,
+				PasswordPath:      exportPasswordPath,
+			})
+			if err != nil {
+				t.Fatalf("export %s recovery package: %v", role, err)
+			}
+			packageRaw, err := json.Marshal(exported.Package)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recoveryPath := filepath.Join(directory, "recovery.json")
+			importPasswordPath := filepath.Join(directory, "password-import")
+			writeOwnerOnlyRecoveryTestFileV1(t, recoveryPath, packageRaw)
+			writeOwnerOnlyRecoveryTestFileV1(t, importPasswordPath, password)
+
+			restoredWalletID := role + "_restored"
+			restoredPolicy, err := lockedSignerAdminPolicy(restoredWalletID, role)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restored, policy, err := keys.ImportRecoveryV1(signerWalletRecoveryImportRequestV2{
+				WalletID:        restoredWalletID,
+				ExpectedVersion: 0,
+				Policy:          restoredPolicy,
+				RecoveryPath:    recoveryPath,
+				PasswordPath:    importPasswordPath,
+			})
+			if err != nil {
+				t.Fatalf("restore %s recovery package: %v", role, err)
+			}
+			if restored.PublicKey != wallet.PublicKey || policy.Role != role {
+				t.Fatalf("%s recovery changed identity: source=%s restored=%s policy=%#v", role, wallet.PublicKey, restored.PublicKey, policy)
+			}
+
+			reexportPasswordPath := filepath.Join(directory, "password-reexport")
+			writeOwnerOnlyRecoveryTestFileV1(t, reexportPasswordPath, password)
+			reexported, err := keys.ExportRecoveryV1(restoredWalletID, signerWalletRecoveryExportRequestV2{
+				ExpectedPublicKey: restored.PublicKey,
+				PasswordPath:      reexportPasswordPath,
+			})
+			if err != nil {
+				t.Fatalf("re-export restored %s wallet: %v", role, err)
+			}
+			if reexported.PublicKey != wallet.PublicKey || reexported.Role != role {
+				t.Fatalf("%s re-export changed identity: %#v", role, reexported)
+			}
+
+			rawDirectory := filepath.Join(directory, ".admin-export")
+			if err := os.Mkdir(rawDirectory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			rawPath := filepath.Join(rawDirectory, "key.json")
+			writeOwnerOnlyRecoveryTestFileV1(t, rawPath, nil)
+			result, err := keys.ExportRawV2(restoredWalletID, signerWalletRawExportRequestV2{
+				ExpectedPublicKey: restored.PublicKey,
+				Path:              rawPath,
+			})
+			if err != nil || !result.Written {
+				t.Fatalf("raw export restored %s wallet: result=%#v err=%v", role, result, err)
+			}
+			raw, err := os.ReadFile(rawPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonical, err := readSignerAdminSolanaKeypair(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatalf("%s raw export is not canonical Solana CLI JSON: %v", role, err)
+			}
+			var values []int
+			if err := json.Unmarshal(canonical, &values); err != nil || len(values) != 64 {
+				t.Fatalf("%s canonical raw export could not be decoded", role)
+			}
+			secret := make([]byte, len(values))
+			for index, value := range values {
+				secret[index] = byte(value)
+				values[index] = 0
+			}
+			if solana.PrivateKey(secret).PublicKey().String() != wallet.PublicKey {
+				t.Fatalf("%s raw export public key mismatch", role)
+			}
+			zeroBytes(secret)
+			zeroBytes(canonical)
+		})
+	}
+}
+
 func TestSignerRecoveryRejectsTamperingAndRoleChangeV1(t *testing.T) {
 	_, keys := openTestSignerV2(t)
 	policy, err := lockedSignerAdminPolicy("mining", "mining")

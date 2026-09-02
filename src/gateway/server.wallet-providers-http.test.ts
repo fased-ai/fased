@@ -2048,4 +2048,106 @@ describe("wallet providers HTTP", () => {
       },
     });
   });
+
+  test("rejects a Bond-bound Vault archive before signer or attachment mutation", async () => {
+    await withTempConfig({
+      cfg: {
+        ...baseConfig,
+        federation: { bond: { walletId: "bond-vault" } },
+        env: {
+          vars: {
+            FASED_WALLET_SOLANA_RPC_URL__BOND_VAULT: "https://rpc.example/solana",
+          },
+        },
+      },
+      run: async () => {
+        const current: PolicySignerPolicy = {
+          walletId: "bond_vault",
+          role: "vault",
+          version: 4,
+          operations: ["solana.nativeTransfer"],
+          programs: ["11111111111111111111111111111111"],
+          assets: [],
+          hash: `sha256:${"a".repeat(64)}`,
+        };
+        const next: PolicySignerPolicy = {
+          walletId: "bond_vault",
+          role: "vault",
+          version: 5,
+          operations: [],
+          programs: [],
+          assets: [],
+          hash: `sha256:${"b".repeat(64)}`,
+        };
+        const socketPath = path.join(String(process.env.FASED_STATE_DIR), "signer.sock");
+        process.env.FASED_WALLET_LOCAL_SIGNER_SOCKET = socketPath;
+        const signer = await createPolicySignerServer({ socketPath, current, next });
+        try {
+          upsertNamedWallet({
+            walletId: "bond-vault",
+            name: "Bond Vault",
+            providerId: "local-socket-signer",
+            addresses: { solana: "11111111111111111111111111111111" },
+            metadata: {
+              role: "vault",
+              purpose: "vault",
+              signerWalletId: "bond_vault",
+            },
+            env: process.env,
+          });
+          const server = createGatewayHttpServer({
+            canvasHost: null,
+            clients: new Set(),
+            controlUiEnabled: false,
+            controlUiBasePath: "/ui",
+            openAiChatCompletionsEnabled: false,
+            openResponsesEnabled: false,
+            handleHooksRequest: async () => false,
+            resolvedAuth,
+          });
+          const response = createResponse();
+          await dispatch(
+            server,
+            createRequest({
+              method: "DELETE",
+              path: "/api/wallet/wallets",
+              authorization: "Bearer root-token",
+              body: {
+                walletId: "bond-vault",
+                archive: true,
+                confirmWalletId: "bond-vault",
+              },
+            }),
+            response.res,
+          );
+          expect(response.res.statusCode).toBe(409);
+          expect(JSON.parse(response.getBody())).toMatchObject({
+            ok: false,
+            error: {
+              code: "bond_wallet_rotation_required",
+              message: expect.stringContaining("rotate or fully withdraw"),
+            },
+          });
+          expect(signer.requests).toEqual([]);
+          expect(
+            readWalletProviderRegistry(process.env).wallets.some(
+              (wallet) => wallet.id === "bond-vault",
+            ),
+          ).toBe(true);
+          const persisted = JSON.parse(
+            await readFile(String(process.env.FASED_CONFIG_PATH), "utf8"),
+          ) as {
+            federation?: { bond?: { walletId?: string } };
+            env?: { vars?: Record<string, string> };
+          };
+          expect(persisted.federation?.bond?.walletId).toBe("bond-vault");
+          expect(persisted.env?.vars?.FASED_WALLET_SOLANA_RPC_URL__BOND_VAULT).toBe(
+            "https://rpc.example/solana",
+          );
+        } finally {
+          await signer.close();
+        }
+      },
+    });
+  });
 });
