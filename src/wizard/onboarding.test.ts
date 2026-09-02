@@ -72,6 +72,7 @@ const readWalletProviderRegistry = vi.hoisted(() =>
 const upsertNamedWallet = vi.hoisted(() => vi.fn(() => ({ id: "wallet-1" })));
 const deleteNamedWallet = vi.hoisted(() => vi.fn());
 const checkNamedWalletDeletionSafety = vi.hoisted(() => vi.fn(() => ({ ok: true, details: null })));
+const checkNamedWalletFinancialAuthority = vi.hoisted(() => vi.fn(() => null));
 const setDefaultWallet = vi.hoisted(() => vi.fn());
 const setNamedWalletRole = vi.hoisted(() => vi.fn());
 const resolveWalletUserRole = vi.hoisted(() => vi.fn<() => unknown>(() => undefined));
@@ -205,6 +206,7 @@ vi.mock("../wallet/native-signer-lifecycle-context.js", () => ({
 }));
 
 vi.mock("../wallet/wallet-provider-registry.js", () => ({
+  checkNamedWalletFinancialAuthority,
   checkNamedWalletDeletionSafety,
   readWalletProviderRegistry,
   upsertNamedWallet,

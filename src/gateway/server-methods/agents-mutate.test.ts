@@ -32,6 +32,10 @@ const mocks = vi.hoisted(() => ({
   fsLstat: vi.fn(async (..._args: unknown[]) => null as import("node:fs").Stats | null),
   fsRealpath: vi.fn(async (p: string) => p),
   fsOpen: vi.fn(async () => ({}) as unknown),
+  detachFinancialAgentWorkspace: vi.fn((): { detached: boolean; fasedAgentRecord?: string } => ({
+    detached: false,
+  })),
+  findFinancialAgentBindingForLocalAgent: vi.fn(() => null),
 }));
 
 vi.mock("../../config/config.js", () => ({
@@ -69,6 +73,11 @@ vi.mock("../../config/sessions/paths.js", () => ({
 
 vi.mock("../../browser/trash.js", () => ({
   movePathToTrash: mocks.movePathToTrash,
+}));
+
+vi.mock("../../agents/financial-agent-binding.js", () => ({
+  detachFinancialAgentWorkspace: mocks.detachFinancialAgentWorkspace,
+  findFinancialAgentBindingForLocalAgent: mocks.findFinancialAgentBindingForLocalAgent,
 }));
 
 vi.mock("../../utils.js", () => ({
@@ -467,6 +476,7 @@ describe("agents.delete", () => {
     mocks.loadConfigReturn = {};
     mocks.findAgentEntryIndex.mockReturnValue(0);
     mocks.pruneAgentConfig.mockReturnValue({ config: {}, removedBindings: 2 });
+    mocks.detachFinancialAgentWorkspace.mockReturnValue({ detached: false });
   });
 
   it("deletes an existing agent and trashes files by default", async () => {
@@ -477,11 +487,38 @@ describe("agents.delete", () => {
 
     expect(respond).toHaveBeenCalledWith(
       true,
-      { ok: true, agentId: "test-agent", removedBindings: 2 },
+      {
+        ok: true,
+        agentId: "test-agent",
+        removedBindings: 2,
+        financialIdentity: { action: "none" },
+      },
       undefined,
     );
     expect(mocks.writeConfigFile).toHaveBeenCalled();
     // moveToTrashBestEffort calls fs.access then movePathToTrash for each dir
+    expect(mocks.movePathToTrash).toHaveBeenCalled();
+  });
+
+  it("detaches a financial identity while trashing only local Agent files", async () => {
+    mocks.detachFinancialAgentWorkspace.mockReturnValue({
+      detached: true,
+      fasedAgentRecord: "FinancialRecord1111111111111111111111111111",
+    });
+
+    const { respond, promise } = makeCall("agents.delete", { agentId: "test-agent" });
+    await promise;
+
+    expect(mocks.detachFinancialAgentWorkspace).toHaveBeenCalledWith({
+      localAgentId: "test-agent",
+    });
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        financialIdentity: expect.objectContaining({ action: "detached" }),
+      }),
+      undefined,
+    );
     expect(mocks.movePathToTrash).toHaveBeenCalled();
   });
 

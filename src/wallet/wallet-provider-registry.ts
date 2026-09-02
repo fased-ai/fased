@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { findFinancialAuthorityUse } from "../agents/financial-agent-binding.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import { throwLegacyEmbeddedKeystoreMigrationRequired } from "./legacy-embedded-keystore.js";
@@ -208,6 +209,78 @@ export class WalletDeletionBlockedError extends Error {
     this.name = "WalletDeletionBlockedError";
     this.details = details;
   }
+}
+
+export class WalletFinancialAuthorityBoundError extends Error {
+  readonly code = "wallet_financial_authority_rotation_required";
+  readonly fasedAgentRecord: string;
+  readonly role: "controller" | "recovery";
+
+  constructor(params: {
+    walletId: string;
+    fasedAgentRecord: string;
+    role: "controller" | "recovery";
+  }) {
+    super(
+      `${params.walletId} is the current ${params.role} for financial Agent ${params.fasedAgentRecord}; finalize and read back the authority rotation before archiving it`,
+    );
+    this.name = "WalletFinancialAuthorityBoundError";
+    this.fasedAgentRecord = params.fasedAgentRecord;
+    this.role = params.role;
+  }
+}
+
+function assertWalletIsNotFinancialAuthority(params: {
+  wallet: WalletNamedWallet | undefined;
+  env: NodeJS.ProcessEnv;
+}): void {
+  const address = params.wallet?.addresses?.solana;
+  if (!address) {
+    return;
+  }
+  const use = findFinancialAuthorityUse(address, params.env);
+  if (use) {
+    throw new WalletFinancialAuthorityBoundError({
+      walletId: params.wallet!.id,
+      fasedAgentRecord: use.fasedAgentRecord,
+      role: use.role,
+    });
+  }
+}
+
+function assertBoundWalletMutationSafe(params: {
+  existing: WalletNamedWallet | undefined;
+  candidate: WalletNamedWallet;
+  env: NodeJS.ProcessEnv;
+}): void {
+  const existingAddress = params.existing?.addresses?.solana;
+  if (!existingAddress) {
+    return;
+  }
+  const use = findFinancialAuthorityUse(existingAddress, params.env);
+  if (
+    use &&
+    (params.candidate.addresses?.solana !== existingAddress ||
+      resolveWalletUserRole(params.candidate) !== resolveWalletUserRole(params.existing))
+  ) {
+    throw new WalletFinancialAuthorityBoundError({
+      walletId: params.existing!.id,
+      fasedAgentRecord: use.fasedAgentRecord,
+      role: use.role,
+    });
+  }
+}
+
+export function checkNamedWalletFinancialAuthority(params: {
+  walletId: string;
+  env?: NodeJS.ProcessEnv;
+}): { fasedAgentRecord: string; role: "controller" | "recovery" } | null {
+  const env = params.env ?? process.env;
+  const wallet = readWalletProviderRegistry(env).wallets.find(
+    (entry) => entry.id === params.walletId.trim(),
+  );
+  const address = wallet?.addresses?.solana;
+  return address ? findFinancialAuthorityUse(address, env) : null;
 }
 
 function nowIso(): string {
@@ -746,6 +819,7 @@ export function upsertNamedWallet(params: {
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
+  assertBoundWalletMutationSafe({ existing, candidate: next, env });
   assertWalletRoleCardinality(registry.wallets, next);
   registry.wallets = [...registry.wallets.filter((entry) => entry.id !== next.id), next].toSorted(
     (a, b) => a.createdAt.localeCompare(b.createdAt),
@@ -773,6 +847,7 @@ export function deleteNamedWallet(params: {
   }
   assertNamedWalletDeletionSafe({ walletId, env });
   const targetWallet = registry.wallets.find((wallet) => wallet.id === walletId);
+  assertWalletIsNotFinancialAuthority({ wallet: targetWallet, env });
   if (resolveWalletUserRole(targetWallet) === "mining") {
     throw new Error(
       "Mining wallets cannot be deleted directly; use Retire and replace Mining wallet so signer acknowledgement precedes registry detachment",
@@ -833,6 +908,7 @@ export function replaceRetiredMiningWallet(params: {
   if (resolveWalletUserRole(source) !== "mining") {
     throw new Error("source registration is not the active Mining wallet");
   }
+  assertWalletIsNotFinancialAuthority({ wallet: source, env });
   if (
     params.successor.id === sourceWalletId ||
     registry.wallets.some((wallet) => wallet.id === params.successor.id)
@@ -941,6 +1017,7 @@ export function setNamedWalletRole(params: {
     },
     updatedAt: nowIso(),
   };
+  assertBoundWalletMutationSafe({ existing: current, candidate, env });
   assertWalletRoleCardinality(registry.wallets, candidate);
   registry.wallets = registry.wallets.map((wallet) =>
     wallet.id === walletId ? candidate : wallet,

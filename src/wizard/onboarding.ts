@@ -51,6 +51,7 @@ import { discoverSolanaNetworkFromRpc } from "../wallet/solana-network-discovery
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
+  checkNamedWalletFinancialAuthority,
   checkNamedWalletDeletionSafety,
   deleteNamedWallet,
   nextRoleWalletIdentity,
@@ -1491,6 +1492,21 @@ export async function runOnboardingWizard(
             ...nextConfig.env?.vars,
             FASED_HOST_PROFILE: hostProfile,
           } as NodeJS.ProcessEnv;
+          const financialAuthority = checkNamedWalletFinancialAuthority({
+            walletId: targetWallet.id,
+            env: archiveEnv,
+          });
+          if (financialAuthority) {
+            await prompter.note(
+              `This wallet is the current ${financialAuthority.role} for financial Agent ${financialAuthority.fasedAgentRecord}. Finalize and read back the authority rotation before archiving it.`,
+              "Authority rotation required",
+            );
+            addAnotherWallet = await prompter.confirm({
+              message: "Run another wallet setup action?",
+              initialValue: false,
+            });
+            continue;
+          }
           const deletionSafety = checkNamedWalletDeletionSafety({
             walletId: targetWallet.id,
             env: archiveEnv,
