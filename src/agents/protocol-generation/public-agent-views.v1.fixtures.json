@@ -1,0 +1,660 @@
+{
+  "schema": "fased.agent-public-view-fixtures.v1",
+  "sourceCommit": "9c1370d6d25248a796cc97817c133fa64e6ce193",
+  "valid": [
+    {
+      "path": "fixtures/public-agent-views/v1/valid/bound-public-mining-agent.json",
+      "scenario": "bound-public-mining-agent",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "0000000000000000000000000000000000000000000000000000000000000002",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "active",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "networkAgentId": "1000000000000000000000000000000000000000000000000000000000000002",
+        "controller": "11111111111111111111111111111111",
+        "recoveryAuthority": "ComputeBudget111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "createdSlot": "100",
+        "createdUnixTimestamp": "1788350400",
+        "namespace": {
+          "binding": "SysvarRent111111111111111111111111111111111",
+          "networkAgentId": "1000000000000000000000000000000000000000000000000000000000000002",
+          "name": "Wally",
+          "handle": "@wally",
+          "ticker": "WALL",
+          "boundSlot": "110",
+          "recordAuthorityGeneration": "1"
+        },
+        "miningBinding": {
+          "binding": "Vote111111111111111111111111111111111111111",
+          "satAgentRecord": "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT",
+          "satcoinProgramId": "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
+          "permanentMiningId": "11111111111111111111111111111111",
+          "boundSlot": "120"
+        },
+        "runtime": {
+          "state": "current",
+          "nodeId": "node:wally-1",
+          "runtimeVersion": "0.1.0",
+          "coreHash": "2000000000000000000000000000000000000000000000000000000000000002",
+          "attestedAt": "2026-09-02T11:55:00.000Z",
+          "expiresAt": "2026-09-02T12:55:00.000Z"
+        },
+        "conflicts": [],
+        "evidence": [
+          {
+            "schema": "fased.agent-evidence-ref.v1",
+            "evidenceId": "agent-record:120",
+            "source": "agent_identity_program",
+            "trust": "finalized",
+            "observedAt": "2026-09-02T12:00:00.000Z",
+            "slot": "120",
+            "digestSha256": "3000000000000000000000000000000000000000000000000000000000000002"
+          }
+        ]
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/complete-drain.json",
+      "scenario": "complete-drain",
+      "value": {
+        "schema": "fased.agent-mining-view.v1",
+        "viewId": "4000000000000000000000000000000000000000000000000000000000000003",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "active",
+        "entryState": "drained",
+        "satAgentRecord": "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT",
+        "satcoinProgramId": "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
+        "permanentMiningId": "11111111111111111111111111111111",
+        "controller": "11111111111111111111111111111111",
+        "activeMinerAuthority": "11111111111111111111111111111111",
+        "runtimeExecutor": "ComputeBudget111111111111111111111111111111",
+        "keeperFeePayer": "SysvarRent111111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "runtimeGeneration": "1",
+        "policyGeneration": "14",
+        "componentGenerations": {
+          "tupleFormat": "1",
+          "schema": "2",
+          "protocol": "2",
+          "cycle": "2",
+          "economics": "3",
+          "penalty": "2",
+          "bond": "2",
+          "keeper": "2",
+          "receipt": "2",
+          "signerCapability": "2"
+        },
+        "lifetimeCounters": {
+          "entered": "12",
+          "valid": "12",
+          "missed": "0",
+          "penalized": "0",
+          "protocolFault": "0"
+        },
+        "currentEconomicEpochCounters": {
+          "entered": "12",
+          "valid": "12",
+          "missed": "0",
+          "penalized": "0",
+          "protocolFault": "0"
+        },
+        "lifetimeRewards": {
+          "baseSatRaw": "120000",
+          "performanceSatRaw": "20000",
+          "deterministicSolLamports": "3000000",
+          "performanceSolLamports": "500000",
+          "treasurySolLamports": "800000",
+          "penaltySolLamports": "0",
+          "keeperCostLamports": "25000"
+        },
+        "currentEconomicEpochRewards": {
+          "baseSatRaw": "120000",
+          "performanceSatRaw": "20000",
+          "deterministicSolLamports": "3000000",
+          "performanceSolLamports": "500000",
+          "treasurySolLamports": "800000",
+          "penaltySolLamports": "0",
+          "keeperCostLamports": "25000"
+        },
+        "capital": {
+          "activeCapitalLamports": "0",
+          "committedCapitalLamports": "0",
+          "operatingReserveLamports": "0",
+          "capitalTimeLamportCycles": "12000000000"
+        },
+        "operations": {
+          "pendingCommitCount": "0",
+          "pendingClaimCount": "0",
+          "unresolvedCycleCount": "0",
+          "keeperMonitor": "offline",
+          "keeperBroadcast": "disabled"
+        },
+        "receipts": {
+          "lastRecordedCycleId": "5960384",
+          "receiptSequence": "12",
+          "currentEconomicEpochId": "1",
+          "currentEconomicEpochReceiptRoot": "5000000000000000000000000000000000000000000000000000000000000003",
+          "closedEconomicEpochsRoot": "6000000000000000000000000000000000000000000000000000000000000003"
+        },
+        "strikes": {
+          "rollingStrikeCount": "0",
+          "cleanActiveDays": "12"
+        },
+        "conflicts": [],
+        "evidence": []
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/conflicting-server-chain-binding.json",
+      "scenario": "conflicting-server-chain-binding",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "0000000000000000000000000000000000000000000000000000000000000005",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "conflict",
+        "lifecycle": "active",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "networkAgentId": "1000000000000000000000000000000000000000000000000000000000000005",
+        "controller": "11111111111111111111111111111111",
+        "recoveryAuthority": "ComputeBudget111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "createdSlot": "100",
+        "createdUnixTimestamp": "1788350400",
+        "conflicts": [
+          {
+            "code": "namespace:mismatch",
+            "message": "Signed server handle disagrees with the finalized namespace binding.",
+            "evidenceIds": ["agent-record:140", "network-attestation:140"]
+          }
+        ],
+        "evidence": [
+          {
+            "schema": "fased.agent-evidence-ref.v1",
+            "evidenceId": "agent-record:140",
+            "source": "agent_identity_program",
+            "trust": "finalized",
+            "observedAt": "2026-09-02T12:00:00.000Z",
+            "slot": "140"
+          },
+          {
+            "schema": "fased.agent-evidence-ref.v1",
+            "evidenceId": "network-attestation:140",
+            "source": "fased_network",
+            "trust": "signed",
+            "observedAt": "2026-09-02T11:59:00.000Z",
+            "expiresAt": "2026-09-02T12:59:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/controller-rotation.json",
+      "scenario": "controller-rotation",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "0000000000000000000000000000000000000000000000000000000000000004",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "active",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "controller": "ComputeBudget111111111111111111111111111111",
+        "recoveryAuthority": "SysvarRent111111111111111111111111111111111",
+        "authorityGeneration": "2",
+        "createdSlot": "100",
+        "createdUnixTimestamp": "1788350400",
+        "runtime": {
+          "state": "absent"
+        },
+        "conflicts": [],
+        "evidence": [
+          {
+            "schema": "fased.agent-evidence-ref.v1",
+            "evidenceId": "controller-rotation:2",
+            "source": "agent_identity_program",
+            "trust": "finalized",
+            "observedAt": "2026-09-02T12:00:00.000Z",
+            "slot": "130",
+            "transactionSignature": "ControllerRotationSignature2"
+          }
+        ]
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/mining-only-record.json",
+      "scenario": "mining-only-record",
+      "value": {
+        "schema": "fased.agent-mining-view.v1",
+        "viewId": "4000000000000000000000000000000000000000000000000000000000000001",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "active",
+        "entryState": "enabled",
+        "satAgentRecord": "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT",
+        "satcoinProgramId": "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
+        "permanentMiningId": "11111111111111111111111111111111",
+        "controller": "11111111111111111111111111111111",
+        "activeMinerAuthority": "11111111111111111111111111111111",
+        "runtimeExecutor": "ComputeBudget111111111111111111111111111111",
+        "keeperFeePayer": "SysvarRent111111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "runtimeGeneration": "1",
+        "policyGeneration": "14",
+        "componentGenerations": {
+          "tupleFormat": "1",
+          "schema": "2",
+          "protocol": "2",
+          "cycle": "2",
+          "economics": "3",
+          "penalty": "2",
+          "bond": "2",
+          "keeper": "2",
+          "receipt": "2",
+          "signerCapability": "2"
+        },
+        "lifetimeCounters": {
+          "entered": "100",
+          "valid": "99",
+          "missed": "1",
+          "penalized": "1",
+          "protocolFault": "0"
+        },
+        "currentEconomicEpochCounters": {
+          "entered": "12",
+          "valid": "12",
+          "missed": "0",
+          "penalized": "0",
+          "protocolFault": "0"
+        },
+        "lifetimeRewards": {
+          "baseSatRaw": "1000000",
+          "performanceSatRaw": "200000",
+          "deterministicSolLamports": "30000000",
+          "performanceSolLamports": "5000000",
+          "treasurySolLamports": "8000000",
+          "penaltySolLamports": "10000",
+          "keeperCostLamports": "250000"
+        },
+        "currentEconomicEpochRewards": {
+          "baseSatRaw": "120000",
+          "performanceSatRaw": "20000",
+          "deterministicSolLamports": "3000000",
+          "performanceSolLamports": "500000",
+          "treasurySolLamports": "800000",
+          "penaltySolLamports": "0",
+          "keeperCostLamports": "25000"
+        },
+        "capital": {
+          "activeCapitalLamports": "1000000000",
+          "committedCapitalLamports": "0",
+          "operatingReserveLamports": "100000000",
+          "capitalTimeLamportCycles": "99000000000"
+        },
+        "operations": {
+          "pendingCommitCount": "0",
+          "pendingClaimCount": "0",
+          "unresolvedCycleCount": "0",
+          "keeperMonitor": "healthy",
+          "keeperBroadcast": "eligible"
+        },
+        "receipts": {
+          "lastRecordedCycleId": "5960384",
+          "receiptSequence": "99",
+          "currentEconomicEpochId": "1",
+          "currentEconomicEpochReceiptRoot": "5000000000000000000000000000000000000000000000000000000000000001",
+          "closedEconomicEpochsRoot": "6000000000000000000000000000000000000000000000000000000000000001"
+        },
+        "strikes": {
+          "rollingStrikeCount": "0",
+          "cleanActiveDays": "12"
+        },
+        "conflicts": [],
+        "evidence": [
+          {
+            "schema": "fased.agent-evidence-ref.v1",
+            "evidenceId": "sat-agent-record:5960384",
+            "source": "satcoin_program",
+            "trust": "finalized",
+            "observedAt": "2026-09-02T12:00:00.000Z",
+            "slot": "5960384"
+          }
+        ]
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/mining-ready-qualification.json",
+      "scenario": "mining-ready-qualification",
+      "value": {
+        "schema": "fased.agent-qualification-view.v1",
+        "viewId": "7000000000000000000000000000000000000000000000000000000000000001",
+        "evaluatedAt": "2026-09-02T12:00:00.000Z",
+        "purpose": "mining_ready",
+        "status": "pass",
+        "policyId": "fased:mining-ready:v1",
+        "policyGeneration": "1",
+        "policyDigestSha256": "8000000000000000000000000000000000000000000000000000000000000001",
+        "subject": {
+          "satAgentRecord": "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT"
+        },
+        "gates": [
+          {
+            "gate": "mining:record-active",
+            "status": "pass",
+            "observed": "active",
+            "required": "active",
+            "evidenceIds": ["sat-agent-record:5960384"]
+          }
+        ],
+        "conflicts": [],
+        "evidence": [
+          {
+            "schema": "fased.agent-evidence-ref.v1",
+            "evidenceId": "sat-agent-record:5960384",
+            "source": "satcoin_program",
+            "trust": "finalized",
+            "observedAt": "2026-09-02T12:00:00.000Z",
+            "slot": "5960384"
+          }
+        ]
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/network-only-agent.json",
+      "scenario": "network-only-agent",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "0000000000000000000000000000000000000000000000000000000000000001",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "network_only",
+        "networkAgentId": "1000000000000000000000000000000000000000000000000000000000000001",
+        "runtime": {
+          "state": "current",
+          "nodeId": "node:network-only-1",
+          "runtimeVersion": "0.1.0",
+          "coreHash": "2000000000000000000000000000000000000000000000000000000000000001",
+          "attestedAt": "2026-09-02T11:55:00.000Z",
+          "expiresAt": "2026-09-02T12:55:00.000Z"
+        },
+        "conflicts": [],
+        "evidence": [
+          {
+            "schema": "fased.agent-evidence-ref.v1",
+            "evidenceId": "network-attestation:1",
+            "source": "fased_network",
+            "trust": "signed",
+            "observedAt": "2026-09-02T11:55:00.000Z",
+            "authority": "network-authority:1",
+            "digestSha256": "3000000000000000000000000000000000000000000000000000000000000001",
+            "expiresAt": "2026-09-02T12:55:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/paused-entry.json",
+      "scenario": "paused-entry",
+      "value": {
+        "schema": "fased.agent-mining-view.v1",
+        "viewId": "4000000000000000000000000000000000000000000000000000000000000002",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "active",
+        "entryState": "paused",
+        "satAgentRecord": "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT",
+        "satcoinProgramId": "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF",
+        "permanentMiningId": "11111111111111111111111111111111",
+        "controller": "11111111111111111111111111111111",
+        "activeMinerAuthority": "11111111111111111111111111111111",
+        "runtimeExecutor": "ComputeBudget111111111111111111111111111111",
+        "keeperFeePayer": "SysvarRent111111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "runtimeGeneration": "1",
+        "policyGeneration": "14",
+        "componentGenerations": {
+          "tupleFormat": "1",
+          "schema": "2",
+          "protocol": "2",
+          "cycle": "2",
+          "economics": "3",
+          "penalty": "2",
+          "bond": "2",
+          "keeper": "2",
+          "receipt": "2",
+          "signerCapability": "2"
+        },
+        "lifetimeCounters": {
+          "entered": "4",
+          "valid": "3",
+          "missed": "1",
+          "penalized": "1",
+          "protocolFault": "0"
+        },
+        "currentEconomicEpochCounters": {
+          "entered": "4",
+          "valid": "3",
+          "missed": "1",
+          "penalized": "1",
+          "protocolFault": "0"
+        },
+        "lifetimeRewards": {
+          "baseSatRaw": "30000",
+          "performanceSatRaw": "4000",
+          "deterministicSolLamports": "900000",
+          "performanceSolLamports": "-100000",
+          "treasurySolLamports": "250000",
+          "penaltySolLamports": "10000",
+          "keeperCostLamports": "12000"
+        },
+        "currentEconomicEpochRewards": {
+          "baseSatRaw": "30000",
+          "performanceSatRaw": "4000",
+          "deterministicSolLamports": "900000",
+          "performanceSolLamports": "-100000",
+          "treasurySolLamports": "250000",
+          "penaltySolLamports": "10000",
+          "keeperCostLamports": "12000"
+        },
+        "capital": {
+          "activeCapitalLamports": "990000000",
+          "committedCapitalLamports": "0",
+          "operatingReserveLamports": "90000000",
+          "capitalTimeLamportCycles": "3960000000"
+        },
+        "operations": {
+          "pendingCommitCount": "0",
+          "pendingClaimCount": "1",
+          "unresolvedCycleCount": "0",
+          "keeperMonitor": "degraded",
+          "keeperBroadcast": "ineligible"
+        },
+        "receipts": {
+          "lastRecordedCycleId": "5960384",
+          "receiptSequence": "4",
+          "currentEconomicEpochId": "1",
+          "currentEconomicEpochReceiptRoot": "5000000000000000000000000000000000000000000000000000000000000002",
+          "closedEconomicEpochsRoot": "6000000000000000000000000000000000000000000000000000000000000002"
+        },
+        "strikes": {
+          "rollingStrikeCount": "1",
+          "cleanActiveDays": "0"
+        },
+        "conflicts": [],
+        "evidence": []
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/retired-agent.json",
+      "scenario": "retired-agent",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "0000000000000000000000000000000000000000000000000000000000000006",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "retired",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "controller": "11111111111111111111111111111111",
+        "recoveryAuthority": "ComputeBudget111111111111111111111111111111",
+        "authorityGeneration": "3",
+        "createdSlot": "100",
+        "createdUnixTimestamp": "1788350400",
+        "runtime": {
+          "state": "absent"
+        },
+        "conflicts": [],
+        "evidence": []
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/valid/stale-runtime.json",
+      "scenario": "stale-runtime",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "0000000000000000000000000000000000000000000000000000000000000003",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "stale",
+        "integrity": "verified",
+        "lifecycle": "active",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "controller": "11111111111111111111111111111111",
+        "recoveryAuthority": "ComputeBudget111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "createdSlot": "100",
+        "createdUnixTimestamp": "1788350400",
+        "runtime": {
+          "state": "stale",
+          "nodeId": "node:wally-old",
+          "runtimeVersion": "0.0.9",
+          "coreHash": "2000000000000000000000000000000000000000000000000000000000000003",
+          "attestedAt": "2026-08-31T12:00:00.000Z",
+          "expiresAt": "2026-08-31T13:00:00.000Z"
+        },
+        "conflicts": [],
+        "evidence": []
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "path": "fixtures/public-agent-views/v1/invalid/conflict-without-evidence.json",
+      "scenario": "reject-empty-conflict",
+      "expectedErrorIncludes": "conflicts requires at least 1 items",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "9000000000000000000000000000000000000000000000000000000000000003",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "conflict",
+        "lifecycle": "active",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "controller": "11111111111111111111111111111111",
+        "recoveryAuthority": "ComputeBudget111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "createdSlot": "100",
+        "createdUnixTimestamp": "1788350400",
+        "conflicts": [],
+        "evidence": []
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/invalid/later-market-field.json",
+      "scenario": "reject-later-market-field",
+      "expectedErrorIncludes": "agentTokenMint is not allowed",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "9000000000000000000000000000000000000000000000000000000000000001",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "active",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "controller": "11111111111111111111111111111111",
+        "recoveryAuthority": "ComputeBudget111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "createdSlot": "100",
+        "createdUnixTimestamp": "1788350400",
+        "agentTokenMint": "11111111111111111111111111111111",
+        "conflicts": [],
+        "evidence": []
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/invalid/mining-qualification-without-miner.json",
+      "scenario": "reject-mining-qualification-without-miner",
+      "expectedErrorIncludes": "subject.satAgentRecord is required",
+      "value": {
+        "schema": "fased.agent-qualification-view.v1",
+        "viewId": "9000000000000000000000000000000000000000000000000000000000000005",
+        "evaluatedAt": "2026-09-02T12:00:00.000Z",
+        "purpose": "mining_ready",
+        "status": "pending",
+        "policyId": "fased:mining-ready:v1",
+        "policyGeneration": "1",
+        "policyDigestSha256": "8000000000000000000000000000000000000000000000000000000000000001",
+        "subject": {},
+        "gates": [
+          {
+            "gate": "mining:record-present",
+            "status": "pending",
+            "evidenceIds": []
+          }
+        ],
+        "conflicts": [],
+        "evidence": []
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/invalid/network-only-chain-claim.json",
+      "scenario": "reject-network-only-chain-claim",
+      "expectedErrorIncludes": "fasedAgentRecord is forbidden",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "9000000000000000000000000000000000000000000000000000000000000004",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "network_only",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "networkAgentId": "1000000000000000000000000000000000000000000000000000000000000004",
+        "runtime": {
+          "state": "absent"
+        },
+        "conflicts": [],
+        "evidence": []
+      }
+    },
+    {
+      "path": "fixtures/public-agent-views/v1/invalid/private-secret-field.json",
+      "scenario": "reject-private-secret-field",
+      "expectedErrorIncludes": "privateKey is not allowed",
+      "value": {
+        "schema": "fased.agent-identity-view.v1",
+        "viewId": "9000000000000000000000000000000000000000000000000000000000000002",
+        "observedAt": "2026-09-02T12:00:00.000Z",
+        "freshness": "fresh",
+        "integrity": "verified",
+        "lifecycle": "active",
+        "fasedAgentRecord": "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev",
+        "controller": "11111111111111111111111111111111",
+        "recoveryAuthority": "ComputeBudget111111111111111111111111111111",
+        "authorityGeneration": "1",
+        "createdSlot": "100",
+        "createdUnixTimestamp": "1788350400",
+        "privateKey": "plaintext-secret",
+        "conflicts": [],
+        "evidence": []
+      }
+    }
+  ]
+}
