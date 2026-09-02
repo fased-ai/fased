@@ -332,8 +332,17 @@ function createState(params: {
   config?: AgentConfig;
   source: "creation" | "legacy-migration";
   timestamp: string;
+  initialPayloads?: AgentProfilePayloadByKind;
 }): AgentProfileState {
-  const payloads = createLegacyProfilePayloads({ agentId: params.agentId, config: params.config });
+  if (params.initialPayloads && params.source !== "creation") {
+    throw new Error("Initial Agent profile payloads are permitted only during creation");
+  }
+  const payloads =
+    params.initialPayloads ??
+    createLegacyProfilePayloads({ agentId: params.agentId, config: params.config });
+  if (params.source === "creation" && payloads.capitalPolicy.mode !== "deny-all") {
+    throw new Error("New Agent profiles must begin with deny-all financial authority");
+  }
   const active = {} as AgentProfileState["active"];
   const history = {} as AgentProfileState["history"];
   for (const kind of AGENT_PROFILE_KINDS) {
@@ -384,6 +393,7 @@ export async function ensureAgentProfileState(params: {
   source?: "creation" | "legacy-migration";
   env?: NodeJS.ProcessEnv;
   now?: Date;
+  initialPayloads?: AgentProfilePayloadByKind;
 }): Promise<AgentProfileState> {
   const agentId = requireCanonicalAgentId(params.agentId);
   const states = await ensureAgentProfileStates({
@@ -392,6 +402,7 @@ export async function ensureAgentProfileState(params: {
         agentId,
         config: params.config,
         source: params.source ?? "legacy-migration",
+        initialPayloads: params.initialPayloads,
       },
     ],
     env: params.env,
@@ -409,6 +420,7 @@ export async function ensureAgentProfileStates(params: {
     agentId: string;
     config?: AgentConfig;
     source: "creation" | "legacy-migration";
+    initialPayloads?: AgentProfilePayloadByKind;
   }>;
   env?: NodeJS.ProcessEnv;
   now?: Date;
@@ -439,6 +451,7 @@ export async function ensureAgentProfileStates(params: {
           config: entry.config,
           source: entry.source,
           timestamp,
+          initialPayloads: entry.initialPayloads,
         });
       if (!existing) {
         store.agents[entry.agentId] = state;

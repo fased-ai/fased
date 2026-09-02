@@ -76,6 +76,33 @@ function expectSubagentAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
 }
 
 describe("ensureAgentWorkspace", () => {
+  it("uses reviewed bootstrap overrides only for missing workspace files", async () => {
+    const tempDir = await makeTempWorkspace("fased-workspace-");
+    await writeWorkspaceFile({
+      dir: tempDir,
+      name: DEFAULT_AGENTS_FILENAME,
+      content: "owner content",
+    });
+
+    await ensureAgentWorkspace({
+      dir: tempDir,
+      ensureBootstrapFiles: true,
+      bootstrapFileOverrides: {
+        "AGENTS.md": "template agents",
+        "SOUL.md": "template soul",
+        "TOOLS.md": "template tools",
+      },
+    });
+
+    expect(await fs.readFile(path.join(tempDir, DEFAULT_AGENTS_FILENAME), "utf8")).toBe(
+      "owner content",
+    );
+    expect(await fs.readFile(path.join(tempDir, "SOUL.md"), "utf8")).toBe("template soul");
+    expect(await fs.readFile(path.join(tempDir, DEFAULT_TOOLS_FILENAME), "utf8")).toBe(
+      "template tools",
+    );
+  });
+
   it("creates BOOTSTRAP.md and records a seeded marker for brand new workspaces", async () => {
     const tempDir = await makeTempWorkspace("fased-workspace-");
 

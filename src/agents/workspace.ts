@@ -372,6 +372,7 @@ async function ensureGitRepo(dir: string, isBrandNewWorkspace: boolean) {
 export async function ensureAgentWorkspace(params?: {
   dir?: string;
   ensureBootstrapFiles?: boolean;
+  bootstrapFileOverrides?: Partial<Record<"AGENTS.md" | "SOUL.md" | "TOOLS.md", string>>;
 }): Promise<{
   dir: string;
   agentsPath?: string;
@@ -420,9 +421,15 @@ export async function ensureAgentWorkspace(params?: {
     return existing.every((v) => !v);
   })();
 
-  const agentsTemplate = await loadTemplate(DEFAULT_AGENTS_FILENAME);
-  const soulTemplate = await loadTemplate(DEFAULT_SOUL_FILENAME);
-  const toolsTemplate = await loadTemplate(DEFAULT_TOOLS_FILENAME);
+  const agentsTemplate =
+    params.bootstrapFileOverrides?.[DEFAULT_AGENTS_FILENAME] ??
+    (await loadTemplate(DEFAULT_AGENTS_FILENAME));
+  const soulTemplate =
+    params.bootstrapFileOverrides?.[DEFAULT_SOUL_FILENAME] ??
+    (await loadTemplate(DEFAULT_SOUL_FILENAME));
+  const toolsTemplate =
+    params.bootstrapFileOverrides?.[DEFAULT_TOOLS_FILENAME] ??
+    (await loadTemplate(DEFAULT_TOOLS_FILENAME));
   const identityTemplate = await loadTemplate(DEFAULT_IDENTITY_FILENAME);
   const userTemplate = await loadTemplate(DEFAULT_USER_FILENAME);
   const heartbeatTemplate = await loadTemplate(DEFAULT_HEARTBEAT_FILENAME);

@@ -15,6 +15,11 @@ import {
   findFinancialAgentBindingForLocalAgent,
 } from "../../agents/financial-agent-binding.js";
 import {
+  DEFAULT_PERSONA_TEMPLATE_ID,
+  buildTemplateProfilePayloads,
+  getPersonaTemplate,
+} from "../../agents/persona-templates.js";
+import {
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
@@ -507,6 +512,8 @@ export const agentsHandlers: GatewayRequestHandlers = {
 
     const workspaceDir = resolveUserPath(String(params.workspace ?? "").trim());
     const model = resolveOptionalStringParam(params.model);
+    const personaTemplateId = params.personaTemplateId ?? DEFAULT_PERSONA_TEMPLATE_ID;
+    const personaTemplate = getPersonaTemplate(personaTemplateId);
 
     // Resolve agentDir against the config we're about to persist (vs the pre-write config),
     // so subsequent resolutions can't disagree about the agent's directory.
@@ -522,14 +529,28 @@ export const agentsHandlers: GatewayRequestHandlers = {
     // Ensure workspace & transcripts exist BEFORE writing config so a failure
     // here does not leave a broken config entry behind.
     const skipBootstrap = Boolean(nextConfig.agents?.defaults?.skipBootstrap);
-    await ensureAgentWorkspace({ dir: workspaceDir, ensureBootstrapFiles: !skipBootstrap });
+    await ensureAgentWorkspace({
+      dir: workspaceDir,
+      ensureBootstrapFiles: !skipBootstrap,
+      bootstrapFileOverrides: personaTemplate.workspaceFiles,
+    });
     await fs.mkdir(resolveSessionTranscriptsDirForAgent(agentId), { recursive: true });
 
     await writeConfigFile(nextConfig);
     const createdEntry = listAgentEntries(nextConfig).find(
       (entry) => normalizeAgentId(entry.id) === agentId,
     );
-    await ensureAgentProfileState({ agentId, config: createdEntry, source: "creation" });
+    const initialPayloads = buildTemplateProfilePayloads({
+      templateId: personaTemplateId,
+      displayName: rawName,
+      taskModelRoutes: createdEntry?.taskModels,
+    });
+    await ensureAgentProfileState({
+      agentId,
+      config: createdEntry,
+      source: "creation",
+      initialPayloads,
+    });
 
     // Always write Name to IDENTITY.md; optionally include emoji/avatar.
     const safeName = sanitizeIdentityLine(rawName);
@@ -547,7 +568,14 @@ export const agentsHandlers: GatewayRequestHandlers = {
 
     respond(
       true,
-      { ok: true, agentId, name: rawName, workspace: workspaceDir, ...(model ? { model } : {}) },
+      {
+        ok: true,
+        agentId,
+        name: rawName,
+        workspace: workspaceDir,
+        ...(model ? { model } : {}),
+        personaTemplateId,
+      },
       undefined,
     );
   },

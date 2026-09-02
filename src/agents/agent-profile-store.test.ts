@@ -11,6 +11,7 @@ import {
   readActiveAgentProfile,
   readAgentProfileState,
 } from "./agent-profile-store.js";
+import { buildTemplateProfilePayloads } from "./persona-templates.js";
 
 const roots: string[] = [];
 
@@ -195,5 +196,37 @@ describe("Agent profile generations", () => {
     expect(() => readAgentProfileState({ agentId: "wally", env })).toThrow(
       "Agent profile store is unreadable",
     );
+  });
+
+  it("accepts reviewed creation payloads but rejects creation-time financial authority", async () => {
+    const env = testEnv();
+    const initialPayloads = buildTemplateProfilePayloads({
+      templateId: "mining-operator",
+      displayName: "Wally",
+    });
+    const state = await ensureAgentProfileState({
+      agentId: "wally",
+      source: "creation",
+      initialPayloads,
+      env,
+    });
+    expect(readActiveAgentProfile(state, "strategy").capabilityPacks).toContain("miner");
+    expect(readActiveAgentProfile(state, "capitalPolicy").mode).toBe("deny-all");
+
+    await expect(
+      ensureAgentProfileState({
+        agentId: "trader",
+        source: "creation",
+        initialPayloads: {
+          ...initialPayloads,
+          capitalPolicy: {
+            ...createDenyAllCapitalPolicy(),
+            mode: "allowlisted",
+            allowedWalletIds: ["strategy"],
+          },
+        },
+        env,
+      }),
+    ).rejects.toThrow("must begin with deny-all financial authority");
   });
 });

@@ -329,7 +329,50 @@ describe("agents.create", () => {
     expect(mocks.ensureAgentWorkspace).toHaveBeenCalled();
     expect(mocks.writeConfigFile).toHaveBeenCalled();
     expect(mocks.ensureAgentProfileState).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "test-agent", source: "creation" }),
+      expect.objectContaining({
+        agentId: "test-agent",
+        source: "creation",
+        initialPayloads: expect.objectContaining({
+          capitalPolicy: expect.objectContaining({ mode: "deny-all" }),
+        }),
+      }),
+    );
+    expect(mocks.ensureAgentWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bootstrapFileOverrides: expect.objectContaining({
+          "SOUL.md": expect.stringContaining("private"),
+        }),
+      }),
+    );
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ personaTemplateId: "private-operator" }),
+      undefined,
+    );
+  });
+
+  it("applies an explicitly selected reviewed PersonaTemplate", async () => {
+    const { respond, promise } = makeCall("agents.create", {
+      name: "Miner Agent",
+      workspace: "/home/user/agents/miner",
+      personaTemplateId: "mining-operator",
+    });
+    await promise;
+
+    expect(mocks.ensureAgentProfileState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialPayloads: expect.objectContaining({
+          strategy: expect.objectContaining({
+            capabilityPacks: ["miner", "risk-officer", "allocator", "public-host"],
+          }),
+          capitalPolicy: expect.objectContaining({ mode: "deny-all" }),
+        }),
+      }),
+    );
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ personaTemplateId: "mining-operator" }),
+      undefined,
     );
   });
 
@@ -395,6 +438,23 @@ describe("agents.create", () => {
       undefined,
       expect.objectContaining({ message: expect.stringContaining("invalid") }),
     );
+  });
+
+  it("rejects an unreviewed PersonaTemplate id before creating workspace state", async () => {
+    const { respond, promise } = makeCall("agents.create", {
+      name: "Unknown Template",
+      workspace: "/tmp/ws",
+      personaTemplateId: "downloaded-template",
+    });
+    await promise;
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ message: expect.stringContaining("invalid agents.create params") }),
+    );
+    expect(mocks.ensureAgentWorkspace).not.toHaveBeenCalled();
+    expect(mocks.ensureAgentProfileState).not.toHaveBeenCalled();
   });
 
   it("always writes Name to IDENTITY.md even without emoji/avatar", async () => {
