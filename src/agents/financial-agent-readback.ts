@@ -1,5 +1,12 @@
 import { PublicKey } from "@solana/web3.js";
 import { fetchPinnedSolanaRpcRead } from "../wallet/solana-rpc-read-fetch.js";
+import {
+  FASED_AGENT_APPROVED_SATCOIN_PROGRAM_IDS,
+  FASED_AGENT_IDENTITY_PROGRAM_ID,
+  FASED_AGENT_MINING_LAYOUT,
+  FASED_AGENT_NAMESPACE_LAYOUT,
+  FASED_AGENT_RECORD_LAYOUT,
+} from "./fased-agent-identity-contract.generated.js";
 import type {
   FinalizedAgentMiningBinding,
   FinalizedAgentNamespaceBinding,
@@ -12,17 +19,7 @@ import {
   type FinancialAgentReattachmentChallenge,
 } from "./financial-agent-binding.js";
 
-export const FASED_AGENT_IDENTITY_PROGRAM_ID = "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev";
-
-const FASED_AGENT_RECORD_DISCRIMINATOR = Buffer.from([164, 123, 4, 229, 103, 117, 40, 238]);
-const NAMESPACE_BINDING_DISCRIMINATOR = Buffer.from([104, 123, 67, 82, 16, 144, 216, 189]);
-const MINING_BINDING_DISCRIMINATOR = Buffer.from([39, 109, 166, 142, 221, 165, 68, 23]);
-const FASED_AGENT_RECORD_SIZE = 219;
-const MINING_BINDING_SIZE = 234;
-const APPROVED_SATCOIN_PROGRAM_IDS = new Set([
-  "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF", // pragma: allowlist secret
-  "DUWcfXrUu2nK6fBJ4VjcnGmkBa62BNBEm4LDo25ppNBT", // pragma: allowlist secret
-]);
+export { FASED_AGENT_IDENTITY_PROGRAM_ID };
 
 type RpcAccount = { data?: [string, string]; executable?: boolean; owner?: string };
 type RpcMultipleAccounts = { context?: { slot?: number }; value?: Array<RpcAccount | null> };
@@ -73,8 +70,11 @@ function readString(
 }
 
 function decodeRecord(params: { address: string; account: RpcAccount; finalizedSlot: number }) {
-  const data = requireAccountData(params.account, params.address, FASED_AGENT_RECORD_SIZE);
-  if (!data.subarray(0, 8).equals(FASED_AGENT_RECORD_DISCRIMINATOR) || data[8] !== 1) {
+  const data = requireAccountData(params.account, params.address, FASED_AGENT_RECORD_LAYOUT.size);
+  if (
+    !data.subarray(0, 8).equals(Buffer.from(FASED_AGENT_RECORD_LAYOUT.discriminator)) ||
+    data[8] !== FASED_AGENT_RECORD_LAYOUT.version
+  ) {
     throw new Error("FasedAgentRecord discriminator/version mismatch");
   }
   const status = data[9] === 0 ? "active" : data[9] === 1 ? "retired" : null;
@@ -84,7 +84,7 @@ function decodeRecord(params: { address: string; account: RpcAccount; finalizedS
   const authorityGeneration = readU64(data, 11).toString();
   const foundingController = readAddress(data, 35);
   const [expectedAddress, bump] = PublicKey.findProgramAddressSync(
-    [Buffer.from("fased-agent-record"), new PublicKey(foundingController).toBuffer()],
+    [Buffer.from(FASED_AGENT_RECORD_LAYOUT.seed), new PublicKey(foundingController).toBuffer()],
     new PublicKey(FASED_AGENT_IDENTITY_PROGRAM_ID),
   );
   if (expectedAddress.toBase58() !== params.address || bump !== data[10]) {
@@ -105,14 +105,20 @@ function decodeNamespace(params: {
   fasedAgentRecord: string;
 }): FinalizedAgentNamespaceBinding {
   const data = requireAccountData(params.account, params.address);
-  if (!data.subarray(0, 8).equals(NAMESPACE_BINDING_DISCRIMINATOR) || data[8] !== 1) {
+  if (
+    !data.subarray(0, 8).equals(Buffer.from(FASED_AGENT_NAMESPACE_LAYOUT.discriminator)) ||
+    data[8] !== FASED_AGENT_NAMESPACE_LAYOUT.version
+  ) {
     throw new Error("AgentNamespaceBinding discriminator/version mismatch");
   }
   if (readAddress(data, 10) !== params.fasedAgentRecord) {
     throw new Error("AgentNamespaceBinding belongs to another Agent record");
   }
   const expectedBump = PublicKey.findProgramAddressSync(
-    [Buffer.from("namespace-binding"), new PublicKey(params.fasedAgentRecord).toBuffer()],
+    [
+      Buffer.from(FASED_AGENT_NAMESPACE_LAYOUT.seed),
+      new PublicKey(params.fasedAgentRecord).toBuffer(),
+    ],
     new PublicKey(FASED_AGENT_IDENTITY_PROGRAM_ID),
   )[1];
   if (data[9] !== expectedBump) {
@@ -120,13 +126,29 @@ function decodeNamespace(params: {
   }
   const cursor = { offset: 74 };
   const networkAgentId = data.subarray(42, 74).toString("hex");
-  const name = readString(data, cursor, 20, "Agent name");
-  const handle = readString(data, cursor, 21, "Agent handle");
-  const ticker = readString(data, cursor, 6, "Agent ticker");
+  const name = readString(data, cursor, FASED_AGENT_NAMESPACE_LAYOUT.maxNameBytes, "Agent name");
+  const handle = readString(
+    data,
+    cursor,
+    FASED_AGENT_NAMESPACE_LAYOUT.maxHandleBytes,
+    "Agent handle",
+  );
+  const ticker = readString(
+    data,
+    cursor,
+    FASED_AGENT_NAMESPACE_LAYOUT.maxTickerBytes,
+    "Agent ticker",
+  );
   cursor.offset += 32 + 8 + 8;
   const boundSlot = Number(readU64(data, cursor.offset));
   cursor.offset += 8 + 8;
   const recordAuthorityGeneration = readU64(data, cursor.offset).toString();
+  cursor.offset += 8;
+  readU64(data, cursor.offset);
+  cursor.offset += 8;
+  if (cursor.offset !== data.length) {
+    throw new Error("AgentNamespaceBinding has trailing or truncated account data");
+  }
   if (!Number.isSafeInteger(boundSlot)) {
     throw new Error("AgentNamespaceBinding slot exceeds safe local representation");
   }
@@ -146,15 +168,21 @@ function decodeMining(params: {
   account: RpcAccount;
   fasedAgentRecord: string;
 }): FinalizedAgentMiningBinding {
-  const data = requireAccountData(params.account, params.address, MINING_BINDING_SIZE);
-  if (!data.subarray(0, 8).equals(MINING_BINDING_DISCRIMINATOR) || data[8] !== 1) {
+  const data = requireAccountData(params.account, params.address, FASED_AGENT_MINING_LAYOUT.size);
+  if (
+    !data.subarray(0, 8).equals(Buffer.from(FASED_AGENT_MINING_LAYOUT.discriminator)) ||
+    data[8] !== FASED_AGENT_MINING_LAYOUT.version
+  ) {
     throw new Error("AgentMiningBinding discriminator/version mismatch");
   }
   if (readAddress(data, 10) !== params.fasedAgentRecord) {
     throw new Error("AgentMiningBinding belongs to another Agent record");
   }
   const expectedBump = PublicKey.findProgramAddressSync(
-    [Buffer.from("mining-binding"), new PublicKey(params.fasedAgentRecord).toBuffer()],
+    [
+      Buffer.from(FASED_AGENT_MINING_LAYOUT.seed),
+      new PublicKey(params.fasedAgentRecord).toBuffer(),
+    ],
     new PublicKey(FASED_AGENT_IDENTITY_PROGRAM_ID),
   )[1];
   if (data[9] !== expectedBump) {
@@ -165,7 +193,7 @@ function decodeMining(params: {
     throw new Error("AgentMiningBinding slot exceeds safe local representation");
   }
   const satcoinProgramId = readAddress(data, 74);
-  if (!APPROVED_SATCOIN_PROGRAM_IDS.has(satcoinProgramId)) {
+  if (!FASED_AGENT_APPROVED_SATCOIN_PROGRAM_IDS.has(satcoinProgramId)) {
     throw new Error("AgentMiningBinding references an unapproved Satcoin program");
   }
   return {
@@ -235,11 +263,11 @@ export async function readFinalizedFinancialAgent(params: {
   }
   const program = new PublicKey(FASED_AGENT_IDENTITY_PROGRAM_ID);
   const [namespaceAddress] = PublicKey.findProgramAddressSync(
-    [Buffer.from("namespace-binding"), new PublicKey(recordAddress).toBuffer()],
+    [Buffer.from(FASED_AGENT_NAMESPACE_LAYOUT.seed), new PublicKey(recordAddress).toBuffer()],
     program,
   );
   const [miningAddress] = PublicKey.findProgramAddressSync(
-    [Buffer.from("mining-binding"), new PublicKey(recordAddress).toBuffer()],
+    [Buffer.from(FASED_AGENT_MINING_LAYOUT.seed), new PublicKey(recordAddress).toBuffer()],
     program,
   );
   const addresses = [recordAddress, namespaceAddress.toBase58(), miningAddress.toBase58()];
