@@ -102,7 +102,7 @@ describe("signer-owned wallet lifecycle", () => {
       name: "Mainnet Primary",
       chain: "solana" as const,
       cluster: "mainnet-beta" as const,
-      genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+      genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", // pragma: allowlist secret
       commitment: "finalized" as const,
       version: 1 as const,
       hash,

@@ -1148,7 +1148,7 @@ describe("local socket signer protocol", () => {
       name: "Mainnet Primary",
       chain: "solana",
       cluster: "mainnet-beta",
-      genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+      genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", // pragma: allowlist secret
       commitment: "finalized",
       version: 1,
       hash,
