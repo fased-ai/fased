@@ -179,6 +179,25 @@ describe("method scope resolution", () => {
     }
   });
 
+  it("keeps remote skill catalog and mutation RPCs closed", () => {
+    const removedMethods = [
+      "skills.search",
+      "skills.detail",
+      "skills.marketplace.install.preview",
+      "skills.marketplace.install",
+      "skills.marketplace.update.preview",
+      "skills.marketplace.update",
+    ];
+    const listedMethods = listGatewayMethods();
+
+    for (const method of removedMethods) {
+      expect(resolveLeastPrivilegeOperatorScopesForMethod(method)).toEqual([]);
+      expect(isGatewayMethodClassified(method)).toBe(false);
+      expect(listedMethods).not.toContain(method);
+      expect(coreGatewayHandlers[method]).toBeUndefined();
+    }
+  });
+
   it("keeps mutating admin helper RPCs scoped but unadvertised", () => {
     const listedMethods = listGatewayMethods();
     const methods = [

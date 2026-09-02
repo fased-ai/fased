@@ -51,6 +51,19 @@ import { usageHandlers } from "./server-methods/usage.js";
 import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
 
+const REMOVED_REMOTE_SKILL_METHODS = new Set([
+  "skills.search",
+  "skills.detail",
+  "skills.marketplace.install.preview",
+  "skills.marketplace.install",
+  "skills.marketplace.update.preview",
+  "skills.marketplace.update",
+]);
+
+const firstPartySkillsHandlers = Object.fromEntries(
+  Object.entries(skillsHandlers).filter(([method]) => !REMOVED_REMOTE_SKILL_METHODS.has(method)),
+) as GatewayRequestHandlers;
+
 const CONTROL_PLANE_WRITE_METHODS = new Set([
   "config.apply",
   "config.patch",
@@ -108,7 +121,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...tasksHandlers,
   ...toolsCatalogHandlers,
   ...toolsEffectiveHandlers,
-  ...skillsHandlers,
+  ...firstPartySkillsHandlers,
   ...sessionsHandlers,
   ...systemHandlers,
   ...updateHandlers,

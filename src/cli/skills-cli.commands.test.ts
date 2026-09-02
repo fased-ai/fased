@@ -238,6 +238,13 @@ describe("registerSkillsCli", () => {
     expect(buildWorkspaceSkillStatusMock).not.toHaveBeenCalled();
   });
 
+  it("does not register the remote skill marketplace command", () => {
+    const program = new Command();
+    registerSkillsCli(program);
+    const skills = program.commands.find((command) => command.name() === "skills");
+    expect(skills?.commands.map((command) => command.name())).not.toContain("marketplace");
+  });
+
   it("grants wallet permissions for a skill", async () => {
     await runCli([
       "skills",
@@ -300,7 +307,7 @@ describe("registerSkillsCli", () => {
     );
   });
 
-  it("lists marketplace skill source and wallet permission state", async () => {
+  it.skip("legacy: listed marketplace skill source and wallet permission state", async () => {
     readTrackedClawHubSkillSlugsMock.mockResolvedValueOnce(["daily-dca"]);
     readClawHubSkillOriginMock.mockResolvedValueOnce({
       version: 1,
@@ -404,7 +411,7 @@ describe("registerSkillsCli", () => {
     expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("review: clean"));
   });
 
-  it("installs ClawHub skills through Fased marketplace checks", async () => {
+  it.skip("legacy: installed ClawHub skills through marketplace checks", async () => {
     await runCli([
       "skills",
       "marketplace",
@@ -429,7 +436,7 @@ describe("registerSkillsCli", () => {
     expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("Installed daily-dca@1.0.0"));
   });
 
-  it("previews ClawHub skill installs without installing", async () => {
+  it.skip("legacy: previewed ClawHub skill installs", async () => {
     await runCli([
       "skills",
       "marketplace",
@@ -460,7 +467,7 @@ describe("registerSkillsCli", () => {
     expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("Archive:"));
   });
 
-  it("previews ClawHub skill updates without installing", async () => {
+  it.skip("legacy: previewed ClawHub skill updates", async () => {
     previewSkillsUpdateFromClawHubMock.mockResolvedValueOnce([
       {
         ok: true,
@@ -510,7 +517,7 @@ describe("registerSkillsCli", () => {
     );
   });
 
-  it("updates ClawHub skills with explicit permission-change approval", async () => {
+  it.skip("legacy: updated ClawHub skills", async () => {
     updateSkillsFromClawHubMock.mockResolvedValueOnce([
       {
         ok: true,
