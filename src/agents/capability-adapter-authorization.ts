@@ -21,6 +21,7 @@ const CanonicalTimestamp = z.string().refine((value) => {
 export const FirstPartyAdapterSignerRequestSchema = z
   .object({
     schema: z.literal("fased.first-party-adapter-signer-request.v1"),
+    requestId: Identifier,
     capabilityId: Identifier,
     adapterId: Identifier,
     operation: Identifier,
@@ -34,7 +35,12 @@ export const FirstPartyAdapterSignerRequestSchema = z
     amountAtoms: AtomicAmount,
     slippageBps: z.number().int().min(0).max(10_000),
     ownerApproved: z.boolean(),
+    policyGeneration: z.number().int().positive().max(1_000_000),
+    policyDigest: Sha256,
+    signerPolicyVersion: z.number().int().positive().max(1_000_000),
+    signerPolicyHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
     requestedAt: CanonicalTimestamp,
+    expiresAt: CanonicalTimestamp,
   })
   .strict();
 
@@ -57,6 +63,13 @@ export function authorizeFirstPartyAdapterSignerRequest(params: {
   trustedSignerKeys: Readonly<Record<string, string>>;
   request: unknown;
   capitalPolicy: CapitalPolicy;
+  capitalPolicyRef: { generation: number; digest: string };
+  usage: {
+    dailySpentAtoms: string;
+    rollingSpentAtoms: string;
+    cadenceToday: number;
+    currentDrawdownBps: number;
+  };
   now?: Date;
 }): VerifiedFirstPartyAdapterSignerRequest {
   const now = params.now ?? new Date();
@@ -68,6 +81,20 @@ export function authorizeFirstPartyAdapterSignerRequest(params: {
   const request = FirstPartyAdapterSignerRequestSchema.parse(params.request);
   const policy = CapitalPolicySchema.parse(params.capitalPolicy);
   const manifest = envelope.manifest;
+
+  if (
+    request.policyGeneration !== params.capitalPolicyRef.generation ||
+    request.policyDigest !== params.capitalPolicyRef.digest
+  ) {
+    throw new Error("adapter signer request does not match the active CapitalPolicy generation");
+  }
+  if (
+    Date.parse(request.requestedAt) > now.getTime() ||
+    Date.parse(request.expiresAt) <= now.getTime() ||
+    Date.parse(request.expiresAt) - Date.parse(request.requestedAt) > 5 * 60_000
+  ) {
+    throw new Error("adapter signer request is outside its bounded execution window");
+  }
 
   if (manifest.capabilityId !== request.capabilityId || manifest.adapterId !== request.adapterId) {
     throw new Error("adapter signer request does not match the verified capability manifest");
@@ -121,6 +148,24 @@ export function authorizeFirstPartyAdapterSignerRequest(params: {
   );
   if (BigInt(request.amountAtoms) > BigInt(policy.perActionLimitAtoms)) {
     throw new Error("capital policy per-action limit exceeded");
+  }
+  if (
+    BigInt(params.usage.dailySpentAtoms) + BigInt(request.amountAtoms) >
+    BigInt(policy.dailyLimitAtoms)
+  ) {
+    throw new Error("capital policy daily limit exceeded");
+  }
+  if (
+    BigInt(params.usage.rollingSpentAtoms) + BigInt(request.amountAtoms) >
+    BigInt(policy.rollingLimitAtoms)
+  ) {
+    throw new Error("capital policy rolling limit exceeded");
+  }
+  if (params.usage.cadenceToday + 1 > policy.maxCadencePerDay) {
+    throw new Error("capital policy cadence limit exceeded");
+  }
+  if (params.usage.currentDrawdownBps > policy.maxDrawdownBps) {
+    throw new Error("capital policy drawdown limit exceeded");
   }
   if (request.slippageBps > policy.maxSlippageBps) {
     throw new Error("capital policy slippage limit exceeded");

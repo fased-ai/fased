@@ -137,6 +137,17 @@ export const FinancialEventSchema = EventBaseSchema.extend({
   intentDigest: DigestSchema.optional(),
   canonicalRef: IdentifierSchema.optional(),
   correctsEventId: IdentifierSchema.optional(),
+  requestId: IdentifierSchema.optional(),
+  walletId: IdentifierSchema.optional(),
+  operation: IdentifierSchema.optional(),
+  destination: IdentifierSchema.optional(),
+  policyGeneration: z.number().int().positive().max(1_000_000).optional(),
+  policyDigest: DigestSchema.optional(),
+  signerPolicyRevision: z.number().int().nonnegative().max(1_000_000).optional(),
+  signerPolicyHash: z
+    .string()
+    .regex(/^sha256:[a-f0-9]{64}$/u)
+    .optional(),
   publicEvidence: PublicEvidenceSchema.optional(),
 })
   .strict()

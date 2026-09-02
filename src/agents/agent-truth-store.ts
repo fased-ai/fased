@@ -755,6 +755,93 @@ export async function appendFinancialEvent(
   });
 }
 
+export type AgentFinancialUsage = {
+  dailySpentAtoms: string;
+  rollingSpentAtoms: string;
+  cadenceToday: number;
+  currentDrawdownBps: number;
+  financialRoot: string | null;
+};
+
+function sumAdmissionAmounts(events: FinancialEvent[]): bigint {
+  return events.reduce((total, event) => total + BigInt(event.quantityMinor ?? "0"), 0n);
+}
+
+export async function admitAndAppendFinancialAction(params: {
+  agentId: string;
+  event: FinancialEventInput;
+  currentDrawdownBps: number;
+  admit: (usage: AgentFinancialUsage) => void;
+  env?: NodeJS.ProcessEnv;
+  now?: Date;
+}): Promise<FinancialEvent> {
+  const env = params.env ?? process.env;
+  const agentId = requireAgentId(params.agentId);
+  const paths = storePaths(agentId, env);
+  return await withFileLock(paths.root, LOCK_OPTIONS, async () => {
+    const snapshot = readSnapshot(agentId, env);
+    const existing = findIdempotent(
+      snapshot.financial.events,
+      params.event.eventId,
+      params.event as Record<string, unknown>,
+    );
+    if (existing) {
+      return existing;
+    }
+    if (
+      params.event.kind !== "order" ||
+      params.event.writer !== "typed-first-party-adapter" ||
+      params.event.status !== "pending" ||
+      !params.event.walletId ||
+      !params.event.requestId ||
+      !params.event.asset ||
+      !params.event.quantityMinor
+    ) {
+      throw new Error("Financial admission requires one complete typed-adapter pending order");
+    }
+    const now = params.now ?? new Date();
+    const day = now.toISOString().slice(0, 10);
+    const rollingStart = now.getTime() - 30 * 24 * 60 * 60_000;
+    const comparable = snapshot.financial.events.filter(
+      (event) =>
+        event.kind === "order" &&
+        event.writer === "typed-first-party-adapter" &&
+        event.walletId === params.event.walletId &&
+        event.asset === params.event.asset &&
+        event.status !== "corrected",
+    );
+    const daily = comparable.filter((event) => event.createdAt.slice(0, 10) === day);
+    const rolling = comparable.filter((event) => Date.parse(event.createdAt) >= rollingStart);
+    params.admit({
+      dailySpentAtoms: sumAdmissionAmounts(daily).toString(),
+      rollingSpentAtoms: sumAdmissionAmounts(rolling).toString(),
+      cadenceToday: daily.length,
+      currentDrawdownBps: params.currentDrawdownBps,
+      financialRoot: latestDigest(snapshot.financial.events),
+    });
+    const event = FinancialEventSchema.parse(
+      makeEvent({
+        domain: "fased.agent.financial-event.v1",
+        sequence: snapshot.financial.events.length + 1,
+        previousDigest: latestDigest(snapshot.financial.events),
+        createdAt: timestamp(params.now),
+        input: params.event,
+      }),
+    );
+    snapshot.financial.events.push(event);
+    snapshot.financial.updatedAt = event.createdAt;
+    snapshot.publicEvidence = derivePublicIndex({
+      agentId,
+      research: snapshot.research,
+      financial: snapshot.financial,
+      builtAt: event.createdAt,
+    });
+    writeJson(paths.financial, snapshot.financial);
+    writeJson(paths.publicEvidence, snapshot.publicEvidence);
+    return event;
+  });
+}
+
 export async function rebuildPublicEvidenceIndex(params: {
   agentId: string;
   env?: NodeJS.ProcessEnv;
