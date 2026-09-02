@@ -203,6 +203,47 @@ describe("finalized financial Agent readback", () => {
     ).rejects.toThrow("not an Agent-program data account");
   });
 
+  it("rejects namespace bytes not consumed by the generated layout", async () => {
+    const fixture = recordFixture();
+    const program = new PublicKey(FASED_AGENT_IDENTITY_PROGRAM_ID);
+    const [namespace] = PublicKey.findProgramAddressSync(
+      [Buffer.from("namespace-binding"), fixture.record.toBuffer()],
+      program,
+    );
+    const genesisHash = Keypair.generate().publicKey.toBase58();
+    mocks.fetchPinnedSolanaRpcRead.mockImplementation(async ({ body }: { body: string }) => {
+      const request = JSON.parse(body) as { method: string };
+      const malformedNamespace = Buffer.concat([
+        namespaceFixture(fixture.record, namespace),
+        Buffer.from([0]),
+      ]);
+      return {
+        response: new Response(
+          JSON.stringify(
+            request.method === "getGenesisHash"
+              ? { jsonrpc: "2.0", result: genesisHash }
+              : {
+                  jsonrpc: "2.0",
+                  result: {
+                    context: { slot: 1 },
+                    value: [account(fixture.data), account(malformedNamespace), null],
+                  },
+                },
+          ),
+        ),
+        release: mocks.release,
+      };
+    });
+
+    await expect(
+      readFinalizedFinancialAgent({
+        rpcUrl: "https://rpc.example.test",
+        genesisHash,
+        fasedAgentRecord: fixture.record.toBase58(),
+      }),
+    ).rejects.toThrow("trailing or truncated");
+  });
+
   it("rejects an RPC from a different genesis before reading Agent accounts", async () => {
     const fixture = recordFixture();
     mocks.fetchPinnedSolanaRpcRead.mockResolvedValue({

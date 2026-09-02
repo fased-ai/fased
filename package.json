@@ -124,6 +124,8 @@
     "./cli-entry": "./fased.mjs"
   },
   "scripts": {
+    "agent:identity-interface:check": "node scripts/generate-fased-agent-identity-interface.mjs --check",
+    "agent:identity-interface:import": "node scripts/generate-fased-agent-identity-interface.mjs --import",
     "android:assemble": "cd apps/android && ./gradlew :app:assembleDebug",
     "android:install": "cd apps/android && ./gradlew :app:installDebug",
     "android:run": "cd apps/android && ./gradlew :app:installDebug && adb shell am start -n ai.fased.android/.MainActivity",
@@ -138,7 +140,7 @@
     "build:runtime-assets": "pnpm canvas:a2ui:bundle && node --import tsx scripts/canvas-a2ui-copy.ts && node --import tsx scripts/copy-hook-metadata.ts && node --import tsx scripts/copy-export-html-templates.ts && node --import tsx scripts/write-build-info.ts && node --import tsx scripts/write-cli-compat.ts",
     "canvas:a2ui:bundle": "bash scripts/bundle-a2ui.sh",
     "check": "pnpm check:ci",
-    "check:ci": "pnpm signer:protocol:check && pnpm sat:signer-codecs:check && pnpm format:check && pnpm lint && pnpm lint:tmp:no-random-messaging && pnpm lint:tmp:channel-agnostic-boundaries && pnpm lint:tmp:no-raw-channel-fetch && pnpm lint:auth:no-pairing-store-group && pnpm lint:auth:pairing-account-scope && pnpm check:host-env-policy:swift",
+    "check:ci": "pnpm signer:protocol:check && pnpm agent:identity-interface:check && pnpm sat:signer-codecs:check && pnpm format:check && pnpm lint && pnpm lint:tmp:no-random-messaging && pnpm lint:tmp:channel-agnostic-boundaries && pnpm lint:tmp:no-raw-channel-fetch && pnpm lint:auth:no-pairing-store-group && pnpm lint:auth:pairing-account-scope && pnpm check:host-env-policy:swift",
     "check:dependency-ownership": "node --import tsx scripts/dependency-ownership-report.ts --check",
     "check:docs": "pnpm format:docs:check && pnpm lint:docs && pnpm docs:check-links && pnpm docs:check-product-contract",
     "check:host-env-policy:swift": "node scripts/generate-host-env-security-policy-swift.mjs --check",
