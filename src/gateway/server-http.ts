@@ -6301,6 +6301,18 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           }
           if (existing.providerId === "local-socket-signer" && archiveRequested) {
             const cfg = loadConfig();
+            const federationWalletId = resolveFederationBondDefaultWalletId(cfg);
+            if (federationWalletId === walletId) {
+              sendLoginResponse(409, {
+                ok: false,
+                error: {
+                  code: "bond_wallet_rotation_required",
+                  message:
+                    "This Owner Vault is bound to Fased Bond; rotate or fully withdraw the Bond position before archiving the wallet",
+                },
+              });
+              return;
+            }
             if (!ensureWalletApprovalAuthorized({ operation: "wallet.archive", cfg })) {
               return;
             }
@@ -6311,7 +6323,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                 wallet: existing,
                 socketPath: resolveLocalSignerSocketPath(effectiveEnv),
               });
-              const federationWalletId = resolveFederationBondDefaultWalletId(cfg);
               const suffix = normalizeWalletIdForEnvSuffix(walletId)?.toUpperCase();
               const rpcKey = suffix
                 ? `FASED_WALLET_SOLANA_RPC_URL__${suffix}`
@@ -6338,9 +6349,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
                         "sat-mining": { enabled: true, ...currentEntry, config: currentSatConfig },
                       },
                     };
-                  }
-                  if (federationWalletId === walletId) {
-                    applyFederationBondWalletConfig(next, null);
                   }
                 },
               });
