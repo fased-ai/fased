@@ -238,73 +238,13 @@ describe("registerSkillsCli", () => {
     expect(buildWorkspaceSkillStatusMock).not.toHaveBeenCalled();
   });
 
-  it("does not register the remote skill marketplace command", () => {
+  it("does not register remote marketplace or direct wallet-authority commands", () => {
     const program = new Command();
     registerSkillsCli(program);
     const skills = program.commands.find((command) => command.name() === "skills");
-    expect(skills?.commands.map((command) => command.name())).not.toContain("marketplace");
-  });
-
-  it("grants wallet permissions for a skill", async () => {
-    await runCli([
-      "skills",
-      "wallet",
-      "grant",
-      "daily-dca",
-      "--actions",
-      "quote,swap,schedule_plan",
-      "--registry",
-      "https://clawhub.com/",
-      "--wallet-id",
-      "agent-1",
-      "--chain",
-      "solana",
-      "--input-mint",
-      "So11111111111111111111111111111111111111112",
-      "--output-mint",
-      "TokenMint1111111111111111111111111111111111",
-      "--max-amount",
-      "100000000",
-      "--max-slippage-bps",
-      "50",
-      "--autonomous",
-      "--cron",
-    ]);
-
-    expect(writeConfigFileMock).toHaveBeenCalledWith(
-      {
-        skills: {
-          marketplace: {
-            allowRegistries: ["https://clawhub.com"],
-          },
-          entries: {
-            "daily-dca": {
-              config: {
-                walletActions: {
-                  actions: ["quote", "swap", "schedule_plan"],
-                  roles: ["agent"],
-                  walletIds: ["agent-1"],
-                  chains: ["solana"],
-                  registries: ["https://clawhub.com"],
-                  inputMints: ["So11111111111111111111111111111111111111112"],
-                  outputMints: ["TokenMint1111111111111111111111111111111111"],
-                  maxAmount: "100000000",
-                  maxSlippageBps: 50,
-                  autonomous: true,
-                  cron: true,
-                },
-              },
-            },
-          },
-        },
-      },
-      {
-        expectedConfigPath: "/tmp/fased.json",
-      },
-    );
-    expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringContaining('Granted wallet actions for skill "daily-dca".'),
-    );
+    const commandNames = skills?.commands.map((command) => command.name()) ?? [];
+    expect(commandNames).not.toContain("marketplace");
+    expect(commandNames).not.toContain("wallet");
   });
 
   it.skip("legacy: listed marketplace skill source and wallet permission state", async () => {

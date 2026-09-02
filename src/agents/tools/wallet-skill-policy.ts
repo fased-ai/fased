@@ -1,27 +1,10 @@
-import path from "node:path";
 import type { FasedAgentConfig } from "../../config/config.js";
 import type { ResolvedWalletRuntimeConfig } from "../../wallet/wallet-runtime-config.js";
-import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agent-scope.js";
-import { readClawHubSkillOrigin } from "../skills-clawhub.js";
-import {
-  isMarketplaceSkillDir,
-  marketplaceSkillProvenanceMatchesContent,
-} from "../skills/trust.js";
 
-const LOCAL_WALLET_ACTION_SOURCE = "local";
-
-export type WalletSkillActionName =
-  | "prepare"
-  | "send"
-  | "plan"
-  | "quote"
-  | "swap"
-  | "schedule_plan"
-  | "schedule_send"
-  | "limit_order"
-  | "limit_cancel"
-  | "limit_history";
-
+/**
+ * Legacy shape retained only so old configuration can be decoded and removed.
+ * Skill files no longer receive wallet authority from this data.
+ */
 export type WalletSkillPermissionConfig = {
   actions?: string[];
   roles?: string[];
@@ -36,124 +19,36 @@ export type WalletSkillPermissionConfig = {
   cron?: boolean;
 };
 
-function normalizeList(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const out = value.map((entry) => String(entry).trim()).filter(Boolean);
-  return out.length > 0 ? out : undefined;
-}
+export type WalletSkillActionName =
+  | "prepare"
+  | "send"
+  | "plan"
+  | "quote"
+  | "swap"
+  | "schedule_plan"
+  | "schedule_send"
+  | "limit_order"
+  | "limit_cancel"
+  | "limit_history";
 
-function normalizeRegistryUrl(value: string | undefined): string | null {
-  const raw = value?.trim();
-  if (!raw) {
-    return null;
-  }
-  try {
-    const url = new URL(raw);
-    url.hash = "";
-    url.search = "";
-    url.pathname = url.pathname.replace(/\/+$/, "");
-    return url.toString().replace(/\/+$/, "");
-  } catch {
-    return raw.replace(/\/+$/, "");
-  }
-}
-
-function normalizeRegistryList(values: unknown): string[] {
-  if (!Array.isArray(values)) {
-    return [];
-  }
-  return values
-    .map((entry) => normalizeRegistryUrl(String(entry)))
-    .filter((entry): entry is string => Boolean(entry));
-}
-
-function normalizeSkillPathId(skillId: string): string | null {
-  const id = skillId.trim();
-  if (!id || id.includes("/") || id.includes("\\") || id.includes("..")) {
-    return null;
-  }
-  return id;
-}
-
-async function readRequesterSkillOrigin(params: {
-  cfg?: FasedAgentConfig;
-  requesterAgentId?: string | null;
-  requesterSkillId: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<{ registry: string; slug: string } | null> {
-  const skillPathId = normalizeSkillPathId(params.requesterSkillId);
-  if (!skillPathId) {
-    return null;
-  }
-  const cfg = params.cfg ?? {};
-  const agentIds = [
-    params.requesterAgentId?.trim() || resolveDefaultAgentId(cfg),
-    resolveDefaultAgentId(cfg),
-  ].filter(Boolean);
-  const workspaces = [
-    ...new Set(agentIds.map((agentId) => resolveAgentWorkspaceDir(cfg, agentId))),
-  ];
-  for (const workspaceDir of workspaces) {
-    const skillDir = path.join(workspaceDir, "skills", skillPathId);
-    if (isMarketplaceSkillDir(skillDir) && !marketplaceSkillProvenanceMatchesContent(skillDir)) {
-      throw new Error("wallet_action_skill_marketplace_content_integrity_failed");
-    }
-    const origin = await readClawHubSkillOrigin(skillDir);
-    if (origin) {
-      return {
-        registry: origin.registry,
-        slug: origin.slug,
-      };
-    }
-  }
+export function readSkillWalletActionPermissions(
+  _cfg: FasedAgentConfig | undefined,
+  _skillId: string | null | undefined,
+): WalletSkillPermissionConfig | null {
   return null;
 }
 
-export function readSkillWalletActionPermissions(
-  cfg: FasedAgentConfig | undefined,
-  skillId: string | null | undefined,
-): WalletSkillPermissionConfig | null {
-  const id = skillId?.trim();
-  if (!id) {
-    return null;
+function denySkillWalletAuthority(skillId: string | null | undefined): void {
+  if (skillId?.trim()) {
+    throw new Error("wallet_action_skill_authority_removed");
   }
-  const raw = cfg?.skills?.entries?.[id]?.config?.walletActions;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-  const value = raw as Record<string, unknown>;
-  return {
-    actions: normalizeList(value.actions),
-    roles: normalizeList(value.roles),
-    walletIds: normalizeList(value.walletIds),
-    chains: normalizeList(value.chains),
-    registries: normalizeList(value.registries),
-    inputMints: normalizeList(value.inputMints),
-    outputMints: normalizeList(value.outputMints),
-    maxAmount:
-      typeof value.maxAmount === "string" ? value.maxAmount.trim() || undefined : undefined,
-    maxSlippageBps:
-      typeof value.maxSlippageBps === "number" && Number.isFinite(value.maxSlippageBps)
-        ? Math.floor(value.maxSlippageBps)
-        : undefined,
-    autonomous: typeof value.autonomous === "boolean" ? value.autonomous : undefined,
-    cron: typeof value.cron === "boolean" ? value.cron : undefined,
-  };
 }
 
 export function enforceWalletSkillAccessEnabled(params: {
   wallet: ResolvedWalletRuntimeConfig;
   requesterSkillId?: string | null;
 }): void {
-  const skillId = params.requesterSkillId?.trim();
-  if (!skillId) {
-    return;
-  }
-  if (!params.wallet.policy.skillsEnabled) {
-    throw new Error("wallet_action_skill_wallet_disabled");
-  }
+  denySkillWalletAuthority(params.requesterSkillId);
 }
 
 export async function enforceWalletSkillPolicy(params: {
@@ -174,106 +69,5 @@ export async function enforceWalletSkillPolicy(params: {
   requireManifest: boolean;
   env?: NodeJS.ProcessEnv;
 }): Promise<void> {
-  const skillId = params.requesterSkillId?.trim() || null;
-  if (!skillId) {
-    return;
-  }
-  if (!normalizeSkillPathId(skillId)) {
-    throw new Error("wallet_action_skill_invalid_id");
-  }
-  const permissions = params.permissions;
-  if (!permissions) {
-    if (params.requireManifest || params.autonomous || params.scheduled) {
-      throw new Error("wallet_action_skill_manifest_required");
-    }
-    return;
-  }
-  if (!permissions.actions?.length) {
-    throw new Error("wallet_action_skill_actions_required");
-  }
-  if (!permissions.actions.includes(params.action)) {
-    throw new Error("wallet_action_skill_action_not_allowed");
-  }
-  if (params.role) {
-    if (!permissions.roles?.length) {
-      throw new Error("wallet_action_skill_roles_required");
-    }
-    if (!permissions.roles.includes(params.role)) {
-      throw new Error("wallet_action_skill_role_not_allowed");
-    }
-  }
-  if (!permissions.walletIds?.length) {
-    throw new Error("wallet_action_skill_wallet_required");
-  }
-  if (!params.walletId || !permissions.walletIds.includes(params.walletId)) {
-    throw new Error("wallet_action_skill_wallet_not_allowed");
-  }
-  if (params.chain) {
-    if (!permissions.chains?.length) {
-      throw new Error("wallet_action_skill_chains_required");
-    }
-    if (!permissions.chains.includes(params.chain)) {
-      throw new Error("wallet_action_skill_chain_not_allowed");
-    }
-  }
-  if (params.inputMint) {
-    if (!permissions.inputMints?.length) {
-      throw new Error("wallet_action_skill_input_mints_required");
-    }
-    if (!permissions.inputMints.includes(params.inputMint)) {
-      throw new Error("wallet_action_skill_input_mint_not_allowed");
-    }
-  }
-  if (params.outputMint) {
-    if (!permissions.outputMints?.length) {
-      throw new Error("wallet_action_skill_output_mints_required");
-    }
-    if (!permissions.outputMints.includes(params.outputMint)) {
-      throw new Error("wallet_action_skill_output_mint_not_allowed");
-    }
-  }
-  if (params.amount) {
-    if (!permissions.maxAmount) {
-      throw new Error("wallet_action_skill_amount_cap_required");
-    }
-    if (BigInt(params.amount) > BigInt(permissions.maxAmount)) {
-      throw new Error("wallet_action_skill_amount_cap_exceeded");
-    }
-  }
-  if (params.slippageBps !== undefined) {
-    if (permissions.maxSlippageBps === undefined) {
-      throw new Error("wallet_action_skill_slippage_cap_required");
-    }
-    if (params.slippageBps > permissions.maxSlippageBps) {
-      throw new Error("wallet_action_skill_slippage_cap_exceeded");
-    }
-  }
-  if (params.autonomous && permissions.autonomous !== true) {
-    throw new Error("wallet_action_skill_autonomous_not_allowed");
-  }
-  if (params.scheduled && permissions.cron !== true) {
-    throw new Error("wallet_action_skill_cron_not_allowed");
-  }
-  if (!permissions.registries?.length) {
-    throw new Error("wallet_action_skill_registries_required");
-  }
-
-  const origin = await readRequesterSkillOrigin({
-    cfg: params.cfg,
-    requesterAgentId: params.requesterAgentId,
-    requesterSkillId: skillId,
-    env: params.env,
-  });
-  if (!origin) {
-    const allowedSources = normalizeRegistryList(permissions.registries);
-    if (!allowedSources.includes(LOCAL_WALLET_ACTION_SOURCE)) {
-      throw new Error("wallet_action_skill_local_source_not_allowed");
-    }
-    return;
-  }
-  const allowedRegistries = normalizeRegistryList(permissions.registries);
-  const registry = normalizeRegistryUrl(origin.registry);
-  if (!registry || !allowedRegistries.includes(registry)) {
-    throw new Error("wallet_action_skill_registry_not_allowlisted");
-  }
+  denySkillWalletAuthority(params.requesterSkillId);
 }

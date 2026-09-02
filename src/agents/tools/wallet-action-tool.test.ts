@@ -1723,7 +1723,7 @@ describe("wallet-action-tool", () => {
     }
   });
 
-  it("requires an explicit skill manifest before custom-skill autonomous swaps", async () => {
+  it("rejects direct custom-skill authority before autonomous swaps", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-auto-deny-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
     try {
@@ -1745,13 +1745,13 @@ describe("wallet-action-tool", () => {
           outputMint: USDC_MINT,
           amount: "100000000",
         }),
-      ).rejects.toThrow("wallet_action_skill_manifest_required");
+      ).rejects.toThrow("wallet_tool_skill_authority_removed");
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("requires installed ClawHub skills to come from an allowlisted registry before wallet actions", async () => {
+  it("rejects installed skill authority regardless of registry configuration", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-registry-"));
     const workspaceDir = path.join(tempDir, "workspace");
     vi.stubEnv("FASED_STATE_DIR", tempDir);
@@ -1806,13 +1806,13 @@ describe("wallet-action-tool", () => {
           amount: "100000000",
           slippageBps: 50,
         }),
-      ).rejects.toThrow("wallet_action_skill_registry_not_allowlisted");
+      ).rejects.toThrow("wallet_tool_skill_authority_removed");
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("executes autonomous swaps only when skill permissions and wallet caps allow it", async () => {
+  it("rejects legacy skill permissions even when wallet caps allow the action", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-action-auto-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
     stubJupiterOrder();
@@ -1850,31 +1850,17 @@ describe("wallet-action-tool", () => {
         throw new Error("missing wallet_action tool");
       }
 
-      const result = await tool.execute("call-auto-swap", {
-        action: "swap",
-        mode: "autonomous",
-        walletHandle: "@wallet:agent",
-        outputMint: USDC_MINT,
-        amount: "100000000",
-        slippageBps: 50,
-      });
-      const details = result.details as Record<string, unknown>;
-      expect(details.ok).toBe(true);
-      expect(details.executed).toBe(true);
-      expect(mocks.provider.prepareJupiterReview).toHaveBeenCalledWith(
-        expect.objectContaining({
-          walletId: "agent",
+      await expect(
+        tool.execute("call-auto-swap", {
+          action: "swap",
           mode: "autonomous",
-          intent: expect.objectContaining({
-            jupiter: expect.objectContaining({ inputAmount: "100000000" }),
-          }),
-          transaction: expect.objectContaining({
-            serializedTxBase64: expect.any(String),
-            submission: "rpc",
-          }),
+          walletHandle: "@wallet:agent",
+          outputMint: USDC_MINT,
+          amount: "100000000",
+          slippageBps: 50,
         }),
-      );
-      expect(mocks.provider.sendTx).not.toHaveBeenCalled();
+      ).rejects.toThrow("wallet_tool_skill_authority_removed");
+      expect(mocks.provider.prepareJupiterReview).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }

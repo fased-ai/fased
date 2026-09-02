@@ -1,19 +1,8 @@
-import path from "node:path";
-import { collectTextContentBlocks } from "../../agents/content-blocks.js";
-import { createFasedAgentTools } from "../../agents/fased-tools.js";
-import { readClawHubSkillOrigin } from "../../agents/skills-clawhub.js";
 import type { SkillCommandSpec } from "../../agents/skills.js";
-import {
-  isMarketplaceSkillDir,
-  marketplaceSkillProvenanceMatchesContent,
-} from "../../agents/skills/trust.js";
-import { applyOwnerOnlyToolPolicy } from "../../agents/tool-policy.js";
 import { getChannelDock } from "../../channels/dock.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
-import { generateSecureToken } from "../../infra/secure-random.js";
-import { resolveGatewayMessageChannel } from "../../utils/message-channel.js";
 import {
   listReservedChatSlashCommandNames,
   listSkillCommandsForWorkspace,
@@ -66,22 +55,6 @@ export type InlineActionResult =
       directives: InlineDirectives;
       abortedLastRun: boolean;
     };
-
-// oxlint-disable-next-line typescript/no-explicit-any
-function extractTextFromToolResult(result: any): string | null {
-  if (!result || typeof result !== "object") {
-    return null;
-  }
-  const content = (result as { content?: unknown }).content;
-  if (typeof content === "string") {
-    const trimmed = content.trim();
-    return trimmed ? trimmed : null;
-  }
-  const parts = collectTextContentBlocks(content);
-  const out = parts.join("");
-  const trimmed = out.trim();
-  return trimmed ? trimmed : null;
-}
 
 export async function handleInlineActions(params: {
   ctx: MsgContext;
@@ -199,76 +172,13 @@ export async function handleInlineActions(params: {
 
     const dispatch = skillInvocation.command.dispatch;
     if (dispatch?.kind === "tool") {
-      const sourceFile = skillInvocation.command.sourceFilePath?.trim();
-      const skillDir = sourceFile ? path.dirname(sourceFile) : "";
-      const marketplaceSkill = Boolean(skillDir && isMarketplaceSkillDir(skillDir));
-      const marketplaceOrigin = skillDir ? await readClawHubSkillOrigin(skillDir) : null;
-      if (
-        marketplaceSkill &&
-        (!marketplaceOrigin || !marketplaceSkillProvenanceMatchesContent(skillDir))
-      ) {
-        typing.cleanup();
-        return {
-          kind: "reply",
-          reply: {
-            text: `❌ Marketplace skill ${skillInvocation.command.skillName} failed its installed-content integrity check. Reinstall the reviewed archive before using direct tool commands.`,
-          },
-        };
-      }
-      if (
-        marketplaceOrigin &&
-        !(marketplaceOrigin.permissions?.toolAccess ?? []).includes(dispatch.toolName)
-      ) {
-        typing.cleanup();
-        return {
-          kind: "reply",
-          reply: {
-            text: `❌ Marketplace skill ${marketplaceOrigin.slug} is not authorized for tool ${dispatch.toolName}. Reinstall a reviewed version whose manifest explicitly requests that tool.`,
-          },
-        };
-      }
-      const rawArgs = (skillInvocation.args ?? "").trim();
-      const channel =
-        resolveGatewayMessageChannel(ctx.Surface) ??
-        resolveGatewayMessageChannel(ctx.Provider) ??
-        undefined;
-
-      const tools = createFasedAgentTools({
-        agentSessionKey: sessionKey,
-        agentChannel: channel,
-        agentAccountId: (ctx as { AccountId?: string }).AccountId,
-        agentTo: ctx.OriginatingTo ?? ctx.To,
-        agentThreadId: ctx.MessageThreadId ?? undefined,
-        agentDir,
-        workspaceDir,
-        config: cfg,
-        requesterSkillId: skillInvocation.command.skillName,
-        requestSource: "skill-command",
-      });
-      const authorizedTools = applyOwnerOnlyToolPolicy(tools, command.senderIsOwner);
-
-      const tool = authorizedTools.find((candidate) => candidate.name === dispatch.toolName);
-      if (!tool) {
-        typing.cleanup();
-        return { kind: "reply", reply: { text: `❌ Tool not available: ${dispatch.toolName}` } };
-      }
-
-      const toolCallId = `cmd_${generateSecureToken(8)}`;
-      try {
-        const result = await tool.execute(toolCallId, {
-          command: rawArgs,
-          commandName: skillInvocation.command.name,
-          skillName: skillInvocation.command.skillName,
-          // oxlint-disable-next-line typescript/no-explicit-any
-        } as any);
-        const text = extractTextFromToolResult(result) ?? "✅ Done.";
-        typing.cleanup();
-        return { kind: "reply", reply: { text } };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        typing.cleanup();
-        return { kind: "reply", reply: { text: `❌ ${message}` } };
-      }
+      typing.cleanup();
+      return {
+        kind: "reply",
+        reply: {
+          text: `❌ Skill-file tool dispatch is unavailable. ${skillInvocation.command.skillName} may provide instructions, but only a verified typed first-party adapter may request execution authority.`,
+        },
+      };
     }
 
     const commandTemplate = skillInvocation.command.promptTemplate?.trim();

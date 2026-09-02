@@ -46,7 +46,6 @@ import { type AnyAgentTool, jsonResult, readStringParam } from "./common.js";
 import {
   enforceWalletSkillAccessEnabled,
   enforceWalletSkillPolicy,
-  readSkillWalletActionPermissions,
 } from "./wallet-skill-policy.js";
 
 const { createAdapter: createWalletProviderAdapter, resolveRpcUrl: resolveScopedRpcUrlForWallet } =
@@ -316,15 +315,11 @@ export function createWalletActionTool(opts?: {
         toolCallExecutionIntentId;
       const scheduled = action === "schedule_plan";
       const requesterSkillId = opts?.requesterSkillId?.trim() || null;
-      const permissions = readSkillWalletActionPermissions(cfg, requesterSkillId);
-      const skillWalletId =
-        permissions?.walletIds?.length === 1 ? permissions.walletIds[0] : undefined;
       const selection = resolveAgentWalletSelection({
         config: cfg,
         walletHandle,
         walletId,
         agentId: requesterAgentId ?? ownerAgentId ?? undefined,
-        skillWalletId,
         env: process.env,
       });
       const rpcUrl = resolveScopedRpcUrlForWallet({
@@ -411,7 +406,7 @@ export function createWalletActionTool(opts?: {
         const percentage = readPositivePercent(params.percentage);
         await enforceWalletSkillPolicy({
           cfg,
-          permissions,
+          permissions: null,
           requesterAgentId,
           requesterSkillId,
           action: "schedule_send",
@@ -549,7 +544,7 @@ export function createWalletActionTool(opts?: {
       if (action === "limit_history") {
         await enforceWalletSkillPolicy({
           cfg,
-          permissions,
+          permissions: null,
           requesterAgentId,
           requesterSkillId,
           action: "limit_history",
@@ -603,7 +598,7 @@ export function createWalletActionTool(opts?: {
       if (action === "limit_cancel") {
         await enforceWalletSkillPolicy({
           cfg,
-          permissions,
+          permissions: null,
           requesterAgentId,
           requesterSkillId,
           action: "limit_cancel",
@@ -753,7 +748,7 @@ export function createWalletActionTool(opts?: {
                 : "quote";
       await enforceWalletSkillPolicy({
         cfg,
-        permissions,
+        permissions: null,
         requesterAgentId,
         requesterSkillId,
         action: requestedWalletAction,

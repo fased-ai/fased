@@ -1,318 +1,72 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { FasedAgentConfig } from "../../config/config.js";
-import { computeSkillContentSha256Sync } from "../skills/trust.js";
+import { resolveWalletRuntimeConfig } from "../../wallet/wallet-runtime-config.js";
 import {
   enforceWalletSkillAccessEnabled,
   enforceWalletSkillPolicy,
   readSkillWalletActionPermissions,
 } from "./wallet-skill-policy.js";
 
-async function writeClawHubOrigin(params: {
-  workspaceDir: string;
-  skillId: string;
-  registry: string;
-}) {
-  const skillDir = path.join(params.workspaceDir, "skills", params.skillId);
-  const dir = path.join(skillDir, ".clawhub");
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(skillDir, "SKILL.md"), `# ${params.skillId}\n`, "utf8");
-  const contentSha256 = computeSkillContentSha256Sync(skillDir);
-  if (!contentSha256) {
-    throw new Error("test skill content digest was unavailable");
-  }
-  await fs.writeFile(
-    path.join(dir, "origin.json"),
-    `${JSON.stringify(
-      {
-        version: 1,
-        registry: params.registry,
-        slug: params.skillId,
-        installedVersion: "1.0.0",
-        installedAt: Date.now(),
-        archiveSha256: "a".repeat(64),
-        archiveIntegrityVerified: true,
-        contentSha256,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
-function cfgWithWalletGrant(skillId: string, extra?: Partial<FasedAgentConfig>): FasedAgentConfig {
-  return {
-    agents: {
-      list: [{ id: "owner", default: true, workspace: extra?.agents?.list?.[0]?.workspace }],
-    },
-    skills: {
-      marketplace: extra?.skills?.marketplace,
-      entries: {
-        [skillId]: {
-          config: {
-            walletActions: {
-              actions: ["quote", "swap"],
-              roles: ["agent"],
-              walletIds: ["agent-1"],
-              chains: ["solana"],
-              registries: ["local"],
-              inputMints: ["So11111111111111111111111111111111111111112"],
-              outputMints: ["TokenMint1111111111111111111111111111111111"],
-              maxAmount: "100000000",
-              maxSlippageBps: 50,
-              autonomous: true,
+describe("removed skill wallet authority", () => {
+  it("ignores every legacy walletActions grant", () => {
+    expect(
+      readSkillWalletActionPermissions(
+        {
+          skills: {
+            entries: {
+              local: {
+                config: {
+                  walletActions: {
+                    actions: ["send"],
+                    roles: ["agent"],
+                    walletIds: ["agent"],
+                  },
+                },
+              },
             },
           },
         },
+        "local",
+      ),
+    ).toBeNull();
+  });
+
+  it("denies wallet access whenever a skill-file identity is present", async () => {
+    const wallet = resolveWalletRuntimeConfig({
+      wallet: {
+        enabled: true,
+        runtime: {
+          policy: { skillsEnabled: true },
+          toolAccess: { mode: "all", allowSkills: ["local"] },
+        },
       },
-    },
-  } as FasedAgentConfig;
-}
-
-function enforce(params: {
-  cfg?: FasedAgentConfig;
-  skillId: string;
-  autonomous?: boolean;
-  scheduled?: boolean;
-  amount?: string;
-}) {
-  return enforceWalletSkillPolicy({
-    cfg: params.cfg,
-    permissions: readSkillWalletActionPermissions(params.cfg, params.skillId),
-    requesterAgentId: "owner",
-    requesterSkillId: params.skillId,
-    action: "swap",
-    role: "agent",
-    walletId: "agent-1",
-    chain: "solana",
-    inputMint: "So11111111111111111111111111111111111111112",
-    outputMint: "TokenMint1111111111111111111111111111111111",
-    amount: params.amount ?? "100000000",
-    slippageBps: 50,
-    autonomous: params.autonomous ?? true,
-    scheduled: params.scheduled ?? false,
-    requireManifest: true,
-  });
-}
-
-describe("wallet skill policy", () => {
-  it("requires the selected wallet policy to allow skill access", () => {
-    const wallet = {
-      policy: { skillsEnabled: false },
-    } as never;
-
-    expect(() =>
-      enforceWalletSkillAccessEnabled({ wallet, requesterSkillId: "daily-dca" }),
-    ).toThrow("wallet_action_skill_wallet_disabled");
-    expect(() =>
-      enforceWalletSkillAccessEnabled({
-        wallet: { policy: { skillsEnabled: true } } as never,
-        requesterSkillId: "daily-dca",
-      }),
-    ).not.toThrow();
-    expect(() => enforceWalletSkillAccessEnabled({ wallet, requesterSkillId: null })).not.toThrow();
-  });
-
-  it("requires an explicit walletActions grant for skill wallet actions", async () => {
-    await expect(enforce({ cfg: {}, skillId: "daily-dca" })).rejects.toThrow(
-      "wallet_action_skill_manifest_required",
-    );
-  });
-
-  it("rejects invalid skill IDs before checking origin metadata", async () => {
-    const cfg = cfgWithWalletGrant("../daily-dca");
-    await expect(enforce({ cfg, skillId: "../daily-dca" })).rejects.toThrow(
-      "wallet_action_skill_invalid_id",
-    );
-  });
-
-  it("allows custom local skills only after an explicit narrow walletActions grant", async () => {
-    const cfg = cfgWithWalletGrant("daily-dca");
-    await expect(enforce({ cfg, skillId: "daily-dca" })).resolves.toBeUndefined();
-  });
-
-  it("rejects agent wallets that are outside the skill wallet allowlist", async () => {
-    const cfg = cfgWithWalletGrant("daily-dca");
-    await expect(
-      enforceWalletSkillPolicy({
-        cfg,
-        permissions: readSkillWalletActionPermissions(cfg, "daily-dca"),
-        requesterAgentId: "owner",
-        requesterSkillId: "daily-dca",
-        action: "swap",
-        role: "agent",
-        walletId: "agent-2",
-        chain: "solana",
-        inputMint: "So11111111111111111111111111111111111111112",
-        outputMint: "TokenMint1111111111111111111111111111111111",
-        amount: "1",
-        slippageBps: 50,
-        autonomous: true,
-        scheduled: false,
-        requireManifest: true,
-      }),
-    ).rejects.toThrow("wallet_action_skill_wallet_not_allowed");
-  });
-
-  it("requires each skill wallet grant to name allowed agent wallet ids", async () => {
-    const cfg = cfgWithWalletGrant("daily-dca");
-    const grant = cfg.skills?.entries?.["daily-dca"]?.config?.walletActions as
-      | Record<string, unknown>
-      | undefined;
-    if (grant) {
-      delete grant.walletIds;
-    }
-    await expect(enforce({ cfg, skillId: "daily-dca" })).rejects.toThrow(
-      "wallet_action_skill_wallet_required",
-    );
-  });
-
-  it("allows installed ClawHub skills from the default trusted registry", async () => {
-    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-skill-origin-"));
-    try {
-      await writeClawHubOrigin({
-        workspaceDir,
-        skillId: "daily-dca",
-        registry: "https://clawhub.com/",
-      });
-      const cfg = cfgWithWalletGrant("daily-dca", {
-        agents: { list: [{ id: "owner", default: true, workspace: workspaceDir }] },
-      });
-      const grant = cfg.skills?.entries?.["daily-dca"]?.config?.walletActions as
-        | Record<string, unknown>
-        | undefined;
-      if (grant) {
-        grant.registries = ["https://clawhub.com"];
-      }
-      await expect(enforce({ cfg, skillId: "daily-dca" })).resolves.toBeUndefined();
-    } finally {
-      await fs.rm(workspaceDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects installed skills from registries outside the configured source allowlist", async () => {
-    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-skill-origin-"));
-    try {
-      await writeClawHubOrigin({
-        workspaceDir,
-        skillId: "daily-dca",
-        registry: "https://evil.example.com",
-      });
-      const cfg = cfgWithWalletGrant("daily-dca", {
-        agents: { list: [{ id: "owner", default: true, workspace: workspaceDir }] },
-        skills: { marketplace: { allowRegistries: ["https://clawhub.com"] } },
-      });
-      await expect(enforce({ cfg, skillId: "daily-dca" })).rejects.toThrow(
-        "wallet_action_skill_registry_not_allowlisted",
-      );
-    } finally {
-      await fs.rm(workspaceDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not inherit a marketplace registry for a mutating wallet grant", async () => {
-    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-skill-origin-"));
-    try {
-      await writeClawHubOrigin({
-        workspaceDir,
-        skillId: "daily-dca",
-        registry: "https://clawhub.com",
-      });
-      const cfg = cfgWithWalletGrant("daily-dca", {
-        agents: { list: [{ id: "owner", default: true, workspace: workspaceDir }] },
-        skills: { marketplace: { allowRegistries: ["https://clawhub.com"] } },
-      });
-      const grant = cfg.skills?.entries?.["daily-dca"]?.config?.walletActions as
-        | Record<string, unknown>
-        | undefined;
-      delete grant?.registries;
-
-      await expect(enforce({ cfg, skillId: "daily-dca" })).rejects.toThrow(
-        "wallet_action_skill_registries_required",
-      );
-    } finally {
-      await fs.rm(workspaceDir, { recursive: true, force: true });
-    }
-  });
-
-  it("enforces skill action, amount, slippage, and autonomous caps", async () => {
-    const cfg = cfgWithWalletGrant("daily-dca");
-
-    await expect(enforce({ cfg, skillId: "daily-dca", amount: "100000001" })).rejects.toThrow(
-      "wallet_action_skill_amount_cap_exceeded",
+    });
+    expect(() => enforceWalletSkillAccessEnabled({ wallet, requesterSkillId: "local" })).toThrow(
+      "wallet_action_skill_authority_removed",
     );
     await expect(
       enforceWalletSkillPolicy({
-        cfg,
-        permissions: readSkillWalletActionPermissions(cfg, "daily-dca"),
-        requesterAgentId: "owner",
-        requesterSkillId: "daily-dca",
+        permissions: null,
+        requesterSkillId: "local",
         action: "send",
-        role: "agent",
-        walletId: "agent-1",
-        chain: "solana",
-        amount: "1",
-        autonomous: true,
+        autonomous: false,
         scheduled: false,
-        requireManifest: true,
+        requireManifest: false,
       }),
-    ).rejects.toThrow("wallet_action_skill_action_not_allowed");
+    ).rejects.toThrow("wallet_action_skill_authority_removed");
+  });
+
+  it("leaves non-skill owner and typed-adapter paths to their own policies", async () => {
+    const wallet = resolveWalletRuntimeConfig({ wallet: { enabled: true } });
+    expect(() => enforceWalletSkillAccessEnabled({ wallet, requesterSkillId: null })).not.toThrow();
     await expect(
       enforceWalletSkillPolicy({
-        cfg,
-        permissions: readSkillWalletActionPermissions(cfg, "daily-dca"),
-        requesterAgentId: "owner",
-        requesterSkillId: "daily-dca",
-        action: "swap",
-        role: "agent",
-        walletId: "agent-1",
-        chain: "solana",
-        inputMint: "So11111111111111111111111111111111111111112",
-        outputMint: "TokenMint1111111111111111111111111111111111",
-        amount: "1",
-        slippageBps: 51,
-        autonomous: true,
+        permissions: null,
+        requesterSkillId: null,
+        action: "prepare",
+        autonomous: false,
         scheduled: false,
-        requireManifest: true,
+        requireManifest: false,
       }),
-    ).rejects.toThrow("wallet_action_skill_slippage_cap_exceeded");
-  });
-
-  it("fails closed when a mutating grant omits an authorization dimension", async () => {
-    const cases: Array<[string, string]> = [
-      ["actions", "wallet_action_skill_actions_required"],
-      ["roles", "wallet_action_skill_roles_required"],
-      ["chains", "wallet_action_skill_chains_required"],
-      ["registries", "wallet_action_skill_registries_required"],
-      ["inputMints", "wallet_action_skill_input_mints_required"],
-      ["outputMints", "wallet_action_skill_output_mints_required"],
-      ["maxAmount", "wallet_action_skill_amount_cap_required"],
-      ["maxSlippageBps", "wallet_action_skill_slippage_cap_required"],
-    ];
-
-    for (const [field, expected] of cases) {
-      const cfg = cfgWithWalletGrant("daily-dca");
-      const grant = cfg.skills?.entries?.["daily-dca"]?.config?.walletActions as
-        | Record<string, unknown>
-        | undefined;
-      delete grant?.[field];
-      await expect(enforce({ cfg, skillId: "daily-dca" })).rejects.toThrow(expected);
-    }
-  });
-
-  it("requires an explicit local source grant when origin metadata is absent", async () => {
-    const cfg = cfgWithWalletGrant("daily-dca");
-    const grant = cfg.skills?.entries?.["daily-dca"]?.config?.walletActions as
-      | Record<string, unknown>
-      | undefined;
-    if (grant) {
-      grant.registries = ["https://clawhub.com"];
-    }
-    await expect(enforce({ cfg, skillId: "daily-dca" })).rejects.toThrow(
-      "wallet_action_skill_local_source_not_allowed",
-    );
+    ).resolves.toBeUndefined();
   });
 });

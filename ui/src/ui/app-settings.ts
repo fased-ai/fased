@@ -819,11 +819,7 @@ function syncWalletPanelFromHash(host: SettingsHost, tab: Tab) {
   }
   const hash = window.location.hash.replace(/^#/, "");
   host.walletMainPanel =
-    hash === "wallet-skill-grants"
-      ? "skill-grants"
-      : hash === "wallet-access" || hash === "wallet-admin-control"
-        ? "access"
-        : "wallets";
+    hash === "wallet-access" || hash === "wallet-admin-control" ? "access" : "wallets";
 }
 
 export function syncUrlWithTab(host: SettingsHost, tab: Tab, replace: boolean) {

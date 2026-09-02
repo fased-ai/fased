@@ -1117,21 +1117,9 @@ export function isWalletToolAllowed(params: {
   requesterSkillId?: string | null;
   requestSource?: string | null;
 }): { ok: boolean; code?: string } {
-  const allowSkills = params.config.toolAccess.allowSkills
-    .map((value) => value.trim())
-    .filter(Boolean);
   const skillId = params.requesterSkillId?.trim() || null;
-  if (!skillId && allowSkills.length > 0) {
-    return { ok: false, code: "wallet_tool_skill_context_required" };
-  }
   if (skillId) {
-    const denySkills = new Set(params.config.toolAccess.denySkills.map((value) => value.trim()));
-    if (denySkills.has(skillId)) {
-      return { ok: false, code: "wallet_tool_skill_denied" };
-    }
-    if (allowSkills.length > 0 && !allowSkills.includes(skillId)) {
-      return { ok: false, code: "wallet_tool_skill_not_allowlisted" };
-    }
+    return { ok: false, code: "wallet_tool_skill_authority_removed" };
   }
   const allowSources = params.config.toolAccess.allowSources
     .map((value) => value.trim().toLowerCase())

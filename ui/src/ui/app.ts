@@ -175,7 +175,6 @@ import {
   clearWalletSkillGrant,
   createEmptyWalletSkillGrantDraft,
   draftFromWalletSkillRow,
-  loadWalletSkillGrants,
   patchWalletSkillGrantDraft,
   saveWalletSkillGrant,
   toggleWalletSkillGrantAction,
@@ -2318,10 +2317,10 @@ export class FasedAgentApp extends LitElement {
   setTab(next: Tab) {
     if (next === "wallet" && typeof window !== "undefined") {
       const hash = window.location.hash.replace(/^#/, "");
-      if (hash === "wallet-skill-grants") {
-        this.walletMainPanel = "skill-grants";
-      } else if (hash === "wallet-access" || hash === "wallet-admin-control") {
+      if (hash === "wallet-access" || hash === "wallet-admin-control") {
         this.walletMainPanel = "access";
+      } else {
+        this.walletMainPanel = "wallets";
       }
     }
     setTabInternal(this as unknown as Parameters<typeof setTabInternal>[0], next);
@@ -3963,19 +3962,17 @@ export class FasedAgentApp extends LitElement {
 
   async handleWalletLoad() {
     await loadWalletInternal(this);
-    await loadWalletSkillGrants(this);
     this.syncWalletPolicyDraftsFromSettings();
     this.focusWalletSecuritySetupIfNeeded();
   }
 
   handleWalletMainPanelChange(panel: "wallets" | "access" | "skill-grants") {
-    this.walletMainPanel = panel;
+    this.walletMainPanel = panel === "skill-grants" ? "wallets" : panel;
     if (typeof window === "undefined" || this.tab !== "wallet") {
       return;
     }
     const url = new URL(window.location.href);
-    url.hash =
-      panel === "skill-grants" ? "wallet-skill-grants" : panel === "access" ? "wallet-access" : "";
+    url.hash = panel === "access" ? "wallet-access" : "";
     window.history.replaceState({}, "", url.toString());
   }
 

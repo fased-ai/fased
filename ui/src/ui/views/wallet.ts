@@ -3,7 +3,6 @@ import type {
   WalletSkillGrantDraft,
   WalletSkillGrantRow,
 } from "../controllers/wallet-skill-grants.ts";
-import { WALLET_SKILL_ACTIONS } from "../controllers/wallet-skill-grants.ts";
 import type { FederationBondStatus } from "../federation-api.ts";
 import { icons } from "../icons.ts";
 import type { SatMinerProfile, SatMiningReadiness, SatMiningRuntimeStatus } from "../mining-api.ts";
@@ -442,54 +441,6 @@ function findNamedWallet(
   return wallets.find((wallet) => wallet.id === normalized);
 }
 
-function formatSkillGrantSummary(grant: Record<string, unknown> | null): string {
-  if (!grant) {
-    return "No grant";
-  }
-  const actions = Array.isArray(grant.actions)
-    ? grant.actions.map((entry) => String(entry)).filter(Boolean)
-    : [];
-  const chains = Array.isArray(grant.chains)
-    ? grant.chains.map((entry) => String(entry)).filter(Boolean)
-    : [];
-  const walletIds = Array.isArray(grant.walletIds)
-    ? grant.walletIds.map((entry) => String(entry)).filter(Boolean)
-    : [];
-  const flags = [
-    grant.autonomous === true ? "autonomous" : null,
-    grant.cron === true ? "cron" : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-  return [
-    actions.length > 0 ? actions.join(", ") : "actions unspecified",
-    walletIds.length === 1
-      ? `skill override ${walletIds[0]}`
-      : walletIds.length > 1
-        ? `wallet allowlist ${walletIds.join(", ")}`
-        : "wallet unspecified",
-    chains.length > 0 ? chains.join(", ") : "chain unspecified",
-    flags,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-function formatRequestedWalletActions(requested: WalletSkillGrantRow["requestedWalletActions"]) {
-  if (!requested) {
-    return "No marketplace wallet request recorded";
-  }
-  const actions = requested.actions?.length ? requested.actions.join(", ") : "actions unspecified";
-  const chains = requested.chains?.length ? requested.chains.join(", ") : "chain unspecified";
-  const flags = [
-    requested.autonomous ? "autonomous requested" : null,
-    requested.cron ? "cron requested" : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-  return [actions, chains, flags].filter(Boolean).join(" · ");
-}
-
 function resolveWalletMetadataRole(
   wallet: WalletViewProps["namedWallets"][number] | undefined,
 ): WalletUserRole | undefined {
@@ -825,10 +776,7 @@ function renderWalletActivePolicyIcons(params: {
   role: DisplayedWalletRole;
   props: Pick<
     WalletViewProps,
-    | "walletDetailsWalletId"
-    | "policyCapsEnabled"
-    | "policySkillsEnabled"
-    | "recurringTransferEnabled"
+    "walletDetailsWalletId" | "policyCapsEnabled" | "recurringTransferEnabled"
   >;
 }) {
   if (params.walletId !== params.props.walletDetailsWalletId) {
@@ -842,14 +790,6 @@ function renderWalletActivePolicyIcons(params: {
             : null,
           params.props.recurringTransferEnabled
             ? { dataRole: "policy-on", title: "Recurring send active", icon: icons.send }
-            : null,
-          params.props.policySkillsEnabled
-            ? {
-                dataRole: "policy-on",
-                title:
-                  "Skill wallet access gate is active. Individual skills still need explicit Wallet > Skill Grants.",
-                icon: icons.spark,
-              }
             : null,
         ]
       : params.role === "vault"
@@ -2486,241 +2426,6 @@ function renderWalletMetaRow(params: {
   </div>`;
 }
 
-function renderWalletSkillGrantsPanel(props: WalletViewProps) {
-  const draft = props.skillGrantDraft;
-  const selectedRow =
-    props.skillGrantRows.find((row) => row.skillId === draft.skillId) ?? props.skillGrantRows[0];
-  const walletIds = (draft.walletIds ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  const saveDisabled =
-    props.skillGrantBusy ||
-    !draft.skillId.trim() ||
-    draft.actions.length === 0 ||
-    walletIds.length === 0;
-  return html`
-    <div id="wallet-skill-grants" class="card wallet-panel">
-      <div class="wallet-panel__head">
-        <div>
-          <div class="card-title">Skill Grants</div>
-          <div class="card-sub">
-            Per-skill caps for Agent wallets. One wallet id is the explicit skill override;
-            multiple ids are an allowlist and normal Agent routing continues.
-          </div>
-        </div>
-        <button class="btn" ?disabled=${props.skillGrantsLoading} @click=${props.onRefresh}>
-          ${props.skillGrantsLoading ? "Refreshing..." : "Refresh"}
-        </button>
-      </div>
-      ${
-        props.skillGrantsWorkspace
-          ? html`<div class="muted mono" style="margin-top: 8px;">${props.skillGrantsWorkspace}</div>`
-          : nothing
-      }
-      ${
-        props.skillGrantsError
-          ? html`<div class="callout danger" style="margin-top: 12px;">${props.skillGrantsError}</div>`
-          : nothing
-      }
-      ${
-        props.skillGrantsMessage
-          ? html`<div class="callout success" style="margin-top: 12px;">${props.skillGrantsMessage}</div>`
-          : nothing
-      }
-      ${
-        props.skillGrantRows.length === 0
-          ? html`
-              <div class="wallet-security-note" style="margin-top: 12px">
-                No reviewed wallet-capable skills or existing wallet grants found yet.
-              </div>
-            `
-          : html`
-              <div class="wallet-skill-grant-layout">
-                <div class="wallet-skill-grant-list">
-                  ${props.skillGrantRows.map((row) => {
-                    const selected = row.skillId === selectedRow?.skillId;
-                    const needsGrant = row.requestedWalletActions && !row.grantedWalletActions;
-                    return html`
-                      <button
-                        class="wallet-skill-grant-row ${selected ? "is-selected" : ""}"
-                        type="button"
-                        @click=${() => props.onSkillGrantSelect(row)}
-                      >
-                        <span
-                          class="status-dot ${row.grantedWalletActions ? "ok" : needsGrant ? "warn" : ""}"
-                        ></span>
-                        <span>
-                          <strong>${row.skillId}</strong>
-                          <span class="muted">
-                            ${row.source === "clawhub" ? "ClawHub" : "config"}
-                            ${row.version ? ` · ${row.version}` : ""}
-                          </span>
-                        </span>
-                        <span class="muted">${formatSkillGrantSummary(row.grantedWalletActions)}</span>
-                      </button>
-                    `;
-                  })}
-                </div>
-                <div class="wallet-skill-grant-form">
-                  <div class="wallet-skill-grant-facts">
-                    <div>
-                      <span>Requested</span>
-                      <strong>
-                        ${formatRequestedWalletActions(selectedRow?.requestedWalletActions ?? null)}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>Current grant</span>
-                      <strong>${formatSkillGrantSummary(selectedRow?.grantedWalletActions ?? null)}</strong>
-                    </div>
-                  </div>
-                  <label class="field">
-                    <span>Skill</span>
-                    <input
-                      .value=${draft.skillId}
-                      @input=${(event: Event) =>
-                        props.onSkillGrantDraftPatch({
-                          skillId: (event.target as HTMLInputElement).value,
-                        })}
-                      placeholder="daily-dca"
-                    />
-                  </label>
-                  <div class="wallet-skill-grant-actions">
-                    ${WALLET_SKILL_ACTIONS.map(
-                      (action) => html`
-                        <label>
-                          <input
-                            type="checkbox"
-                            .checked=${draft.actions.includes(action)}
-                            @change=${(event: Event) =>
-                              props.onSkillGrantActionToggle(
-                                action,
-                                (event.target as HTMLInputElement).checked,
-                              )}
-                          />
-                          <span>${action}</span>
-                        </label>
-                      `,
-                    )}
-                  </div>
-                  <div class="wallet-card-security__grid">
-                    <label class="field">
-                      <span>Chain</span>
-                      <select .value="solana" disabled>
-                        <option value="solana">Solana</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Agent wallet ids</span>
-                      <input
-                        .value=${draft.walletIds}
-                        @input=${(event: Event) =>
-                          props.onSkillGrantDraftPatch({
-                            walletIds: (event.target as HTMLInputElement).value,
-                          })}
-                        placeholder="comma-separated"
-                      />
-                    </label>
-                    <label class="field">
-                      <span>Max amount</span>
-                      <input
-                        .value=${draft.maxAmount}
-                        @input=${(event: Event) =>
-                          props.onSkillGrantDraftPatch({
-                            maxAmount: (event.target as HTMLInputElement).value,
-                          })}
-                        placeholder="base units"
-                      />
-                    </label>
-                    <label class="field">
-                      <span>Slippage bps</span>
-                      <input
-                        .value=${draft.maxSlippageBps}
-                        @input=${(event: Event) =>
-                          props.onSkillGrantDraftPatch({
-                            maxSlippageBps: (event.target as HTMLInputElement).value,
-                          })}
-                        placeholder="50"
-                      />
-                    </label>
-                    <label class="field">
-                      <span>Registry</span>
-                      <input
-                        .value=${draft.registry}
-                        @input=${(event: Event) =>
-                          props.onSkillGrantDraftPatch({
-                            registry: (event.target as HTMLInputElement).value,
-                          })}
-                      />
-                    </label>
-                    <label class="field">
-                      <span>Input mints</span>
-                      <input
-                        .value=${draft.inputMints}
-                        @input=${(event: Event) =>
-                          props.onSkillGrantDraftPatch({
-                            inputMints: (event.target as HTMLInputElement).value,
-                          })}
-                        placeholder="comma-separated"
-                      />
-                    </label>
-                    <label class="field">
-                      <span>Output mints</span>
-                      <input
-                        .value=${draft.outputMints}
-                        @input=${(event: Event) =>
-                          props.onSkillGrantDraftPatch({
-                            outputMints: (event.target as HTMLInputElement).value,
-                          })}
-                        placeholder="comma-separated"
-                      />
-                    </label>
-                  </div>
-                  <div class="wallet-skill-grant-flags">
-                    <label>
-                      <input
-                        type="checkbox"
-                        .checked=${draft.autonomous}
-                        @change=${(event: Event) =>
-                          props.onSkillGrantDraftPatch({
-                            autonomous: (event.target as HTMLInputElement).checked,
-                          })}
-                      />
-                      <span>Autonomous</span>
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        .checked=${draft.cron}
-                        @change=${(event: Event) =>
-                          props.onSkillGrantDraftPatch({
-                            cron: (event.target as HTMLInputElement).checked,
-                          })}
-                      />
-                      <span>Cron</span>
-                    </label>
-                  </div>
-                  <div class="wallet-card-security__actions">
-                    <button class="btn primary" ?disabled=${saveDisabled} @click=${props.onSkillGrantSave}>
-                      ${props.skillGrantBusy ? "Saving..." : "Save grant"}
-                    </button>
-                    <button
-                      class="btn danger"
-                      ?disabled=${props.skillGrantBusy || !draft.skillId.trim()}
-                      @click=${() => props.onSkillGrantClear(draft.skillId)}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-              </div>
-            `
-      }
-    </div>
-  `;
-}
-
 function renderWalletAccessPanel(props: WalletViewProps) {
   const status = props.status;
   const adminControlShortcut = describeAdminControlShortcut(props);
@@ -2968,13 +2673,9 @@ export function renderWallet(props: WalletViewProps) {
   const expandedPanel = props.expandedPanel ?? "";
   const routeHash =
     typeof window !== "undefined" ? String(window.location?.hash ?? "").replace(/^#/, "") : "";
-  const hashPanel =
-    routeHash === "wallet-skill-grants"
-      ? "skill-grants"
-      : ["wallet-access", "wallet-admin-control"].includes(routeHash)
-        ? "access"
-        : null;
-  const activeMainPanel = hashPanel ?? props.mainPanel ?? "wallets";
+  const hashPanel = ["wallet-access", "wallet-admin-control"].includes(routeHash) ? "access" : null;
+  const requestedMainPanel = hashPanel ?? props.mainPanel ?? "wallets";
+  const activeMainPanel = requestedMainPanel === "skill-grants" ? "wallets" : requestedMainPanel;
   const createProvider = (props.providers ?? []).find(
     (provider) => provider.id === "local-socket-signer",
   );
@@ -2987,14 +2688,13 @@ export function renderWallet(props: WalletViewProps) {
   const createInputReady = Boolean(
     props.createRole && rpcSelectionCount === 1 && !miningCreationBlocked,
   );
-  const setMainPanel = (panel: "wallets" | "access" | "skill-grants") => {
+  const setMainPanel = (panel: "wallets" | "access") => {
     props.onMainPanelChange?.(panel);
     if (typeof window === "undefined") {
       return;
     }
     const url = new URL(window.location.href);
-    url.hash =
-      panel === "skill-grants" ? "wallet-skill-grants" : panel === "access" ? "wallet-access" : "";
+    url.hash = panel === "access" ? "wallet-access" : "";
     window.history.replaceState({}, "", url.toString());
   };
 
@@ -4298,14 +3998,6 @@ export function renderWallet(props: WalletViewProps) {
           >
             Account Security
           </button>
-          <button
-            class="btn"
-            role="tab"
-            aria-selected=${activeMainPanel === "skill-grants" ? "true" : "false"}
-            @click=${() => setMainPanel("skill-grants")}
-          >
-            Skill Grants
-          </button>
           ${
             activeMainPanel === "wallets"
               ? html`
@@ -4330,11 +4022,9 @@ export function renderWallet(props: WalletViewProps) {
           }
         </div>
         ${
-          activeMainPanel === "skill-grants"
-            ? renderWalletSkillGrantsPanel(props)
-            : activeMainPanel === "access"
-              ? renderWalletAccessPanel(props)
-              : html`<div id="wallet-wallets" class="wallet-wallets-section">
+          activeMainPanel === "access"
+            ? renderWalletAccessPanel(props)
+            : html`<div id="wallet-wallets" class="wallet-wallets-section">
           <details class="wallet-create-panel">
             <summary>Create wallet</summary>
             <div class="wallet-create-grid">
@@ -4512,12 +4202,6 @@ export function renderWallet(props: WalletViewProps) {
                           label: "Automation",
                           title:
                             "Stop or resume background wallet execution for this Agent wallet.",
-                        },
-                        {
-                          id: "skills",
-                          label: "Skills",
-                          title:
-                            "Allow reviewed skills to use this Agent wallet after separate skill grants.",
                         },
                       ]
                     : [
@@ -5466,58 +5150,6 @@ export function renderWallet(props: WalletViewProps) {
                                                   `;
                                               })()}
 	                                          `
-                                        : nothing
-                                    }
-                                    ${
-                                      cardRole === "agent" && activePolicyPanel === "skills"
-                                        ? html`
-                                            ${(() => {
-                                              const skillsEnabled =
-                                                props.policySkillsEnabled ??
-                                                settings?.policy.skillsEnabled ??
-                                                false;
-                                              return html`
-                                                <div class="field">
-                                                  <div class="wallet-spend-limit-row">
-                                                    <label class="field">
-                                                      <span>Status</span>
-                                                      <select
-                                                        .value=${
-                                                          skillsEnabled ? "enabled" : "disabled"
-                                                        }
-                                                        ?disabled=${
-                                                          props.settingsBusy ||
-                                                          !settings ||
-                                                          !canEditPolicy
-                                                        }
-                                                        @change=${(event: Event) =>
-                                                          props.onPolicyDraftChange({
-                                                            skillsEnabled:
-                                                              (
-                                                                event.currentTarget as HTMLSelectElement
-                                                              ).value === "enabled",
-                                                          })}
-                                                      >
-                                                        <option value="disabled">Off</option>
-                                                        <option value="enabled">On</option>
-                                                      </select>
-                                                    </label>
-                                                    <button
-                                                      class="btn"
-                                                      ?disabled=${
-                                                        props.settingsBusy ||
-                                                        !settings ||
-                                                        !canEditPolicy
-                                                      }
-                                                      @click=${props.onSavePolicy}
-                                                    >
-                                                      ${props.settingsBusy ? "Saving..." : "Save"}
-                                                    </button>
-                                                  </div>
-                                                </div>
-                                              `;
-                                            })()}
-                                          `
                                         : nothing
                                     }
                                   `

@@ -280,7 +280,7 @@ describe("wallet-tool", () => {
     }
   });
 
-  it("requires an explicit walletActions manifest before skill wallet sends", async () => {
+  it("rejects direct skill authority before wallet sends", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-skill-send-"));
     vi.stubEnv("FASED_STATE_DIR", tempDir);
     try {
@@ -300,13 +300,13 @@ describe("wallet-tool", () => {
           to: "So11111111111111111111111111111111111111112",
           amount: "1",
         }),
-      ).rejects.toThrow("wallet_action_skill_manifest_required");
+      ).rejects.toThrow("wallet_tool_skill_authority_removed");
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("rejects installed ClawHub skills from unallowlisted registries before wallet sends", async () => {
+  it("rejects installed skill wallet authority regardless of registry configuration", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-tool-registry-"));
     const workspaceDir = path.join(tempDir, "workspace");
     vi.stubEnv("FASED_STATE_DIR", tempDir);
@@ -356,7 +356,7 @@ describe("wallet-tool", () => {
           to: "So11111111111111111111111111111111111111112",
           amount: "1",
         }),
-      ).rejects.toThrow("wallet_action_skill_registry_not_allowlisted");
+      ).rejects.toThrow("wallet_tool_skill_authority_removed");
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -1437,7 +1437,7 @@ describe("wallet-tool", () => {
     );
   });
 
-  it("enforces skill allowlist when configured", async () => {
+  it("ignores legacy skill allowlists and rejects skill authority", async () => {
     const cfg = walletEnabledConfig();
     cfg.wallet = {
       ...cfg.wallet,
@@ -1456,9 +1456,10 @@ describe("wallet-tool", () => {
     if (!missingSkillContextTool) {
       throw new Error("missing wallet tool");
     }
-    await expect(
-      missingSkillContextTool.execute("call-missing-skill", { action: "status" }),
-    ).rejects.toThrow("wallet_tool_skill_context_required");
+    const status = await missingSkillContextTool.execute("call-without-skill", {
+      action: "status",
+    });
+    expect((status.details as { ok?: boolean }).ok).toBe(true);
 
     const allowedSkillTool = createWalletTool({
       config: cfg,
@@ -1468,7 +1469,8 @@ describe("wallet-tool", () => {
     if (!allowedSkillTool) {
       throw new Error("missing wallet tool");
     }
-    const status = await allowedSkillTool.execute("call-skill", { action: "status" });
-    expect((status.details as { ok?: boolean }).ok).toBe(true);
+    await expect(allowedSkillTool.execute("call-skill", { action: "status" })).rejects.toThrow(
+      "wallet_tool_skill_authority_removed",
+    );
   });
 });

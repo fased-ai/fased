@@ -1041,7 +1041,7 @@ describe("renderWallet", () => {
     expect(text).not.toContain("Bond active");
   });
 
-  it("renders wallet skill grants without granting mining or vault wallet access", () => {
+  it("redirects stale skill-grant panel state to ordinary wallets", () => {
     const text = flattenTemplateText(
       renderWalletForTest({
         mainPanel: "skill-grants",
@@ -1081,10 +1081,10 @@ describe("renderWallet", () => {
       }),
     );
 
-    expect(text).toContain("Skill Grants");
-    expect(text).toContain("daily-dca");
-    expect(text).toContain("Agent wallet ids");
-    expect(text).toContain("quote, swap");
+    expect(text).toContain("Wallets");
+    expect(text).not.toContain("Skill Grants");
+    expect(text).not.toContain("daily-dca");
+    expect(text).not.toContain("Agent wallet ids");
   });
 
   it("renders Agent policy without legacy custody controls", () => {
