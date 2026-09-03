@@ -150,7 +150,11 @@ describe("lean CI and release workflow contracts", () => {
     expect(Object.keys(value.jobs ?? {})).toEqual(["release"]);
     expect(value.jobs?.release?.["timeout-minutes"]).toBe(25);
     expect(value.jobs?.release?.environment).toBeUndefined();
+    expect(value.jobs?.release?.env?.FASED_RELEASE_TIMINGS_FILE).toBe(
+      "${{ github.workspace }}/.fased-release-phase-timings.json",
+    );
     expect(source).toContain("attestations: write");
+    expect(source).not.toContain("${{ runner.temp }}");
     const releaseText = jobText(value.jobs?.release);
     expect(source).toContain("Resolve exact next signed channel identity");
     expect(source).toContain("ci-version-identity.mjs --inventory-only");
