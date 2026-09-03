@@ -60,12 +60,17 @@ void test("Fased consumes one generated Agent identity contract", () => {
     "utf8",
   );
   assert.match(generatedGo, /agentIdentityInstructionContractsV1/u);
+  assert.match(generatedGo, /"initialize_namespace_config":.*pragma: allowlist secret/u);
 
   const generated = fs.readFileSync(
     path.join(root, "src/agents/fased-agent-identity-contract.generated.ts"),
     "utf8",
   );
-  assert.equal(generated.match(/pragma: allowlist secret/gu)?.length, 6);
+  assert.ok((generated.match(/pragma: allowlist secret/gu)?.length ?? 0) >= 6);
+  assert.match(
+    generated,
+    /address: "CwidR6FY9eR3sn4nGZC6ScwDiqqXmALsfA57yYKQgXJH", \/\/ pragma: allowlist secret/u, // pragma: allowlist secret
+  );
 
   const preCommit = fs.readFileSync(path.join(root, ".pre-commit-config.yaml"), "utf8");
   assert.ok(preCommit.includes("fased-agent-(identity|capital)-interface\\.v1"));

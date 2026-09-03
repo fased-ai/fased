@@ -72,7 +72,7 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "system_program",
           signer: false,
           writable: false,
-          address: "11111111111111111111111111111111",
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
         },
       ],
     },
@@ -111,7 +111,7 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "system_program",
           signer: false,
           writable: false,
-          address: "11111111111111111111111111111111",
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
         },
       ],
     },
@@ -164,7 +164,7 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "system_program",
           signer: false,
           writable: false,
-          address: "11111111111111111111111111111111",
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
         },
       ],
     },
@@ -227,13 +227,13 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "instructions",
           signer: false,
           writable: false,
-          address: "Sysvar1nstructions1111111111111111111111111",
+          address: "Sysvar1nstructions1111111111111111111111111", // pragma: allowlist secret
         },
         {
           name: "system_program",
           signer: false,
           writable: false,
-          address: "11111111111111111111111111111111",
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
         },
       ],
     },
@@ -318,7 +318,7 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "system_program",
           signer: false,
           writable: false,
-          address: "11111111111111111111111111111111",
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
         },
       ],
     },
@@ -337,7 +337,7 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "bootstrap_authority",
           signer: true,
           writable: true,
-          address: "CwidR6FY9eR3sn4nGZC6ScwDiqqXmALsfA57yYKQgXJH",
+          address: "CwidR6FY9eR3sn4nGZC6ScwDiqqXmALsfA57yYKQgXJH", // pragma: allowlist secret
         },
         {
           name: "namespace_config",
@@ -348,7 +348,7 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "system_program",
           signer: false,
           writable: false,
-          address: "11111111111111111111111111111111",
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
         },
       ],
     },
@@ -443,7 +443,7 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "system_program",
           signer: false,
           writable: false,
-          address: "11111111111111111111111111111111",
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
         },
       ],
     },
@@ -466,7 +466,7 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
           name: "bootstrap_authority",
           signer: true,
           writable: false,
-          address: "CwidR6FY9eR3sn4nGZC6ScwDiqqXmALsfA57yYKQgXJH",
+          address: "CwidR6FY9eR3sn4nGZC6ScwDiqqXmALsfA57yYKQgXJH", // pragma: allowlist secret
         },
         {
           name: "namespace_config",
