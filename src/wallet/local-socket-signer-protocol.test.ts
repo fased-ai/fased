@@ -688,7 +688,7 @@ describe("local socket signer protocol", () => {
     ).toBe(false);
   });
 
-  it("accepts only narrow Vault bond and federation challenge intents", () => {
+  it("accepts only narrow Vault bond, Agent Capital, and federation challenge intents", () => {
     const policyHash = `sha256:${"e".repeat(64)}`;
     const bondIntent = {
       type: "solana.vaultBondAction" as const,
@@ -719,6 +719,39 @@ describe("local socket signer protocol", () => {
           requestId: "vault-bond-request",
           policyHash,
           intent: { ...bondIntent, serializedTxBase64: "forbidden" },
+        },
+      }),
+    ).toThrow("invalid signer request");
+
+    const capitalIntent = {
+      type: "solana.agentCapitalAction" as const,
+      cluster: "devnet" as const,
+      action: "deposit_capital_offer",
+      programId: "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz", // pragma: allowlist secret
+      dataBase64: "AQ==",
+      keys: bondIntent.keys,
+    };
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "owner-vault",
+        request: {
+          requestId: "agent-capital:deposit-1",
+          policyHash,
+          mode: "reviewed",
+          intent: capitalIntent,
+        },
+      }).op,
+    ).toBe("v2.review.prepare");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "owner-vault",
+        request: {
+          requestId: "agent-capital:deposit-1",
+          policyHash,
+          mode: "reviewed",
+          intent: { ...capitalIntent, transaction: "forbidden" },
         },
       }),
     ).toThrow("invalid signer request");

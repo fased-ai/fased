@@ -842,8 +842,8 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 
 func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2, error) {
 	switch strings.TrimSpace(req.Intent.Type) {
-	case intentSolanaVaultBondAction, intentFederationBondChallenge:
-		return signerOperationV2{}, errors.New("Vault bond and federation challenge intents require signer-owned reviewed authorization")
+	case intentSolanaVaultBondAction, intentSolanaAgentCapitalAction, intentFederationBondChallenge:
+		return signerOperationV2{}, errors.New("Vault bond, Agent Capital, and federation challenge intents require signer-owned reviewed authorization")
 	}
 	walletRecord, err := s.keys.PublicRecord(req.IntentWalletID())
 	if err != nil {
@@ -1285,7 +1285,7 @@ func buildTypedInstructionsV2(
 			transferData,
 		)
 		return appendMemo([]solana.Instruction{createDestinationATA, transfer}), nil
-	case intentSolanaSATAction, intentSolanaSATKeeperAction, intentSolanaSATLookupTable, intentSolanaVaultBondAction:
+	case intentSolanaSATAction, intentSolanaSATKeeperAction, intentSolanaSATLookupTable, intentSolanaVaultBondAction, intentSolanaAgentCapitalAction:
 		if len(intent.Instructions) == 0 || len(intent.Instructions) > 6 {
 			return nil, errors.New("typed SAT action has an invalid instruction count")
 		}

@@ -1043,7 +1043,7 @@ type WalletSettingsResponsePayload = {
   signerPolicy?: {
     state: "locked" | "acknowledged" | "unavailable";
     walletId: string;
-    role?: "agent" | "mining" | "vault";
+    role?: "agent" | "mining" | "vault" | "profile" | "strategy";
     version?: number;
     hash?: string;
     operations?: string[];

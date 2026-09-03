@@ -45,6 +45,21 @@ export { DEFAULT_PROVIDER } from "../agents/defaults.js";
 export { getApiKeyForModel, requireApiKey } from "../agents/model-auth.js";
 export type { ResolvedProviderAuth } from "../agents/model-auth.js";
 export {
+  deriveAgentCapitalRequestId,
+  executeReviewedAgentCapitalAction,
+  validateAgentCapitalInstruction,
+} from "../agents/agent-capital-runtime.js";
+export type {
+  AgentCapitalInstruction,
+  AgentCapitalOperation,
+  AgentCapitalReadback,
+} from "../agents/agent-capital-runtime.js";
+export {
+  FASED_AGENT_CAPITAL_CONTRACT,
+  FASED_AGENT_CAPITAL_PROGRAM_ID,
+} from "../agents/fased-agent-capital-contract.generated.js";
+export type { FasedAgentCapitalAction } from "../agents/fased-agent-capital-contract.generated.js";
+export {
   buildModelAliasIndex,
   resolveConfiguredModelRef,
   resolveDefaultModelForAgent,

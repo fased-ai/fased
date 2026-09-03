@@ -1,0 +1,664 @@
+{
+  "$schema": "fased.agent-capital-interface.v1",
+  "source": {
+    "repository": "https://github.com/fased-ai/agent-protocol",
+    "commit": "847d0192ef10623778dbe94575c3e35d0dd14ff3",
+    "tree": "1b620fe687a81751e5558e27b13d3a36fe3816aa",
+    "idlSha256": "sha256:91c86295de1d45f83fea1827e05b52f907da9e5162f93d2d22be6a2b1489e608"
+  },
+  "programId": "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz",
+  "generation": 1,
+  "instructions": [
+    {
+      "action": "activate_capital_offer",
+      "discriminator": [193, 30, 42, 77, 124, 96, 143, 254],
+      "dataSize": 8,
+      "args": [],
+      "accounts": [
+        {
+          "name": "activator",
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "capital_offer",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "permanent_mining_id",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "sat_agent_record",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "vault_authority",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_miner_capital",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "satcoin_program",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "system_program",
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "action": "bind_satcoin_vault",
+      "discriminator": [14, 100, 95, 170, 52, 252, 45, 189],
+      "dataSize": 24,
+      "args": [
+        {
+          "name": "expected_fased_authority_generation",
+          "type": "u64"
+        },
+        {
+          "name": "expected_sat_authority_generation",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "profile_controller",
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "mining_controller",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "name": "current_miner_authority",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "name": "fased_agent_record",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "agent_mining_binding",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "permanent_mining_id",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "sat_agent_record",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "current_miner_capital",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "sat_vault_program_allowlist",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "vault_program",
+          "signer": false,
+          "writable": false,
+          "address": "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz"
+        },
+        {
+          "name": "vault_authority",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_miner_capital",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "satcoin_program",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "system_program",
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "action": "cancel_capital_offer",
+      "discriminator": [159, 178, 204, 191, 17, 158, 215, 185],
+      "dataSize": 8,
+      "args": [],
+      "accounts": [
+        {
+          "name": "canceller",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "capital_offer",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_miner_capital",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "satcoin_program",
+          "signer": false,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "action": "claim_vault_sat",
+      "discriminator": [192, 63, 51, 179, 195, 52, 94, 83],
+      "dataSize": 8,
+      "args": [],
+      "accounts": [
+        {
+          "name": "payer",
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_position",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "participant",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "vault_authority",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "sat_reward_destination",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "sat_mint",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "participant_sat_destination",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "associated_token_program",
+          "signer": false,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "action": "deposit_capital_offer",
+      "discriminator": [249, 178, 77, 168, 49, 178, 22, 161],
+      "dataSize": 16,
+      "args": [
+        {
+          "name": "lamports",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "participant",
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "capital_offer",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_authority",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_position",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "action": "finalize_vault_exit",
+      "discriminator": [159, 129, 210, 209, 251, 220, 200, 200],
+      "dataSize": 8,
+      "args": [],
+      "accounts": [
+        {
+          "name": "payer",
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "capital_offer",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_position",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "participant",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_authority",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "sat_agent_record",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "vault_miner_capital",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "sat_reward_destination",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "sat_mint",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "participant_sat_destination",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "exit_receipt",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "satcoin_program",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "system_program",
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "associated_token_program",
+          "signer": false,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "action": "initialize_capital_offer",
+      "discriminator": [5, 161, 92, 181, 252, 59, 99, 182],
+      "dataSize": 60,
+      "args": [
+        {
+          "name": "max_total_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "min_activation_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "min_deposit_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "max_deposit_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "max_participants",
+          "type": "u32"
+        },
+        {
+          "name": "open_slot",
+          "type": "u64"
+        },
+        {
+          "name": "close_slot",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "profile_controller",
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "fased_agent_record",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "capital_offer",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "action": "record_vault_result",
+      "discriminator": [242, 103, 93, 40, 15, 167, 232, 244],
+      "dataSize": 16,
+      "args": [
+        {
+          "name": "expected_receipt_sequence",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "recorder",
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "result_checkpoint",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "sat_agent_record",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "vault_miner_capital",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "sat_reward_destination",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "satcoin_program",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "system_program",
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "action": "refund_cancelled_position",
+      "discriminator": [132, 88, 151, 80, 120, 71, 250, 66],
+      "dataSize": 8,
+      "args": [],
+      "accounts": [
+        {
+          "name": "payer",
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "capital_offer",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_position",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "participant",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_authority",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "exit_receipt",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "action": "request_vault_exit",
+      "discriminator": [160, 182, 95, 222, 214, 109, 218, 209],
+      "dataSize": 8,
+      "args": [],
+      "accounts": [
+        {
+          "name": "participant",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "name": "agent_capital_vault_binding",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "mining_vault",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_position",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "vault_miner_capital",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "satcoin_program",
+          "signer": false,
+          "writable": false
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentCapitalVaultBinding",
+      "discriminator": [163, 160, 41, 5, 201, 12, 182, 231]
+    },
+    {
+      "name": "AgentMiningBinding",
+      "discriminator": [39, 109, 166, 142, 221, 165, 68, 23]
+    },
+    {
+      "name": "AgentMiningVault",
+      "discriminator": [218, 187, 15, 67, 66, 76, 62, 109]
+    },
+    {
+      "name": "CapitalOffer",
+      "discriminator": [217, 11, 49, 163, 27, 216, 133, 22]
+    },
+    {
+      "name": "FasedAgentRecord",
+      "discriminator": [164, 123, 4, 229, 103, 117, 40, 238]
+    },
+    {
+      "name": "VaultExitReceipt",
+      "discriminator": [111, 159, 251, 95, 141, 186, 237, 93]
+    },
+    {
+      "name": "VaultPosition",
+      "discriminator": [122, 109, 193, 63, 69, 148, 90, 237]
+    },
+    {
+      "name": "VaultResultCheckpoint",
+      "discriminator": [223, 198, 112, 97, 201, 132, 109, 124]
+    }
+  ]
+}

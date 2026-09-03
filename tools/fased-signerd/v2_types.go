@@ -27,6 +27,7 @@ const (
 	intentSolanaSATKeeperAction    = "solana.satKeeperAction"
 	intentSolanaSATLookupTable     = "solana.satLookupTable"
 	intentSolanaVaultBondAction    = "solana.vaultBondAction"
+	intentSolanaAgentCapitalAction = "solana.agentCapitalAction"
 	intentFederationBondChallenge  = "federation.bondChallenge"
 	intentSolanaJupiterSwap        = "solana.jupiter.swap"
 	intentSolanaTriggerAuth        = "solana.jupiter.trigger.auth"
@@ -351,6 +352,11 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 			return normalizedIntentV2{}, errors.New("typed Vault bond intent requires signer wallet context")
 		}
 		return normalizeSATIntentV2(input, *wallet)
+	case intentSolanaAgentCapitalAction:
+		if wallet == nil || wallet.IsZero() {
+			return normalizedIntentV2{}, errors.New("typed Agent Capital intent requires signer wallet context")
+		}
+		return normalizeAgentCapitalIntentV2(input, *wallet)
 	case intentFederationBondChallenge:
 		if wallet == nil || wallet.IsZero() {
 			return normalizedIntentV2{}, errors.New("federation bond challenge requires signer wallet context")

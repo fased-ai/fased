@@ -30,7 +30,7 @@ repos:
           - --baseline
           - .secrets.baseline
           - --exclude-files
-          - '(^|/)(dist/|vendor/|pnpm-lock\.yaml$|\.detect-secrets\.cfg$|config/lifecycle-compatibility\.v1\.json$|config/owner-local-predecessor-schema1\.v1\.json$|extensions/sat-mining/protocol-generation/(idl\.generation-2|activation\.sat-dep-(000[6-9]|001[0-9]))\.json$|src/agents/protocol-generation/(fased-agent-identity-interface\.v1|public-agent-views\.v1\.(source|fixtures))\.json$|tools/fased-lifecycled/trust/(sigstore-public-good-trusted-root\.json|testdata/fased-hosted-release-v2\.fixture|testdata/fased-hosted-release-v2\.attestation\.fixture)$)'
+          - '(^|/)(dist/|vendor/|pnpm-lock\.yaml$|\.detect-secrets\.cfg$|config/lifecycle-compatibility\.v1\.json$|config/owner-local-predecessor-schema1\.v1\.json$|extensions/sat-mining/protocol-generation/(idl\.generation-2|activation\.sat-dep-(000[6-9]|001[0-9]))\.json$|src/agents/protocol-generation/(fased-agent-(identity|capital)-interface\.v1|public-agent-views\.v1\.(source|fixtures))\.json$|tools/fased-lifecycled/trust/(sigstore-public-good-trusted-root\.json|testdata/fased-hosted-release-v2\.fixture|testdata/fased-hosted-release-v2\.attestation\.fixture)$)'
           - --exclude-lines
           - 'key_content\.include\?\("BEGIN PRIVATE KEY"\)'
           - --exclude-lines
