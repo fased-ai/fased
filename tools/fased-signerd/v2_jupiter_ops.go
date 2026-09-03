@@ -143,6 +143,29 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 		if err == nil {
 			artifact = signerReviewArtifactInputV2{WalletPublicKey: wallet.PublicKey, Kind: signerReviewArtifactSolanaTransactionV2, Digest: agentCapitalArtifactDigestV2(validated), Transaction: &transaction, StateDigest: snapshot.Digest, StateSlot: snapshot.Slot}
 		}
+	case intent.Intent.Type == intentSolanaMoneyFoundation:
+		if req.Transaction == nil {
+			return signerReviewV2{}, errors.New("reviewed money-foundation action requires the exact compiler transaction")
+		}
+		if mode, modeErr := normalizeReviewModeV2(req.Mode); modeErr != nil || mode != jupiterReviewModeReviewedV2 {
+			return signerReviewV2{}, errors.New("money-foundation actions require reviewed mode")
+		}
+		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
+		if networkErr != nil {
+			return signerReviewV2{}, errSignerNetworkPendingV2
+		}
+		var snapshot signerOwnedAccountSnapshotV2
+		var verifiedRPCs []string
+		intent, snapshot, verifiedRPCs, err = resolveMoneyFoundationReviewStateV2(rpcURLs, walletPublicKey, intent)
+		if err == nil {
+			transaction, err = normalizeTransactionEnvelopeV2(*req.Transaction)
+		}
+		if err == nil {
+			validated, err = validateAndSimulateMoneyFoundationReviewV2(verifiedRPCs, walletPublicKey, intent, transaction)
+		}
+		if err == nil {
+			artifact = signerReviewArtifactInputV2{WalletPublicKey: wallet.PublicKey, Kind: signerReviewArtifactSolanaTransactionV2, Digest: moneyFoundationArtifactDigestV2(validated), Transaction: &transaction, StateDigest: snapshot.Digest, StateSlot: snapshot.Slot}
+		}
 	case intent.Intent.Type == intentFederationBondChallenge:
 		if req.Transaction != nil {
 			return signerReviewV2{}, errors.New("federation bond challenge rejects transaction artifacts")
@@ -162,7 +185,7 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 			artifact.WalletPublicKey = wallet.PublicKey
 		}
 	default:
-		return signerReviewV2{}, errors.New("review.prepare supports typed Jupiter, signer-built SOL/SPL transfers, Vault bond actions, and federation bond challenges")
+		return signerReviewV2{}, errors.New("review.prepare supports typed Jupiter, signer-built SOL/SPL transfers, Vault bond, Agent Capital, money-foundation, and federation actions")
 	}
 	if err != nil {
 		return signerReviewV2{}, err
@@ -284,6 +307,25 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 				err = errors.New("stored Agent Capital review transaction is missing")
 			} else {
 				validated, err = validateAndSimulateAgentCapitalReviewV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
+			}
+		}
+	case intent.Intent.Type == intentSolanaMoneyFoundation:
+		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
+		if networkErr != nil {
+			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
+		}
+		var currentIntent normalizedIntentV2
+		var snapshot signerOwnedAccountSnapshotV2
+		currentIntent, snapshot, rpcURLs, err = resolveMoneyFoundationReviewStateV2(configuredRPCs, walletPublicKey, intent)
+		if err == nil {
+			err = compareMoneyFoundationReviewStateV2(review, currentIntent, snapshot)
+		}
+		if err == nil {
+			intent = currentIntent
+			if artifact.Transaction == nil {
+				err = errors.New("stored money-foundation review transaction is missing")
+			} else {
+				validated, err = validateAndSimulateMoneyFoundationReviewV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
 			}
 		}
 	case intent.Intent.Type == intentFederationBondChallenge:
@@ -481,6 +523,25 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		}
 		intent, rpcURLs = currentIntent, verifiedRPCs
 	}
+	if intent.Intent.Type == intentSolanaMoneyFoundation {
+		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
+		if networkErr != nil {
+			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, errSignerNetworkPendingV2)
+			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
+		}
+		currentIntent, snapshot, verifiedRPCs, stateErr := resolveMoneyFoundationReviewStateV2(configuredRPCs, walletPublicKey, intent)
+		if stateErr == nil {
+			stateErr = compareMoneyFoundationReviewStateV2(review, currentIntent, snapshot)
+		}
+		if stateErr == nil && artifact.Transaction != nil {
+			validated, stateErr = validateAndSimulateMoneyFoundationReviewV2(verifiedRPCs, walletPublicKey, currentIntent, *artifact.Transaction)
+		}
+		if stateErr != nil {
+			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, stateErr)
+			return signerReviewExecutionResultV2{}, stateErr
+		}
+		intent, rpcURLs = currentIntent, verifiedRPCs
+	}
 	if intent.Intent.Type == intentFederationBondChallenge {
 		_, payload, payloadErr := federationPayloadFromIntentV2(intent)
 		if payloadErr == nil {
@@ -507,7 +568,15 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			Review: review, Operation: &operation, SignatureBase64: signatureBase64, Signer: wallet.PublicKey,
 		}, err
 	}
-	signedRaw, signature, err := signValidatedJupiterTransactionV2(validated, privateKey)
+	var signedRaw []byte
+	var signature solana.Signature
+	if intent.Intent.Type == intentSolanaMoneyFoundation {
+		signedRaw, signature, err = execution.SignValidatedMoneyFoundationTransaction(
+			validated.Transaction, validated.WalletSignerIndex, validated.EphemeralSignerIndex, privateKey,
+		)
+	} else {
+		signedRaw, signature, err = signValidatedJupiterTransactionV2(validated, privateKey)
+	}
 	if err != nil {
 		failed, markErr := s.store.markFailedClaim(operation.RequestID, attempt, err)
 		if markErr != nil {

@@ -191,6 +191,48 @@ export type WalletProviderAgentCapitalIntentV2 = {
   keys: Array<{ pubkey: string; isSigner: boolean; isWritable: boolean }>;
 };
 
+export type WalletProviderMoneyFoundationIntentV2 = {
+  type: "solana.moneyFoundationAction";
+  cluster: "devnet";
+  moneyFoundation: {
+    contractGeneration: 1;
+    policyGeneration: string;
+    policyDigestSha256: string;
+    action: "ADD_POL" | "EMERGENCY_UNWIND";
+    sourceClass: "OWNER_SEED" | "PROTOCOL_SURPLUS" | "EMERGENCY_TREASURY";
+    sourceOwner: string;
+    destinationOwner: string;
+    lifecycle: "DISABLED" | "ENABLED" | "PAUSED" | "RETIRED";
+    fundingAuthorized: boolean;
+    publicEntryEnabled: boolean;
+    liquidityTreasury: string;
+    emergencyAuthority: string;
+    emergencyUnwindNotBeforeSlot: string;
+    satMint: string;
+    satTokenProgram: string;
+    wrappedSolMint: string;
+    venueProgram: string;
+    poolConfig: string;
+    pool: string;
+    positionMint: string;
+    positionTokenAccount: string;
+    satVault: string;
+    solVault: string;
+    initialSatRaw: string;
+    initialSolLamports: string;
+    inputRaw: string;
+    minimumSatRaw: string;
+    minimumSolLamports: string;
+    maxSlippageBps: number;
+    maxPriceImpactBps: number;
+    maxCombinedFeeBps: number;
+    simulationSlot: string;
+    expiresSlot: string;
+    sourceDescriptorSha256: string;
+    protectedCapitalAddresses: string[];
+  };
+};
+
 export type WalletProviderFederationBondChallengeIntentV2 = {
   type: "federation.bondChallenge";
   federation: {
@@ -212,6 +254,7 @@ export type WalletProviderSignerIntentV2 =
   | WalletProviderTypedTransferIntentV2
   | WalletProviderVaultBondIntentV2
   | WalletProviderAgentCapitalIntentV2
+  | WalletProviderMoneyFoundationIntentV2
   | WalletProviderFederationBondChallengeIntentV2;
 
 export type WalletProviderSignerIntentType = WalletProviderSignerIntentV2["type"];

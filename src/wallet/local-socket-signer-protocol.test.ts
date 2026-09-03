@@ -688,7 +688,7 @@ describe("local socket signer protocol", () => {
     ).toBe(false);
   });
 
-  it("accepts only narrow Vault bond, Agent Capital, and federation challenge intents", () => {
+  it("accepts only narrow Vault bond, Agent Capital, money-foundation, and federation challenge intents", () => {
     const policyHash = `sha256:${"e".repeat(64)}`;
     const bondIntent = {
       type: "solana.vaultBondAction" as const,
@@ -752,6 +752,78 @@ describe("local socket signer protocol", () => {
           policyHash,
           mode: "reviewed",
           intent: { ...capitalIntent, transaction: "forbidden" },
+        },
+      }),
+    ).toThrow("invalid signer request");
+
+    const moneyFoundationIntent = {
+      type: "solana.moneyFoundationAction" as const,
+      cluster: "devnet" as const,
+      moneyFoundation: {
+        contractGeneration: 1 as const,
+        policyGeneration: "1",
+        policyDigestSha256: "a".repeat(64),
+        action: "ADD_POL" as const,
+        sourceClass: "OWNER_SEED" as const,
+        sourceOwner: bondIntent.keys[0].pubkey,
+        destinationOwner: bondIntent.keys[0].pubkey,
+        lifecycle: "ENABLED" as const,
+        fundingAuthorized: true,
+        publicEntryEnabled: false,
+        liquidityTreasury: bondIntent.keys[0].pubkey,
+        emergencyAuthority: bondIntent.keys[0].pubkey,
+        emergencyUnwindNotBeforeSlot: "0",
+        satMint: bondIntent.keys[0].pubkey,
+        satTokenProgram: bondIntent.keys[0].pubkey,
+        wrappedSolMint: bondIntent.keys[0].pubkey,
+        venueProgram: bondIntent.keys[0].pubkey,
+        poolConfig: bondIntent.keys[0].pubkey,
+        pool: bondIntent.keys[0].pubkey,
+        positionMint: bondIntent.keys[0].pubkey,
+        positionTokenAccount: bondIntent.keys[0].pubkey,
+        satVault: bondIntent.keys[0].pubkey,
+        solVault: bondIntent.keys[0].pubkey,
+        initialSatRaw: "50000000000",
+        initialSolLamports: "2500000",
+        inputRaw: "50000000000",
+        minimumSatRaw: "0",
+        minimumSolLamports: "0",
+        maxSlippageBps: 100,
+        maxPriceImpactBps: 1000,
+        maxCombinedFeeBps: 1000,
+        simulationSlot: "100",
+        expiresSlot: "200",
+        sourceDescriptorSha256: "b".repeat(64),
+        protectedCapitalAddresses: [bondIntent.keys[0].pubkey],
+      },
+    };
+    expect(
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "pol-vault",
+        request: {
+          requestId: "money-foundation:add-pol-1",
+          policyHash,
+          mode: "reviewed",
+          intent: moneyFoundationIntent,
+          transaction: {
+            serializedTxBase64: "AQ==",
+            programs: [bondIntent.keys[0].pubkey],
+            writableAccounts: [bondIntent.keys[0].pubkey],
+            submission: "rpc",
+          },
+        },
+      }).op,
+    ).toBe("v2.review.prepare");
+    expect(() =>
+      parseLocalSocketSignerRequest({
+        op: "v2.review.prepare",
+        walletId: "pol-vault",
+        request: {
+          requestId: "money-foundation:add-pol-1",
+          policyHash,
+          mode: "reviewed",
+          intent: { ...moneyFoundationIntent, serializedTxBase64: "forbidden" },
         },
       }),
     ).toThrow("invalid signer request");

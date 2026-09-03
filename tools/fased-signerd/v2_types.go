@@ -28,6 +28,7 @@ const (
 	intentSolanaSATLookupTable     = "solana.satLookupTable"
 	intentSolanaVaultBondAction    = "solana.vaultBondAction"
 	intentSolanaAgentCapitalAction = "solana.agentCapitalAction"
+	intentSolanaMoneyFoundation    = "solana.moneyFoundationAction"
 	intentFederationBondChallenge  = "federation.bondChallenge"
 	intentSolanaJupiterSwap        = "solana.jupiter.swap"
 	intentSolanaTriggerAuth        = "solana.jupiter.trigger.auth"
@@ -78,6 +79,7 @@ type signerIntentV2 struct {
 	Cluster             string                                 `json:"cluster,omitempty"`
 	AuthorityWalletID   string                                 `json:"authorityWalletId,omitempty"`
 	Federation          *signerFederationBondChallengeIntentV2 `json:"federation,omitempty"`
+	MoneyFoundation     *signerMoneyFoundationIntentV2         `json:"moneyFoundation,omitempty"`
 }
 
 type signerExecuteRequestV2 struct {
@@ -233,20 +235,21 @@ type signerReservationRequirementV2 struct {
 }
 
 type normalizedIntentV2 struct {
-	Intent               signerIntentV2
-	Digest               string
-	Asset                string
-	Amount               *big.Int
-	RequiredPrograms     []string
-	Destination          string
-	Instructions         []solana.Instruction
-	AddressLookupTables  []solana.PublicKey
-	NativeFeeReservation *big.Int
-	PolicyOperation      string
-	CapExempt            bool
-	RequiredRole         string
-	Message              []byte
-	ParentIntent         *normalizedIntentV2
+	Intent                 signerIntentV2
+	Digest                 string
+	Asset                  string
+	Amount                 *big.Int
+	RequiredPrograms       []string
+	Destination            string
+	Instructions           []solana.Instruction
+	AddressLookupTables    []solana.PublicKey
+	NativeFeeReservation   *big.Int
+	PolicyOperation        string
+	CapExempt              bool
+	RequiredRole           string
+	Message                []byte
+	ParentIntent           *normalizedIntentV2
+	AdditionalReservations []signerReservationRequirementV2
 }
 
 func isSPLTokenProgram(programID string) bool {
@@ -357,6 +360,11 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 			return normalizedIntentV2{}, errors.New("typed Agent Capital intent requires signer wallet context")
 		}
 		return normalizeAgentCapitalIntentV2(input, *wallet)
+	case intentSolanaMoneyFoundation:
+		if wallet == nil || wallet.IsZero() {
+			return normalizedIntentV2{}, errors.New("typed money-foundation intent requires signer wallet context")
+		}
+		return normalizeMoneyFoundationIntentV2(input, *wallet)
 	case intentFederationBondChallenge:
 		if wallet == nil || wallet.IsZero() {
 			return normalizedIntentV2{}, errors.New("federation bond challenge requires signer wallet context")
@@ -544,7 +552,7 @@ func policyReservationsForIntentModeV2(
 	if err != nil {
 		return nil, err
 	}
-	requirements := make([]signerReservationRequirementV2, 0, 2)
+	requirements := make([]signerReservationRequirementV2, 0, 2+len(intent.AdditionalReservations))
 	feeOnlyPrimary := false
 	switch intent.Intent.Type {
 	case intentSolanaTriggerAuth, intentSolanaTriggerCancel, intentSolanaTriggerWithdraw, intentSolanaSATKeeperAction:
@@ -559,6 +567,23 @@ func policyReservationsForIntentModeV2(
 		})
 	}
 	policies := map[string]signerPolicyAssetV2{intent.Asset: primaryPolicy}
+	for _, additional := range intent.AdditionalReservations {
+		if additional.Asset == "" || additional.Amount == nil || additional.Amount.Sign() <= 0 || additional.Primary {
+			return nil, errors.New("typed signer additional reservation is invalid")
+		}
+		assetPolicy, policyErr := policyAssetByNameV2(policy, additional.Asset)
+		if policyErr != nil {
+			return nil, policyErr
+		}
+		allowsReviewedDestination := reviewed && assetPolicy.ReviewedDestinations
+		if additional.Destination != "" && !containsStringV2(assetPolicy.Destinations, additional.Destination) && !allowsReviewedDestination {
+			return nil, fmt.Errorf("policy denies additional destination %s", additional.Destination)
+		}
+		policies[additional.Asset] = assetPolicy
+		requirements = append(requirements, signerReservationRequirementV2{
+			Asset: additional.Asset, Amount: new(big.Int).Set(additional.Amount), Destination: additional.Destination,
+		})
+	}
 	if fee.Sign() > 0 {
 		nativePolicy, policyErr := policyAssetByNameV2(policy, "solana:native")
 		if policyErr != nil {

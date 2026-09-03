@@ -34,6 +34,10 @@ type jupiterValidatedTransactionV2 struct {
 	Programs          []string
 	Writable          []string
 	WalletSignerIndex int
+	// EphemeralSignerIndex is used only by the reviewed money-foundation
+	// pool-creation path. The caller must pre-sign the one-use position mint;
+	// the native signer verifies and preserves that exact signature.
+	EphemeralSignerIndex int
 }
 
 type jupiterTransactionSnapshotV2 struct {
