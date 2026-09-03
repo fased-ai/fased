@@ -67,7 +67,7 @@ func ownerCeremonyCreateFixtureV1(t *testing.T, profile, recovery signerWalletRe
 func ownerCeremonyBindingFixtureV1(action string, profile, mining signerWalletRecordV2) ownerCeremonyRequestV1 {
 	contract, _ := ownerCeremonyContractForActionV1(action)
 	data := make([]byte, contract.DataSize)
-	copy(data[:8], contract.Disc[:])
+	copy(data[:contract.DiscSize], contract.Disc[:contract.DiscSize])
 	accounts := make([]ownerCeremonyAccountV1, 0, len(contract.Accounts))
 	for _, expected := range contract.Accounts {
 		key := solana.NewWallet().PublicKey().String()
@@ -81,6 +81,75 @@ func ownerCeremonyBindingFixtureV1(action string, profile, mining signerWalletRe
 			if expected.Address != "" {
 				key = expected.Address
 			}
+		}
+		if !expected.IsSigner {
+			walletID = ""
+		}
+		accounts = append(accounts, ownerCeremonyAccountV1{
+			Name: expected.Name, Pubkey: key, IsSigner: expected.IsSigner,
+			IsWritable: expected.IsWritable, SignerWalletID: walletID,
+		})
+	}
+	return ownerCeremonyRequestV1{
+		RequestID: "owner-ceremony-" + action, Cluster: "devnet", Action: action,
+		ProgramID: contract.ProgramID, DataBase64: base64.StdEncoding.EncodeToString(data), Accounts: accounts,
+	}
+}
+
+func ownerCeremonySatInitFixtureV1(t *testing.T, action string, mining signerWalletRecordV2) ownerCeremonyRequestV1 {
+	t.Helper()
+	contract, ok := ownerCeremonyContractForActionV1(action)
+	if !ok {
+		t.Fatalf("missing %s contract", action)
+	}
+	miningKey := solana.MustPublicKeyFromBase58(mining.PublicKey)
+	agentRecord, _, err := solana.FindProgramAddress(
+		[][]byte{[]byte("sat_agent_record"), miningKey[:]},
+		solana.MustPublicKeyFromBase58(contract.ProgramID),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capital, _, err := solana.FindProgramAddress(
+		[][]byte{[]byte("sat_miner_capital_state"), miningKey[:]},
+		solana.MustPublicKeyFromBase58(contract.ProgramID),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := make([]byte, contract.DataSize)
+	data[0] = contract.Disc[0]
+	if action == "sat_init_agent_record" {
+		recovery := solana.NewWallet().PublicKey()
+		runtimeExecutor := solana.NewWallet().PublicKey()
+		keeperPayer := solana.NewWallet().PublicKey()
+		for _, field := range []struct {
+			offset int
+			key    solana.PublicKey
+		}{{1, miningKey}, {33, miningKey}, {65, recovery}, {97, miningKey}, {129, runtimeExecutor}, {161, keeperPayer}} {
+			copy(data[field.offset:field.offset+32], field.key[:])
+		}
+	} else {
+		copy(data[1:], miningKey[:])
+	}
+	accounts := make([]ownerCeremonyAccountV1, 0, len(contract.Accounts))
+	for _, expected := range contract.Accounts {
+		key := solana.NewWallet().PublicKey().String()
+		walletID := ""
+		switch expected.Name {
+		case "permanent_mining_id", "controller", "active_miner_authority", "signer":
+			key, walletID = mining.PublicKey, mining.WalletID
+		case "sat_agent_record":
+			key = agentRecord.String()
+		case "sat_miner_capital_state":
+			key = capital.String()
+		default:
+			if expected.Address != "" {
+				key = expected.Address
+			}
+		}
+		if !expected.IsSigner {
+			walletID = ""
 		}
 		accounts = append(accounts, ownerCeremonyAccountV1{
 			Name: expected.Name, Pubkey: key, IsSigner: expected.IsSigner,
@@ -202,6 +271,48 @@ func TestOwnerCeremonyRequiresControlExactContractRolesSimulationAndReplayFence(
 		if err != nil || len(tx.Signatures) != 2 {
 			t.Fatalf("%s signer layout changed: signatures=%d err=%v", action, len(tx.Signatures), err)
 		}
+	}
+	for _, action := range []string{"sat_init_agent_record", "sat_init_miner_capital"} {
+		initialization := ownerCeremonySatInitFixtureV1(t, action, mining)
+		normalized, err := service.normalizeOwnerCeremonyV1(initialization)
+		if err != nil {
+			t.Fatalf("%s was rejected: %v", action, err)
+		}
+		tx, err := buildOwnerCeremonyTransactionV1(normalized, blockhash)
+		if err != nil || len(tx.Signatures) != 1 || !normalized.FeePayer.Equals(solana.MustPublicKeyFromBase58(mining.PublicKey)) {
+			t.Fatalf("%s signer layout changed: signatures=%d payer=%s err=%v", action, len(tx.Signatures), normalized.FeePayer, err)
+		}
+	}
+	badSatRoles := ownerCeremonySatInitFixtureV1(t, "sat_init_agent_record", mining)
+	badSatRoles.RequestID = "owner-ceremony-sat-init-bad-roles"
+	badSatRoleData, err := base64.StdEncoding.DecodeString(badSatRoles.DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	miningKey := solana.MustPublicKeyFromBase58(mining.PublicKey)
+	copy(badSatRoleData[129:161], miningKey[:])
+	badSatRoles.DataBase64 = base64.StdEncoding.EncodeToString(badSatRoleData)
+	if _, err := service.normalizeOwnerCeremonyV1(badSatRoles); err == nil || !strings.Contains(err.Error(), "must be isolated") {
+		t.Fatalf("Satcoin initialization accepted a Runtime key equal to Mining: %v", err)
+	}
+	badSatBinding := ownerCeremonySatInitFixtureV1(t, "sat_init_agent_record", mining)
+	badSatBinding.RequestID = "owner-ceremony-sat-init-bad-binding"
+	badSatBindingData, err := base64.StdEncoding.DecodeString(badSatBinding.DataBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherController := solana.NewWallet().PublicKey()
+	copy(badSatBindingData[33:65], otherController[:])
+	badSatBinding.DataBase64 = base64.StdEncoding.EncodeToString(badSatBindingData)
+	if _, err := service.normalizeOwnerCeremonyV1(badSatBinding); err == nil || !strings.Contains(err.Error(), "authority fields") {
+		t.Fatalf("Satcoin initialization accepted an embedded controller mismatch: %v", err)
+	}
+	badCapital := ownerCeremonySatInitFixtureV1(t, "sat_init_miner_capital", mining)
+	badCapital.RequestID = "owner-ceremony-sat-capital-bad-pda"
+	badCapital.Accounts = append([]ownerCeremonyAccountV1(nil), badCapital.Accounts...)
+	badCapital.Accounts[3].Pubkey = solana.NewWallet().PublicKey().String()
+	if _, err := service.normalizeOwnerCeremonyV1(badCapital); err == nil || !strings.Contains(err.Error(), "PDA changed") {
+		t.Fatalf("Satcoin capital initialization accepted a changed capital PDA: %v", err)
 	}
 	rejected := fixture
 	rejected.RequestID = "owner-ceremony-simulation-rejected"

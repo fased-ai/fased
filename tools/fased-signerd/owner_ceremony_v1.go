@@ -55,16 +55,20 @@ type ownerCeremonyContractV1 struct {
 	ProgramID string
 	DataSize  int
 	Disc      [8]byte
+	DiscSize  int
 	Accounts  []agentIdentityAccountContractV1
 }
 
 func ownerCeremonyContractForActionV1(action string) (ownerCeremonyContractV1, bool) {
 	action = strings.TrimSpace(action)
+	if contract, ok := satcoinOwnerInstructionContractsV1[action]; ok {
+		return contract, true
+	}
 	if action == "create_fased_agent_record" || action == "bind_agent_mining" {
 		contract, ok := agentIdentityInstructionContractsV1[action]
 		return ownerCeremonyContractV1{
 			ProgramID: agentIdentityProgramIDV1, DataSize: contract.DataSize,
-			Disc: contract.Discriminator, Accounts: contract.Accounts,
+			Disc: contract.Discriminator, DiscSize: 8, Accounts: contract.Accounts,
 		}, ok
 	}
 	if action == "bind_satcoin_vault" {
@@ -77,7 +81,7 @@ func ownerCeremonyContractForActionV1(action string) (ownerCeremonyContractV1, b
 		}
 		return ownerCeremonyContractV1{
 			ProgramID: agentCapitalProgramIDV1, DataSize: contract.DataSize,
-			Disc: contract.Discriminator, Accounts: accounts,
+			Disc: contract.Discriminator, DiscSize: 8, Accounts: accounts,
 		}, ok
 	}
 	return ownerCeremonyContractV1{}, false
@@ -89,7 +93,7 @@ func ownerCeremonyRoleV1(accountName string) string {
 		return "profile"
 	case "recovery_authority":
 		return "vault"
-	case "mining_controller", "current_miner_authority":
+	case "permanent_mining_id", "controller", "active_miner_authority", "signer", "mining_controller", "current_miner_authority":
 		return "mining"
 	default:
 		return ""
@@ -120,17 +124,17 @@ func (s *signerServiceV2) normalizeOwnerCeremonyV1(input ownerCeremonyRequestV1)
 	}
 	contract, ok := ownerCeremonyContractForActionV1(input.Action)
 	if !ok {
-		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony permits only create_fased_agent_record, bind_agent_mining, or bind_satcoin_vault")
+		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony action is not in the exact generated or Satcoin initialization contract")
 	}
 	program, err := solana.PublicKeyFromBase58(strings.TrimSpace(input.ProgramID))
 	if err != nil || program.String() != contract.ProgramID {
 		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony program does not match the generated contract")
 	}
 	data, err := base64.StdEncoding.Strict().DecodeString(strings.TrimSpace(input.DataBase64))
-	if err != nil || contract.DataSize < 8 || len(data) != contract.DataSize || base64.StdEncoding.EncodeToString(data) != input.DataBase64 {
+	if err != nil || contract.DiscSize < 1 || contract.DiscSize > len(contract.Disc) || contract.DataSize < contract.DiscSize || len(data) != contract.DataSize || base64.StdEncoding.EncodeToString(data) != input.DataBase64 {
 		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony instruction data is not canonical")
 	}
-	if subtle.ConstantTimeCompare(data[:8], contract.Disc[:]) != 1 || len(input.Accounts) != len(contract.Accounts) {
+	if subtle.ConstantTimeCompare(data[:contract.DiscSize], contract.Disc[:contract.DiscSize]) != 1 || len(input.Accounts) != len(contract.Accounts) {
 		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony instruction discriminator or account count changed")
 	}
 
@@ -191,9 +195,21 @@ func (s *signerServiceV2) normalizeOwnerCeremonyV1(input ownerCeremonyRequestV1)
 		}
 		accounts = append(accounts, &solana.AccountMeta{PublicKey: key, IsSigner: raw.IsSigner, IsWritable: raw.IsWritable})
 	}
-	if len(signerKeys) < 2 || !signerKeys[0].Equals(accounts[0].PublicKey) || !accounts[0].IsWritable {
-		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony requires the writable Profile controller as fee payer and at least one additional authority")
+	if err := validateSatcoinOwnerCeremonyV1(input.Action, program, data, accounts); err != nil {
+		return normalizedOwnerCeremonyV1{}, err
 	}
+	feePayerAccount := 0
+	minimumSigners := 2
+	if input.Action == "sat_init_agent_record" {
+		feePayerAccount = 1
+		minimumSigners = 1
+	} else if input.Action == "sat_init_miner_capital" {
+		minimumSigners = 1
+	}
+	if len(signerKeys) < minimumSigners || feePayerAccount >= len(accounts) || !accounts[feePayerAccount].IsSigner || !accounts[feePayerAccount].IsWritable {
+		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony fee payer or required signer layout changed")
+	}
+	feePayer := accounts[feePayerAccount].PublicKey
 	if input.Action == "create_fased_agent_record" && signerKeys[0].Equals(signerKeys[1]) {
 		return normalizedOwnerCeremonyV1{}, errors.New("Profile controller and Recovery Authority must be distinct")
 	}
@@ -205,9 +221,13 @@ func (s *signerServiceV2) normalizeOwnerCeremonyV1(input ownerCeremonyRequestV1)
 		return normalizedOwnerCeremonyV1{}, err
 	}
 	digest := sha256.Sum256(encoded)
+	feePayerID := seenSigner[feePayer.String()]
+	if feePayerID == "" {
+		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony fee payer is not signer-owned")
+	}
 	return normalizedOwnerCeremonyV1{
 		Request: canonical, Digest: "sha256:" + hex.EncodeToString(digest[:]), Program: program,
-		Instruction: solana.NewInstruction(program, accounts, data), FeePayer: signerKeys[0], FeePayerID: signerWallets[0],
+		Instruction: solana.NewInstruction(program, accounts, data), FeePayer: feePayer, FeePayerID: feePayerID,
 		SignerWallets: signerWallets, SignerKeys: signerKeys, RPCURLs: rpcURLs, Writable: writable,
 	}, nil
 }
