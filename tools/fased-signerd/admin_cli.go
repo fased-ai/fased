@@ -115,6 +115,15 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		default:
 			return errors.New("unknown signer admin wallet command")
 		}
+	case "owner-ceremony":
+		switch args[1] {
+		case "prepare":
+			return runSignerAdminOwnerCeremonyV1(args[2:], stdin, stdout, false)
+		case "execute":
+			return runSignerAdminOwnerCeremonyV1(args[2:], stdin, stdout, true)
+		default:
+			return errors.New("unknown signer admin owner-ceremony command")
+		}
 	case "keeper":
 		switch args[1] {
 		case "ensure-fee-payer":
@@ -187,8 +196,41 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 	}
 }
 
+func runSignerAdminOwnerCeremonyV1(args []string, stdin io.Reader, stdout io.Writer, execute bool) error {
+	fs, common := newSignerAdminFlagSet("owner-ceremony")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(common.operatorSocket) != "" {
+		return errors.New("owner ceremony requires only --control-socket and an exact JSON request on stdin")
+	}
+	socket, err := requireSignerAdminControlSocket(common.controlSocket)
+	if err != nil {
+		return err
+	}
+	limited := io.LimitReader(stdin, maxSignerAdminPolicyBytes+1)
+	raw, err := io.ReadAll(limited)
+	if err != nil || len(raw) == 0 || len(raw) > maxSignerAdminPolicyBytes {
+		return errors.New("read bounded owner ceremony JSON from stdin")
+	}
+	defer zeroBytes(raw)
+	var body ownerCeremonyRequestV1
+	if err := decodeStrictJSONV2(raw, &body); err != nil {
+		return errors.New("owner ceremony JSON is invalid")
+	}
+	op := "v2.ownerCeremony.prepare"
+	if execute {
+		op = "v2.ownerCeremony.execute"
+	}
+	result, err := callSignerSocketWithSensitivityV1(socket, false, op, "", "", body, true)
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminResult(result, stdout)
+}
+
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {service|wallet|keeper|policy|network|jupiter|webauthn|migration} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {service|wallet|owner-ceremony|keeper|policy|network|jupiter|webauthn|migration} <command> [flags]")
 }
 
 func runSignerAdminKeeperFeePayerV2(args []string, ensure bool, stdout io.Writer) error {

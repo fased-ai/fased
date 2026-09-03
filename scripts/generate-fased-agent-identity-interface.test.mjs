@@ -32,32 +32,48 @@ void test("Fased consumes one generated Agent identity contract", () => {
   assert.equal(contract.accounts.namespaceBinding.maxHandleBytes, 21);
   assert.equal(contract.accounts.namespaceBinding.maxTickerBytes, 6);
   assert.equal(contract.recoveryRotationDelaySeconds, 48 * 60 * 60);
-  assert.deepEqual(contract.instructions, [
-    "accept_controller_transfer",
-    "accept_recovery_rotation",
-    "bind_agent_mining",
-    "bind_agent_namespace",
-    "cancel_controller_transfer",
-    "cancel_recovery_rotation",
-    "create_fased_agent_record",
-    "initialize_namespace_config",
-    "propose_controller_transfer",
-    "propose_recovery_rotation",
-    "recover_controller",
-    "set_namespace_authority",
-  ]);
+  assert.deepEqual(
+    contract.instructions.map((instruction) => instruction.action),
+    [
+      "accept_controller_transfer",
+      "accept_recovery_rotation",
+      "bind_agent_mining",
+      "bind_agent_namespace",
+      "cancel_controller_transfer",
+      "cancel_recovery_rotation",
+      "create_fased_agent_record",
+      "initialize_namespace_config",
+      "propose_controller_transfer",
+      "propose_recovery_rotation",
+      "recover_controller",
+      "set_namespace_authority",
+    ],
+  );
+  for (const instruction of contract.instructions) {
+    assert.equal(instruction.discriminator.length, 8);
+    assert.ok(instruction.dataSize === null || instruction.dataSize >= 8);
+    assert.ok(instruction.accounts.length > 0);
+  }
+
+  const generatedGo = fs.readFileSync(
+    path.join(root, "tools/fased-signerd/agent_identity_contract_generated.go"),
+    "utf8",
+  );
+  assert.match(generatedGo, /agentIdentityInstructionContractsV1/u);
+  assert.match(generatedGo, /"initialize_namespace_config":.*pragma: allowlist secret/u);
 
   const generated = fs.readFileSync(
     path.join(root, "src/agents/fased-agent-identity-contract.generated.ts"),
     "utf8",
   );
-  assert.equal(generated.match(/pragma: allowlist secret/gu)?.length, 6);
+  assert.ok((generated.match(/pragma: allowlist secret/gu)?.length ?? 0) >= 6);
+  assert.match(
+    generated,
+    /address: "CwidR6FY9eR3sn4nGZC6ScwDiqqXmALsfA57yYKQgXJH", \/\/ pragma: allowlist secret/u, // pragma: allowlist secret
+  );
 
   const preCommit = fs.readFileSync(path.join(root, ".pre-commit-config.yaml"), "utf8");
-  assert.match(
-    preCommit,
-    /src\/agents\/protocol-generation\/fased-agent-identity-interface\\\.v1\\\.json/u,
-  );
+  assert.ok(preCommit.includes("fased-agent-(identity|capital)-interface\\.v1"));
 
   const readback = fs.readFileSync(
     path.join(root, "src/agents/financial-agent-readback.ts"),

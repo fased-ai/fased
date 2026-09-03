@@ -4,8 +4,8 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
   $schema: "fased.agent-identity-interface.v1",
   source: {
     repository: "https://github.com/fased-ai/agent-protocol",
-    commit: "7023952bc23b594bdb0813182768ffbf34a23a12", // pragma: allowlist secret
-    tree: "716ecfe5a1def077b4261fa983a8b9e0f3635871", // pragma: allowlist secret
+    commit: "141e42b9635e61202ca981dbbcea84e2343b3723", // pragma: allowlist secret
+    tree: "33d146aeccd596ad2f61434cc562d802f08f9567", // pragma: allowlist secret
     idlSha256: "sha256:fdf5803dbbbabab6c6427001c013225dc106acfae4bfb93db0abbfc35a93952e", // pragma: allowlist secret
   },
   programId: "FasEdZ9BAsboUPF2TUQjLaapC8arcAkV5fRnMtV2G1Ev", // pragma: allowlist secret
@@ -37,18 +37,444 @@ export const FASED_AGENT_IDENTITY_CONTRACT = {
   ],
   recoveryRotationDelaySeconds: 172800,
   instructions: [
-    "accept_controller_transfer",
-    "accept_recovery_rotation",
-    "bind_agent_mining",
-    "bind_agent_namespace",
-    "cancel_controller_transfer",
-    "cancel_recovery_rotation",
-    "create_fased_agent_record",
-    "initialize_namespace_config",
-    "propose_controller_transfer",
-    "propose_recovery_rotation",
-    "recover_controller",
-    "set_namespace_authority",
+    {
+      action: "accept_controller_transfer",
+      discriminator: [135, 55, 214, 194, 170, 245, 86, 53],
+      dataSize: 16,
+      args: [
+        {
+          name: "expected_authority_generation",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "new_controller",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "old_controller_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "new_controller_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
+        },
+      ],
+    },
+    {
+      action: "accept_recovery_rotation",
+      discriminator: [82, 229, 62, 120, 228, 148, 188, 3],
+      dataSize: 16,
+      args: [
+        {
+          name: "expected_authority_generation",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "new_recovery_authority",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "old_recovery_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "new_recovery_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
+        },
+      ],
+    },
+    {
+      action: "bind_agent_mining",
+      discriminator: [201, 54, 193, 112, 248, 11, 111, 26],
+      dataSize: 24,
+      args: [
+        {
+          name: "expected_fased_authority_generation",
+          type: "u64",
+        },
+        {
+          name: "expected_mining_authority_generation",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "profile_controller",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "mining_controller",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "sat_agent_record",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "agent_mining_binding",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "mining_identity_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
+        },
+      ],
+    },
+    {
+      action: "bind_agent_namespace",
+      discriminator: [203, 250, 201, 193, 48, 135, 23, 89],
+      dataSize: null,
+      args: [
+        {
+          name: "reservation",
+          type: {
+            defined: {
+              name: "NamespaceReservation",
+            },
+          },
+        },
+      ],
+      accounts: [
+        {
+          name: "profile_controller",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "namespace_config",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "namespace_binding",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "network_agent_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "name_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "handle_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "ticker_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "instructions",
+          signer: false,
+          writable: false,
+          address: "Sysvar1nstructions1111111111111111111111111", // pragma: allowlist secret
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
+        },
+      ],
+    },
+    {
+      action: "cancel_controller_transfer",
+      discriminator: [240, 95, 141, 94, 14, 170, 189, 130],
+      dataSize: 16,
+      args: [
+        {
+          name: "expected_authority_generation",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "controller",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: true,
+        },
+      ],
+    },
+    {
+      action: "cancel_recovery_rotation",
+      discriminator: [198, 228, 200, 111, 48, 37, 61, 177],
+      dataSize: 16,
+      args: [
+        {
+          name: "expected_authority_generation",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "controller",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: true,
+        },
+      ],
+    },
+    {
+      action: "create_fased_agent_record",
+      discriminator: [251, 206, 168, 122, 51, 22, 10, 90],
+      dataSize: 8,
+      args: [],
+      accounts: [
+        {
+          name: "profile_controller",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "recovery_authority",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "controller_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "recovery_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
+        },
+      ],
+    },
+    {
+      action: "initialize_namespace_config",
+      discriminator: [38, 35, 59, 141, 140, 109, 198, 93],
+      dataSize: 40,
+      args: [
+        {
+          name: "namespace_authority",
+          type: "pubkey",
+        },
+      ],
+      accounts: [
+        {
+          name: "bootstrap_authority",
+          signer: true,
+          writable: true,
+          address: "CwidR6FY9eR3sn4nGZC6ScwDiqqXmALsfA57yYKQgXJH", // pragma: allowlist secret
+        },
+        {
+          name: "namespace_config",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
+        },
+      ],
+    },
+    {
+      action: "propose_controller_transfer",
+      discriminator: [217, 91, 219, 165, 226, 1, 170, 169],
+      dataSize: 40,
+      args: [
+        {
+          name: "new_controller",
+          type: "pubkey",
+        },
+      ],
+      accounts: [
+        {
+          name: "controller",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: true,
+        },
+      ],
+    },
+    {
+      action: "propose_recovery_rotation",
+      discriminator: [224, 106, 189, 55, 229, 188, 216, 62],
+      dataSize: 40,
+      args: [
+        {
+          name: "new_recovery",
+          type: "pubkey",
+        },
+      ],
+      accounts: [
+        {
+          name: "controller",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: true,
+        },
+      ],
+    },
+    {
+      action: "recover_controller",
+      discriminator: [131, 160, 11, 42, 175, 230, 157, 52],
+      dataSize: 16,
+      args: [
+        {
+          name: "expected_authority_generation",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "recovery_authority",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "new_controller",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "old_controller_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "recovery_index",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "new_controller_index",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111", // pragma: allowlist secret
+        },
+      ],
+    },
+    {
+      action: "set_namespace_authority",
+      discriminator: [145, 186, 57, 228, 4, 183, 122, 30],
+      dataSize: 48,
+      args: [
+        {
+          name: "expected_generation",
+          type: "u64",
+        },
+        {
+          name: "namespace_authority",
+          type: "pubkey",
+        },
+      ],
+      accounts: [
+        {
+          name: "bootstrap_authority",
+          signer: true,
+          writable: false,
+          address: "CwidR6FY9eR3sn4nGZC6ScwDiqqXmALsfA57yYKQgXJH", // pragma: allowlist secret
+        },
+        {
+          name: "namespace_config",
+          signer: false,
+          writable: true,
+        },
+      ],
+    },
   ],
 } as const;
 
