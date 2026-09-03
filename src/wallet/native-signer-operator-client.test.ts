@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   invokeNativeSignerOperatorCapabilities,
   invokeNativeSignerOperatorHealth,
+  invokeNativeSignerRPCProfileBind,
+  invokeNativeSignerRPCProfileCreate,
+  invokeNativeSignerRPCProfileList,
 } from "./native-signer-operator-client.js";
 
 const tempDirs: string[] = [];
@@ -125,5 +128,90 @@ describe("native signer operator client", () => {
         operatorSocketPath: fixture.socketPath,
       }),
     ).toThrow(/invalid protocol v2 result/);
+  });
+
+  it("uses typed operator commands for RPC profile list, create, and bind", () => {
+    const profile = {
+      profileId: "devnet-primary",
+      name: "Devnet Primary",
+      chain: "solana" as const,
+      cluster: "devnet" as const,
+      genesisHash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", // pragma: allowlist secret
+      commitment: "finalized" as const,
+      version: 1 as const,
+      hash: `hmac-sha256:${"a".repeat(64)}`,
+      endpointCount: 1,
+      ready: true as const,
+    };
+    const listFixture = createNativeSignerFixture(JSON.stringify([profile]));
+    expect(
+      invokeNativeSignerRPCProfileList({
+        signerBinPath: listFixture.binaryPath,
+        operatorSocketPath: listFixture.socketPath,
+      }),
+    ).toEqual([profile]);
+    expect(fs.readFileSync(listFixture.argsPath, "utf8").trim().split("\n")).toEqual([
+      "admin",
+      "rpc-profile",
+      "list",
+      "--operator-socket",
+      listFixture.socketPath,
+    ]);
+
+    const createFixture = createNativeSignerFixture(JSON.stringify(profile));
+    expect(
+      invokeNativeSignerRPCProfileCreate({
+        signerBinPath: createFixture.binaryPath,
+        operatorSocketPath: createFixture.socketPath,
+        profileId: profile.profileId,
+        name: profile.name,
+        primaryRpcUrl: "https://api.devnet.solana.com",
+      }),
+    ).toEqual(profile);
+
+    const binding = {
+      walletId: "profile",
+      profileId: profile.profileId,
+      profileVersion: 1,
+      profileHash: profile.hash,
+      networkVersion: 1,
+      networkHash: `hmac-sha256:${"b".repeat(64)}`,
+      genesisHash: profile.genesisHash,
+      ready: true as const,
+    };
+    const bindFixture = createNativeSignerFixture(JSON.stringify(binding));
+    expect(
+      invokeNativeSignerRPCProfileBind({
+        signerBinPath: bindFixture.binaryPath,
+        operatorSocketPath: bindFixture.socketPath,
+        walletId: binding.walletId,
+        profile,
+      }),
+    ).toEqual(binding);
+    expect(fs.readFileSync(bindFixture.argsPath, "utf8").trim().split("\n")).toEqual([
+      "admin",
+      "rpc-profile",
+      "bind",
+      "--wallet-id",
+      binding.walletId,
+      "--profile-id",
+      profile.profileId,
+      "--profile-version",
+      "1",
+      "--profile-hash",
+      profile.hash,
+      "--operator-socket",
+      bindFixture.socketPath,
+    ]);
+  });
+
+  it("fails closed on malformed RPC profile output", () => {
+    const fixture = createNativeSignerFixture(JSON.stringify([{ profileId: "devnet-primary" }]));
+    expect(() =>
+      invokeNativeSignerRPCProfileList({
+        signerBinPath: fixture.binaryPath,
+        operatorSocketPath: fixture.socketPath,
+      }),
+    ).toThrow(/invalid result/);
   });
 });
