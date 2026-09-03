@@ -1,0 +1,33 @@
+{
+  "schema": "fased.money-foundation-source.v1",
+  "agentProtocol": {
+    "repository": "fased-ai/agent-protocol",
+    "commit": "847d0192ef10623778dbe94575c3e35d0dd14ff3",
+    "tree": "1b620fe687a81751e5558e27b13d3a36fe3816aa",
+    "contractSha256": "7f4e0ef24335d45294132ae38da8471c6939b9e5cacf2e5be4716af940a7f44b",
+    "schemaSha256": "2412f35ede5f2f524664ef6f9236c733a762e26bb43a0245790a3cd5b6391507",
+    "upstreamGeneratedTypeScriptSha256": "4849b07c7f0f92b170cc5c607af7d8f18c4d1f238b1fab95505595c762ae9256",
+    "generatedTypeScriptSha256": "5a55748394cb89cf401462067210971614752b103d030c39eeccc96f6ca59447",
+    "fixtureBundleSha256": "c8de28dea2cb4ac6fd47e4dff76113679404b8e89b38a0e3649d007e3a3b873a",
+    "validFixtureCount": 5,
+    "invalidFixtureCount": 5,
+    "capitalInterfaceSha256": "456862b375eeb9eb43e78754e35819a95c6e85e25467c62fb394e6d3294b5b76"
+  },
+  "satcoin": {
+    "repository": "satcoin-org/sat",
+    "commit": "a6ccff6473fc302f9eb3a6ab31f749cb184c0eab",
+    "tree": "fa337572d34002c32ff9ed7d2122ee56c666ce55",
+    "upstreamBondLayoutSha256": {
+      "bond-tier-policy-layout.json": "22287d64429931fc8a4e2b9cc9983d87d4a56948d82b41a3083a41ed4bb94bf9",
+      "bond-epoch-distributor-v3-layout.json": "7a783761fac31c15f97c54c82cb68004bdd40dd79f1e3dfd0638effbe4bd019d",
+      "bond-epoch-position-v3-layout.json": "5edc7b8207d89ffdfab5a3ae9da13288baa2fed5ec888894c756b6e63a1820ae",
+      "bond-epoch-snapshot-v3-layout.json": "540b50157e97cd0ebb4274fbe4f33c970ad7601813072058a063a8b7d0be3a98"
+    },
+    "bondLayoutSha256": {
+      "bond-tier-policy-layout.json": "22287d64429931fc8a4e2b9cc9983d87d4a56948d82b41a3083a41ed4bb94bf9",
+      "bond-epoch-distributor-v3-layout.json": "10918214f5b9e26e3d92e13fb415bcbe9ae7eb8ae504cab86f4e66e062016db1",
+      "bond-epoch-position-v3-layout.json": "a133843947b1896881a037647b69485af694a38ae962fd440c85b53502b9fe13",
+      "bond-epoch-snapshot-v3-layout.json": "12eb5e750a5b93925f2aa43710a8dc2cf746cd79ddea89163ae2e224195d339b"
+    }
+  }
+}

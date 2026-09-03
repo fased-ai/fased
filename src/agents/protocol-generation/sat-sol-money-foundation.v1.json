@@ -1,0 +1,147 @@
+{
+  "$schema": "fased.sat-sol-money-foundation-contract.v1",
+  "contractId": "fased.sat-sol-money-foundation.v1",
+  "contractGeneration": 1,
+  "initialState": "DISABLED_UNFUNDED",
+  "supportedVenues": ["METEORA_DAMM_V2_LAUNCH"],
+  "canonicalPair": {
+    "base": "SAT",
+    "quote": "WSOL"
+  },
+  "leadingCanary": {
+    "satRaw": "200000000000000",
+    "solLamports": "10000000000",
+    "authorized": false
+  },
+  "enums": {
+    "MarketLifecycle": ["DISABLED", "ENABLED", "PAUSED", "RETIRED"],
+    "VenueKind": ["METEORA_DAMM_V2_LAUNCH"],
+    "WithdrawalMode": ["EMERGENCY_TIMELOCK_ONLY"],
+    "MarketAction": ["ENTER", "EXIT", "ADD_POL", "EMERGENCY_UNWIND"],
+    "ReviewDecision": ["APPROVED", "REJECTED"],
+    "SourceClass": ["RETAIL_WALLET", "OWNER_SEED", "PROTOCOL_SURPLUS", "EMERGENCY_TREASURY"]
+  },
+  "objects": {
+    "SatSolMarketPolicyV1": {
+      "schema": "fased.sat-sol-market-policy.v1",
+      "required": [
+        "contractGeneration",
+        "policyGeneration",
+        "clusterGenesisHash",
+        "lifecycle",
+        "satMint",
+        "satTokenProgram",
+        "wrappedSolMint",
+        "venue",
+        "venueProgram",
+        "liquidityTreasury",
+        "emergencyAuthority",
+        "initialSatRaw",
+        "initialSolLamports",
+        "maxSlippageBps",
+        "maxPriceImpactBps",
+        "maxCombinedFeeBps",
+        "publicEntryEnabled",
+        "fundingAuthorized",
+        "withdrawalMode",
+        "sourceDescriptorSha256"
+      ]
+    },
+    "SatSolMarketBindingV1": {
+      "schema": "fased.sat-sol-market-binding.v1",
+      "required": [
+        "contractGeneration",
+        "policyGeneration",
+        "policyDigestSha256",
+        "lifecycle",
+        "pool",
+        "poolConfig",
+        "poolProgram",
+        "positionMint",
+        "positionTokenAccount",
+        "satVault",
+        "solVault",
+        "liquidityTreasury",
+        "emergencyAuthority",
+        "finalizedSlot",
+        "satReserveRaw",
+        "solReserveLamports",
+        "immutableConfig",
+        "custodyVerified",
+        "publicEntryEnabled"
+      ]
+    },
+    "SatSolTransactionReviewV1": {
+      "schema": "fased.sat-sol-transaction-review.v1",
+      "required": [
+        "contractGeneration",
+        "policyGeneration",
+        "policyDigestSha256",
+        "action",
+        "decision",
+        "sourceClass",
+        "sourceOwner",
+        "destinationOwner",
+        "pool",
+        "satMint",
+        "wrappedSolMint",
+        "inputRaw",
+        "minimumOutputRaw",
+        "maxSlippageBps",
+        "simulationSlot",
+        "expiresSlot",
+        "fixedDestination",
+        "protectedCapitalReachable"
+      ]
+    },
+    "SatSolPolCustodyV1": {
+      "schema": "fased.sat-sol-pol-custody.v1",
+      "required": [
+        "contractGeneration",
+        "policyGeneration",
+        "policyDigestSha256",
+        "pool",
+        "positionMint",
+        "positionTokenAccount",
+        "positionOwner",
+        "withdrawalMode",
+        "emergencyAuthority",
+        "miningVaultPrincipalReachable",
+        "bondPrincipalReachable",
+        "keeperReserveReachable",
+        "pendingClaimsReachable",
+        "protectedAgentReserveReachable",
+        "ownerHotWalletCanWithdraw"
+      ]
+    },
+    "SatSolEmergencyUnwindReceiptV1": {
+      "schema": "fased.sat-sol-emergency-unwind-receipt.v1",
+      "required": [
+        "contractGeneration",
+        "policyGeneration",
+        "policyDigestSha256",
+        "pool",
+        "positionMint",
+        "finalizedSlot",
+        "satBeforeRaw",
+        "solBeforeLamports",
+        "satRecoveredRaw",
+        "solRecoveredLamports",
+        "satDestination",
+        "solDestination",
+        "positionClosed",
+        "remainingPositionRaw",
+        "allProtectedLiabilitiesUnchanged"
+      ]
+    }
+  },
+  "invariants": [
+    "Genesis is disabled, unfunded and does not authorize pool creation or public entry",
+    "Every configured instance binds exact SAT mint, token program, WSOL mint, venue program, pool, vault and position identities",
+    "An approved transaction review expires and fixes source, destination, pool, amount bounds and slippage",
+    "Mining Vault principal, Bond principal, keeper reserves, pending claims and protected Agent reserves are unreachable from POL custody",
+    "Only a timelocked emergency path may remove the canonical position",
+    "Entrance, exit and unwind evidence use finalized balances and conserve SAT and SOL independently",
+    "No contract record claims that source validation or local simulation is a live market"
+  ]
+}

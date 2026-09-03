@@ -60,6 +60,20 @@ export {
 } from "../agents/fased-agent-capital-contract.generated.js";
 export type { FasedAgentCapitalAction } from "../agents/fased-agent-capital-contract.generated.js";
 export {
+  FASED_SAT_SOL_MONEY_FOUNDATION_CONTRACT,
+  FASED_SAT_SOL_MONEY_FOUNDATION_SCHEMA,
+} from "../agents/fased-sat-sol-money-foundation.generated.js";
+export type {
+  SatSolEmergencyUnwindReceiptV1,
+  SatSolMarketBindingV1,
+  SatSolMarketPolicyV1,
+  SatSolMoneyFoundationRecord,
+  SatSolPolCustodyV1,
+  SatSolTransactionReviewV1,
+} from "../agents/fased-sat-sol-money-foundation.generated.js";
+export { validateSatSolMoneyFoundationRecord } from "../agents/sat-sol-money-foundation.js";
+export type { SatSolMoneyFoundationValidation } from "../agents/sat-sol-money-foundation.js";
+export {
   buildModelAliasIndex,
   resolveConfiguredModelRef,
   resolveDefaultModelForAgent,
