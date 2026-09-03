@@ -148,8 +148,12 @@ owner authorization.
 - Cache immutable artifacts/tools/one predecessor, never installations,
   journals, Wallets or signer state. Use `$XDG_CACHE_HOME/fased-dev` and exact
   task-created `/tmp/fased-*` directories; remove only classified residues.
-- Check `sudo -n true` once when privilege is selected. If unavailable, report
-  `NOT RUN: sudo credential expired`; never poll.
+- Before an authorized host install or update that may require privilege, ask
+  the owner to run `sudo -v` once in their own terminal so the sudo credential
+  cache is active. Never request, accept, echo, or handle the sudo password in
+  chat or tool input. After the owner confirms, check `sudo -n true` once. If
+  unavailable, report `NOT RUN: sudo credential expired`; never poll or start a
+  password prompt.
 
 The canonical skill is
 `docs/maintainers/codex-skills/fased-release-manager/`. Synchronize the installed
