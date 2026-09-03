@@ -1,0 +1,26 @@
+{
+  "programId": "66pQjRgCB19xRQMgqepqRaHQMNnoTzKm7x2Thr7WcgRu",
+  "accountName": "BondEpochPositionV3State",
+  "accountHeaderSize": 8,
+  "bodySize": 208,
+  "accountSize": 216,
+  "discriminator": 145,
+  "pdaSeed": "sat_bond_epoch_position_v3",
+  "version": 3,
+  "status": { "inactive": 0, "pending": 1, "active": 2 },
+  "offsets": {
+    "version": 0,
+    "status": 1,
+    "bump": 2,
+    "policyVersion": 8,
+    "authority": 16,
+    "bondPosition": 48,
+    "activeStakeRaw": 80,
+    "pendingStakeRaw": 88,
+    "eligibleFromEpoch": 96,
+    "claimableRewardRaw": 104,
+    "rewardDebtFp": 112,
+    "fractionalRemainderFp": 128,
+    "lastSyncedSlot": 136
+  }
+}

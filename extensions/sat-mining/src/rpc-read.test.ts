@@ -6,6 +6,9 @@ import {
   calculateSatRevealSharedRentLamports,
   createReadConnection,
   decodeSatBondPosition,
+  decodeSatBondEpochDistributorV3,
+  decodeSatBondEpochPositionV3,
+  decodeSatBondEpochSnapshotV3,
   decodeSatBondStakingDistributor,
   decodeSatCycle,
   decodeSatCycleV2,
@@ -141,6 +144,116 @@ describe("decodeSatBondStakingDistributor", () => {
     expect(decoded.totalActiveStakeRaw).toBe("0");
     expect(decoded.fractionalRemainderFp).toBe("500000000000000000");
     expect(decoded.vaultMatchesExpected).toBe(true);
+  });
+});
+
+describe("Bond-v3 account decoders", () => {
+  it("decodes exact distributor, position, and snapshot layouts", () => {
+    const bondProgram = new PublicKey("D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq"); // pragma: allowlist secret
+    const mint = new PublicKey("2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa"); // pragma: allowlist secret
+    const authority = new PublicKey("8ZxJ61qmvh3j9rDao8XDgcJMWx5SPr2zX4tEdK2rgCvW"); // pragma: allowlist secret
+    const bondPosition = new PublicKey("AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene"); // pragma: allowlist secret
+    const [distributor] = PublicKey.findProgramAddressSync(
+      [Buffer.from("sat_bond_epoch_distributor_v3")],
+      bondProgram,
+    );
+    const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"); // pragma: allowlist secret
+    const associatedTokenProgram = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"); // pragma: allowlist secret
+    const [rewardVault] = PublicKey.findProgramAddressSync(
+      [distributor.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()],
+      associatedTokenProgram,
+    );
+    const updateAuthority = new PublicKey("5dCkcRHrPvkfAbpD7XvKj92kL5YQ2ebbgY2LmEgyhmKY"); // pragma: allowlist secret
+    process.env.FASED_SAT_PROGRAM_ID = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75"; // pragma: allowlist secret
+    process.env.FASED_SAT_BOND_PROGRAM_ID = bondProgram.toBase58();
+    process.env.FASED_SAT_MINT_ADDRESS = mint.toBase58();
+    process.env.FASED_SAT_MINT_PROGRAM_ID = "8fb3Mpowe4pD6ed89gwm6gLuh8csPSrLi3hypcesqs5C"; // pragma: allowlist secret
+
+    const distributorData = Buffer.alloc(264);
+    distributorData[0] = 144;
+    const distributorBody = distributorData.subarray(8);
+    distributorBody[0] = 3;
+    distributorBody[2] = 1;
+    distributorBody.writeBigUInt64LE(7n, 8);
+    mint.toBuffer().copy(distributorBody, 16);
+    rewardVault.toBuffer().copy(distributorBody, 48);
+    updateAuthority.toBuffer().copy(distributorBody, 80);
+    distributorBody.writeBigUInt64LE(500_000_000_000n, 112);
+    distributorBody.writeBigUInt64LE(604_800n, 120);
+    distributorBody.writeBigUInt64LE(9n, 128);
+    distributorBody.writeBigUInt64LE(700n, 136);
+    distributorBody.writeBigUInt64LE(3n, 144);
+    distributorBody.writeBigUInt64LE(11n, 152);
+    distributorBody.writeBigUInt64LE(12n, 168);
+    distributorBody.writeBigUInt64LE(100n, 184);
+    distributorBody.writeBigUInt64LE(17n, 192);
+    distributorBody.writeBigUInt64LE(19n, 200);
+    distributorBody.writeBigUInt64LE(23n, 216);
+    distributorBody.writeBigUInt64LE(29n, 224);
+    distributorBody.writeBigUInt64LE(2n, 232);
+
+    expect(decodeSatBondEpochDistributorV3(distributorData, distributor.toBase58())).toMatchObject({
+      address: distributor.toBase58(),
+      version: 3,
+      statusLabel: "active",
+      policyVersion: 7,
+      rewardThresholdRaw: "500000000000",
+      epochSeconds: 604800,
+      currentEpoch: 9,
+      eligibleStakeRaw: "700",
+      pendingStakeRaw: "29",
+      pendingPositionCount: "2",
+    });
+
+    const positionData = Buffer.alloc(216);
+    positionData[0] = 145;
+    const positionBody = positionData.subarray(8);
+    positionBody[0] = 3;
+    positionBody[1] = 2;
+    positionBody.writeBigUInt64LE(7n, 8);
+    authority.toBuffer().copy(positionBody, 16);
+    bondPosition.toBuffer().copy(positionBody, 48);
+    positionBody.writeBigUInt64LE(500n, 80);
+    positionBody.writeBigUInt64LE(25n, 88);
+    positionBody.writeBigUInt64LE(10n, 96);
+    positionBody.writeBigUInt64LE(31n, 104);
+    positionBody.writeBigUInt64LE(37n, 112);
+    positionBody.writeBigUInt64LE(41n, 136);
+
+    expect(decodeSatBondEpochPositionV3(positionData, "epoch-position")).toMatchObject({
+      address: "epoch-position",
+      version: 3,
+      statusLabel: "active",
+      authority: authority.toBase58(),
+      bondPosition: bondPosition.toBase58(),
+      activeStakeRaw: "500",
+      pendingStakeRaw: "25",
+      eligibleFromEpoch: 10,
+      claimableRewardRaw: "31",
+      lastSyncedSlot: 41,
+    });
+
+    const snapshotData = Buffer.alloc(104);
+    snapshotData[0] = 146;
+    const snapshotBody = snapshotData.subarray(8);
+    snapshotBody[0] = 3;
+    snapshotBody.writeBigUInt64LE(9n, 8);
+    snapshotBody.writeBigUInt64LE(7n, 16);
+    snapshotBody.writeBigUInt64LE(700n, 24);
+    snapshotBody.writeBigUInt64LE(43n, 32);
+    snapshotBody.writeBigUInt64LE(47n, 40);
+    snapshotBody.writeBigUInt64LE(53n, 56);
+
+    expect(decodeSatBondEpochSnapshotV3(snapshotData, "epoch-snapshot")).toMatchObject({
+      address: "epoch-snapshot",
+      version: 3,
+      completedEpoch: 9,
+      policyVersion: 7,
+      eligibleStakeRaw: "700",
+      distributedRewardRaw: "43",
+      rewardIndexAfterFp: "47",
+      createdAtSlot: 53,
+    });
   });
 });
 

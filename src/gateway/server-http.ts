@@ -12,20 +12,21 @@ import type { TlsOptions } from "node:tls";
 import type { WebSocketServer } from "ws";
 import {
   invalidateSatReadCaches,
+  inspectSatBondEpochDistributorV3,
+  inspectSatBondEpochPositionV3,
   inspectSatBondPosition,
   inspectSatBondStakingDistributor,
   inspectSatBondStakingPosition,
   inspectSatChainSlot,
 } from "../../extensions/sat-mining/src/rpc-read.js";
 import {
-  submitSatCancelBondUnlock,
-  submitSatClaimBondStakingRewards,
-  submitSatFinalizeBondUnlock,
-  submitSatIncreaseBondPosition,
+  submitSatCancelBondUnlockV3,
+  submitSatClaimBondEpochRewardsV3,
+  submitSatFinalizeBondUnlockV3,
+  submitSatIncreaseBondPositionV3,
   submitSatOpenBondPosition,
-  submitSatRequestBondUnlock,
-  submitSatSyncBondStakingPosition,
-  submitSatSyncBondStakingRewards,
+  submitSatRegisterBondEpochPositionV3,
+  submitSatRequestBondUnlockV3,
   runWithSatSubmissionWorkflow,
 } from "../../extensions/sat-mining/src/solana-submit.js";
 import { digestSatSubmissionIntent } from "../../extensions/sat-mining/src/submission-ledger.js";
@@ -863,7 +864,7 @@ type FederationStatusBond = {
     position?: {
       exists: boolean;
       address?: string;
-      status?: "inactive" | "active";
+      status?: "inactive" | "pending" | "active";
       activeStakeRaw?: string;
       claimableRewardRaw?: string;
       rewardDebtFp?: string;
@@ -2416,6 +2417,24 @@ function estimateBondStakingClaimRaw(
   return claimable > 0n ? claimable.toString() : undefined;
 }
 
+function resolveBondEpochActivationSnapshotEpoch(
+  distributor: { currentEpoch: number },
+  position: { pendingStakeRaw?: string; eligibleFromEpoch: number } | null | undefined,
+): number {
+  const hasMaturePendingStake =
+    (parseSatRawBigInt(position?.pendingStakeRaw) ?? 0n) > 0n &&
+    position !== null &&
+    position !== undefined &&
+    distributor.currentEpoch >= position.eligibleFromEpoch;
+  if (hasMaturePendingStake) {
+    if (position.eligibleFromEpoch <= 0) {
+      throw new Error("Bond v3 pending stake has an invalid eligibility epoch");
+    }
+    return position.eligibleFromEpoch - 1;
+  }
+  return distributor.currentEpoch;
+}
+
 function appendActionWarning(current: string | undefined, next: string): string {
   const trimmed = next.trim();
   if (!trimmed) {
@@ -3379,13 +3398,22 @@ async function readLocalFederationStatus(
     const liveBond = walletAddress
       ? await inspectSatBondPosition(cfg as never, { authority: walletAddress }).catch(() => null)
       : null;
-    const liveBondStakingDistributor = await inspectSatBondStakingDistributor(cfg as never).catch(
+    const liveBondEpochDistributor = await inspectSatBondEpochDistributorV3(cfg as never).catch(
       () => null,
     );
-    const liveBondStakingPosition = walletAddress
-      ? await inspectSatBondStakingPosition(cfg as never, { authority: walletAddress }).catch(
+    const liveBondStakingDistributor =
+      liveBondEpochDistributor ??
+      (await inspectSatBondStakingDistributor(cfg as never).catch(() => null));
+    const liveBondEpochPosition = walletAddress
+      ? await inspectSatBondEpochPositionV3(cfg as never, { authority: walletAddress }).catch(
           () => null,
         )
+      : null;
+    const liveBondStakingPosition = walletAddress
+      ? (liveBondEpochPosition ??
+        (await inspectSatBondStakingPosition(cfg as never, { authority: walletAddress }).catch(
+          () => null,
+        )))
       : null;
     const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
     const bondVaultBalances: NonNullable<FederationStatusPayload["bond"]>["vaultBalances"] = {};
@@ -3490,13 +3518,26 @@ async function readLocalFederationStatus(
           address: liveBondStakingDistributor?.address,
           status: liveBondStakingDistributor?.statusLabel,
           rewardVault: liveBondStakingDistributor?.rewardVault,
-          minStakeRaw: resolveEffectiveBondStakingMinRaw(liveBondStakingDistributor?.minStakeRaw),
-          totalActiveStakeRaw: liveBondStakingDistributor?.totalActiveStakeRaw,
+          minStakeRaw: resolveEffectiveBondStakingMinRaw(
+            liveBondEpochDistributor?.rewardThresholdRaw ??
+              (liveBondStakingDistributor && "minStakeRaw" in liveBondStakingDistributor
+                ? liveBondStakingDistributor.minStakeRaw
+                : undefined),
+          ),
+          totalActiveStakeRaw:
+            liveBondEpochDistributor?.eligibleStakeRaw ??
+            (liveBondStakingDistributor && "totalActiveStakeRaw" in liveBondStakingDistributor
+              ? liveBondStakingDistributor.totalActiveStakeRaw
+              : undefined),
           rewardIndexFp: liveBondStakingDistributor?.rewardIndexFp,
           observedRewardVaultRaw: liveBondStakingDistributor?.observedRewardVaultRaw,
           unallocatedRewardRaw: liveBondStakingDistributor?.unallocatedRewardRaw,
           rewardVaultBalanceRaw: liveBondStakingDistributor?.rewardVaultBalanceRaw,
-          lastSyncedSlot: liveBondStakingDistributor?.lastSyncedSlot,
+          lastSyncedSlot:
+            liveBondEpochDistributor?.lastUpdatedSlot ??
+            (liveBondStakingDistributor && "lastSyncedSlot" in liveBondStakingDistributor
+              ? liveBondStakingDistributor.lastSyncedSlot
+              : undefined),
           mintMatchesRuntime: liveBondStakingDistributor?.mintMatchesRuntime,
           vaultMatchesExpected: liveBondStakingDistributor?.vaultMatchesExpected,
         },
@@ -4863,48 +4904,40 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           let proofSubmitted = false;
           let proofWarning: string | undefined;
           let stakingClaimedRaw: string | undefined;
-          const syncBondStakingPositionForAction = async () => {
-            const distributor = await retrySolanaRateLimit(
-              "read bond staking distributor",
-              async () => await inspectSatBondStakingDistributor(bondCfg as never),
-            ).catch(() => null);
-            if (!distributor || distributor.statusLabel !== "active") {
-              return;
-            }
-            try {
-              await retrySolanaRateLimit(
-                "sync bond staking rewards",
-                async () =>
-                  await runBondSubmission(
-                    "sync-staking-rewards",
-                    async () => await submitSatSyncBondStakingRewards(bondCfg as never),
-                  ),
-              );
-              await retrySolanaRateLimit(
-                "sync bond staking position",
-                async () =>
-                  await runBondSubmission(
-                    "sync-staking-position",
-                    async () => await submitSatSyncBondStakingPosition(bondCfg as never),
-                  ),
-              );
-              invalidateSatReadCaches({ preserveStable: true });
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              proofWarning = appendActionWarning(
-                proofWarning,
-                `Staking position sync did not complete: ${message}`,
-              );
-            }
-          };
-          const readBondStakingPosition = async () =>
+          const readBondEpochDistributor = async () =>
             await retrySolanaRateLimit(
-              "read bond staking position",
+              "read bond epoch distributor v3",
+              async () => await inspectSatBondEpochDistributorV3(bondCfg as never),
+            );
+          const readBondEpochPosition = async () =>
+            await retrySolanaRateLimit(
+              "read bond epoch position v3",
               async () =>
-                await inspectSatBondStakingPosition(bondCfg as never, {
+                await inspectSatBondEpochPositionV3(bondCfg as never, {
                   authority: resolvedWallet.walletAddress,
                 }),
             );
+          const syncBondStakingPositionForAction = async () => {
+            const distributor = await readBondEpochDistributor();
+            if (!distributor || distributor.statusLabel !== "active") {
+              throw new Error("SAT Bond-v3 epoch distributor is not active");
+            }
+            const position = await readBondEpochPosition();
+            const activationSnapshotEpoch = resolveBondEpochActivationSnapshotEpoch(
+              distributor,
+              position,
+            );
+            const result = await runBondSubmission(
+              "sync-epoch-position-v3",
+              async () =>
+                await submitSatRegisterBondEpochPositionV3(bondCfg as never, {
+                  activationSnapshotEpoch,
+                }),
+            );
+            invalidateSatReadCaches({ preserveStable: true });
+            return result;
+          };
+          const readBondStakingPosition = async () => await readBondEpochPosition();
           if (requestPath === "/api/federation/bond/open") {
             const amountSat = parsed.amountSat ?? resolveDefaultBondAmountSat(parsed.tier);
             const amount = parseSatAmountToRawNumber(amountSat);
@@ -4932,19 +4965,25 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           } else if (requestPath === "/api/federation/bond/increase") {
             const amountSat = parsed.amountSat ?? "1";
             const amount = parseSatAmountToRawNumber(amountSat);
+            await syncBondStakingPositionForAction();
+            const distributor = await readBondEpochDistributor();
+            const position = await readBondEpochPosition();
+            if (!distributor) {
+              throw new Error("SAT Bond-v3 epoch distributor is not active");
+            }
             tx = await runBondSubmission(
               "increase",
               async () =>
-                await submitSatIncreaseBondPosition(bondCfg as never, {
+                await submitSatIncreaseBondPositionV3(bondCfg as never, {
                   amountRaw: amount.safeInteger,
+                  activationSnapshotEpoch: resolveBondEpochActivationSnapshotEpoch(
+                    distributor,
+                    position,
+                  ),
                 }),
             );
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
-            if (liveBond?.statusLabel === "active") {
-              await syncBondStakingPositionForAction();
-              liveBond = await readBond();
-            }
             if ((parsed.autoSubmitProof ?? true) && liveBond?.statusLabel === "active") {
               const proof = await runBondSubmission(
                 "refresh-proof",
@@ -4954,18 +4993,28 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               proofWarning = appendActionWarning(proofWarning, proof.warning ?? "");
             }
           } else if (requestPath === "/api/federation/bond/request-unlock") {
+            await syncBondStakingPositionForAction();
+            const distributor = await readBondEpochDistributor();
+            const position = await readBondEpochPosition();
+            if (!distributor) {
+              throw new Error("SAT Bond-v3 epoch distributor is not active");
+            }
             tx = await runBondSubmission(
               "request-unlock",
-              async () => await submitSatRequestBondUnlock(bondCfg as never),
+              async () =>
+                await submitSatRequestBondUnlockV3(bondCfg as never, {
+                  activationSnapshotEpoch: resolveBondEpochActivationSnapshotEpoch(
+                    distributor,
+                    position,
+                  ),
+                }),
             );
             invalidateSatReadCaches({ preserveStable: true });
-            liveBond = await readBond();
-            await syncBondStakingPositionForAction();
             liveBond = await readBond();
           } else if (requestPath === "/api/federation/bond/cancel-unlock") {
             tx = await runBondSubmission(
               "cancel-unlock",
-              async () => await submitSatCancelBondUnlock(bondCfg as never),
+              async () => await submitSatCancelBondUnlockV3(bondCfg as never),
             );
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
@@ -4984,11 +5033,9 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             }
             tx = await runBondSubmission(
               "finalize-unlock",
-              async () => await submitSatFinalizeBondUnlock(bondCfg as never),
+              async () => await submitSatFinalizeBondUnlockV3(bondCfg as never),
             );
             invalidateSatReadCaches({ preserveStable: true });
-            liveBond = await readBond();
-            await syncBondStakingPositionForAction();
             liveBond = await readBond();
           } else if (requestPath === "/api/federation/bond/prove") {
             liveBond = await readBond();
@@ -5003,43 +5050,34 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
               "SAT bond staking distributor initialization is a protocol-genesis operation; use the approved token/sat operator workflow",
             );
           } else if (requestPath === "/api/federation/bond/staking/sync") {
-            tx = await retrySolanaRateLimit(
-              "sync bond staking rewards",
-              async () =>
-                await runBondSubmission(
-                  "sync-staking-rewards",
-                  async () => await submitSatSyncBondStakingRewards(bondCfg as never),
-                ),
-            );
-            await retrySolanaRateLimit(
-              "sync bond staking position",
-              async () =>
-                await runBondSubmission(
-                  "sync-staking-position",
-                  async () => await submitSatSyncBondStakingPosition(bondCfg as never),
-                ),
-            );
+            tx = await syncBondStakingPositionForAction();
             invalidateSatReadCaches({ preserveStable: true });
             liveBond = await readBond();
           } else if (requestPath === "/api/federation/bond/staking/claim") {
+            await syncBondStakingPositionForAction();
             invalidateSatReadCaches({ preserveStable: true });
             const stakingPositionBeforeClaim = await readBondStakingPosition().catch(() => null);
-            const stakingDistributorBeforeClaim = await retrySolanaRateLimit(
-              "read bond staking distributor",
-              async () => await inspectSatBondStakingDistributor(bondCfg as never),
-            ).catch(() => null);
-            const estimatedClaimRaw = estimateBondStakingClaimRaw(
-              stakingPositionBeforeClaim,
-              stakingDistributorBeforeClaim,
+            const stakingDistributorBeforeClaim = await readBondEpochDistributor().catch(
+              () => null,
             );
+            const estimatedClaimRaw = stakingPositionBeforeClaim?.claimableRewardRaw;
             if (isPositiveSatRawAmount(estimatedClaimRaw)) {
               stakingClaimedRaw = estimatedClaimRaw;
+              if (!stakingDistributorBeforeClaim) {
+                throw new Error("SAT Bond-v3 epoch distributor is not active");
+              }
               tx = await retrySolanaRateLimit(
-                "claim bond staking rewards",
+                "claim bond epoch rewards v3",
                 async () =>
                   await runBondSubmission(
                     "claim-staking-rewards",
-                    async () => await submitSatClaimBondStakingRewards(bondCfg as never),
+                    async () =>
+                      await submitSatClaimBondEpochRewardsV3(bondCfg as never, {
+                        activationSnapshotEpoch: resolveBondEpochActivationSnapshotEpoch(
+                          stakingDistributorBeforeClaim,
+                          stakingPositionBeforeClaim,
+                        ),
+                      }),
                   ),
               );
             } else {

@@ -62,6 +62,15 @@ export const SAT_BOND_INSTRUCTION_DISCRIMINATORS = {
   claimStakingRewards: 10,
   claimUnallocatedStakingRewards: 11,
   recordProtocolStakingRewards: 12,
+  initEpochDistributorV3: 13,
+  advanceEpochV3: 14,
+  registerEpochPositionV3: 15,
+  increaseBondPositionV3: 16,
+  requestBondUnlockV3: 17,
+  cancelBondUnlockV3: 18,
+  finalizeBondUnlockV3: 19,
+  claimEpochRewardsV3: 20,
+  recordProtocolEpochRewardsV3: 21,
 } as const;
 
 export const SAT_PROTOCOL_CONSTANTS = {
@@ -87,14 +96,14 @@ export const SAT_PROTOCOL_CONSTANTS = {
 export const SAT_GENESIS_PROFILE_CONTRACTS = {
   devnet: {
     cluster: "devnet",
-    configSha256: "79c536b73d7682842c9574f6785e7a8ab5916eb0a99e29f98c00bde4b18e3500",
+    configSha256: "79c536b73d7682842c9574f6785e7a8ab5916eb0a99e29f98c00bde4b18e3500", // pragma: allowlist secret
     registryReserveTargetLamports: 200_000_000n,
     registryReserveMaxLamports: 200_000_000n,
     keeperReserveSpendableLamports: 10_000_000n,
   },
   "mainnet-beta": {
     cluster: "mainnet-beta",
-    configSha256: "f35ccf88352efc6f86e6ff18b5c6f349e7ba792916ec8a4ae5c3705fde4c963b",
+    configSha256: "f35ccf88352efc6f86e6ff18b5c6f349e7ba792916ec8a4ae5c3705fde4c963b", // pragma: allowlist secret
     registryReserveTargetLamports: 500_000_000n,
     registryReserveMaxLamports: 1_000_000_000n,
     keeperReserveSpendableLamports: 10_000_000n,

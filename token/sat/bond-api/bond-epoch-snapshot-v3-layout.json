@@ -1,0 +1,20 @@
+{
+  "programId": "66pQjRgCB19xRQMgqepqRaHQMNnoTzKm7x2Thr7WcgRu",
+  "accountName": "BondEpochSnapshotV3State",
+  "accountHeaderSize": 8,
+  "bodySize": 96,
+  "accountSize": 104,
+  "discriminator": 146,
+  "pdaSeed": "sat_bond_epoch_snapshot_v3",
+  "version": 3,
+  "offsets": {
+    "version": 0,
+    "bump": 1,
+    "completedEpoch": 8,
+    "policyVersion": 16,
+    "eligibleStakeRaw": 24,
+    "distributedRewardRaw": 32,
+    "rewardIndexAfterFp": 40,
+    "createdAtSlot": 56
+  }
+}

@@ -89,6 +89,8 @@ const SAT_BOND_POSITION_SEED = "sat_bond_position";
 const SAT_BOND_TIER_POLICY_SEED = "sat_bond_tier_policy";
 const SAT_BOND_STAKING_DISTRIBUTOR_SEED = "sat_bond_staking_distributor";
 const SAT_BOND_EPOCH_DISTRIBUTOR_V3_SEED = "sat_bond_epoch_distributor_v3";
+const SAT_BOND_EPOCH_POSITION_V3_SEED = "sat_bond_epoch_position_v3";
+const SAT_BOND_EPOCH_SNAPSHOT_V3_SEED = "sat_bond_epoch_snapshot_v3";
 const SAT_BOND_STAKING_POSITION_SEED = "sat_bond_staking_position";
 const SAT_TREASURY_STATE_SEED = "sat_treasury_state";
 const SAT_REGISTRY_RESERVE_SEED = "sat_registry_reserve";
@@ -1377,6 +1379,42 @@ function buildClaimUnallocatedStakingRewardsData(env: NodeJS.ProcessEnv = proces
   return Buffer.from([BOND_IX.claimUnallocatedStakingRewards]);
 }
 
+function buildRegisterBondEpochPositionV3Data(env: NodeJS.ProcessEnv = process.env) {
+  assertDedicatedBondProgram(env);
+  return Buffer.from([BOND_IX.registerEpochPositionV3]);
+}
+
+function buildIncreaseBondPositionV3Data(
+  params: { amountRaw: number },
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  assertDedicatedBondProgram(env);
+  return Buffer.concat([
+    Buffer.from([BOND_IX.increaseBondPositionV3]),
+    encodeU64(params.amountRaw),
+  ]);
+}
+
+function buildRequestBondUnlockV3Data(env: NodeJS.ProcessEnv = process.env) {
+  assertDedicatedBondProgram(env);
+  return Buffer.from([BOND_IX.requestBondUnlockV3]);
+}
+
+function buildCancelBondUnlockV3Data(env: NodeJS.ProcessEnv = process.env) {
+  assertDedicatedBondProgram(env);
+  return Buffer.from([BOND_IX.cancelBondUnlockV3]);
+}
+
+function buildFinalizeBondUnlockV3Data(env: NodeJS.ProcessEnv = process.env) {
+  assertDedicatedBondProgram(env);
+  return Buffer.from([BOND_IX.finalizeBondUnlockV3]);
+}
+
+function buildClaimBondEpochRewardsV3Data(env: NodeJS.ProcessEnv = process.env) {
+  assertDedicatedBondProgram(env);
+  return Buffer.from([BOND_IX.claimEpochRewardsV3]);
+}
+
 function encodeAllocationFp(allocationFp: number[], expectedChannels: 16 | 25): Buffer {
   if (allocationFp.length !== expectedChannels) {
     throw new Error(`expected ${expectedChannels} allocation channels, got ${allocationFp.length}`);
@@ -2085,21 +2123,44 @@ function resolveSatBondAccounts(
     [Buffer.from(SAT_BOND_STAKING_POSITION_SEED), signer.toBuffer()],
     programId,
   );
+  const [bondEpochDistributorV3] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from(SAT_BOND_EPOCH_DISTRIBUTOR_V3_SEED)],
+    programId,
+  );
+  const [bondEpochPositionV3] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from(SAT_BOND_EPOCH_POSITION_V3_SEED), signer.toBuffer()],
+    programId,
+  );
   const signerTokenAccount = deriveAssociatedTokenAddress(solana, signer, mint);
   const bondVault = deriveAssociatedTokenAddress(solana, bondPosition, mint);
   const bondStakingRewardVault = deriveAssociatedTokenAddress(solana, bondStakingDistributor, mint);
+  const bondEpochRewardVaultV3 = deriveAssociatedTokenAddress(solana, bondEpochDistributorV3, mint);
   return {
     bondProgramId: programId,
     bondTierPolicy,
     bondPosition,
     bondStakingDistributor,
     bondStakingPosition,
+    bondEpochDistributorV3,
+    bondEpochPositionV3,
     signerTokenAccount,
     bondVault,
     bondStakingRewardVault,
+    bondEpochRewardVaultV3,
     mint,
     dedicated: hasDedicatedBondProgram(env),
   };
+}
+
+function resolveSatBondEpochSnapshotV3(
+  solana: SolanaModuleLike,
+  bondProgramId: import("@solana/web3.js").PublicKey,
+  completedEpoch: number,
+) {
+  return solana.PublicKey.findProgramAddressSync(
+    [Buffer.from(SAT_BOND_EPOCH_SNAPSHOT_V3_SEED), encodeU64(completedEpoch)],
+    bondProgramId,
+  )[0];
 }
 
 export async function submitSatUpdateBondTierPolicy(
@@ -2383,6 +2444,244 @@ export async function submitSatClaimBondStakingRewards(_config: SatMiningConfig)
         { pubkey: bondStakingPosition, isSigner: false, isWritable: true },
         { pubkey: bondPosition, isSigner: false, isWritable: false },
         { pubkey: bondStakingRewardVault, isSigner: false, isWritable: true },
+        { pubkey: signerTokenAccount, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
+        {
+          pubkey: new solana.PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
+          isSigner: false,
+          isWritable: false,
+        },
+      ];
+    },
+  });
+}
+
+export async function submitSatRegisterBondEpochPositionV3(
+  _config: SatMiningConfig,
+  params: { activationSnapshotEpoch: number },
+) {
+  const cfg = loadConfigForSatRuntime(_config);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  assertDedicatedBondProgram(effectiveEnv);
+  return submitInstruction({
+    cfg,
+    env: effectiveEnv,
+    data: buildRegisterBondEpochPositionV3Data(effectiveEnv),
+    programId: resolveSatBondProgramIdFromEnv(effectiveEnv),
+    accountResolver: async (solana, signer) => {
+      const {
+        bondProgramId,
+        bondTierPolicy,
+        bondPosition,
+        bondEpochDistributorV3,
+        bondEpochPositionV3,
+      } = resolveSatBondAccounts(solana, signer, effectiveEnv);
+      const activationSnapshot = resolveSatBondEpochSnapshotV3(
+        solana,
+        bondProgramId,
+        params.activationSnapshotEpoch,
+      );
+      return [
+        { pubkey: signer, isSigner: true, isWritable: true },
+        { pubkey: bondTierPolicy, isSigner: false, isWritable: false },
+        { pubkey: bondPosition, isSigner: false, isWritable: true },
+        { pubkey: bondEpochDistributorV3, isSigner: false, isWritable: true },
+        { pubkey: bondEpochPositionV3, isSigner: false, isWritable: true },
+        { pubkey: activationSnapshot, isSigner: false, isWritable: false },
+        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+      ];
+    },
+  });
+}
+
+export async function submitSatIncreaseBondPositionV3(
+  _config: SatMiningConfig,
+  params: { amountRaw: number; activationSnapshotEpoch: number },
+) {
+  const cfg = loadConfigForSatRuntime(_config);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  assertDedicatedBondProgram(effectiveEnv);
+  return submitInstruction({
+    cfg,
+    env: effectiveEnv,
+    data: buildIncreaseBondPositionV3Data(params, effectiveEnv),
+    programId: resolveSatBondProgramIdFromEnv(effectiveEnv),
+    accountResolver: async (solana, signer) => {
+      const {
+        bondProgramId,
+        bondTierPolicy,
+        bondPosition,
+        signerTokenAccount,
+        bondVault,
+        mint,
+        bondEpochDistributorV3,
+        bondEpochPositionV3,
+      } = resolveSatBondAccounts(solana, signer, effectiveEnv);
+      const activationSnapshot = resolveSatBondEpochSnapshotV3(
+        solana,
+        bondProgramId,
+        params.activationSnapshotEpoch,
+      );
+      return [
+        { pubkey: signer, isSigner: true, isWritable: false },
+        { pubkey: bondTierPolicy, isSigner: false, isWritable: false },
+        { pubkey: bondPosition, isSigner: false, isWritable: true },
+        { pubkey: signerTokenAccount, isSigner: false, isWritable: true },
+        { pubkey: bondVault, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: bondEpochDistributorV3, isSigner: false, isWritable: true },
+        { pubkey: bondEpochPositionV3, isSigner: false, isWritable: true },
+        { pubkey: activationSnapshot, isSigner: false, isWritable: false },
+        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
+        {
+          pubkey: new solana.PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
+          isSigner: false,
+          isWritable: false,
+        },
+      ];
+    },
+  });
+}
+
+export async function submitSatRequestBondUnlockV3(
+  _config: SatMiningConfig,
+  params: { activationSnapshotEpoch: number },
+) {
+  const cfg = loadConfigForSatRuntime(_config);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  assertDedicatedBondProgram(effectiveEnv);
+  return submitInstruction({
+    cfg,
+    env: effectiveEnv,
+    data: buildRequestBondUnlockV3Data(effectiveEnv),
+    programId: resolveSatBondProgramIdFromEnv(effectiveEnv),
+    accountResolver: async (solana, signer) => {
+      const {
+        bondProgramId,
+        bondTierPolicy,
+        bondPosition,
+        bondEpochDistributorV3,
+        bondEpochPositionV3,
+      } = resolveSatBondAccounts(solana, signer, effectiveEnv);
+      const activationSnapshot = resolveSatBondEpochSnapshotV3(
+        solana,
+        bondProgramId,
+        params.activationSnapshotEpoch,
+      );
+      return [
+        { pubkey: signer, isSigner: true, isWritable: false },
+        { pubkey: bondTierPolicy, isSigner: false, isWritable: false },
+        { pubkey: bondPosition, isSigner: false, isWritable: true },
+        { pubkey: bondEpochDistributorV3, isSigner: false, isWritable: true },
+        { pubkey: bondEpochPositionV3, isSigner: false, isWritable: true },
+        { pubkey: activationSnapshot, isSigner: false, isWritable: false },
+      ];
+    },
+  });
+}
+
+export async function submitSatCancelBondUnlockV3(_config: SatMiningConfig) {
+  const cfg = loadConfigForSatRuntime(_config);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  assertDedicatedBondProgram(effectiveEnv);
+  return submitInstruction({
+    cfg,
+    env: effectiveEnv,
+    data: buildCancelBondUnlockV3Data(effectiveEnv),
+    programId: resolveSatBondProgramIdFromEnv(effectiveEnv),
+    accountResolver: async (solana, signer) => {
+      const { bondTierPolicy, bondPosition, bondEpochDistributorV3, bondEpochPositionV3 } =
+        resolveSatBondAccounts(solana, signer, effectiveEnv);
+      return [
+        { pubkey: signer, isSigner: true, isWritable: false },
+        { pubkey: bondTierPolicy, isSigner: false, isWritable: false },
+        { pubkey: bondPosition, isSigner: false, isWritable: true },
+        { pubkey: bondEpochDistributorV3, isSigner: false, isWritable: true },
+        { pubkey: bondEpochPositionV3, isSigner: false, isWritable: true },
+      ];
+    },
+  });
+}
+
+export async function submitSatFinalizeBondUnlockV3(_config: SatMiningConfig) {
+  const cfg = loadConfigForSatRuntime(_config);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  assertDedicatedBondProgram(effectiveEnv);
+  return submitInstruction({
+    cfg,
+    env: effectiveEnv,
+    data: buildFinalizeBondUnlockV3Data(effectiveEnv),
+    programId: resolveSatBondProgramIdFromEnv(effectiveEnv),
+    accountResolver: async (solana, signer) => {
+      const {
+        bondTierPolicy,
+        bondPosition,
+        bondEpochDistributorV3,
+        bondEpochPositionV3,
+        bondVault,
+        signerTokenAccount,
+        mint,
+      } = resolveSatBondAccounts(solana, signer, effectiveEnv);
+      return [
+        { pubkey: signer, isSigner: true, isWritable: false },
+        { pubkey: bondTierPolicy, isSigner: false, isWritable: false },
+        { pubkey: bondPosition, isSigner: false, isWritable: true },
+        { pubkey: bondEpochDistributorV3, isSigner: false, isWritable: true },
+        { pubkey: bondEpochPositionV3, isSigner: false, isWritable: true },
+        { pubkey: bondVault, isSigner: false, isWritable: true },
+        { pubkey: signerTokenAccount, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: new solana.PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
+        {
+          pubkey: new solana.PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
+          isSigner: false,
+          isWritable: false,
+        },
+      ];
+    },
+  });
+}
+
+export async function submitSatClaimBondEpochRewardsV3(
+  _config: SatMiningConfig,
+  params: { activationSnapshotEpoch: number },
+) {
+  const cfg = loadConfigForSatRuntime(_config);
+  const effectiveEnv = resolveSatEffectiveEnv(cfg, process.env);
+  assertDedicatedBondProgram(effectiveEnv);
+  return submitInstruction({
+    cfg,
+    env: effectiveEnv,
+    data: buildClaimBondEpochRewardsV3Data(effectiveEnv),
+    programId: resolveSatBondProgramIdFromEnv(effectiveEnv),
+    accountResolver: async (solana, signer) => {
+      const {
+        bondProgramId,
+        bondTierPolicy,
+        bondPosition,
+        bondEpochDistributorV3,
+        bondEpochPositionV3,
+        bondEpochRewardVaultV3,
+        signerTokenAccount,
+        mint,
+      } = resolveSatBondAccounts(solana, signer, effectiveEnv);
+      const activationSnapshot = resolveSatBondEpochSnapshotV3(
+        solana,
+        bondProgramId,
+        params.activationSnapshotEpoch,
+      );
+      return [
+        { pubkey: signer, isSigner: true, isWritable: false },
+        { pubkey: bondTierPolicy, isSigner: false, isWritable: false },
+        { pubkey: bondEpochDistributorV3, isSigner: false, isWritable: true },
+        { pubkey: bondEpochPositionV3, isSigner: false, isWritable: true },
+        { pubkey: bondPosition, isSigner: false, isWritable: false },
+        { pubkey: activationSnapshot, isSigner: false, isWritable: false },
+        { pubkey: bondEpochRewardVaultV3, isSigner: false, isWritable: true },
         { pubkey: signerTokenAccount, isSigner: false, isWritable: true },
         { pubkey: mint, isSigner: false, isWritable: false },
         { pubkey: solana.SystemProgram.programId, isSigner: false, isWritable: false },

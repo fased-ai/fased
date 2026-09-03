@@ -9,8 +9,8 @@ import {
   SAT_SIGNER_CODECS,
 } from "./src/signer-codec-manifest.js";
 
-const MAIN_PROGRAM = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75";
-const BOND_PROGRAM = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq";
+const MAIN_PROGRAM = "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75"; // pragma: allowlist secret
+const BOND_PROGRAM = "D1ySMMiJmvJRhJJKwYnc171w3g2JDPQnkgD8kGhaG4Vq"; // pragma: allowlist secret
 
 describe("SAT protocol-v2 signer codec manifest", () => {
   it("resolves named main and dedicated-bond actions only for their configured program family", () => {
@@ -36,7 +36,7 @@ describe("SAT protocol-v2 signer codec manifest", () => {
         ]),
       }).action,
     ).toBe("openBondPosition");
-    expect(new Set(SAT_SIGNER_ACTIONS).size).toBe(41);
+    expect(new Set(SAT_SIGNER_ACTIONS).size).toBe(47);
   });
 
   it("rejects unknown programs, action-family mismatches, malformed lengths and batch headers", () => {

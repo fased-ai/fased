@@ -33,6 +33,13 @@ func putVaultBondKeyV2(data []byte, offset int, key solana.PublicKey) {
 	copy(data[offset:offset+32], key[:])
 }
 
+func putVaultBondU128V2(data []byte, offset int, value *big.Int) {
+	low := value.Uint64()
+	high := new(big.Int).Rsh(new(big.Int).Set(value), 64).Uint64()
+	binary.LittleEndian.PutUint64(data[offset:offset+8], low)
+	binary.LittleEndian.PutUint64(data[offset+8:offset+16], high)
+}
+
 func splTokenTestAccountV2(mint, owner solana.PublicKey, amount uint64) *rpc.Account {
 	data := make([]byte, splTokenAccountSizeV2)
 	putVaultBondKeyV2(data, 0, mint)
@@ -342,5 +349,163 @@ func TestSignerV2VaultBondClaimsBindExactStateAmountAndRecipient(t *testing.T) {
 	wrongAuthority.Digest, _ = signerOwnedAccountSnapshotDigestV2(wrongAuthority.Addresses, wrongAuthority.Accounts)
 	if _, err := resolveVaultBondClaimEffectV2(unallocated.instruction, unallocated.wallet, wrongAuthority); err == nil || !strings.Contains(err.Error(), "authority") {
 		t.Fatalf("unallocated claim accepted the wrong update authority: %v", err)
+	}
+}
+
+func vaultBondEpochClaimFixtureV3(t *testing.T) vaultBondRPCFixtureV2 {
+	t.Helper()
+	fixture := makeVaultBondRPCFixtureV2(t)
+	distributor, distributorBump := vaultBondTestPDA(t, fixture.program, []byte("sat_bond_epoch_distributor_v3"))
+	epochPosition, epochPositionBump := vaultBondTestPDA(t, fixture.program, []byte("sat_bond_epoch_position_v3"), fixture.wallet[:])
+	activationSnapshot, _ := vaultBondTestPDA(t, fixture.program, []byte("sat_bond_epoch_snapshot_v3"), vaultBondUint64LEBytesV2(3))
+	rewardVault, err := findAssociatedTokenAddressV2(distributor, fixture.mint, solana.TokenProgramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	distributorData := make([]byte, vaultBondEpochDistributorSizeV3)
+	distributorData[0] = vaultBondEpochDistributorDiscriminatorV3
+	distributorBody := distributorData[vaultBondAccountHeaderSizeV2:]
+	distributorBody[0], distributorBody[1], distributorBody[2] = 3, distributorBump, 1
+	binary.LittleEndian.PutUint64(distributorBody[8:16], 7)
+	putVaultBondKeyV2(distributorBody, 16, fixture.mint)
+	putVaultBondKeyV2(distributorBody, 48, rewardVault)
+	putVaultBondKeyV2(distributorBody, 80, fixture.updateAuthority)
+	binary.LittleEndian.PutUint64(distributorBody[112:120], 50)
+	binary.LittleEndian.PutUint64(distributorBody[120:128], 604800)
+	binary.LittleEndian.PutUint64(distributorBody[128:136], 3)
+	binary.LittleEndian.PutUint64(distributorBody[136:144], 75)
+	binary.LittleEndian.PutUint64(distributorBody[144:152], 1)
+	rewardIndex := new(big.Int).SetUint64(2_000_000_000)
+	putVaultBondU128V2(distributorBody, 152, rewardIndex)
+	putVaultBondU128V2(distributorBody, 168, rewardIndex)
+	binary.LittleEndian.PutUint64(distributorBody[184:192], 100)
+
+	epochData := make([]byte, vaultBondEpochPositionSizeV3)
+	epochData[0] = vaultBondEpochPositionDiscriminatorV3
+	epochBody := epochData[vaultBondAccountHeaderSizeV2:]
+	epochBody[0], epochBody[1], epochBody[2] = 3, 2, epochPositionBump
+	binary.LittleEndian.PutUint64(epochBody[8:16], 7)
+	putVaultBondKeyV2(epochBody, 16, fixture.wallet)
+	putVaultBondKeyV2(epochBody, 48, fixture.position)
+	binary.LittleEndian.PutUint64(epochBody[80:88], 75)
+	binary.LittleEndian.PutUint64(epochBody[104:112], 41)
+	putVaultBondU128V2(epochBody, 112, new(big.Int).Mul(big.NewInt(75), rewardIndex))
+	binary.LittleEndian.PutUint64(epochBody[136:144], 99)
+
+	positionAccount := cloneRPCAccountV2(fixture.snapshot.Accounts[1])
+	positionData := append([]byte(nil), positionAccount.Data.GetBinary()...)
+	positionData[vaultBondAccountHeaderSizeV2+1] = 1
+	positionAccount.Data = rpc.DataBytesOrJSONFromBytes(positionData)
+	addresses := []solana.PublicKey{fixture.policy, distributor, epochPosition, fixture.position, activationSnapshot, rewardVault, fixture.recipient, fixture.mint}
+	accounts := []*rpc.Account{
+		cloneRPCAccountV2(fixture.snapshot.Accounts[0]), vaultBondTestAccountV2(fixture.program, distributorData),
+		vaultBondTestAccountV2(fixture.program, epochData), positionAccount, nil,
+		splTokenTestAccountV2(fixture.mint, distributor, 100), cloneRPCAccountV2(fixture.snapshot.Accounts[5]),
+		cloneRPCAccountV2(fixture.snapshot.Accounts[6]),
+	}
+	digest, err := signerOwnedAccountSnapshotDigestV2(addresses, accounts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.distributor, fixture.staking, fixture.rewardVault = distributor, epochPosition, rewardVault
+	fixture.instruction = normalizedSATInstructionV2{
+		Program: fixture.program, Data: []byte{20}, Codec: signerSATCodecsV2["claimBondEpochRewardsV3"],
+		Accounts: solana.AccountMetaSlice{
+			&solana.AccountMeta{PublicKey: fixture.wallet, IsSigner: true},
+			&solana.AccountMeta{PublicKey: fixture.policy},
+			&solana.AccountMeta{PublicKey: distributor, IsWritable: true},
+			&solana.AccountMeta{PublicKey: epochPosition, IsWritable: true},
+			&solana.AccountMeta{PublicKey: fixture.position},
+			&solana.AccountMeta{PublicKey: activationSnapshot},
+			&solana.AccountMeta{PublicKey: rewardVault, IsWritable: true},
+			&solana.AccountMeta{PublicKey: fixture.recipient, IsWritable: true},
+			&solana.AccountMeta{PublicKey: fixture.mint},
+			&solana.AccountMeta{PublicKey: solana.SystemProgramID},
+			&solana.AccountMeta{PublicKey: solana.TokenProgramID},
+			&solana.AccountMeta{PublicKey: solana.SPLAssociatedTokenAccountProgramID},
+		},
+	}
+	fixture.snapshot = signerOwnedAccountSnapshotV2{Slot: 100, Addresses: addresses, Accounts: accounts, Digest: digest}
+	return fixture
+}
+
+func TestSignerV2VaultBondEpochV3ClaimRequiresSynchronizedExactState(t *testing.T) {
+	fixture := vaultBondEpochClaimFixtureV3(t)
+	effect, err := resolveVaultBondClaimEffectV2(fixture.instruction, fixture.wallet, fixture.snapshot)
+	if err != nil {
+		t.Fatalf("resolve v3 epoch claim: %v", err)
+	}
+	if effect.Action != "claimBondEpochRewardsV3" || effect.Amount.Cmp(big.NewInt(41)) != 0 || effect.Destination != fixture.wallet.String() || !effect.RequiresStateRecheck {
+		t.Fatalf("unexpected v3 epoch claim effect: %#v", effect)
+	}
+	unsynced := fixture.snapshot
+	unsynced.Accounts = append([]*rpc.Account(nil), fixture.snapshot.Accounts...)
+	unsynced.Accounts[2] = cloneRPCAccountV2(unsynced.Accounts[2])
+	data := append([]byte(nil), unsynced.Accounts[2].Data.GetBinary()...)
+	putVaultBondU128V2(data[vaultBondAccountHeaderSizeV2:], 112, big.NewInt(0))
+	unsynced.Accounts[2].Data = rpc.DataBytesOrJSONFromBytes(data)
+	unsynced.Digest, _ = signerOwnedAccountSnapshotDigestV2(unsynced.Addresses, unsynced.Accounts)
+	if _, err := resolveVaultBondClaimEffectV2(fixture.instruction, fixture.wallet, unsynced); err == nil || !strings.Contains(err.Error(), "synchronized") {
+		t.Fatalf("unsynchronized v3 claim was accepted: %v", err)
+	}
+}
+
+func TestSignerV2VaultBondEpochV3FinalizeRequiresNoActiveOrPendingStake(t *testing.T) {
+	claim := vaultBondEpochClaimFixtureV3(t)
+	epochAccount := cloneRPCAccountV2(claim.snapshot.Accounts[2])
+	epochData := append([]byte(nil), epochAccount.Data.GetBinary()...)
+	epochBody := epochData[vaultBondAccountHeaderSizeV2:]
+	epochBody[1] = 0
+	binary.LittleEndian.PutUint64(epochBody[80:88], 0)
+	binary.LittleEndian.PutUint64(epochBody[88:96], 0)
+	putVaultBondU128V2(epochBody, 112, big.NewInt(0))
+	epochAccount.Data = rpc.DataBytesOrJSONFromBytes(epochData)
+	positionAccount := cloneRPCAccountV2(claim.snapshot.Accounts[3])
+	positionData := append([]byte(nil), positionAccount.Data.GetBinary()...)
+	positionData[vaultBondAccountHeaderSizeV2+1] = 2
+	positionAccount.Data = rpc.DataBytesOrJSONFromBytes(positionData)
+	addresses := []solana.PublicKey{claim.policy, claim.position, claim.distributor, claim.staking, claim.bondVault, claim.recipient, claim.mint}
+	accounts := []*rpc.Account{
+		cloneRPCAccountV2(claim.snapshot.Accounts[0]), positionAccount,
+		cloneRPCAccountV2(claim.snapshot.Accounts[1]), epochAccount,
+		splTokenTestAccountV2(claim.mint, claim.position, 75), cloneRPCAccountV2(claim.snapshot.Accounts[6]),
+		cloneRPCAccountV2(claim.snapshot.Accounts[7]),
+	}
+	digest, err := signerOwnedAccountSnapshotDigestV2(addresses, accounts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instruction := normalizedSATInstructionV2{
+		Program: claim.program, Data: []byte{19}, Codec: signerSATCodecsV2["finalizeBondUnlockV3"],
+		Accounts: solana.AccountMetaSlice{
+			&solana.AccountMeta{PublicKey: claim.wallet, IsSigner: true},
+			&solana.AccountMeta{PublicKey: claim.policy},
+			&solana.AccountMeta{PublicKey: claim.position, IsWritable: true},
+			&solana.AccountMeta{PublicKey: claim.distributor, IsWritable: true},
+			&solana.AccountMeta{PublicKey: claim.staking, IsWritable: true},
+			&solana.AccountMeta{PublicKey: claim.bondVault, IsWritable: true},
+			&solana.AccountMeta{PublicKey: claim.recipient, IsWritable: true},
+			&solana.AccountMeta{PublicKey: claim.mint},
+			&solana.AccountMeta{PublicKey: solana.SystemProgramID},
+			&solana.AccountMeta{PublicKey: solana.TokenProgramID},
+			&solana.AccountMeta{PublicKey: solana.SPLAssociatedTokenAccountProgramID},
+		},
+	}
+	snapshot := signerOwnedAccountSnapshotV2{Slot: 100, Addresses: addresses, Accounts: accounts, Digest: digest}
+	effect, err := resolveVaultBondFinalizeEffectV2(instruction, claim.wallet, snapshot)
+	if err != nil || effect.Amount.Cmp(big.NewInt(75)) != 0 || effect.Action != "finalizeBondUnlockV3" {
+		t.Fatalf("resolve v3 finalization: effect=%#v err=%v", effect, err)
+	}
+
+	active := snapshot
+	active.Accounts = append([]*rpc.Account(nil), snapshot.Accounts...)
+	active.Accounts[3] = cloneRPCAccountV2(active.Accounts[3])
+	activeData := append([]byte(nil), active.Accounts[3].Data.GetBinary()...)
+	binary.LittleEndian.PutUint64(activeData[vaultBondAccountHeaderSizeV2+80:vaultBondAccountHeaderSizeV2+88], 1)
+	active.Accounts[3].Data = rpc.DataBytesOrJSONFromBytes(activeData)
+	active.Digest, _ = signerOwnedAccountSnapshotDigestV2(active.Addresses, active.Accounts)
+	if _, err := resolveVaultBondFinalizeEffectV2(instruction, claim.wallet, active); err == nil || !strings.Contains(err.Error(), "fully inactive") {
+		t.Fatalf("active v3 stake was accepted for finalization: %v", err)
 	}
 }

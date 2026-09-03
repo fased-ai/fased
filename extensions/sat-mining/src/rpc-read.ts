@@ -26,6 +26,9 @@ import {
 
 export { resolveDefaultSolanaPublicReadFallbackUrl } from "./rpc-read-service.js";
 import {
+  loadSatBondEpochDistributorV3Layout,
+  loadSatBondEpochPositionV3Layout,
+  loadSatBondEpochSnapshotV3Layout,
   loadSatBondLayout,
   loadSatBondPolicyLayout,
   loadSatBondStakingDistributorLayout,
@@ -386,6 +389,66 @@ export type SatBondStakingPositionView = {
   rewardDebtFp: string;
   fractionalRemainderFp: string;
   lastSyncedSlot: number;
+};
+
+export type SatBondEpochDistributorV3View = {
+  address: string;
+  version: number;
+  bump: number;
+  status: number;
+  statusLabel: "inactive" | "active";
+  policyVersion: number;
+  rewardMint: string;
+  rewardVault: string;
+  expectedRewardVault: string;
+  updateAuthority: string;
+  rewardThresholdRaw: string;
+  epochSeconds: number;
+  currentEpoch: number;
+  eligibleStakeRaw: string;
+  activePositionCount: string;
+  rewardIndexFp: string;
+  policyBoundaryRewardIndexFp: string;
+  observedRewardVaultRaw: string;
+  pendingEpochRewardRaw: string;
+  unallocatedRewardRaw: string;
+  fractionalRemainderFp: string;
+  lastUpdatedSlot: number;
+  pendingStakeRaw: string;
+  pendingPositionCount: string;
+  rewardVaultBalanceRaw?: string;
+  mintMatchesRuntime: boolean;
+  vaultMatchesExpected: boolean;
+};
+
+export type SatBondEpochPositionV3View = {
+  address: string;
+  version: number;
+  status: number;
+  statusLabel: "inactive" | "pending" | "active";
+  bump: number;
+  policyVersion: number;
+  authority: string;
+  bondPosition: string;
+  activeStakeRaw: string;
+  pendingStakeRaw: string;
+  eligibleFromEpoch: number;
+  claimableRewardRaw: string;
+  rewardDebtFp: string;
+  fractionalRemainderFp: string;
+  lastSyncedSlot: number;
+};
+
+export type SatBondEpochSnapshotV3View = {
+  address: string;
+  version: number;
+  bump: number;
+  completedEpoch: number;
+  policyVersion: number;
+  eligibleStakeRaw: string;
+  distributedRewardRaw: string;
+  rewardIndexAfterFp: string;
+  createdAtSlot: number;
 };
 
 export type SatCycleRegistryMetaView = {
@@ -1204,6 +1267,102 @@ function decodeSatBondStakingPosition(data: Buffer, address: string): SatBondSta
     rewardDebtFp: readU128String(body, layout.offsets.rewardDebtFp),
     fractionalRemainderFp: readU64String(body, layout.offsets.fractionalRemainderFp),
     lastSyncedSlot: readU64Number(body, layout.offsets.lastSyncedSlot),
+  };
+}
+
+export function decodeSatBondEpochDistributorV3(
+  data: Buffer,
+  address: string,
+): SatBondEpochDistributorV3View {
+  const layout = loadSatBondEpochDistributorV3Layout();
+  const body = expectAccountData(data, layout.discriminator, "SAT Bond-v3 epoch distributor");
+  const rewardMint = readPubkey(body, layout.offsets.rewardMint);
+  const rewardVault = readPubkey(body, layout.offsets.rewardVault);
+  const solana = require("@solana/web3.js") as SolanaModuleLike;
+  const expectedRewardVault = deriveAssociatedTokenAddress(
+    solana,
+    new solana.PublicKey(address),
+    new solana.PublicKey(SAT_MINT_ADDRESS()),
+  ).toBase58();
+  const status = body[layout.offsets.status] ?? 0;
+  return {
+    address,
+    version: body[layout.offsets.version] ?? 0,
+    bump: body[layout.offsets.bump] ?? 0,
+    status,
+    statusLabel: status === layout.status.active ? "active" : "inactive",
+    policyVersion: readU64Number(body, layout.offsets.policyVersion),
+    rewardMint,
+    rewardVault,
+    expectedRewardVault,
+    updateAuthority: readPubkey(body, layout.offsets.updateAuthority),
+    rewardThresholdRaw: readU64String(body, layout.offsets.rewardThresholdRaw),
+    epochSeconds: readU64Number(body, layout.offsets.epochSeconds),
+    currentEpoch: readU64Number(body, layout.offsets.currentEpoch),
+    eligibleStakeRaw: readU64String(body, layout.offsets.eligibleStakeRaw),
+    activePositionCount: readU64String(body, layout.offsets.activePositionCount),
+    rewardIndexFp: readU128String(body, layout.offsets.rewardIndexFp),
+    policyBoundaryRewardIndexFp: readU128String(body, layout.offsets.policyBoundaryRewardIndexFp),
+    observedRewardVaultRaw: readU64String(body, layout.offsets.observedRewardVaultRaw),
+    pendingEpochRewardRaw: readU64String(body, layout.offsets.pendingEpochRewardRaw),
+    unallocatedRewardRaw: readU64String(body, layout.offsets.unallocatedRewardRaw),
+    fractionalRemainderFp: readU64String(body, layout.offsets.fractionalRemainderFp),
+    lastUpdatedSlot: readU64Number(body, layout.offsets.lastUpdatedSlot),
+    pendingStakeRaw: readU64String(body, layout.offsets.pendingStakeRaw),
+    pendingPositionCount: readU64String(body, layout.offsets.pendingPositionCount),
+    mintMatchesRuntime: rewardMint === SAT_MINT_ADDRESS(),
+    vaultMatchesExpected: rewardVault === expectedRewardVault,
+  };
+}
+
+export function decodeSatBondEpochPositionV3(
+  data: Buffer,
+  address: string,
+): SatBondEpochPositionV3View {
+  const layout = loadSatBondEpochPositionV3Layout();
+  const body = expectAccountData(data, layout.discriminator, "SAT Bond-v3 epoch position");
+  const status = body[layout.offsets.status] ?? 0;
+  const statusLabel =
+    status === layout.status.active
+      ? "active"
+      : status === layout.status.pending
+        ? "pending"
+        : "inactive";
+  return {
+    address,
+    version: body[layout.offsets.version] ?? 0,
+    status,
+    statusLabel,
+    bump: body[layout.offsets.bump] ?? 0,
+    policyVersion: readU64Number(body, layout.offsets.policyVersion),
+    authority: readPubkey(body, layout.offsets.authority),
+    bondPosition: readPubkey(body, layout.offsets.bondPosition),
+    activeStakeRaw: readU64String(body, layout.offsets.activeStakeRaw),
+    pendingStakeRaw: readU64String(body, layout.offsets.pendingStakeRaw),
+    eligibleFromEpoch: readU64Number(body, layout.offsets.eligibleFromEpoch),
+    claimableRewardRaw: readU64String(body, layout.offsets.claimableRewardRaw),
+    rewardDebtFp: readU128String(body, layout.offsets.rewardDebtFp),
+    fractionalRemainderFp: readU64String(body, layout.offsets.fractionalRemainderFp),
+    lastSyncedSlot: readU64Number(body, layout.offsets.lastSyncedSlot),
+  };
+}
+
+export function decodeSatBondEpochSnapshotV3(
+  data: Buffer,
+  address: string,
+): SatBondEpochSnapshotV3View {
+  const layout = loadSatBondEpochSnapshotV3Layout();
+  const body = expectAccountData(data, layout.discriminator, "SAT Bond-v3 epoch snapshot");
+  return {
+    address,
+    version: body[layout.offsets.version] ?? 0,
+    bump: body[layout.offsets.bump] ?? 0,
+    completedEpoch: readU64Number(body, layout.offsets.completedEpoch),
+    policyVersion: readU64Number(body, layout.offsets.policyVersion),
+    eligibleStakeRaw: readU64String(body, layout.offsets.eligibleStakeRaw),
+    distributedRewardRaw: readU64String(body, layout.offsets.distributedRewardRaw),
+    rewardIndexAfterFp: readU128String(body, layout.offsets.rewardIndexAfterFp),
+    createdAtSlot: readU64Number(body, layout.offsets.createdAtSlot),
   };
 }
 
@@ -2854,6 +3013,95 @@ export async function inspectSatBondStakingPosition(
       return account ? decodeSatBondStakingPosition(account, address.toBase58()) : null;
     },
   );
+}
+
+export async function deriveSatBondEpochSnapshotV3Address(
+  _config: SatMiningConfig,
+  params: { completedEpoch: number },
+): Promise<string> {
+  assertDedicatedBondProgramConfigured(process.env);
+  const { solana, programId } = await resolveBondProgramContext(process.env);
+  const layout = loadSatBondEpochSnapshotV3Layout();
+  const [address] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from(layout.pdaSeed), encodeU64(params.completedEpoch)],
+    programId,
+  );
+  return address.toBase58();
+}
+
+export async function inspectSatBondEpochDistributorV3(
+  _config: SatMiningConfig,
+): Promise<SatBondEpochDistributorV3View | null> {
+  assertDedicatedBondProgramConfigured(process.env);
+  const { solana, programId } = await resolveBondProgramContext(process.env);
+  const layout = loadSatBondEpochDistributorV3Layout();
+  const [address] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from(layout.pdaSeed)],
+    programId,
+  );
+  const rpc = resolveEffectiveReadRpcConfig();
+  return await getOrLoadRpcCacheValue<SatBondEpochDistributorV3View | null>(
+    `view:bond-epoch-distributor-v3:${rpcCacheScope(rpc)}`,
+    SAT_RPC_LIVE_VIEW_CACHE_TTL_MS,
+    async () => {
+      const expectedRewardVault = deriveAssociatedTokenAddress(
+        solana,
+        address,
+        new solana.PublicKey(SAT_MINT_ADDRESS()),
+      ).toBase58();
+      const [distributorRecord, rewardVaultRecord] = await fetchMultipleAccountRecordsRaw(
+        rpc,
+        [address.toBase58(), expectedRewardVault],
+        "bond-epoch-distributor-v3",
+      );
+      if (!distributorRecord?.data) {
+        return null;
+      }
+      const view = decodeSatBondEpochDistributorV3(distributorRecord.data, address.toBase58());
+      if (view.rewardVault === expectedRewardVault) {
+        view.rewardVaultBalanceRaw = decodeSplTokenAccountAmount(rewardVaultRecord);
+      }
+      return view;
+    },
+  );
+}
+
+export async function inspectSatBondEpochPositionV3(
+  _config: SatMiningConfig,
+  params: { authority: string },
+): Promise<SatBondEpochPositionV3View | null> {
+  assertDedicatedBondProgramConfigured(process.env);
+  const { solana, programId } = await resolveBondProgramContext(process.env);
+  const layout = loadSatBondEpochPositionV3Layout();
+  const [address] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from(layout.pdaSeed), new solana.PublicKey(params.authority).toBuffer()],
+    programId,
+  );
+  const rpc = resolveEffectiveReadRpcConfig();
+  return await getOrLoadRpcCacheValue<SatBondEpochPositionV3View | null>(
+    `view:bond-epoch-position-v3:${rpcCacheScope(rpc)}:${params.authority}`,
+    SAT_RPC_LIVE_VIEW_CACHE_TTL_MS,
+    async () => {
+      const account = await fetchAccountInfoRaw(rpc, address.toBase58(), "bond-epoch-position-v3");
+      return account ? decodeSatBondEpochPositionV3(account, address.toBase58()) : null;
+    },
+  );
+}
+
+export async function inspectSatBondEpochSnapshotV3(
+  _config: SatMiningConfig,
+  params: { completedEpoch: number },
+): Promise<SatBondEpochSnapshotV3View | null> {
+  assertDedicatedBondProgramConfigured(process.env);
+  const { solana, programId } = await resolveBondProgramContext(process.env);
+  const layout = loadSatBondEpochSnapshotV3Layout();
+  const [address] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from(layout.pdaSeed), encodeU64(params.completedEpoch)],
+    programId,
+  );
+  const rpc = resolveEffectiveReadRpcConfig();
+  const account = await fetchAccountInfoRaw(rpc, address.toBase58(), "bond-epoch-snapshot-v3");
+  return account ? decodeSatBondEpochSnapshotV3(account, address.toBase58()) : null;
 }
 
 export async function inspectSatCycleRegistryMeta(
