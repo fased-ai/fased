@@ -385,9 +385,16 @@ export async function requireLocalSocketSignerProtocolV2(
       ? ["reviewedVaultBondActions", "signerOwnedStateRecheck", "durableReviewAuthorization"]
       : intentType === "solana.agentCapitalAction"
         ? ["reviewedAgentCapitalActions", "signerOwnedStateRecheck", "durableReviewAuthorization"]
-        : intentType === "federation.bondChallenge"
-          ? ["reviewedFederationBondChallenges", "durableReviewAuthorization"]
-          : [];
+        : intentType === "solana.moneyFoundationAction"
+          ? [
+              "reviewedMoneyFoundationActions",
+              "preSignedEphemeralPositionMint",
+              "signerOwnedStateRecheck",
+              "durableReviewAuthorization",
+            ]
+          : intentType === "federation.bondChallenge"
+            ? ["reviewedFederationBondChallenges", "durableReviewAuthorization"]
+            : [];
   const missingIntentFeatures = intentReviewFeatures.filter(
     (feature) => !capabilities?.features.includes(feature),
   );

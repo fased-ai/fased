@@ -71,6 +71,15 @@ export type {
   SatSolPolCustodyV1,
   SatSolTransactionReviewV1,
 } from "../agents/fased-sat-sol-money-foundation.generated.js";
+export {
+  deriveMoneyFoundationRequestId,
+  executeReviewedMoneyFoundationAction,
+  prepareMoneyFoundationTransactionEnvelope,
+} from "../agents/money-foundation-runtime.js";
+export type {
+  MoneyFoundationOperation,
+  MoneyFoundationReadback,
+} from "../agents/money-foundation-runtime.js";
 export { validateSatSolMoneyFoundationRecord } from "../agents/sat-sol-money-foundation.js";
 export type { SatSolMoneyFoundationValidation } from "../agents/sat-sol-money-foundation.js";
 export {

@@ -9,6 +9,7 @@
     "solana.satLookupTable",
     "solana.vaultBondAction",
     "solana.agentCapitalAction",
+    "solana.moneyFoundationAction",
     "federation.bondChallenge",
     "solana.jupiter.swap",
     "solana.jupiter.trigger.create",
@@ -57,6 +58,8 @@
     "legacyOnlyJupiterTransactions",
     "reviewedVaultBondActions",
     "reviewedAgentCapitalActions",
+    "reviewedMoneyFoundationActions",
+    "preSignedEphemeralPositionMint",
     "reviewedFederationBondChallenges",
     "signerOwnedStateRecheck",
     "durableReviewAuthorization",
@@ -90,6 +93,8 @@
     "signerOwnedJupiterTriggerHistory",
     "signerOwnedReviewPrepareExecute",
     "exactPreparedTransactions",
+    "reviewedMoneyFoundationActions",
+    "preSignedEphemeralPositionMint",
     "legacyOnlyJupiterTransactions",
     "signerOwnedEncryptedSATCommitments"
   ]
