@@ -107,4 +107,16 @@ metadata-only promotion retains its configured environment review. One approval
 may authorize a named conditional chain; do not ask for the same approval again
 while its exact identities and predicates remain unchanged.
 
+## GitHub authentication
+
+Before the first GitHub API mutation, run `gh auth status`. Reuse a valid saved
+credential without asking the owner to authenticate again. If the saved
+credential is absent or invalid and the authorized workflow requires GitHub API
+access, start exactly one device flow with automatic browser opening disabled,
+show the owner the one-time code and `https://github.com/login/device`, and keep
+that same flow alive while the owner authorizes it. Afterward, require
+`gh auth status` to prove the credential was saved before continuing. Never
+start parallel or repeated device flows, never merely tell the owner to “log
+in,” and never expose the resulting token.
+
 Never publish npm packages or make npm registry state a release predicate.
