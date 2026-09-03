@@ -27,10 +27,23 @@ void test("Fased pins one exact generated public Agent view contract", () => {
   const generatedBytes = fs.readFileSync(
     path.join(root, "src/agents/fased-agent-public-views.generated.ts"),
   );
+  const fixtureBundleBytes = fs.readFileSync(
+    path.join(root, "src/agents/protocol-generation/public-agent-views.v1.fixtures.json"),
+  );
+  const fixtureBundle = JSON.parse(fixtureBundleBytes.toString("utf8"));
   assert.equal(createHash("sha256").update(contractBytes).digest("hex"), source.contractSha256);
   assert.match(source.upstreamGeneratedTypeScriptSha256, /^[0-9a-f]{64}$/u);
   assert.equal(
     createHash("sha256").update(generatedBytes).digest("hex"),
     source.generatedTypeScriptSha256,
   );
+  assert.equal(
+    createHash("sha256").update(fixtureBundleBytes).digest("hex"),
+    source.fixtureBundleSha256,
+  );
+  assert.equal(fixtureBundle.sourceCommit, source.commit);
+  assert.equal(fixtureBundle.valid.length, source.validFixtureCount);
+  assert.equal(fixtureBundle.invalid.length, source.invalidFixtureCount);
+  assert.ok(source.validFixtureCount >= 10);
+  assert.ok(source.invalidFixtureCount >= 5);
 });

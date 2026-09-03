@@ -22,6 +22,13 @@ const sourcePath = path.join(
   "public-agent-views.v1.source.json",
 );
 const generatedPath = path.join(root, "src", "agents", "fased-agent-public-views.generated.ts");
+const fixtureBundlePath = path.join(
+  root,
+  "src",
+  "agents",
+  "protocol-generation",
+  "public-agent-views.v1.fixtures.json",
+);
 const importMode = process.argv.includes("--import");
 const checkMode = process.argv.includes("--check");
 const agentRootIndex = process.argv.indexOf("--agent-root");
@@ -51,6 +58,39 @@ function stableJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function importedFixtures(repo, sourceRef, commit) {
+  const fixtureRoot = "fixtures/public-agent-views/v1";
+  const files = String(git(repo, ["ls-tree", "-r", "--name-only", sourceRef, fixtureRoot]))
+    .trim()
+    .split("\n")
+    .filter((file) => file.endsWith(".json"))
+    .toSorted();
+  const entries = files.map((file) => {
+    const fixture = JSON.parse(
+      Buffer.from(git(repo, ["show", `${sourceRef}:${file}`])).toString("utf8"),
+    );
+    if (
+      !fixture ||
+      typeof fixture !== "object" ||
+      Array.isArray(fixture) ||
+      Object.keys(fixture).toSorted().join(",") !== "scenario,value" ||
+      typeof fixture.scenario !== "string" ||
+      !fixture.value ||
+      typeof fixture.value !== "object" ||
+      Array.isArray(fixture.value)
+    ) {
+      throw new Error(`canonical Agent public-view fixture ${file} is malformed`);
+    }
+    return { path: file, scenario: fixture.scenario, value: fixture.value };
+  });
+  return {
+    schema: "fased.agent-public-view-fixtures.v1",
+    sourceCommit: commit,
+    valid: entries.filter((entry) => entry.path.includes("/valid/")),
+    invalid: entries.filter((entry) => entry.path.includes("/invalid/")),
+  };
+}
+
 function update(filePath, expected) {
   const current = fs.existsSync(filePath) ? fs.readFileSync(filePath) : null;
   if (current?.equals(expected)) {
@@ -72,6 +112,7 @@ if (importMode) {
   const generatedBytes = Buffer.from(
     git(agentRoot, ["show", `${sourceRef}:clients/js/src/views/generated/publicAgentViews.ts`]),
   );
+  const fixtureBundle = importedFixtures(agentRoot, sourceRef, commit);
   const contract = JSON.parse(contractBytes.toString("utf8"));
   if (
     contract.$schema !== "fased.public-agent-view-contract.v1" ||
@@ -87,12 +128,14 @@ if (importMode) {
     throw new Error("canonical Agent public-view contract is unsupported");
   }
   update(contractPath, contractBytes);
+  update(fixtureBundlePath, Buffer.from(stableJson(fixtureBundle)));
   update(generatedPath, Buffer.concat([Buffer.from("/* oxlint-disable */\n"), generatedBytes]));
-  execFileSync("pnpm", ["exec", "oxfmt", "--write", generatedPath], {
+  execFileSync("pnpm", ["exec", "oxfmt", "--write", generatedPath, fixtureBundlePath], {
     cwd: root,
     stdio: ["ignore", "ignore", "pipe"],
   });
   const localGeneratedBytes = fs.readFileSync(generatedPath);
+  const localFixtureBundleBytes = fs.readFileSync(fixtureBundlePath);
   update(
     sourcePath,
     Buffer.from(
@@ -104,6 +147,9 @@ if (importMode) {
         contractSha256: sha256(contractBytes),
         upstreamGeneratedTypeScriptSha256: sha256(generatedBytes),
         generatedTypeScriptSha256: sha256(localGeneratedBytes),
+        fixtureBundleSha256: sha256(localFixtureBundleBytes),
+        validFixtureCount: fixtureBundle.valid.length,
+        invalidFixtureCount: fixtureBundle.invalid.length,
         publicViews: contract.publicViews,
       }),
     ),
@@ -112,7 +158,9 @@ if (importMode) {
 
 const contractBytes = fs.readFileSync(contractPath);
 const generatedBytes = fs.readFileSync(generatedPath);
+const fixtureBundleBytes = fs.readFileSync(fixtureBundlePath);
 const contract = JSON.parse(contractBytes.toString("utf8"));
+const fixtureBundle = JSON.parse(fixtureBundleBytes.toString("utf8"));
 const source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
 if (
   source.schema !== "fased.agent-public-view-source.v1" ||
@@ -122,6 +170,13 @@ if (
   source.contractSha256 !== sha256(contractBytes) ||
   !/^[0-9a-f]{64}$/u.test(source.upstreamGeneratedTypeScriptSha256) ||
   source.generatedTypeScriptSha256 !== sha256(generatedBytes) ||
+  source.fixtureBundleSha256 !== sha256(fixtureBundleBytes) ||
+  fixtureBundle.schema !== "fased.agent-public-view-fixtures.v1" ||
+  fixtureBundle.sourceCommit !== source.commit ||
+  fixtureBundle.valid.length !== source.validFixtureCount ||
+  fixtureBundle.invalid.length !== source.invalidFixtureCount ||
+  source.validFixtureCount < 10 ||
+  source.invalidFixtureCount < 5 ||
   contract.contractId !== "fased.public-agent-views.v1" ||
   JSON.stringify(source.publicViews) !== JSON.stringify(contract.publicViews)
 ) {
@@ -136,5 +191,8 @@ console.log(
     contractSha256: source.contractSha256,
     upstreamGeneratedTypeScriptSha256: source.upstreamGeneratedTypeScriptSha256,
     generatedTypeScriptSha256: source.generatedTypeScriptSha256,
+    fixtureBundleSha256: source.fixtureBundleSha256,
+    validFixtureCount: source.validFixtureCount,
+    invalidFixtureCount: source.invalidFixtureCount,
   }),
 );

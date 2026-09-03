@@ -6,6 +6,9 @@
   "contractSha256": "364e38cae0ae90e927af5c7a80a95ced47adbdfa46acb7ed91e0db0489aa9a3a",
   "upstreamGeneratedTypeScriptSha256": "7afde928a7e0714f504e41a49fe0b0a8789ffe5a6a768982dd3f12fce8da9ad6",
   "generatedTypeScriptSha256": "f62bc40feeda240b9fac36511b544a6d917e258b162178b1a5546941f07adf36",
+  "fixtureBundleSha256": "2de0c6df8989b71a70ead4b2ad81a997b0335245f3a9e27e4cc6a10cab7b2b83",
+  "validFixtureCount": 10,
+  "invalidFixtureCount": 5,
   "publicViews": [
     "AgentEvidenceRef",
     "AgentIdentityView",
