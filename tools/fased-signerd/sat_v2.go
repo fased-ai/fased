@@ -178,7 +178,7 @@ func normalizeSATIntentV2(input signerIntentV2, wallet solana.PublicKey) (normal
 				return normalizedIntentV2{}, fmt.Errorf("SAT %s amount must be positive", action)
 			}
 			asset = "solana:native"
-		case "openBondPosition", "increaseBondPosition":
+		case "openBondPosition", "increaseBondPosition", "increaseBondPositionV3":
 			amount = new(big.Int).SetUint64(binary.LittleEndian.Uint64(data[1:9]))
 			if amount.Sign() <= 0 {
 				return normalizedIntentV2{}, fmt.Errorf("SAT %s amount must be positive", action)
@@ -243,7 +243,7 @@ func satDestinationForActionV2(instruction normalizedSATInstructionV2, wallet so
 		index = 1
 	case "initMinerCapital":
 		index = 3
-	case "openBondPosition", "increaseBondPosition":
+	case "openBondPosition", "increaseBondPosition", "registerBondEpochPositionV3", "increaseBondPositionV3", "requestBondUnlockV3", "cancelBondUnlockV3":
 		index = 2
 	case "claimUnallocatedStakingRewards", "claimProtocolDistributorSat":
 		index = 4
@@ -253,7 +253,7 @@ func satDestinationForActionV2(instruction normalizedSATInstructionV2, wallet so
 		index = 3
 	case "closeResolvedMinerCycleState":
 		index = 2
-	case "withdrawMinerCapital", "finalizeBondUnlock", "claimBondStakingRewards", "claimCycleRewards", "claimCycleRewardsBatch", "claimCycleRewardsV2", "claimCycleRewardsBatchV2":
+	case "withdrawMinerCapital", "finalizeBondUnlock", "claimBondStakingRewards", "finalizeBondUnlockV3", "claimBondEpochRewardsV3", "claimCycleRewards", "claimCycleRewardsBatch", "claimCycleRewardsV2", "claimCycleRewardsBatchV2":
 		return wallet, true
 	}
 	if index < 0 || index >= len(instruction.Accounts) {
@@ -267,6 +267,12 @@ func satMintForActionV2(instruction normalizedSATInstructionV2) (solana.PublicKe
 	switch instruction.Codec.Action {
 	case "finalizeBondUnlock", "claimBondStakingRewards":
 		index = 7
+	case "increaseBondPositionV3":
+		index = 5
+	case "finalizeBondUnlockV3":
+		index = 7
+	case "claimBondEpochRewardsV3":
+		index = 8
 	case "syncBondStakingRewards":
 		index = 2
 	case "claimUnallocatedStakingRewards":
@@ -966,6 +972,73 @@ func validateSATSemanticsV2(ix normalizedSATInstructionV2, wallet solana.PublicK
 			expectSATKeyV2(ix, 8, system, "system program"),
 			expectSATKeyV2(ix, 9, token, "SPL token program"),
 			expectSATKeyV2(ix, 10, ataProgram, "associated token program"),
+		)
+	case "registerBondEpochPositionV3":
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "bond tier policy", []byte("sat_bond_tier_policy")),
+			expectSATPDAV2(ix, 2, p, "bond position", []byte("sat_bond_position"), wallet[:]),
+			expectSATPDAV2(ix, 3, p, "bond epoch distributor v3", []byte("sat_bond_epoch_distributor_v3")),
+			expectSATPDAV2(ix, 4, p, "bond epoch position v3", []byte("sat_bond_epoch_position_v3"), wallet[:]),
+			expectSATKeyV2(ix, 6, system, "system program"),
+		)
+	case "increaseBondPositionV3":
+		if satU64V2(d, 1) == 0 {
+			return errors.New("SAT increaseBondPositionV3 amount must be positive")
+		}
+		position := ix.Accounts[2].PublicKey
+		mint := ix.Accounts[5].PublicKey
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "bond tier policy", []byte("sat_bond_tier_policy")),
+			expectSATPDAV2(ix, 2, p, "bond position", []byte("sat_bond_position"), wallet[:]),
+			expectSATATAV2(ix, 3, wallet, mint, "signer SAT token account"),
+			expectSATATAV2(ix, 4, position, mint, "bond vault"),
+			expectSATPDAV2(ix, 6, p, "bond epoch distributor v3", []byte("sat_bond_epoch_distributor_v3")),
+			expectSATPDAV2(ix, 7, p, "bond epoch position v3", []byte("sat_bond_epoch_position_v3"), wallet[:]),
+			expectSATKeyV2(ix, 9, system, "system program"),
+			expectSATKeyV2(ix, 10, token, "SPL token program"),
+			expectSATKeyV2(ix, 11, ataProgram, "associated token program"),
+		)
+	case "requestBondUnlockV3":
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "bond tier policy", []byte("sat_bond_tier_policy")),
+			expectSATPDAV2(ix, 2, p, "bond position", []byte("sat_bond_position"), wallet[:]),
+			expectSATPDAV2(ix, 3, p, "bond epoch distributor v3", []byte("sat_bond_epoch_distributor_v3")),
+			expectSATPDAV2(ix, 4, p, "bond epoch position v3", []byte("sat_bond_epoch_position_v3"), wallet[:]),
+		)
+	case "cancelBondUnlockV3":
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "bond tier policy", []byte("sat_bond_tier_policy")),
+			expectSATPDAV2(ix, 2, p, "bond position", []byte("sat_bond_position"), wallet[:]),
+			expectSATPDAV2(ix, 3, p, "bond epoch distributor v3", []byte("sat_bond_epoch_distributor_v3")),
+			expectSATPDAV2(ix, 4, p, "bond epoch position v3", []byte("sat_bond_epoch_position_v3"), wallet[:]),
+		)
+	case "finalizeBondUnlockV3":
+		position := ix.Accounts[2].PublicKey
+		mint := ix.Accounts[7].PublicKey
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "bond tier policy", []byte("sat_bond_tier_policy")),
+			expectSATPDAV2(ix, 2, p, "bond position", []byte("sat_bond_position"), wallet[:]),
+			expectSATPDAV2(ix, 3, p, "bond epoch distributor v3", []byte("sat_bond_epoch_distributor_v3")),
+			expectSATPDAV2(ix, 4, p, "bond epoch position v3", []byte("sat_bond_epoch_position_v3"), wallet[:]),
+			expectSATATAV2(ix, 5, position, mint, "bond vault"),
+			expectSATATAV2(ix, 6, wallet, mint, "signer SAT token account"),
+			expectSATKeyV2(ix, 8, system, "system program"),
+			expectSATKeyV2(ix, 9, token, "SPL token program"),
+			expectSATKeyV2(ix, 10, ataProgram, "associated token program"),
+		)
+	case "claimBondEpochRewardsV3":
+		distributor := ix.Accounts[2].PublicKey
+		mint := ix.Accounts[8].PublicKey
+		return firstSATErrorV2(
+			expectSATPDAV2(ix, 1, p, "bond tier policy", []byte("sat_bond_tier_policy")),
+			expectSATPDAV2(ix, 2, p, "bond epoch distributor v3", []byte("sat_bond_epoch_distributor_v3")),
+			expectSATPDAV2(ix, 3, p, "bond epoch position v3", []byte("sat_bond_epoch_position_v3"), wallet[:]),
+			expectSATPDAV2(ix, 4, p, "bond position", []byte("sat_bond_position"), wallet[:]),
+			expectSATATAV2(ix, 6, distributor, mint, "bond epoch reward vault v3"),
+			expectSATATAV2(ix, 7, wallet, mint, "signer SAT token account"),
+			expectSATKeyV2(ix, 9, system, "system program"),
+			expectSATKeyV2(ix, 10, token, "SPL token program"),
+			expectSATKeyV2(ix, 11, ataProgram, "associated token program"),
 		)
 	case "claimUnallocatedStakingRewards":
 		distributor := ix.Accounts[1].PublicKey

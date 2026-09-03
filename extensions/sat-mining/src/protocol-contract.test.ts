@@ -70,6 +70,15 @@ const BOND_RUST_NAMES: Record<keyof typeof SAT_BOND_INSTRUCTION_DISCRIMINATORS, 
   claimStakingRewards: "ClaimBondStakingRewards",
   claimUnallocatedStakingRewards: "ClaimUnallocatedStakingRewards",
   recordProtocolStakingRewards: "RecordProtocolStakingRewards",
+  initEpochDistributorV3: "InitBondEpochDistributorV3",
+  advanceEpochV3: "AdvanceBondEpochV3",
+  registerEpochPositionV3: "RegisterBondEpochPositionV3",
+  increaseBondPositionV3: "IncreaseBondPositionV3",
+  requestBondUnlockV3: "RequestBondUnlockV3",
+  cancelBondUnlockV3: "CancelBondUnlockV3",
+  finalizeBondUnlockV3: "FinalizeBondUnlockV3",
+  claimEpochRewardsV3: "ClaimBondEpochRewardsV3",
+  recordProtocolEpochRewardsV3: "RecordProtocolBondEpochRewardsV3",
 };
 
 describe("SAT protocol contract", () => {

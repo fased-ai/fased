@@ -18,7 +18,7 @@ const (
 	satFamilyBond = "bond"
 )
 
-const satAccountOrderContractSHA256 = "8ebc48ffa550385c19dd610063e5b735491880b77c23214a25068d2a53864fc8" // pragma: allowlist secret
+const satAccountOrderContractSHA256 = "920119a87256c4f306a744dd6bce64fd0bbb6be2f18a325a5499ac361ef71ddd" // pragma: allowlist secret
 
 var satUnboundLegacyActions = map[string]struct{}{
 	"initializeCycle":      {},
@@ -396,6 +396,60 @@ var signerSATCodecsV2 = map[string]signerSATCodecV2{
 		Family:        satFamilyBond,
 		ContractKey:   "claimUnallocatedStakingRewards",
 		AccountShape:  "SW,-W,-W,-W,--,--,--,--,--",
+		Variable:      "",
+	},
+	"registerBondEpochPositionV3": {
+		Action:        "registerBondEpochPositionV3",
+		Discriminator: 15,
+		DataLength:    1,
+		Family:        satFamilyBond,
+		ContractKey:   "registerEpochPositionV3",
+		AccountShape:  "SW,--,-W,-W,-W,--,--",
+		Variable:      "",
+	},
+	"increaseBondPositionV3": {
+		Action:        "increaseBondPositionV3",
+		Discriminator: 16,
+		DataLength:    9,
+		Family:        satFamilyBond,
+		ContractKey:   "increaseBondPositionV3",
+		AccountShape:  "S-,--,-W,-W,-W,--,-W,-W,--,--,--,--",
+		Variable:      "",
+	},
+	"requestBondUnlockV3": {
+		Action:        "requestBondUnlockV3",
+		Discriminator: 17,
+		DataLength:    1,
+		Family:        satFamilyBond,
+		ContractKey:   "requestBondUnlockV3",
+		AccountShape:  "S-,--,-W,-W,-W,--",
+		Variable:      "",
+	},
+	"cancelBondUnlockV3": {
+		Action:        "cancelBondUnlockV3",
+		Discriminator: 18,
+		DataLength:    1,
+		Family:        satFamilyBond,
+		ContractKey:   "cancelBondUnlockV3",
+		AccountShape:  "S-,--,-W,-W,-W",
+		Variable:      "",
+	},
+	"finalizeBondUnlockV3": {
+		Action:        "finalizeBondUnlockV3",
+		Discriminator: 19,
+		DataLength:    1,
+		Family:        satFamilyBond,
+		ContractKey:   "finalizeBondUnlockV3",
+		AccountShape:  "S-,--,-W,-W,-W,-W,-W,--,--,--,--",
+		Variable:      "",
+	},
+	"claimBondEpochRewardsV3": {
+		Action:        "claimBondEpochRewardsV3",
+		Discriminator: 20,
+		DataLength:    1,
+		Family:        satFamilyBond,
+		ContractKey:   "claimEpochRewardsV3",
+		AccountShape:  "S-,--,-W,-W,--,--,-W,-W,--,--,--,--",
 		Variable:      "",
 	},
 }

@@ -371,10 +371,64 @@ export const SAT_SIGNER_CODECS = [
     accountShape: "SW,-W,-W,-W,--,--,--,--,--",
     variable: "",
   },
+  {
+    action: "registerBondEpochPositionV3",
+    family: "bond",
+    contractKey: "registerEpochPositionV3",
+    discriminator: 15,
+    dataLength: 1,
+    accountShape: "SW,--,-W,-W,-W,--,--",
+    variable: "",
+  },
+  {
+    action: "increaseBondPositionV3",
+    family: "bond",
+    contractKey: "increaseBondPositionV3",
+    discriminator: 16,
+    dataLength: 9,
+    accountShape: "S-,--,-W,-W,-W,--,-W,-W,--,--,--,--",
+    variable: "",
+  },
+  {
+    action: "requestBondUnlockV3",
+    family: "bond",
+    contractKey: "requestBondUnlockV3",
+    discriminator: 17,
+    dataLength: 1,
+    accountShape: "S-,--,-W,-W,-W,--",
+    variable: "",
+  },
+  {
+    action: "cancelBondUnlockV3",
+    family: "bond",
+    contractKey: "cancelBondUnlockV3",
+    discriminator: 18,
+    dataLength: 1,
+    accountShape: "S-,--,-W,-W,-W",
+    variable: "",
+  },
+  {
+    action: "finalizeBondUnlockV3",
+    family: "bond",
+    contractKey: "finalizeBondUnlockV3",
+    discriminator: 19,
+    dataLength: 1,
+    accountShape: "S-,--,-W,-W,-W,-W,-W,--,--,--,--",
+    variable: "",
+  },
+  {
+    action: "claimBondEpochRewardsV3",
+    family: "bond",
+    contractKey: "claimEpochRewardsV3",
+    discriminator: 20,
+    dataLength: 1,
+    accountShape: "S-,--,-W,-W,--,--,-W,-W,--,--,--,--",
+    variable: "",
+  },
 ] as const;
 
 export const SAT_ACCOUNT_ORDER_CONTRACT_SHA256 =
-  "8ebc48ffa550385c19dd610063e5b735491880b77c23214a25068d2a53864fc8"; // pragma: allowlist secret
+  "920119a87256c4f306a744dd6bce64fd0bbb6be2f18a325a5499ac361ef71ddd"; // pragma: allowlist secret
 export const SAT_UNBOUND_LEGACY_ACTIONS = [
   "initializeCycle",
   "openDispute",

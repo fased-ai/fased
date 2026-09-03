@@ -15,17 +15,23 @@ import (
 )
 
 const (
-	vaultBondAccountHeaderSizeV2        = 8
-	vaultBondPositionSizeV2             = 192
-	vaultBondTierPolicySizeV2           = 144
-	vaultBondStakingDistributorSizeV2   = 232
-	vaultBondStakingPositionSizeV2      = 200
-	vaultBondPositionDiscriminatorV2    = byte(140)
-	vaultBondTierPolicyDiscriminatorV2  = byte(141)
-	vaultBondDistributorDiscriminatorV2 = byte(142)
-	vaultBondStakingDiscriminatorV2     = byte(143)
-	splTokenAccountSizeV2               = 165
-	splMintAccountSizeV2                = 82
+	vaultBondAccountHeaderSizeV2             = 8
+	vaultBondPositionSizeV2                  = 192
+	vaultBondTierPolicySizeV2                = 144
+	vaultBondStakingDistributorSizeV2        = 232
+	vaultBondStakingPositionSizeV2           = 200
+	vaultBondPositionDiscriminatorV2         = byte(140)
+	vaultBondTierPolicyDiscriminatorV2       = byte(141)
+	vaultBondDistributorDiscriminatorV2      = byte(142)
+	vaultBondStakingDiscriminatorV2          = byte(143)
+	vaultBondEpochDistributorSizeV3          = 264
+	vaultBondEpochPositionSizeV3             = 216
+	vaultBondEpochSnapshotSizeV3             = 104
+	vaultBondEpochDistributorDiscriminatorV3 = byte(144)
+	vaultBondEpochPositionDiscriminatorV3    = byte(145)
+	vaultBondEpochSnapshotDiscriminatorV3    = byte(146)
+	splTokenAccountSizeV2                    = 165
+	splMintAccountSizeV2                     = 82
 )
 
 type vaultBondPositionStateV2 struct {
@@ -87,6 +93,52 @@ type vaultBondStakingPositionStateV2 struct {
 	FractionalRemainderRaw uint64
 }
 
+type vaultBondEpochDistributorStateV3 struct {
+	Version                     byte
+	Bump                        byte
+	Status                      byte
+	PolicyVersion               uint64
+	RewardMint                  solana.PublicKey
+	RewardVault                 solana.PublicKey
+	UpdateAuthority             solana.PublicKey
+	RewardThresholdRaw          uint64
+	EpochSeconds                uint64
+	CurrentEpoch                uint64
+	EligibleStakeRaw            uint64
+	ActivePositionCount         uint64
+	RewardIndexFP               *big.Int
+	PolicyBoundaryRewardIndexFP *big.Int
+	ObservedRewardVaultRaw      uint64
+	PendingEpochRewardRaw       uint64
+	UnallocatedRewardRaw        uint64
+	LastUpdatedSlot             uint64
+	PendingStakeRaw             uint64
+	PendingPositionCount        uint64
+}
+
+type vaultBondEpochPositionStateV3 struct {
+	Version            byte
+	Status             byte
+	Bump               byte
+	PolicyVersion      uint64
+	Authority          solana.PublicKey
+	BondPosition       solana.PublicKey
+	ActiveStakeRaw     uint64
+	PendingStakeRaw    uint64
+	EligibleFromEpoch  uint64
+	ClaimableRewardRaw uint64
+	RewardDebtFP       *big.Int
+	LastSyncedSlot     uint64
+}
+
+type vaultBondEpochSnapshotStateV3 struct {
+	Version            byte
+	Bump               byte
+	CompletedEpoch     uint64
+	PolicyVersion      uint64
+	RewardIndexAfterFP *big.Int
+}
+
 type splTokenAccountStateV2 struct {
 	Mint   solana.PublicKey
 	Owner  solana.PublicKey
@@ -138,6 +190,12 @@ func vaultBondReadU128V2(body []byte, offset int) *big.Int {
 	high := new(big.Int).SetUint64(binary.LittleEndian.Uint64(body[offset+8 : offset+16]))
 	high.Lsh(high, 64)
 	return high.Add(high, low)
+}
+
+func vaultBondUint64LEBytesV2(value uint64) []byte {
+	var encoded [8]byte
+	binary.LittleEndian.PutUint64(encoded[:], value)
+	return encoded[:]
 }
 
 func validateVaultBondPDAAndBumpV2(address, program solana.PublicKey, bump byte, label string, seeds ...[]byte) error {
@@ -240,6 +298,74 @@ func decodeVaultBondStakingPositionStateV2(account *rpc.Account, address, progra
 	}
 	if err := validateVaultBondPDAAndBumpV2(address, program, state.Bump, "Vault bond staking position", []byte("sat_bond_staking_position"), wallet[:]); err != nil {
 		return vaultBondStakingPositionStateV2{}, err
+	}
+	return state, nil
+}
+
+func decodeVaultBondEpochDistributorStateV3(account *rpc.Account, address, program solana.PublicKey) (vaultBondEpochDistributorStateV3, error) {
+	body, err := strictVaultBondAccountDataV2(account, program, vaultBondEpochDistributorSizeV3, vaultBondEpochDistributorDiscriminatorV3, "Vault bond epoch distributor v3")
+	if err != nil {
+		return vaultBondEpochDistributorStateV3{}, err
+	}
+	state := vaultBondEpochDistributorStateV3{
+		Version: body[0], Bump: body[1], Status: body[2], PolicyVersion: binary.LittleEndian.Uint64(body[8:16]),
+		RewardMint: vaultBondReadPublicKeyV2(body, 16), RewardVault: vaultBondReadPublicKeyV2(body, 48),
+		UpdateAuthority: vaultBondReadPublicKeyV2(body, 80), RewardThresholdRaw: binary.LittleEndian.Uint64(body[112:120]),
+		EpochSeconds: binary.LittleEndian.Uint64(body[120:128]), CurrentEpoch: binary.LittleEndian.Uint64(body[128:136]),
+		EligibleStakeRaw: binary.LittleEndian.Uint64(body[136:144]), ActivePositionCount: binary.LittleEndian.Uint64(body[144:152]),
+		RewardIndexFP: vaultBondReadU128V2(body, 152), PolicyBoundaryRewardIndexFP: vaultBondReadU128V2(body, 168),
+		ObservedRewardVaultRaw: binary.LittleEndian.Uint64(body[184:192]), PendingEpochRewardRaw: binary.LittleEndian.Uint64(body[192:200]),
+		UnallocatedRewardRaw: binary.LittleEndian.Uint64(body[200:208]), LastUpdatedSlot: binary.LittleEndian.Uint64(body[216:224]),
+		PendingStakeRaw: binary.LittleEndian.Uint64(body[224:232]), PendingPositionCount: binary.LittleEndian.Uint64(body[232:240]),
+	}
+	if state.Version != 3 || state.Status != 1 || state.RewardMint.IsZero() || state.UpdateAuthority.IsZero() || state.RewardThresholdRaw == 0 || state.EpochSeconds == 0 {
+		return vaultBondEpochDistributorStateV3{}, errors.New("Vault bond epoch distributor v3 contains unsupported state")
+	}
+	if err := validateVaultBondPDAAndBumpV2(address, program, state.Bump, "Vault bond epoch distributor v3", []byte("sat_bond_epoch_distributor_v3")); err != nil {
+		return vaultBondEpochDistributorStateV3{}, err
+	}
+	expectedVault, err := findAssociatedTokenAddressV2(address, state.RewardMint, solana.TokenProgramID)
+	if err != nil || !state.RewardVault.Equals(expectedVault) {
+		return vaultBondEpochDistributorStateV3{}, errors.New("Vault bond epoch distributor v3 stores a non-canonical reward vault")
+	}
+	return state, nil
+}
+
+func decodeVaultBondEpochPositionStateV3(account *rpc.Account, address, program, wallet, bondPosition solana.PublicKey) (vaultBondEpochPositionStateV3, error) {
+	body, err := strictVaultBondAccountDataV2(account, program, vaultBondEpochPositionSizeV3, vaultBondEpochPositionDiscriminatorV3, "Vault bond epoch position v3")
+	if err != nil {
+		return vaultBondEpochPositionStateV3{}, err
+	}
+	state := vaultBondEpochPositionStateV3{
+		Version: body[0], Status: body[1], Bump: body[2], PolicyVersion: binary.LittleEndian.Uint64(body[8:16]),
+		Authority: vaultBondReadPublicKeyV2(body, 16), BondPosition: vaultBondReadPublicKeyV2(body, 48),
+		ActiveStakeRaw: binary.LittleEndian.Uint64(body[80:88]), PendingStakeRaw: binary.LittleEndian.Uint64(body[88:96]),
+		EligibleFromEpoch: binary.LittleEndian.Uint64(body[96:104]), ClaimableRewardRaw: binary.LittleEndian.Uint64(body[104:112]),
+		RewardDebtFP: vaultBondReadU128V2(body, 112), LastSyncedSlot: binary.LittleEndian.Uint64(body[136:144]),
+	}
+	if state.Version != 3 || state.Status > 2 || !state.Authority.Equals(wallet) || !state.BondPosition.Equals(bondPosition) {
+		return vaultBondEpochPositionStateV3{}, errors.New("Vault bond epoch position v3 contains unsupported or mismatched state")
+	}
+	if err := validateVaultBondPDAAndBumpV2(address, program, state.Bump, "Vault bond epoch position v3", []byte("sat_bond_epoch_position_v3"), wallet[:]); err != nil {
+		return vaultBondEpochPositionStateV3{}, err
+	}
+	return state, nil
+}
+
+func decodeVaultBondEpochSnapshotStateV3(account *rpc.Account, address, program solana.PublicKey) (vaultBondEpochSnapshotStateV3, error) {
+	body, err := strictVaultBondAccountDataV2(account, program, vaultBondEpochSnapshotSizeV3, vaultBondEpochSnapshotDiscriminatorV3, "Vault bond epoch snapshot v3")
+	if err != nil {
+		return vaultBondEpochSnapshotStateV3{}, err
+	}
+	state := vaultBondEpochSnapshotStateV3{
+		Version: body[0], Bump: body[1], CompletedEpoch: binary.LittleEndian.Uint64(body[8:16]),
+		PolicyVersion: binary.LittleEndian.Uint64(body[16:24]), RewardIndexAfterFP: vaultBondReadU128V2(body, 40),
+	}
+	if state.Version != 3 {
+		return vaultBondEpochSnapshotStateV3{}, errors.New("Vault bond epoch snapshot v3 contains unsupported state")
+	}
+	if err := validateVaultBondPDAAndBumpV2(address, program, state.Bump, "Vault bond epoch snapshot v3", []byte("sat_bond_epoch_snapshot_v3"), vaultBondUint64LEBytesV2(state.CompletedEpoch)); err != nil {
+		return vaultBondEpochSnapshotStateV3{}, err
 	}
 	return state, nil
 }
@@ -355,8 +481,8 @@ func vaultBondSnapshotMapV2(snapshot signerOwnedAccountSnapshotV2) map[string]*r
 }
 
 func vaultBondFinalizeSnapshotAddressesV2(instruction normalizedSATInstructionV2) ([]solana.PublicKey, error) {
-	if instruction.Codec.Action != "finalizeBondUnlock" || instruction.Codec.Family != satFamilyBond || len(instruction.Accounts) != 11 {
-		return nil, errors.New("Vault bond finalization snapshot requires the typed finalizeBondUnlock codec")
+	if (instruction.Codec.Action != "finalizeBondUnlock" && instruction.Codec.Action != "finalizeBondUnlockV3") || instruction.Codec.Family != satFamilyBond || len(instruction.Accounts) != 11 {
+		return nil, errors.New("Vault bond finalization snapshot requires a typed finalizeBondUnlock codec")
 	}
 	addresses := make([]solana.PublicKey, 0, 7)
 	for index := 1; index <= 7; index++ {
@@ -381,8 +507,8 @@ func resolveVaultBondFinalizeEffectFromRPCV2(rpcURLs []string, cluster string, i
 // finalize-unlock instruction. A reviewed execute must fetch this snapshot
 // again and require the same digest immediately before signing.
 func resolveVaultBondFinalizeEffectV2(instruction normalizedSATInstructionV2, wallet solana.PublicKey, snapshot signerOwnedAccountSnapshotV2) (vaultBondResolvedEffectV2, error) {
-	if instruction.Codec.Action != "finalizeBondUnlock" || instruction.Codec.Family != satFamilyBond || len(instruction.Accounts) != 11 {
-		return vaultBondResolvedEffectV2{}, errors.New("exact Vault bond finalization requires the typed finalizeBondUnlock codec")
+	if (instruction.Codec.Action != "finalizeBondUnlock" && instruction.Codec.Action != "finalizeBondUnlockV3") || instruction.Codec.Family != satFamilyBond || len(instruction.Accounts) != 11 {
+		return vaultBondResolvedEffectV2{}, errors.New("exact Vault bond finalization requires a typed finalizeBondUnlock codec")
 	}
 	if snapshot.Digest == "" || !strings.HasPrefix(snapshot.Digest, "sha256:") {
 		return vaultBondResolvedEffectV2{}, errors.New("exact Vault bond finalization requires a signer-owned account snapshot")
@@ -398,17 +524,34 @@ func resolveVaultBondFinalizeEffectV2(instruction normalizedSATInstructionV2, wa
 	if err != nil {
 		return vaultBondResolvedEffectV2{}, err
 	}
-	distributor, err := decodeVaultBondStakingDistributorStateV2(accountAt(3), instruction.Accounts[3].PublicKey, program)
-	if err != nil {
-		return vaultBondResolvedEffectV2{}, err
-	}
-	staking, err := decodeVaultBondStakingPositionStateV2(accountAt(4), instruction.Accounts[4].PublicKey, program, wallet, instruction.Accounts[2].PublicKey)
-	if err != nil {
-		return vaultBondResolvedEffectV2{}, err
-	}
 	mint := instruction.Accounts[7].PublicKey
-	if !position.BondMint.Equals(mint) || !distributor.RewardMint.Equals(mint) || position.PolicyVersion != uint32(policy.PolicyVersion) || staking.PolicyVersion != policy.PolicyVersion || distributor.PolicyVersion != policy.PolicyVersion {
+	if !position.BondMint.Equals(mint) || position.PolicyVersion != uint32(policy.PolicyVersion) {
 		return vaultBondResolvedEffectV2{}, errors.New("Vault bond finalization account policy/mint versions do not agree")
+	}
+	if instruction.Codec.Action == "finalizeBondUnlockV3" {
+		distributor, err := decodeVaultBondEpochDistributorStateV3(accountAt(3), instruction.Accounts[3].PublicKey, program)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		epochPosition, err := decodeVaultBondEpochPositionStateV3(accountAt(4), instruction.Accounts[4].PublicKey, program, wallet, instruction.Accounts[2].PublicKey)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		if !distributor.RewardMint.Equals(mint) || distributor.PolicyVersion != policy.PolicyVersion || epochPosition.PolicyVersion != policy.PolicyVersion || epochPosition.ActiveStakeRaw != 0 || epochPosition.PendingStakeRaw != 0 {
+			return vaultBondResolvedEffectV2{}, errors.New("Vault bond v3 finalization epoch state is not fully inactive")
+		}
+	} else {
+		distributor, err := decodeVaultBondStakingDistributorStateV2(accountAt(3), instruction.Accounts[3].PublicKey, program)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		staking, err := decodeVaultBondStakingPositionStateV2(accountAt(4), instruction.Accounts[4].PublicKey, program, wallet, instruction.Accounts[2].PublicKey)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		if !distributor.RewardMint.Equals(mint) || staking.PolicyVersion != policy.PolicyVersion || distributor.PolicyVersion != policy.PolicyVersion || staking.ActiveStakeRaw != 0 {
+			return vaultBondResolvedEffectV2{}, errors.New("Vault bond finalization legacy staking state is not fully inactive")
+		}
 	}
 	if err := validateVaultBondMintAccountV2(accountAt(7), mint); err != nil {
 		return vaultBondResolvedEffectV2{}, err
@@ -420,11 +563,11 @@ func resolveVaultBondFinalizeEffectV2(instruction normalizedSATInstructionV2, wa
 	if _, err := decodeSPLTokenAccountStateV2(accountAt(6), instruction.Accounts[6].PublicKey, mint, wallet, "Vault bond recipient"); err != nil {
 		return vaultBondResolvedEffectV2{}, err
 	}
-	if !position.BondVault.Equals(instruction.Accounts[5].PublicKey) || position.Status != 2 || position.AmountRaw == 0 || position.UnlockAvailableAtSlot == 0 || snapshot.Slot < position.UnlockAvailableAtSlot || staking.ActiveStakeRaw != 0 || bondVault.Amount < position.AmountRaw {
+	if !position.BondVault.Equals(instruction.Accounts[5].PublicKey) || position.Status != 2 || position.AmountRaw == 0 || position.UnlockAvailableAtSlot == 0 || snapshot.Slot < position.UnlockAvailableAtSlot || bondVault.Amount < position.AmountRaw {
 		return vaultBondResolvedEffectV2{}, errors.New("Vault bond finalization is not ready for the exact reviewed amount")
 	}
 	return vaultBondResolvedEffectV2{
-		Action: "finalizeBondUnlock", Asset: "solana:spl:" + mint.String(),
+		Action: instruction.Codec.Action, Asset: "solana:spl:" + mint.String(),
 		Amount: new(big.Int).SetUint64(position.AmountRaw), Destination: wallet.String(),
 		StateDigest: snapshot.Digest, StateSlot: snapshot.Slot, RequiresStateRecheck: true,
 	}, nil
@@ -453,6 +596,51 @@ func resolveVaultBondClaimEffectV2(instruction normalizedSATInstructionV2, walle
 	accountAt := func(index int) *rpc.Account { return accounts[instruction.Accounts[index].PublicKey.String()] }
 	program := instruction.Program
 	switch instruction.Codec.Action {
+	case "claimBondEpochRewardsV3":
+		if len(instruction.Accounts) != 12 {
+			return vaultBondResolvedEffectV2{}, errors.New("exact Vault bond epoch claim requires the typed claimBondEpochRewardsV3 codec")
+		}
+		policy, err := decodeVaultBondTierPolicyStateV2(accountAt(1), instruction.Accounts[1].PublicKey, program)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		distributor, err := decodeVaultBondEpochDistributorStateV3(accountAt(2), instruction.Accounts[2].PublicKey, program)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		bondPosition, err := decodeVaultBondPositionStateV2(accountAt(4), instruction.Accounts[4].PublicKey, program, wallet)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		epochPosition, err := decodeVaultBondEpochPositionStateV3(accountAt(3), instruction.Accounts[3].PublicKey, program, wallet, instruction.Accounts[4].PublicKey)
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		mint := instruction.Accounts[8].PublicKey
+		expectedDebt := new(big.Int).Mul(new(big.Int).SetUint64(epochPosition.ActiveStakeRaw), distributor.RewardIndexFP)
+		if !bondPosition.BondMint.Equals(mint) || !distributor.RewardMint.Equals(mint) ||
+			bondPosition.PolicyVersion != uint32(policy.PolicyVersion) || distributor.PolicyVersion != policy.PolicyVersion || epochPosition.PolicyVersion != policy.PolicyVersion ||
+			epochPosition.PendingStakeRaw != 0 || epochPosition.RewardDebtFP.Cmp(expectedDebt) != 0 {
+			return vaultBondResolvedEffectV2{}, errors.New("Vault bond epoch claim must be synchronized before exact review")
+		}
+		if err := validateVaultBondMintAccountV2(accountAt(8), mint); err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		rewardVault, err := decodeSPLTokenAccountStateV2(accountAt(6), instruction.Accounts[6].PublicKey, mint, instruction.Accounts[2].PublicKey, "Vault bond epoch reward vault")
+		if err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		if !distributor.RewardVault.Equals(instruction.Accounts[6].PublicKey) || epochPosition.ClaimableRewardRaw == 0 || distributor.ObservedRewardVaultRaw < epochPosition.ClaimableRewardRaw || rewardVault.Amount < epochPosition.ClaimableRewardRaw {
+			return vaultBondResolvedEffectV2{}, errors.New("Vault bond epoch reward is not claimable for the exact reviewed amount")
+		}
+		if err := validateOptionalVaultBondRecipientV2(accountAt(7), instruction.Accounts[7].PublicKey, mint, wallet, "Vault bond epoch reward recipient"); err != nil {
+			return vaultBondResolvedEffectV2{}, err
+		}
+		return vaultBondResolvedEffectV2{
+			Action: instruction.Codec.Action, Asset: "sat:mint:" + mint.String(),
+			Amount: new(big.Int).SetUint64(epochPosition.ClaimableRewardRaw), Destination: wallet.String(),
+			StateDigest: snapshot.Digest, StateSlot: snapshot.Slot, RequiresStateRecheck: true,
+		}, nil
 	case "claimBondStakingRewards":
 		if len(instruction.Accounts) != 11 {
 			return vaultBondResolvedEffectV2{}, errors.New("exact Vault bond staking claim requires the typed claimBondStakingRewards codec")

@@ -114,12 +114,97 @@ export type SatBondStakingPositionLayoutSpec = {
   };
 };
 
+export type SatBondEpochDistributorV3LayoutSpec = {
+  accountName: string;
+  discriminator: number;
+  accountHeaderSize: number;
+  bodySize: number;
+  accountSize: number;
+  pdaSeed: string;
+  version: number;
+  rewardEpochSeconds: string;
+  unlockDelaySlots: string;
+  status: { active: number };
+  offsets: {
+    version: number;
+    bump: number;
+    status: number;
+    policyVersion: number;
+    rewardMint: number;
+    rewardVault: number;
+    updateAuthority: number;
+    rewardThresholdRaw: number;
+    epochSeconds: number;
+    currentEpoch: number;
+    eligibleStakeRaw: number;
+    activePositionCount: number;
+    rewardIndexFp: number;
+    policyBoundaryRewardIndexFp: number;
+    observedRewardVaultRaw: number;
+    pendingEpochRewardRaw: number;
+    unallocatedRewardRaw: number;
+    fractionalRemainderFp: number;
+    lastUpdatedSlot: number;
+    pendingStakeRaw: number;
+    pendingPositionCount: number;
+  };
+};
+
+export type SatBondEpochPositionV3LayoutSpec = {
+  accountName: string;
+  discriminator: number;
+  accountHeaderSize: number;
+  bodySize: number;
+  accountSize: number;
+  pdaSeed: string;
+  version: number;
+  status: { inactive: number; pending: number; active: number };
+  offsets: {
+    version: number;
+    status: number;
+    bump: number;
+    policyVersion: number;
+    authority: number;
+    bondPosition: number;
+    activeStakeRaw: number;
+    pendingStakeRaw: number;
+    eligibleFromEpoch: number;
+    claimableRewardRaw: number;
+    rewardDebtFp: number;
+    fractionalRemainderFp: number;
+    lastSyncedSlot: number;
+  };
+};
+
+export type SatBondEpochSnapshotV3LayoutSpec = {
+  accountName: string;
+  discriminator: number;
+  accountHeaderSize: number;
+  bodySize: number;
+  accountSize: number;
+  pdaSeed: string;
+  version: number;
+  offsets: {
+    version: number;
+    bump: number;
+    completedEpoch: number;
+    policyVersion: number;
+    eligibleStakeRaw: number;
+    distributedRewardRaw: number;
+    rewardIndexAfterFp: number;
+    createdAtSlot: number;
+  };
+};
+
 export type SatBondLayoutSpec = SatBondPositionLayoutSpec;
 
 let cachedLayout: { mode: "legacy" | "dedicated"; value: SatBondPositionLayoutSpec } | null = null;
 let cachedPolicyLayout: SatBondTierPolicyLayoutSpec | null = null;
 let cachedStakingDistributorLayout: SatBondStakingDistributorLayoutSpec | null = null;
 let cachedStakingPositionLayout: SatBondStakingPositionLayoutSpec | null = null;
+let cachedEpochDistributorV3Layout: SatBondEpochDistributorV3LayoutSpec | null = null;
+let cachedEpochPositionV3Layout: SatBondEpochPositionV3LayoutSpec | null = null;
+let cachedEpochSnapshotV3Layout: SatBondEpochSnapshotV3LayoutSpec | null = null;
 
 const LEGACY_FALLBACK_LAYOUT: SatBondPositionLayoutSpec = {
   accountName: "SatBondPositionState",
@@ -263,6 +348,88 @@ const DEDICATED_FALLBACK_STAKING_POSITION_LAYOUT: SatBondStakingPositionLayoutSp
     rewardDebtFp: 96,
     lastSyncedSlot: 112,
     fractionalRemainderFp: 120,
+  },
+};
+
+const DEDICATED_FALLBACK_EPOCH_DISTRIBUTOR_V3_LAYOUT: SatBondEpochDistributorV3LayoutSpec = {
+  accountName: "BondEpochDistributorV3State",
+  accountHeaderSize: 8,
+  bodySize: 256,
+  accountSize: 264,
+  discriminator: 144,
+  pdaSeed: "sat_bond_epoch_distributor_v3",
+  version: 3,
+  rewardEpochSeconds: "604800",
+  unlockDelaySlots: "1512000",
+  status: { active: 1 },
+  offsets: {
+    version: 0,
+    bump: 1,
+    status: 2,
+    policyVersion: 8,
+    rewardMint: 16,
+    rewardVault: 48,
+    updateAuthority: 80,
+    rewardThresholdRaw: 112,
+    epochSeconds: 120,
+    currentEpoch: 128,
+    eligibleStakeRaw: 136,
+    activePositionCount: 144,
+    rewardIndexFp: 152,
+    policyBoundaryRewardIndexFp: 168,
+    observedRewardVaultRaw: 184,
+    pendingEpochRewardRaw: 192,
+    unallocatedRewardRaw: 200,
+    fractionalRemainderFp: 208,
+    lastUpdatedSlot: 216,
+    pendingStakeRaw: 224,
+    pendingPositionCount: 232,
+  },
+};
+
+const DEDICATED_FALLBACK_EPOCH_POSITION_V3_LAYOUT: SatBondEpochPositionV3LayoutSpec = {
+  accountName: "BondEpochPositionV3State",
+  accountHeaderSize: 8,
+  bodySize: 208,
+  accountSize: 216,
+  discriminator: 145,
+  pdaSeed: "sat_bond_epoch_position_v3",
+  version: 3,
+  status: { inactive: 0, pending: 1, active: 2 },
+  offsets: {
+    version: 0,
+    status: 1,
+    bump: 2,
+    policyVersion: 8,
+    authority: 16,
+    bondPosition: 48,
+    activeStakeRaw: 80,
+    pendingStakeRaw: 88,
+    eligibleFromEpoch: 96,
+    claimableRewardRaw: 104,
+    rewardDebtFp: 112,
+    fractionalRemainderFp: 128,
+    lastSyncedSlot: 136,
+  },
+};
+
+const DEDICATED_FALLBACK_EPOCH_SNAPSHOT_V3_LAYOUT: SatBondEpochSnapshotV3LayoutSpec = {
+  accountName: "BondEpochSnapshotV3State",
+  accountHeaderSize: 8,
+  bodySize: 96,
+  accountSize: 104,
+  discriminator: 146,
+  pdaSeed: "sat_bond_epoch_snapshot_v3",
+  version: 3,
+  offsets: {
+    version: 0,
+    bump: 1,
+    completedEpoch: 8,
+    policyVersion: 16,
+    eligibleStakeRaw: 24,
+    distributedRewardRaw: 32,
+    rewardIndexAfterFp: 40,
+    createdAtSlot: 56,
   },
 };
 
@@ -424,6 +591,38 @@ function resolveStakingPositionLayoutPath(env: NodeJS.ProcessEnv = process.env):
   return null;
 }
 
+function resolveEpochV3LayoutPath(
+  envName: string,
+  fileName: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  assertDedicatedBondProgramConfigured(env);
+  const explicit = String(env[envName] ?? "").trim();
+  const candidates = [
+    explicit,
+    path.resolve(process.cwd(), "..", "..", "token", "sat", "bond-api", fileName),
+    path.resolve(process.cwd(), "token", "sat", "bond-api", fileName),
+    path.resolve(
+      import.meta.dirname,
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      "token",
+      "sat",
+      "bond-api",
+      fileName,
+    ),
+  ];
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export function loadSatBondLayout(env: NodeJS.ProcessEnv = process.env): SatBondPositionLayoutSpec {
   assertDedicatedBondProgramConfigured(env);
   const mode = "dedicated";
@@ -492,4 +691,58 @@ export function loadSatBondStakingPositionLayout(
   }
   cachedStakingPositionLayout ??= DEDICATED_FALLBACK_STAKING_POSITION_LAYOUT;
   return cachedStakingPositionLayout;
+}
+
+export function loadSatBondEpochDistributorV3Layout(
+  env: NodeJS.ProcessEnv = process.env,
+): SatBondEpochDistributorV3LayoutSpec {
+  assertDedicatedBondProgramConfigured(env);
+  if (cachedEpochDistributorV3Layout) {
+    return cachedEpochDistributorV3Layout;
+  }
+  const layoutPath = resolveEpochV3LayoutPath(
+    "FASED_SAT_BOND_EPOCH_DISTRIBUTOR_V3_LAYOUT_PATH",
+    "bond-epoch-distributor-v3-layout.json",
+    env,
+  );
+  cachedEpochDistributorV3Layout = layoutPath
+    ? (JSON.parse(fs.readFileSync(layoutPath, "utf-8")) as SatBondEpochDistributorV3LayoutSpec)
+    : DEDICATED_FALLBACK_EPOCH_DISTRIBUTOR_V3_LAYOUT;
+  return cachedEpochDistributorV3Layout;
+}
+
+export function loadSatBondEpochPositionV3Layout(
+  env: NodeJS.ProcessEnv = process.env,
+): SatBondEpochPositionV3LayoutSpec {
+  assertDedicatedBondProgramConfigured(env);
+  if (cachedEpochPositionV3Layout) {
+    return cachedEpochPositionV3Layout;
+  }
+  const layoutPath = resolveEpochV3LayoutPath(
+    "FASED_SAT_BOND_EPOCH_POSITION_V3_LAYOUT_PATH",
+    "bond-epoch-position-v3-layout.json",
+    env,
+  );
+  cachedEpochPositionV3Layout = layoutPath
+    ? (JSON.parse(fs.readFileSync(layoutPath, "utf-8")) as SatBondEpochPositionV3LayoutSpec)
+    : DEDICATED_FALLBACK_EPOCH_POSITION_V3_LAYOUT;
+  return cachedEpochPositionV3Layout;
+}
+
+export function loadSatBondEpochSnapshotV3Layout(
+  env: NodeJS.ProcessEnv = process.env,
+): SatBondEpochSnapshotV3LayoutSpec {
+  assertDedicatedBondProgramConfigured(env);
+  if (cachedEpochSnapshotV3Layout) {
+    return cachedEpochSnapshotV3Layout;
+  }
+  const layoutPath = resolveEpochV3LayoutPath(
+    "FASED_SAT_BOND_EPOCH_SNAPSHOT_V3_LAYOUT_PATH",
+    "bond-epoch-snapshot-v3-layout.json",
+    env,
+  );
+  cachedEpochSnapshotV3Layout = layoutPath
+    ? (JSON.parse(fs.readFileSync(layoutPath, "utf-8")) as SatBondEpochSnapshotV3LayoutSpec)
+    : DEDICATED_FALLBACK_EPOCH_SNAPSHOT_V3_LAYOUT;
+  return cachedEpochSnapshotV3Layout;
 }

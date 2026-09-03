@@ -112,6 +112,12 @@ const VAULT_BOND_ACTIONS = new Set<SatSignerAction>([
   "syncBondStakingPosition",
   "claimBondStakingRewards",
   "claimUnallocatedStakingRewards",
+  "registerBondEpochPositionV3",
+  "increaseBondPositionV3",
+  "requestBondUnlockV3",
+  "cancelBondUnlockV3",
+  "finalizeBondUnlockV3",
+  "claimBondEpochRewardsV3",
 ]);
 
 const REQUIRED_SAT_SIGNER_FEATURES = [

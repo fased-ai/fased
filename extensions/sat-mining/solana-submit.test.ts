@@ -90,10 +90,12 @@ import {
   inspectSatKeeperFeePayerRuntime,
   submitSatAbortEmptyCycle,
   submitSatClaimBondStakingRewards,
+  submitSatClaimBondEpochRewardsV3,
   submitSatClaimProtocolDistributorSat,
   submitSatClaimUnallocatedStakingRewards,
   submitSatCleanupDistributionLookupTable,
   submitSatCancelBondUnlock,
+  submitSatCancelBondUnlockV3,
   submitSatCloseResolvedCleanupBatch,
   submitSatCloseResolvedCycleArtifacts,
   submitSatCloseResolvedCycleRegistryPage,
@@ -104,8 +106,10 @@ import {
   submitSatCommitCycle,
   submitSatDistributeCyclePage,
   submitSatFinalizeBondUnlock,
+  submitSatFinalizeBondUnlockV3,
   submitSatFinalizeCycleSettlement,
   submitSatIncreaseBondPosition,
+  submitSatIncreaseBondPositionV3,
   submitSatInitMinerCapital,
   submitSatOpenBondPosition,
   submitSatSetActiveCommit,
@@ -114,6 +118,8 @@ import {
   submitSatRefillRegistryReserveFromTreasury,
   submitSatReleaseUnrevealedCommit,
   submitSatRequestBondUnlock,
+  submitSatRegisterBondEpochPositionV3,
+  submitSatRequestBondUnlockV3,
   submitSatScoreCyclePage,
   submitSatSealCycleEntropy,
   submitSatSettleCyclePage,
@@ -905,6 +911,28 @@ describe("SAT cycle transaction builders", () => {
     ["sync rewards", () => submitSatSyncBondStakingRewards({} as never)],
     ["sync position", () => submitSatSyncBondStakingPosition({} as never)],
     ["claim rewards", () => submitSatClaimBondStakingRewards({} as never)],
+    [
+      "register epoch position v3",
+      () => submitSatRegisterBondEpochPositionV3({} as never, { activationSnapshotEpoch: 7 }),
+    ],
+    [
+      "increase v3",
+      () =>
+        submitSatIncreaseBondPositionV3({} as never, {
+          amountRaw: 100_000_000_000,
+          activationSnapshotEpoch: 7,
+        }),
+    ],
+    [
+      "request unlock v3",
+      () => submitSatRequestBondUnlockV3({} as never, { activationSnapshotEpoch: 7 }),
+    ],
+    ["cancel unlock v3", () => submitSatCancelBondUnlockV3({} as never)],
+    ["finalize unlock v3", () => submitSatFinalizeBondUnlockV3({} as never)],
+    [
+      "claim epoch rewards v3",
+      () => submitSatClaimBondEpochRewardsV3({} as never, { activationSnapshotEpoch: 7 }),
+    ],
     [
       "claim unallocated rewards",
       () =>

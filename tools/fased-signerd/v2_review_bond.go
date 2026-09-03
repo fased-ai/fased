@@ -70,7 +70,7 @@ func resolveVaultBondReviewStateV2(
 	if err != nil {
 		return normalizedIntentV2{}, signerOwnedAccountSnapshotV2{}, nil, err
 	}
-	if instruction.Codec.Action == "finalizeBondUnlock" {
+	if instruction.Codec.Action == "finalizeBondUnlock" || instruction.Codec.Action == "finalizeBondUnlockV3" {
 		effect, effectErr := resolveVaultBondFinalizeEffectV2(instruction, wallet, snapshot)
 		if effectErr != nil {
 			return normalizedIntentV2{}, signerOwnedAccountSnapshotV2{}, nil, effectErr
@@ -78,7 +78,7 @@ func resolveVaultBondReviewStateV2(
 		intent.Asset = effect.Asset
 		intent.Amount = effect.Amount
 		intent.Destination = effect.Destination
-	} else if instruction.Codec.Action == "claimBondStakingRewards" || instruction.Codec.Action == "claimUnallocatedStakingRewards" {
+	} else if instruction.Codec.Action == "claimBondStakingRewards" || instruction.Codec.Action == "claimUnallocatedStakingRewards" || instruction.Codec.Action == "claimBondEpochRewardsV3" {
 		effect, effectErr := resolveVaultBondClaimEffectV2(instruction, wallet, snapshot)
 		if effectErr != nil {
 			return normalizedIntentV2{}, signerOwnedAccountSnapshotV2{}, nil, effectErr
