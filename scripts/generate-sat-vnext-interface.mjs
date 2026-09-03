@@ -36,6 +36,13 @@ const releaseContractPath = path.join(
   "mining",
   "sat-vnext-release-contract.generated.ts",
 );
+const extensionReleaseContractPath = path.join(
+  root,
+  "extensions",
+  "sat-mining",
+  "src",
+  "vnext-release-contract.generated.ts",
+);
 const goPath = path.join(root, "tools", "fased-signerd", "sat_vnext_manifest_generated.go");
 const goReleasePath = path.join(root, "tools", "fased-signerd", "sat_release_ack_generated.go");
 const activationPath = path.join(bundleDir, "activation.sat-dep-0012.json");
@@ -397,6 +404,7 @@ if (formattedActivationTypescript.errors.length > 0) {
 update(tsPath, Buffer.from(formattedTypescript.code));
 update(activationTsPath, Buffer.from(formattedActivationTypescript.code));
 update(releaseContractPath, Buffer.from(releaseContract));
+update(extensionReleaseContractPath, Buffer.from(releaseContract));
 update(goPath, Buffer.from(go));
 update(goReleasePath, Buffer.from(goRelease));
 process.stdout.write(

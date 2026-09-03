@@ -85,6 +85,17 @@ void test("Fased activates only when the finalized deployment matches the candid
   assert.match(releaseContract, /keeper: "SAT-KEEPER-GEN-002"/u);
   assert.match(releaseContract, /protocol: "SAT-PROTO-GEN-002"/u);
   assert.match(releaseContract, /signerCapability: "FSD-SIGNER-GEN-002"/u);
+  const extensionReleaseContract = fs.readFileSync(
+    path.join(root, "extensions", "sat-mining", "src", "vnext-release-contract.generated.ts"),
+    "utf8",
+  );
+  assert.equal(extensionReleaseContract, releaseContract);
+  const stateIdentity = fs.readFileSync(
+    path.join(root, "extensions", "sat-mining", "src", "state-identity.ts"),
+    "utf8",
+  );
+  assert.match(stateIdentity, /from "\.\/vnext-release-contract\.generated\.js"/u);
+  assert.doesNotMatch(stateIdentity, /\.\.\/\.\.\/\.\.\/src\/mining/u);
 
   const signerReleaseContract = fs.readFileSync(
     path.join(root, "tools", "fased-signerd", "sat_release_ack_generated.go"),
