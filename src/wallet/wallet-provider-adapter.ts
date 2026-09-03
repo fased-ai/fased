@@ -182,6 +182,15 @@ export type WalletProviderVaultBondIntentV2 = {
   };
 };
 
+export type WalletProviderAgentCapitalIntentV2 = {
+  type: "solana.agentCapitalAction";
+  cluster: "local" | "devnet" | "mainnet-beta";
+  action: string;
+  programId: string;
+  dataBase64: string;
+  keys: Array<{ pubkey: string; isSigner: boolean; isWritable: boolean }>;
+};
+
 export type WalletProviderFederationBondChallengeIntentV2 = {
   type: "federation.bondChallenge";
   federation: {
@@ -202,6 +211,7 @@ export type WalletProviderSignerIntentV2 =
   | WalletProviderJupiterIntentV2
   | WalletProviderTypedTransferIntentV2
   | WalletProviderVaultBondIntentV2
+  | WalletProviderAgentCapitalIntentV2
   | WalletProviderFederationBondChallengeIntentV2;
 
 export type WalletProviderSignerIntentType = WalletProviderSignerIntentV2["type"];
@@ -228,7 +238,7 @@ export type WalletProviderJupiterReviewV2 = {
   destination: string;
   policyOperation: string;
   requiredPrograms: string[];
-  requiredRole?: "agent" | "mining" | "vault";
+  requiredRole?: "agent" | "mining" | "vault" | "profile" | "strategy";
   issuedAt: string;
   state: "prepared" | "signed";
   preparedAt: string;
@@ -253,7 +263,7 @@ export type WalletProviderSignerReviewAuthorizationV2 = {
 export type WalletProviderSignerReviewBindingV2 = {
   requestId: string;
   walletId: string;
-  role: "agent" | "mining" | "vault";
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
   intentType: WalletProviderSignerIntentType;
   intentDigest: string;
   semanticIntent: WalletProviderSignerIntentV2;

@@ -119,7 +119,7 @@ export type WalletSendApprovalPayload = {
   signerDestination?: string;
   signerPolicyOperation?: string;
   signerRequiredPrograms?: string[];
-  signerRequiredRole?: "agent" | "mining" | "vault";
+  signerRequiredRole?: "agent" | "mining" | "vault" | "profile" | "strategy";
   signerNonce?: string;
   signerIssuedAt?: string;
   signerReviewExpiresAt?: string;
@@ -284,7 +284,7 @@ export function signerReviewBindingMatchesWalletApprovalPayload(
 export function bindSignerReviewToWalletApprovalPayload(params: {
   payload: WalletSendApprovalPayload;
   review: WalletProviderJupiterReviewV2;
-  role: "agent" | "mining" | "vault";
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
 }): WalletSendApprovalPayload {
   const { review, role } = params;
   if (
@@ -1512,7 +1512,7 @@ export function createWalletSendApprovalRequest(params: {
 
 export function createSignerReviewApprovalRequest(params: {
   review: WalletProviderJupiterReviewV2;
-  role: "agent" | "mining" | "vault";
+  role: "agent" | "mining" | "vault" | "profile" | "strategy";
   walletId?: string;
   requestedBy?: string;
   walletName?: string;

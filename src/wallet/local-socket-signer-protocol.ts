@@ -403,6 +403,21 @@ export const SignerIntentV2Schema = Type.Union([
   ),
   Type.Object(
     {
+      type: Type.Literal("solana.agentCapitalAction"),
+      cluster: Type.Union([
+        Type.Literal("local"),
+        Type.Literal("devnet"),
+        Type.Literal("mainnet-beta"),
+      ]),
+      action: Type.String({ minLength: 1 }),
+      programId: Type.String(),
+      dataBase64: Type.String(),
+      keys: Type.Array(SignerSatAccountV2Schema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
       type: Type.Literal("federation.bondChallenge"),
       federation: SignerFederationBondChallengeV2Schema,
     },

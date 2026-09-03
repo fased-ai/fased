@@ -105,7 +105,7 @@ export type LocalSocketSignerHealthProbe = {
   satRelease?: LocalSocketSignerSatReleaseAcknowledgement;
   policies?: Array<{
     walletId: string;
-    role: "agent" | "mining" | "vault";
+    role: "agent" | "mining" | "vault" | "profile" | "strategy";
     version: number;
     hash: string;
   }>;
@@ -383,9 +383,11 @@ export async function requireLocalSocketSignerProtocolV2(
   const intentReviewFeatures =
     intentType === "solana.vaultBondAction"
       ? ["reviewedVaultBondActions", "signerOwnedStateRecheck", "durableReviewAuthorization"]
-      : intentType === "federation.bondChallenge"
-        ? ["reviewedFederationBondChallenges", "durableReviewAuthorization"]
-        : [];
+      : intentType === "solana.agentCapitalAction"
+        ? ["reviewedAgentCapitalActions", "signerOwnedStateRecheck", "durableReviewAuthorization"]
+        : intentType === "federation.bondChallenge"
+          ? ["reviewedFederationBondChallenges", "durableReviewAuthorization"]
+          : [];
   const missingIntentFeatures = intentReviewFeatures.filter(
     (feature) => !capabilities?.features.includes(feature),
   );
