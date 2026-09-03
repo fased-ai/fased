@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../../../src/mining/sat-vnext-release-contract.generated.js";
 import { SAT_VNEXT_ACTIVATION } from "./vnext-activation-manifest.js";
+import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "./vnext-release-contract.generated.js";
 
 export type SatMiningCluster = "local" | "devnet" | "mainnet-beta";
 

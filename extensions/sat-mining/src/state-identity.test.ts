@@ -5,6 +5,7 @@ import {
   satMiningStateIdentityKey,
   type SatMiningStateIdentity,
 } from "./state-identity.js";
+import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "./vnext-release-contract.generated.js";
 
 const IDENTITY: SatMiningStateIdentity = {
   cluster: "devnet",
@@ -14,6 +15,11 @@ const IDENTITY: SatMiningStateIdentity = {
 };
 
 describe("SAT Mining state identity", () => {
+  it("loads the packaged extension-local vNext release binding", () => {
+    expect(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.schema).toBe("fased.sat-release-acknowledgement.v1");
+    expect(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.state).toBe("EXECUTABLE_BOUND_PUBLIC_ENTRY_DISABLED");
+  });
+
   it("changes for every cluster, program, generation, and Wallet dimension", () => {
     const keys = [
       IDENTITY,
