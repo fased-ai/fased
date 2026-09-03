@@ -29,6 +29,10 @@ describe("release version inventory", () => {
     expect(validateCurrentVersionInventory(fixture())).toBe("1.2.3");
   });
 
+  it("accepts a synchronized release-candidate identity", () => {
+    expect(validateCurrentVersionInventory(fixture("0.1.76-rc.142"))).toBe("0.1.76-rc.142");
+  });
+
   it("rejects mismatched extension identity", () => {
     const root = fixture();
     writeFileSync(
