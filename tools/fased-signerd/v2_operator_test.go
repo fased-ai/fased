@@ -162,6 +162,64 @@ func TestSignerOperatorLifecycleAllowsTypedSetupButDeniesCustodyExport(t *testin
 	}
 }
 
+func TestSignerOperatorLifecycleDispatchesRPCProfiles(t *testing.T) {
+	store, keys := openTestSignerV2(t)
+	keys.genesisHash = func(string) (string, error) { return solanaDevnetGenesisHashV2, nil }
+	service := &signerServiceV2{store: store, keys: keys}
+
+	if _, err := service.handle(request{
+		Op: "v2.rpcProfile.list", operatorSocket: true,
+	}, signerConfig{}, false); err != nil {
+		t.Fatalf("operator RPC profile list failed: %v", err)
+	}
+
+	createBody, err := json.Marshal(signerRPCProfileCreateRequestV1{
+		ProfileID:     "devnet-primary",
+		Name:          "Devnet Primary",
+		PrimaryRPCURL: "https://api.devnet.solana.com",
+		Commitment:    signerRPCProfileCommitmentV1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.handle(request{
+		Op: "v2.rpcProfile.create", Request: createBody, operatorSocket: true,
+	}, signerConfig{}, false); err != nil {
+		t.Fatalf("operator RPC profile create failed: %v", err)
+	}
+	profile, err := keys.RPCProfileSummaryV1("devnet-primary")
+	if err != nil || profile.GenesisHash != solanaDevnetGenesisHashV2 || !profile.Ready {
+		t.Fatalf("operator RPC profile create was not durable: profile=%#v err=%v", profile, err)
+	}
+
+	if _, _, err := keys.CreateWithRoleBaseline(
+		"operator-profile",
+		0,
+		signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: "profile"},
+		signerRoleBaselineRuntimeV1{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	bindBody, err := json.Marshal(signerRPCProfileBindRequestV1{
+		ProfileID:              profile.ProfileID,
+		ExpectedProfileVersion: profile.Version,
+		ExpectedProfileHash:    profile.Hash,
+		ExpectedNetworkVersion: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.handle(request{
+		Op: "v2.rpcProfile.bind", WalletID: "operator-profile", Request: bindBody, operatorSocket: true,
+	}, signerConfig{}, false); err != nil {
+		t.Fatalf("operator RPC profile bind failed: %v", err)
+	}
+	network, err := keys.NetworkSummaryV2("operator-profile")
+	if err != nil || network.Version != 1 || network.Hash == "" || !network.Ready {
+		t.Fatalf("operator RPC profile bind was not durable: network=%#v err=%v", network, err)
+	}
+}
+
 func TestSignerPeerCredentialRequiresExpectedUnixPeerUID(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("Unix peer credentials are intentionally fail-closed on this platform")

@@ -283,7 +283,7 @@ func (m *signerKeyManagerV2) exportOperatorRawV1(
 func (s *signerServiceV2) handleOperatorLifecycleV1(req request, cfg signerConfig) ([]byte, error) {
 	if cfg.readOnly && req.Op != "health" && req.Op != "v2.capabilities" &&
 		req.Op != "v2.wallet.get" && req.Op != "v2.wallet.readiness" && req.Op != "v2.network.get" &&
-		req.Op != "getBalance" && req.Op != "v2.wallet.rotation.status" {
+		req.Op != "v2.rpcProfile.list" && req.Op != "getBalance" && req.Op != "v2.wallet.rotation.status" {
 		return nil, errors.New("read-only signer mode")
 	}
 	switch req.Op {
@@ -336,6 +336,32 @@ func (s *signerServiceV2) handleOperatorLifecycleV1(req request, cfg signerConfi
 			return nil, err
 		}
 		return marshalSignerResultV2(result)
+	case "v2.rpcProfile.list":
+		profiles, err := s.keys.ListRPCProfilesV1()
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(profiles)
+	case "v2.rpcProfile.create":
+		var body signerRPCProfileCreateRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, errors.New("invalid signer-v2 request")
+		}
+		profile, err := s.keys.CreateRPCProfileV1(body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(profile)
+	case "v2.rpcProfile.bind":
+		var body signerRPCProfileBindRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, errors.New("invalid signer-v2 request")
+		}
+		binding, err := s.keys.BindRPCProfileV1(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(binding)
 	case "v2.network.setPrimary":
 		var body signerOperatorNetworkSetPrimaryRequestV1
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
