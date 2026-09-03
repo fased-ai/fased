@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fased.sat-sol-money-foundation.v1",
+  "title": "Fased SAT/SOL money foundation records",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SatSolMarketPolicyV1"
+    },
+    {
+      "$ref": "#/$defs/SatSolMarketBindingV1"
+    },
+    {
+      "$ref": "#/$defs/SatSolTransactionReviewV1"
+    },
+    {
+      "$ref": "#/$defs/SatSolPolCustodyV1"
+    },
+    {
+      "$ref": "#/$defs/SatSolEmergencyUnwindReceiptV1"
+    }
+  ],
+  "$defs": {
+    "SatSolMarketPolicyV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "fased.sat-sol-market-policy.v1"
+        },
+        "contractGeneration": {
+          "const": 1
+        },
+        "policyGeneration": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "clusterGenesisHash": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "lifecycle": {
+          "enum": ["DISABLED", "ENABLED", "PAUSED", "RETIRED"]
+        },
+        "satMint": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "satTokenProgram": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "wrappedSolMint": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "venue": {
+          "enum": ["METEORA_DAMM_V2_LAUNCH"]
+        },
+        "venueProgram": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "liquidityTreasury": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "emergencyAuthority": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "initialSatRaw": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "initialSolLamports": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "maxSlippageBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "maxPriceImpactBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "maxCombinedFeeBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "publicEntryEnabled": {
+          "type": "boolean"
+        },
+        "fundingAuthorized": {
+          "type": "boolean"
+        },
+        "withdrawalMode": {
+          "enum": ["EMERGENCY_TIMELOCK_ONLY"]
+        },
+        "sourceDescriptorSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "schema",
+        "contractGeneration",
+        "policyGeneration",
+        "clusterGenesisHash",
+        "lifecycle",
+        "satMint",
+        "satTokenProgram",
+        "wrappedSolMint",
+        "venue",
+        "venueProgram",
+        "liquidityTreasury",
+        "emergencyAuthority",
+        "initialSatRaw",
+        "initialSolLamports",
+        "maxSlippageBps",
+        "maxPriceImpactBps",
+        "maxCombinedFeeBps",
+        "publicEntryEnabled",
+        "fundingAuthorized",
+        "withdrawalMode",
+        "sourceDescriptorSha256"
+      ]
+    },
+    "SatSolMarketBindingV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "fased.sat-sol-market-binding.v1"
+        },
+        "contractGeneration": {
+          "const": 1
+        },
+        "policyGeneration": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "policyDigestSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "lifecycle": {
+          "enum": ["DISABLED", "ENABLED", "PAUSED", "RETIRED"]
+        },
+        "pool": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "poolConfig": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "poolProgram": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "positionMint": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "positionTokenAccount": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "satVault": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "solVault": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "liquidityTreasury": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "emergencyAuthority": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "finalizedSlot": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "satReserveRaw": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "solReserveLamports": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "immutableConfig": {
+          "type": "boolean"
+        },
+        "custodyVerified": {
+          "type": "boolean"
+        },
+        "publicEntryEnabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "contractGeneration",
+        "policyGeneration",
+        "policyDigestSha256",
+        "lifecycle",
+        "pool",
+        "poolConfig",
+        "poolProgram",
+        "positionMint",
+        "positionTokenAccount",
+        "satVault",
+        "solVault",
+        "liquidityTreasury",
+        "emergencyAuthority",
+        "finalizedSlot",
+        "satReserveRaw",
+        "solReserveLamports",
+        "immutableConfig",
+        "custodyVerified",
+        "publicEntryEnabled"
+      ]
+    },
+    "SatSolTransactionReviewV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "fased.sat-sol-transaction-review.v1"
+        },
+        "contractGeneration": {
+          "const": 1
+        },
+        "policyGeneration": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "policyDigestSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "action": {
+          "enum": ["ENTER", "EXIT", "ADD_POL", "EMERGENCY_UNWIND"]
+        },
+        "decision": {
+          "enum": ["APPROVED", "REJECTED"]
+        },
+        "sourceClass": {
+          "enum": ["RETAIL_WALLET", "OWNER_SEED", "PROTOCOL_SURPLUS", "EMERGENCY_TREASURY"]
+        },
+        "sourceOwner": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "destinationOwner": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "pool": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "satMint": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "wrappedSolMint": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "inputRaw": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "minimumOutputRaw": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "maxSlippageBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "simulationSlot": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "expiresSlot": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "fixedDestination": {
+          "type": "boolean"
+        },
+        "protectedCapitalReachable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "contractGeneration",
+        "policyGeneration",
+        "policyDigestSha256",
+        "action",
+        "decision",
+        "sourceClass",
+        "sourceOwner",
+        "destinationOwner",
+        "pool",
+        "satMint",
+        "wrappedSolMint",
+        "inputRaw",
+        "minimumOutputRaw",
+        "maxSlippageBps",
+        "simulationSlot",
+        "expiresSlot",
+        "fixedDestination",
+        "protectedCapitalReachable"
+      ]
+    },
+    "SatSolPolCustodyV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "fased.sat-sol-pol-custody.v1"
+        },
+        "contractGeneration": {
+          "const": 1
+        },
+        "policyGeneration": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "policyDigestSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pool": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "positionMint": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "positionTokenAccount": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "positionOwner": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "withdrawalMode": {
+          "enum": ["EMERGENCY_TIMELOCK_ONLY"]
+        },
+        "emergencyAuthority": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "miningVaultPrincipalReachable": {
+          "const": false
+        },
+        "bondPrincipalReachable": {
+          "const": false
+        },
+        "keeperReserveReachable": {
+          "const": false
+        },
+        "pendingClaimsReachable": {
+          "const": false
+        },
+        "protectedAgentReserveReachable": {
+          "const": false
+        },
+        "ownerHotWalletCanWithdraw": {
+          "const": false
+        }
+      },
+      "required": [
+        "schema",
+        "contractGeneration",
+        "policyGeneration",
+        "policyDigestSha256",
+        "pool",
+        "positionMint",
+        "positionTokenAccount",
+        "positionOwner",
+        "withdrawalMode",
+        "emergencyAuthority",
+        "miningVaultPrincipalReachable",
+        "bondPrincipalReachable",
+        "keeperReserveReachable",
+        "pendingClaimsReachable",
+        "protectedAgentReserveReachable",
+        "ownerHotWalletCanWithdraw"
+      ]
+    },
+    "SatSolEmergencyUnwindReceiptV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "fased.sat-sol-emergency-unwind-receipt.v1"
+        },
+        "contractGeneration": {
+          "const": 1
+        },
+        "policyGeneration": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "policyDigestSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pool": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "positionMint": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "finalizedSlot": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "satBeforeRaw": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "solBeforeLamports": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "satRecoveredRaw": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "solRecoveredLamports": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "satDestination": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "solDestination": {
+          "type": "string",
+          "pattern": "^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+        },
+        "positionClosed": {
+          "type": "boolean"
+        },
+        "remainingPositionRaw": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "allProtectedLiabilitiesUnchanged": {
+          "const": true
+        }
+      },
+      "required": [
+        "schema",
+        "contractGeneration",
+        "policyGeneration",
+        "policyDigestSha256",
+        "pool",
+        "positionMint",
+        "finalizedSlot",
+        "satBeforeRaw",
+        "solBeforeLamports",
+        "satRecoveredRaw",
+        "solRecoveredLamports",
+        "satDestination",
+        "solDestination",
+        "positionClosed",
+        "remainingPositionRaw",
+        "allProtectedLiabilitiesUnchanged"
+      ]
+    }
+  }
+}
