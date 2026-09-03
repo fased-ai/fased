@@ -26,7 +26,12 @@ import {
   writeMiningRetirementReceipt,
 } from "../wallet/mining-wallet-retirement.js";
 import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
-import { invokeNativeSignerOperatorHealth } from "../wallet/native-signer-operator-client.js";
+import {
+  invokeNativeSignerOperatorHealth,
+  invokeNativeSignerRPCProfileBind,
+  invokeNativeSignerRPCProfileCreate,
+  invokeNativeSignerRPCProfileList,
+} from "../wallet/native-signer-operator-client.js";
 import { normalizeNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
 import {
   callLocalSocketSigner,
@@ -878,19 +883,32 @@ async function createSignerOwnedWalletForSetup(params: {
   }
 
   const selectedProfile = params.rpcProfileId
-    ? (await listSignerOwnedRPCProfiles({ socketPath })).find(
-        (entry) => entry.profileId === params.rpcProfileId,
-      )
+    ? (operatorLifecycle
+        ? invokeNativeSignerRPCProfileList({
+            signerBinPath: operatorLifecycle.signerBinPath,
+            operatorSocketPath: operatorLifecycle.operatorSocketPath,
+            env: mergedEnv,
+          })
+        : await listSignerOwnedRPCProfiles({ socketPath })
+      ).find((entry) => entry.profileId === params.rpcProfileId)
     : undefined;
   if (params.rpcProfileId && !selectedProfile) {
     throw new Error(`signer-owned RPC profile not found: ${params.rpcProfileId}`);
   }
   const profileBinding = selectedProfile
-    ? await bindSignerOwnedRPCProfile({
-        socketPath,
-        walletId: signerWalletId,
-        profile: selectedProfile,
-      })
+    ? operatorLifecycle
+      ? invokeNativeSignerRPCProfileBind({
+          signerBinPath: operatorLifecycle.signerBinPath,
+          operatorSocketPath: operatorLifecycle.operatorSocketPath,
+          walletId: signerWalletId,
+          profile: selectedProfile,
+          env: mergedEnv,
+        })
+      : await bindSignerOwnedRPCProfile({
+          socketPath,
+          walletId: signerWalletId,
+          profile: selectedProfile,
+        })
     : undefined;
   const network = profileBinding
     ? {
@@ -1800,19 +1818,32 @@ async function importSignerOwnedWalletForSetup(params: {
           env: mergedEnv,
         });
   const selectedProfile = params.rpcProfileId
-    ? (await listSignerOwnedRPCProfiles({ socketPath })).find(
-        (entry) => entry.profileId === params.rpcProfileId,
-      )
+    ? (operatorLifecycle
+        ? invokeNativeSignerRPCProfileList({
+            signerBinPath,
+            operatorSocketPath: controlSocketPath,
+            env: mergedEnv,
+          })
+        : await listSignerOwnedRPCProfiles({ socketPath })
+      ).find((entry) => entry.profileId === params.rpcProfileId)
     : undefined;
   if (params.rpcProfileId && !selectedProfile) {
     throw new Error(`signer-owned RPC profile not found: ${params.rpcProfileId}`);
   }
   const profileBinding = selectedProfile
-    ? await bindSignerOwnedRPCProfile({
-        socketPath,
-        walletId: signerWalletId,
-        profile: selectedProfile,
-      })
+    ? operatorLifecycle
+      ? invokeNativeSignerRPCProfileBind({
+          signerBinPath,
+          operatorSocketPath: controlSocketPath,
+          walletId: signerWalletId,
+          profile: selectedProfile,
+          env: mergedEnv,
+        })
+      : await bindSignerOwnedRPCProfile({
+          socketPath,
+          walletId: signerWalletId,
+          profile: selectedProfile,
+        })
     : undefined;
   const network = profileBinding
     ? {
@@ -2436,16 +2467,28 @@ export async function walletRpcProfileCreateCommand(
 ) {
   const cfg = loadConfig();
   const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
-  const socketPath = resolveLocalSignerSocketPath(effectiveEnv);
-  const profile = await createSignerOwnedRPCProfile({
-    socketPath,
-    profileId: options.profileId,
-    name: options.name,
-    primaryRpcUrl: options.primaryRpcUrl,
-    websocketRpcUrl: options.websocketRpcUrl,
-    executionFallbackRpcUrl: options.executionFallbackRpcUrl,
-    verificationRpcUrl: options.verificationRpcUrl,
-  });
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
+  const profile = operatorLifecycle
+    ? invokeNativeSignerRPCProfileCreate({
+        signerBinPath: operatorLifecycle.signerBinPath,
+        operatorSocketPath: operatorLifecycle.operatorSocketPath,
+        profileId: options.profileId,
+        name: options.name,
+        primaryRpcUrl: options.primaryRpcUrl,
+        websocketRpcUrl: options.websocketRpcUrl,
+        executionFallbackRpcUrl: options.executionFallbackRpcUrl,
+        verificationRpcUrl: options.verificationRpcUrl,
+        env: effectiveEnv,
+      })
+    : await createSignerOwnedRPCProfile({
+        socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+        profileId: options.profileId,
+        name: options.name,
+        primaryRpcUrl: options.primaryRpcUrl,
+        websocketRpcUrl: options.websocketRpcUrl,
+        executionFallbackRpcUrl: options.executionFallbackRpcUrl,
+        verificationRpcUrl: options.verificationRpcUrl,
+      });
   runtime.log(
     options.json
       ? JSON.stringify({ ok: true, profile }, null, 2)
@@ -2459,9 +2502,16 @@ export async function walletRpcProfileListCommand(
 ) {
   const cfg = loadConfig();
   const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
-  const profiles = await listSignerOwnedRPCProfiles({
-    socketPath: resolveLocalSignerSocketPath(effectiveEnv),
-  });
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
+  const profiles = operatorLifecycle
+    ? invokeNativeSignerRPCProfileList({
+        signerBinPath: operatorLifecycle.signerBinPath,
+        operatorSocketPath: operatorLifecycle.operatorSocketPath,
+        env: effectiveEnv,
+      })
+    : await listSignerOwnedRPCProfiles({
+        socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+      });
   if (options.json) {
     runtime.log(JSON.stringify({ ok: true, profiles }, null, 2));
     return;
@@ -2483,14 +2533,21 @@ export async function walletRpcProfileBindCommand(
 ) {
   const cfg = loadConfig();
   const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
   const registry = readWalletProviderRegistry(effectiveEnv);
   const wallet = registry.wallets.find((entry) => entry.id === options.walletId.trim());
   if (!wallet || wallet.providerId !== "local-socket-signer") {
     throw new Error(`native signer wallet not found: ${options.walletId}`);
   }
-  const profiles = await listSignerOwnedRPCProfiles({
-    socketPath: resolveLocalSignerSocketPath(effectiveEnv),
-  });
+  const profiles = operatorLifecycle
+    ? invokeNativeSignerRPCProfileList({
+        signerBinPath: operatorLifecycle.signerBinPath,
+        operatorSocketPath: operatorLifecycle.operatorSocketPath,
+        env: effectiveEnv,
+      })
+    : await listSignerOwnedRPCProfiles({
+        socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+      });
   const profile = profiles.find((entry) => entry.profileId === options.profileId.trim());
   if (!profile) {
     throw new Error(`signer-owned RPC profile not found: ${options.profileId}`);
@@ -2499,11 +2556,19 @@ export async function walletRpcProfileBindCommand(
     typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
       ? wallet.metadata.signerWalletId.trim()
       : normalizeNativeSignerWalletId(wallet.id);
-  const binding = await bindSignerOwnedRPCProfile({
-    socketPath: resolveLocalSignerSocketPath(effectiveEnv),
-    walletId: signerWalletId,
-    profile,
-  });
+  const binding = operatorLifecycle
+    ? invokeNativeSignerRPCProfileBind({
+        signerBinPath: operatorLifecycle.signerBinPath,
+        operatorSocketPath: operatorLifecycle.operatorSocketPath,
+        walletId: signerWalletId,
+        profile,
+        env: effectiveEnv,
+      })
+    : await bindSignerOwnedRPCProfile({
+        socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+        walletId: signerWalletId,
+        profile,
+      });
   registry.wallets = registry.wallets.map((entry) =>
     entry.id === wallet.id
       ? {

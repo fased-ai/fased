@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { validateLocalSocketSignerResult } from "./local-socket-signer-protocol.js";
+import {
+  validateLocalSocketSignerResult,
+  type LocalSocketSignerRPCProfileBindingV1,
+  type LocalSocketSignerRPCProfileSummaryV1,
+} from "./local-socket-signer-protocol.js";
 import type { LocalSocketSignerHealthProbe } from "./providers/local-socket-signer-adapter.js";
 import { redactWalletDiagnosticText } from "./wallet-redaction.js";
 
@@ -30,7 +34,8 @@ function invokeNativeSignerOperatorJSON(params: {
   args: string[];
   env: NodeJS.ProcessEnv;
   label: string;
-}): Record<string, unknown> {
+  input?: string;
+}): unknown {
   if (
     !path.isAbsolute(params.signerBinPath) ||
     path.resolve(params.signerBinPath) !== params.signerBinPath
@@ -48,7 +53,8 @@ function invokeNativeSignerOperatorJSON(params: {
     ["admin", ...params.args, "--operator-socket", params.operatorSocketPath],
     {
       env: lifecycleEnv(params.env),
-      stdio: ["ignore", "pipe", "pipe"],
+      input: params.input,
+      stdio: [params.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       encoding: "utf8",
       maxBuffer: 256 * 1024,
       timeout: 30_000,
@@ -69,10 +75,7 @@ function invokeNativeSignerOperatorJSON(params: {
   } catch {
     throw new Error(`${params.label} returned invalid JSON`);
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${params.label} returned an invalid result`);
-  }
-  return parsed as Record<string, unknown>;
+  return parsed;
 }
 
 export function invokeNativeSignerOperatorCapabilities(params: {
@@ -80,13 +83,17 @@ export function invokeNativeSignerOperatorCapabilities(params: {
   operatorSocketPath: string;
   env?: NodeJS.ProcessEnv;
 }): NativeSignerOperatorCapabilities {
-  const result = invokeNativeSignerOperatorJSON({
+  const raw = invokeNativeSignerOperatorJSON({
     signerBinPath: params.signerBinPath,
     operatorSocketPath: params.operatorSocketPath,
     args: ["service", "capabilities"],
     env: params.env ?? process.env,
     label: "native signer capabilities",
   });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("native signer capabilities returned an invalid result");
+  }
+  const result = raw as Record<string, unknown>;
   const capabilities =
     result.capabilities &&
     typeof result.capabilities === "object" &&
@@ -142,4 +149,88 @@ export function invokeNativeSignerOperatorHealth(params: {
     ok: true,
     ...(result as Omit<LocalSocketSignerHealthProbe, "ok">),
   };
+}
+
+export function invokeNativeSignerRPCProfileList(params: {
+  signerBinPath: string;
+  operatorSocketPath: string;
+  env?: NodeJS.ProcessEnv;
+}): LocalSocketSignerRPCProfileSummaryV1[] {
+  const result = invokeNativeSignerOperatorJSON({
+    signerBinPath: params.signerBinPath,
+    operatorSocketPath: params.operatorSocketPath,
+    args: ["rpc-profile", "list"],
+    env: params.env ?? process.env,
+    label: "native signer RPC profile list",
+  });
+  if (!validateLocalSocketSignerResult("v2.rpcProfile.list", result)) {
+    throw new Error("native signer RPC profile list returned an invalid result");
+  }
+  return result as LocalSocketSignerRPCProfileSummaryV1[];
+}
+
+export function invokeNativeSignerRPCProfileCreate(params: {
+  signerBinPath: string;
+  operatorSocketPath: string;
+  profileId: string;
+  name: string;
+  primaryRpcUrl: string;
+  websocketRpcUrl?: string;
+  executionFallbackRpcUrl?: string;
+  verificationRpcUrl?: string;
+  env?: NodeJS.ProcessEnv;
+}): LocalSocketSignerRPCProfileSummaryV1 {
+  const result = invokeNativeSignerOperatorJSON({
+    signerBinPath: params.signerBinPath,
+    operatorSocketPath: params.operatorSocketPath,
+    args: ["rpc-profile", "create"],
+    input: JSON.stringify({
+      profileId: params.profileId,
+      name: params.name,
+      primaryRpcUrl: params.primaryRpcUrl,
+      ...(params.websocketRpcUrl ? { websocketRpcUrl: params.websocketRpcUrl } : {}),
+      ...(params.executionFallbackRpcUrl
+        ? { executionFallbackRpcUrl: params.executionFallbackRpcUrl }
+        : {}),
+      ...(params.verificationRpcUrl ? { verificationRpcUrl: params.verificationRpcUrl } : {}),
+      commitment: "finalized",
+    }),
+    env: params.env ?? process.env,
+    label: "native signer RPC profile create",
+  });
+  if (!validateLocalSocketSignerResult("v2.rpcProfile.create", result)) {
+    throw new Error("native signer RPC profile create returned an invalid result");
+  }
+  return result as LocalSocketSignerRPCProfileSummaryV1;
+}
+
+export function invokeNativeSignerRPCProfileBind(params: {
+  signerBinPath: string;
+  operatorSocketPath: string;
+  walletId: string;
+  profile: Pick<LocalSocketSignerRPCProfileSummaryV1, "profileId" | "version" | "hash">;
+  env?: NodeJS.ProcessEnv;
+}): LocalSocketSignerRPCProfileBindingV1 {
+  const result = invokeNativeSignerOperatorJSON({
+    signerBinPath: params.signerBinPath,
+    operatorSocketPath: params.operatorSocketPath,
+    args: [
+      "rpc-profile",
+      "bind",
+      "--wallet-id",
+      params.walletId,
+      "--profile-id",
+      params.profile.profileId,
+      "--profile-version",
+      String(params.profile.version),
+      "--profile-hash",
+      params.profile.hash,
+    ],
+    env: params.env ?? process.env,
+    label: "native signer RPC profile bind",
+  });
+  if (!validateLocalSocketSignerResult("v2.rpcProfile.bind", result)) {
+    throw new Error("native signer RPC profile bind returned an invalid result");
+  }
+  return result as LocalSocketSignerRPCProfileBindingV1;
 }

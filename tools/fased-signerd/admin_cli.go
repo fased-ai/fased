@@ -67,7 +67,7 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 	if err := rejectSignerAdminSecretInputs(args, environ); err != nil {
 		return err
 	}
-	if len(args) >= 2 && args[0] == "network" && args[1] == "put" {
+	if len(args) >= 2 && ((args[0] == "network" && args[1] == "put") || (args[0] == "rpc-profile" && args[1] == "create")) {
 		if err := rejectSignerAdminNetworkEnvironmentV2(environ); err != nil {
 			return err
 		}
@@ -157,6 +157,17 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		default:
 			return errors.New("unknown signer admin network command")
 		}
+	case "rpc-profile":
+		switch args[1] {
+		case "list":
+			return runSignerAdminRPCProfileListV1(args[2:], stdout)
+		case "create":
+			return runSignerAdminRPCProfileCreateV1(args[2:], stdin, stdout)
+		case "bind":
+			return runSignerAdminRPCProfileBindV1(args[2:], stdout)
+		default:
+			return errors.New("unknown signer admin RPC profile command")
+		}
 	case "jupiter":
 		switch args[1] {
 		case "api-key-install":
@@ -230,7 +241,7 @@ func runSignerAdminOwnerCeremonyV1(args []string, stdin io.Reader, stdout io.Wri
 }
 
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {service|wallet|owner-ceremony|keeper|policy|network|jupiter|webauthn|migration} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {service|wallet|owner-ceremony|keeper|policy|network|rpc-profile|jupiter|webauthn|migration} <command> [flags]")
 }
 
 func runSignerAdminKeeperFeePayerV2(args []string, ensure bool, stdout io.Writer) error {
@@ -1157,6 +1168,184 @@ func writeSignerAdminNetworkSummaryV2(result json.RawMessage, walletID string, s
 	encoded, err := json.Marshal(summary)
 	if err != nil {
 		return errors.New("encode signer network summary")
+	}
+	return writeSignerAdminResult(encoded, stdout)
+}
+
+func validateSignerAdminRPCProfileSummaryV1(summary signerRPCProfileSummaryV1) error {
+	if _, err := normalizeSignerRPCProfileIDV1(summary.ProfileID); err != nil {
+		return err
+	}
+	if _, err := normalizeSignerRPCProfileNameV1(summary.Name); err != nil {
+		return err
+	}
+	if summary.Chain != "solana" || (summary.Cluster != "mainnet-beta" && summary.Cluster != "devnet" && summary.Cluster != "custom") {
+		return errors.New("invalid RPC profile chain or cluster")
+	}
+	if len(summary.GenesisHash) < 32 || len(summary.GenesisHash) > 64 || summary.Commitment != signerRPCProfileCommitmentV1 || summary.Version != 1 || !isValidSignerNetworkHashV2(summary.Hash) || summary.EndpointCount < 1 || summary.EndpointCount > 4 || !summary.Ready {
+		return errors.New("invalid RPC profile metadata")
+	}
+	return nil
+}
+
+func writeSignerAdminRPCProfileSummaryV1(result json.RawMessage, stdout io.Writer) error {
+	var summary signerRPCProfileSummaryV1
+	if err := decodeSignerAdminStrictJSON(result, &summary); err != nil || validateSignerAdminRPCProfileSummaryV1(summary) != nil {
+		return errors.New("signer returned an invalid RPC profile summary")
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		return errors.New("encode signer RPC profile summary")
+	}
+	return writeSignerAdminResult(encoded, stdout)
+}
+
+func writeSignerAdminRPCProfileListV1(result json.RawMessage, stdout io.Writer) error {
+	var profiles []signerRPCProfileSummaryV1
+	if err := decodeSignerAdminStrictJSON(result, &profiles); err != nil || len(profiles) > maxSignerRPCProfilesV1 {
+		return errors.New("signer returned an invalid RPC profile list")
+	}
+	for _, profile := range profiles {
+		if err := validateSignerAdminRPCProfileSummaryV1(profile); err != nil {
+			return errors.New("signer returned an invalid RPC profile list")
+		}
+	}
+	encoded, err := json.Marshal(profiles)
+	if err != nil {
+		return errors.New("encode signer RPC profile list")
+	}
+	return writeSignerAdminResult(encoded, stdout)
+}
+
+func validateSignerAdminRPCProfileBindingV1(binding signerRPCProfileBindingSummaryV1, walletID, profileID, profileHash string, profileVersion, expectedNetworkVersion uint64) error {
+	if binding.WalletID != walletID || binding.ProfileID != profileID || binding.ProfileVersion != profileVersion || binding.ProfileHash != profileHash || binding.NetworkVersion != expectedNetworkVersion+1 || !isValidSignerNetworkHashV2(binding.NetworkHash) || len(binding.GenesisHash) < 32 || len(binding.GenesisHash) > 64 || !binding.Ready {
+		return errors.New("invalid RPC profile binding metadata")
+	}
+	return nil
+}
+
+func runSignerAdminRPCProfileListV1(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("rpc-profile list")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
+		return err
+	}
+	var result json.RawMessage
+	if operator {
+		result, err = callSignerOperatorSensitiveV1(common.operatorSocket, "v2.rpcProfile.list", "", nil)
+	} else {
+		result, err = callSignerAdmin(common.controlSocket, "v2.rpcProfile.list", "", nil)
+	}
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminRPCProfileListV1(result, stdout)
+}
+
+func runSignerAdminRPCProfileCreateV1(args []string, stdin io.Reader, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("rpc-profile create")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
+		return err
+	}
+	raw, err := io.ReadAll(io.LimitReader(stdin, maxSignerNetworkInputBytesV2+1))
+	if err != nil || len(raw) == 0 || len(raw) > maxSignerNetworkInputBytesV2 {
+		return errors.New("stdin must contain one strict RPC profile JSON object within the size limit")
+	}
+	defer zeroBytes(raw)
+	var body signerRPCProfileCreateRequestV1
+	if err := decodeSignerAdminStrictJSON(raw, &body); err != nil {
+		return errors.New("stdin must contain one strict RPC profile JSON object")
+	}
+	if _, _, _, err := normalizeSignerRPCProfileInputV1(body); err != nil {
+		return err
+	}
+	defer func() {
+		body.PrimaryRPCURL = ""
+		body.WebSocketRPCURL = ""
+		body.ExecutionFallbackRPCURL = ""
+		body.VerificationRPCURL = ""
+	}()
+	var result json.RawMessage
+	if operator {
+		result, err = callSignerOperatorSensitiveV1(common.operatorSocket, "v2.rpcProfile.create", "", body)
+	} else {
+		result, err = callSignerAdminSensitiveV2(common.controlSocket, "v2.rpcProfile.create", "", body)
+	}
+	if err != nil {
+		return err
+	}
+	return writeSignerAdminRPCProfileSummaryV1(result, stdout)
+}
+
+func runSignerAdminRPCProfileBindV1(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("rpc-profile bind")
+	var walletID, profileID, profileHash string
+	var profileVersion signerAdminRequiredUint64
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	fs.StringVar(&profileID, "profile-id", "", "signer-owned RPC profile identifier")
+	fs.Var(&profileVersion, "profile-version", "required RPC profile version")
+	fs.StringVar(&profileHash, "profile-hash", "", "required authenticated RPC profile hash")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if !profileVersion.set || profileVersion.value == 0 {
+		return errors.New("--profile-version is required")
+	}
+	_, operator, err := requireSignerAdminLifecycleSocket(common)
+	if err != nil {
+		return err
+	}
+	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
+		return err
+	}
+	if profileID, err = normalizeSignerRPCProfileIDV1(profileID); err != nil {
+		return err
+	}
+	if !isValidSignerNetworkHashV2(profileHash) {
+		return errors.New("--profile-hash must be an authenticated signer profile hash")
+	}
+	var networkResult json.RawMessage
+	if operator {
+		networkResult, err = callSignerOperatorSensitiveV1(common.operatorSocket, "v2.network.get", walletID, nil)
+	} else {
+		networkResult, err = callSignerAdmin(common.controlSocket, "v2.network.get", walletID, nil)
+	}
+	if err != nil {
+		return err
+	}
+	var network signerNetworkSummaryV2
+	if err := decodeSignerAdminStrictJSON(networkResult, &network); err != nil || validateSignerNetworkSummaryV2(network, walletID) != nil {
+		return errors.New("signer returned an invalid network summary")
+	}
+	body := signerRPCProfileBindRequestV1{
+		ProfileID:              profileID,
+		ExpectedProfileVersion: profileVersion.value,
+		ExpectedProfileHash:    profileHash,
+		ExpectedNetworkVersion: network.Version,
+	}
+	var result json.RawMessage
+	if operator {
+		result, err = callSignerOperatorSensitiveV1(common.operatorSocket, "v2.rpcProfile.bind", walletID, body)
+	} else {
+		result, err = callSignerAdmin(common.controlSocket, "v2.rpcProfile.bind", walletID, body)
+	}
+	if err != nil {
+		return err
+	}
+	var binding signerRPCProfileBindingSummaryV1
+	if err := decodeSignerAdminStrictJSON(result, &binding); err != nil || validateSignerAdminRPCProfileBindingV1(binding, walletID, profileID, profileHash, profileVersion.value, network.Version) != nil {
+		return errors.New("signer returned an invalid RPC profile binding")
+	}
+	encoded, err := json.Marshal(binding)
+	if err != nil {
+		return errors.New("encode signer RPC profile binding")
 	}
 	return writeSignerAdminResult(encoded, stdout)
 }

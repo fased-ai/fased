@@ -96,6 +96,64 @@ func startSignerAdminTestServerMode(
 	return signerAdminTestServer{path: path, requests: requests, done: done}
 }
 
+func startSignerAdminTestServerSequence(
+	t *testing.T,
+	mode os.FileMode,
+	responders ...func(request) ([]byte, error),
+) signerAdminTestServer {
+	t.Helper()
+	directory := signerAdminShortTempDir(t)
+	path := filepath.Join(directory, "control.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen on signer admin test socket: %v", err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		_ = listener.Close()
+		t.Fatalf("secure signer admin test socket: %v", err)
+	}
+	requests := make(chan request, len(responders))
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		for _, respond := range responders {
+			conn, err := listener.Accept()
+			if err != nil {
+				done <- err
+				return
+			}
+			line, err := bufio.NewReader(conn).ReadBytes('\n')
+			if err != nil {
+				_ = conn.Close()
+				done <- err
+				return
+			}
+			var req request
+			if err := decodeSignerAdminStrictJSON(bytes.TrimSpace(line), &req); err != nil {
+				_ = conn.Close()
+				done <- err
+				return
+			}
+			requests <- req
+			response, err := respond(req)
+			if err != nil {
+				_ = conn.Close()
+				done <- err
+				return
+			}
+			if _, err := conn.Write(append(response, '\n')); err != nil {
+				_ = conn.Close()
+				done <- err
+				return
+			}
+			_ = conn.Close()
+		}
+		done <- nil
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+	return signerAdminTestServer{path: path, requests: requests, done: done}
+}
+
 func signerAdminTestSuccess(t *testing.T, result string) func(request) ([]byte, error) {
 	t.Helper()
 	return func(request) ([]byte, error) {
@@ -816,6 +874,94 @@ func TestSignerAdminNetworkPutRejectsRPCArgsEnvironmentAndInvalidStdin(t *testin
 	}, strings.NewReader(oversized), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "size limit") {
 		t.Fatalf("network put accepted oversized stdin: %v", err)
 	}
+}
+
+func TestSignerAdminRPCProfileOperatorCommandsAreTypedAndMetadataOnly(t *testing.T) {
+	hash := "hmac-sha256:" + strings.Repeat("a", 64)
+	networkHash := "hmac-sha256:" + strings.Repeat("b", 64)
+	genesis := "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" // pragma: allowlist secret
+	profileResult := `{"profileId":"devnet-primary","name":"Devnet Primary","chain":"solana","cluster":"devnet","genesisHash":"` + genesis + `","commitment":"finalized","version":1,"hash":"` + hash + `","endpointCount":1,"ready":true}`
+
+	listServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `[`+profileResult+`]`))
+	var stdout bytes.Buffer
+	if err := runSignerAdminCLI([]string{
+		"rpc-profile", "list", "--operator-socket", listServer.path,
+	}, strings.NewReader(""), &stdout, nil); err != nil {
+		t.Fatalf("list signer RPC profiles: %v", err)
+	}
+	listRequest := waitSignerAdminTestServer(t, listServer)
+	if listRequest.Op != "v2.rpcProfile.list" || listRequest.Operator == nil || listRequest.WalletID != "" || len(listRequest.Request) != 0 {
+		t.Fatalf("unexpected signer RPC profile list envelope: %#v", listRequest)
+	}
+	if strings.Contains(stdout.String(), "https://") || !strings.Contains(stdout.String(), `"profileId": "devnet-primary"`) {
+		t.Fatalf("RPC profile list was not metadata-only: %q", stdout.String())
+	}
+
+	secret := "rpc-profile-secret-token" // pragma: allowlist secret
+	input := []byte(`{"profileId":"devnet-primary","name":"Devnet Primary","primaryRpcUrl":"https://api.devnet.solana.com/?token=` + secret + `","commitment":"finalized"}`)
+	createServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, profileResult))
+	stdout.Reset()
+	if err := runSignerAdminCLI([]string{
+		"rpc-profile", "create", "--operator-socket", createServer.path,
+	}, bytes.NewReader(input), &stdout, nil); err != nil {
+		t.Fatalf("create signer RPC profile: %v", err)
+	}
+	createRequest := waitSignerAdminTestServer(t, createServer)
+	if createRequest.Op != "v2.rpcProfile.create" || createRequest.Operator == nil || createRequest.WalletID != "" {
+		t.Fatalf("unexpected signer RPC profile create envelope: %#v", createRequest)
+	}
+	var createBody signerRPCProfileCreateRequestV1
+	decodeSignerAdminTestBody(t, createRequest, &createBody)
+	if !strings.Contains(createBody.PrimaryRPCURL, secret) || createBody.Commitment != "finalized" {
+		t.Fatalf("RPC profile create did not preserve strict stdin: %#v", createBody)
+	}
+	if strings.Contains(stdout.String(), secret) || strings.Contains(stdout.String(), "api.devnet") {
+		t.Fatalf("RPC profile create output exposed endpoint material: %q", stdout.String())
+	}
+	zeroBytes(input)
+
+	bindServer := startSignerAdminTestServerSequence(
+		t,
+		0o660,
+		signerAdminTestSuccess(t, `{"walletId":"profile","configured":false,"version":0,"ready":false}`),
+		signerAdminTestSuccess(t, `{"walletId":"profile","profileId":"devnet-primary","profileVersion":1,"profileHash":"`+hash+`","networkVersion":1,"networkHash":"`+networkHash+`","genesisHash":"`+genesis+`","ready":true}`),
+	)
+	stdout.Reset()
+	if err := runSignerAdminCLI([]string{
+		"rpc-profile", "bind", "--operator-socket", bindServer.path,
+		"--wallet-id", "profile", "--profile-id", "devnet-primary",
+		"--profile-version", "1", "--profile-hash", hash,
+	}, strings.NewReader(""), &stdout, nil); err != nil {
+		t.Fatalf("bind signer RPC profile: %v", err)
+	}
+	firstRequest := waitSignerAdminTestServer(t, bindServer)
+	secondRequest := <-bindServer.requests
+	if firstRequest.Op != "v2.network.get" || secondRequest.Op != "v2.rpcProfile.bind" || firstRequest.Operator == nil || secondRequest.Operator == nil || secondRequest.WalletID != "profile" {
+		t.Fatalf("unexpected signer RPC profile bind sequence: first=%#v second=%#v", firstRequest, secondRequest)
+	}
+	var bindBody signerRPCProfileBindRequestV1
+	decodeSignerAdminTestBody(t, secondRequest, &bindBody)
+	if bindBody.ExpectedNetworkVersion != 0 || bindBody.ExpectedProfileVersion != 1 || bindBody.ExpectedProfileHash != hash {
+		t.Fatalf("RPC profile bind omitted an exact version fence: %#v", bindBody)
+	}
+}
+
+func TestSignerAdminRPCProfileCreateRejectsEnvironmentAndMalformedResponses(t *testing.T) {
+	err := runSignerAdminCLI([]string{"rpc-profile", "create"}, strings.NewReader(`{}`), io.Discard, []string{
+		"FASED_RPC_URL=https://do-not-print.example/?token=secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not accepted") || strings.Contains(err.Error(), "do-not-print") {
+		t.Fatalf("RPC profile create accepted RPC environment material: %v", err)
+	}
+
+	leaking := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{"profileId":"devnet-primary","name":"Devnet Primary","chain":"solana","cluster":"devnet","genesisHash":"EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG","commitment":"finalized","version":1,"hash":"hmac-sha256:`+strings.Repeat("a", 64)+`","endpointCount":1,"ready":true,"primaryRpcUrl":"https://do-not-print.example/?token=secret"}`))
+	err = runSignerAdminCLI([]string{
+		"rpc-profile", "list", "--operator-socket", leaking.path,
+	}, strings.NewReader(""), io.Discard, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid RPC profile list") || strings.Contains(err.Error(), "do-not-print") {
+		t.Fatalf("RPC profile list accepted a URL-bearing response: %v", err)
+	}
+	waitSignerAdminTestServer(t, leaking)
 }
 
 func TestSignerAdminWebAuthnTypedPassthrough(t *testing.T) {
