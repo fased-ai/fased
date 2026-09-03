@@ -203,6 +203,29 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			}
 			return marshalSignerResultV2(map[string]any{"transactionId": body.TransactionID, "phase": "aborted"})
 		}
+	case "v2.ownerCeremony.prepare", "v2.ownerCeremony.execute":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		var body ownerCeremonyRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		if req.Op == "v2.ownerCeremony.prepare" {
+			result, err := s.prepareOwnerCeremonyV1(body)
+			if err != nil {
+				return nil, err
+			}
+			return marshalSignerResultV2(result)
+		}
+		result, err := s.executeOwnerCeremonyV1(body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
 	case "getAddresses":
 		wallet, err := s.keys.PublicRecord(req.WalletID)
 		if err != nil {

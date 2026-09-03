@@ -218,6 +218,10 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" || req.Operator != nil {
 			return errors.New("invalid signer request")
 		}
+	case "v2.ownerCeremony.prepare", "v2.ownerCeremony.execute":
+		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" || req.Operator != nil {
+			return errors.New("invalid signer request")
+		}
 	case "v2.network.get", "v2.policy.get", "v2.wallet.get", "v2.wallet.readiness", "v2.wallet.reencrypt", "v2.wallet.rotation.status", "v2.jupiter.trigger.history", "v2.keeperFeePayer.get":
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
@@ -409,6 +413,8 @@ func parseArgs() signerConfig {
 		"v2.lifecycle.upgrade.verify":      10,
 		"v2.lifecycle.upgrade.commit":      10,
 		"v2.lifecycle.upgrade.abort":       10,
+		"v2.ownerCeremony.prepare":         getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OWNER_CEREMONY", 12),
+		"v2.ownerCeremony.execute":         getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OWNER_CEREMONY", 6),
 		"v2.review.prepare":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW", 60),
 		"v2.review.execute":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
 		"getAddresses":                     getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETADDRESSES", 120),
