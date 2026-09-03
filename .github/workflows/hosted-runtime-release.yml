@@ -26,7 +26,7 @@ jobs:
   release:
     name: Build, attest, publish, and promote exact tag once
     env:
-      FASED_RELEASE_TIMINGS_FILE: ${{ runner.temp }}/fased-release-phase-timings.json
+      FASED_RELEASE_TIMINGS_FILE: ${{ github.workspace }}/.fased-release-phase-timings.json
     permissions:
       actions: read
       attestations: write
