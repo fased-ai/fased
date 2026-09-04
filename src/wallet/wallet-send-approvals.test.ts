@@ -58,7 +58,7 @@ it("limits no-passkey Capital confirmation to Devnet Profile initialization", ()
       type: "solana.agentCapitalAction" as const,
       cluster: "devnet" as const,
       action: "initialize_capital_offer" as const,
-      programId: "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz",
+      programId: "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz", // pragma: allowlist secret -- public program ID
       dataBase64: "AA==",
       keys: [],
     },
@@ -810,7 +810,7 @@ describe("wallet-send-approvals", () => {
         assetSymbol: "USDC",
         assetName: "USD Coin",
         assetDecimals: 6,
-        program: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        program: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // pragma: allowlist secret -- public USDC mint
       },
       requestedBy: "owner",
       settlementContext: {
