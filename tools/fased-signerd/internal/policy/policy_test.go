@@ -48,6 +48,7 @@ func TestNormalizeGoldenAndAllAssetFamilies(t *testing.T) {
 		Operations: []string{" transfer ", "bond", "transfer"},
 		Programs:   []string{policyTestKey, FederationBondProgramDomain, " " + policyTestKey + " ", FederationBondProgramDomain},
 		Assets: []Asset{
+			{Asset: "agent-capital:action", Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "1", MaxDaily: "1"},
 			{Asset: " solana:spl:" + policyTestKey, Destinations: []string{policyTestKey, solana.SystemProgramID.String(), policyTestKey}, MaxPerTx: "0002", MaxDaily: "0003"},
 			{Asset: "sat:mint:" + policyTestKey, Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "4", MaxDaily: "5"},
 			{Asset: "sat:capital:lamports", Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "6", MaxDaily: "7"},
@@ -60,17 +61,17 @@ func TestNormalizeGoldenAndAllAssetFamilies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Hash != "sha256:d954603ac5a1edc3bbdef8634fc33945456951ba444f6715bc7c1a64e935f390" {
+	if got.Hash != "sha256:3a020d772af4855845a6dd9cf0a7f603fe662a52c905ced6f509ae06a050c357" {
 		t.Fatalf("canonical policy hash changed: %s", got.Hash)
 	}
 	if !reflect.DeepEqual(got.Operations, []string{"bond", "transfer"}) || !reflect.DeepEqual(got.Programs, []string{policyTestKey, FederationBondProgramDomain}) {
 		t.Fatalf("operations/programs were not sorted and deduplicated: %#v", got)
 	}
-	if got.Assets[0].Asset != "federation:bond-challenge" || got.Assets[5].Asset != "solana:spl:"+policyTestKey {
+	if got.Assets[0].Asset != "agent-capital:action" || got.Assets[6].Asset != "solana:spl:"+policyTestKey {
 		t.Fatalf("assets were not sorted: %#v", got.Assets)
 	}
-	if got.Assets[5].MaxPerTx != "2" || got.Assets[5].MaxDaily != "3" || !reflect.DeepEqual(got.Assets[5].Destinations, []string{solana.SystemProgramID.String(), policyTestKey}) {
-		t.Fatalf("asset was not canonicalized: %#v", got.Assets[5])
+	if got.Assets[6].MaxPerTx != "2" || got.Assets[6].MaxDaily != "3" || !reflect.DeepEqual(got.Assets[6].Destinations, []string{solana.SystemProgramID.String(), policyTestKey}) {
+		t.Fatalf("asset was not canonicalized: %#v", got.Assets[6])
 	}
 
 	permuted := input
