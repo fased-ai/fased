@@ -155,6 +155,5 @@ owner authorization.
   unavailable, report `NOT RUN: sudo credential expired`; never poll or start a
   password prompt.
 
-The canonical skill is
-`docs/maintainers/codex-skills/fased-release-manager/`. Synchronize the installed
-copy only after the canonical folder and harness validator pass.
+The canonical skill is `docs/maintainers/codex-skills/fased-release-manager/`.
+Synchronize the installed copy only after the canonical folder and harness validator pass.
