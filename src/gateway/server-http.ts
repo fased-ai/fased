@@ -30,6 +30,10 @@ import {
   runWithSatSubmissionWorkflow,
 } from "../../extensions/sat-mining/src/solana-submit.js";
 import { digestSatSubmissionIntent } from "../../extensions/sat-mining/src/submission-ledger.js";
+import {
+  prepareOrReconcileReviewedAgentCapitalAction,
+  type AgentCapitalInstruction,
+} from "../agents/agent-capital-runtime.js";
 import { resolveAgentAvatar } from "../agents/identity-avatar.js";
 import {
   A2UI_PATH,
@@ -86,7 +90,10 @@ import {
   fetchSolanaTokenBalanceViaRpc,
 } from "../wallet/solana-assets.js";
 import { resolveFederationBondWallet } from "../wallet/solana-bond-signing.js";
-import { fetchSolanaGenesisHashFromRpc } from "../wallet/solana-network-discovery.js";
+import {
+  discoverSolanaNetworkFromRpc,
+  fetchSolanaGenesisHashFromRpc,
+} from "../wallet/solana-network-discovery.js";
 import { fetchPinnedSolanaRpcRead } from "../wallet/solana-rpc-read-fetch.js";
 import { searchSolanaTokens } from "../wallet/solana-token-resolver.js";
 import {
@@ -1207,6 +1214,47 @@ function toOptionalString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseAgentCapitalInstruction(value: unknown): AgentCapitalInstruction | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const allowedInstructionKeys = new Set(["action", "programId", "dataBase64", "keys"]);
+  if (Object.keys(value).some((key) => !allowedInstructionKeys.has(key))) {
+    return undefined;
+  }
+  const action = toOptionalString(value.action);
+  const programId = toOptionalString(value.programId);
+  const dataBase64 = toOptionalString(value.dataBase64);
+  if (!action || !programId || !dataBase64 || !Array.isArray(value.keys)) {
+    return undefined;
+  }
+  const keys: AgentCapitalInstruction["keys"] = [];
+  for (const key of value.keys) {
+    if (
+      !isPlainObject(key) ||
+      Object.keys(key).some(
+        (field) => field !== "pubkey" && field !== "isSigner" && field !== "isWritable",
+      ) ||
+      typeof key.pubkey !== "string" ||
+      typeof key.isSigner !== "boolean" ||
+      typeof key.isWritable !== "boolean"
+    ) {
+      return undefined;
+    }
+    keys.push({
+      pubkey: key.pubkey,
+      isSigner: key.isSigner,
+      isWritable: key.isWritable,
+    });
+  }
+  return {
+    action: action as AgentCapitalInstruction["action"],
+    programId,
+    dataBase64,
+    keys,
+  };
 }
 
 function toOptionalInt(value: unknown): number | undefined {
@@ -9069,6 +9117,123 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
           env: effectiveEnv,
         });
         sendLoginResponse(200, { ok: true, simulation });
+        return;
+      }
+      if (requestPath === "/api/wallet/agent-capital/review") {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.setHeader("Allow", "POST");
+          sendLoginResponse(405, {
+            ok: false,
+            error: { code: "method_not_allowed", message: "method must be POST" },
+          });
+          return;
+        }
+        if (!(await ensureWalletApiAuthorized())) {
+          return;
+        }
+        const body = await readJsonBody(req, 256 * 1024);
+        if (!body.ok || !isPlainObject(body.value)) {
+          sendLoginResponse(400, {
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message: body.ok ? "request body must be an object" : body.error,
+            },
+          });
+          return;
+        }
+        const payload = body.value;
+        const allowedKeys = new Set(["walletId", "workflowId", "instruction"]);
+        const walletId = toOptionalString(payload.walletId);
+        const workflowId = toOptionalString(payload.workflowId);
+        const instruction = parseAgentCapitalInstruction(payload.instruction);
+        if (
+          Object.keys(payload).some((key) => !allowedKeys.has(key)) ||
+          !walletId ||
+          !workflowId ||
+          !instruction
+        ) {
+          sendLoginResponse(400, {
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message:
+                "walletId, workflowId, and one exact generated Agent Capital instruction are required",
+            },
+          });
+          return;
+        }
+        const cfg = loadConfig();
+        const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
+        const selectedWallet = readWalletProviderRegistry(process.env).wallets.find(
+          (wallet) => wallet.id === walletId,
+        );
+        const walletPublicKey = selectedWallet?.addresses?.solana?.trim() || "";
+        if (
+          !selectedWallet ||
+          selectedWallet.providerId !== "local-socket-signer" ||
+          !walletPublicKey
+        ) {
+          sendLoginResponse(400, {
+            ok: false,
+            error: {
+              code: "wallet_provider_invalid_config",
+              message: "Agent Capital requires a registered signer-owned Solana wallet",
+            },
+          });
+          return;
+        }
+        const rpcUrl = resolveScopedRpcUrlForWallet({
+          env: effectiveEnv,
+          chains: ["solana"],
+          walletId,
+        });
+        if (!rpcUrl) {
+          sendLoginResponse(400, {
+            ok: false,
+            error: {
+              code: "wallet_provider_invalid_config",
+              message: "Agent Capital requires a verified wallet-scoped Solana RPC profile",
+            },
+          });
+          return;
+        }
+        try {
+          const cluster = await discoverSolanaNetworkFromRpc(rpcUrl);
+          const result = await prepareOrReconcileReviewedAgentCapitalAction({
+            socketPath: resolveLocalSignerSocketPath(effectiveEnv),
+            rpcUrl,
+            cluster,
+            walletId,
+            walletPublicKey,
+            workflowId,
+            instruction,
+            env: process.env,
+          });
+          if (result.state === "pending") {
+            sendLoginResponse(200, {
+              ok: true,
+              mode: "manual",
+              request: sanitizeWalletSendApprovalRequest(result.approval),
+            });
+            return;
+          }
+          sendLoginResponse(200, {
+            ok: true,
+            mode: "confirmed",
+            operation: result.operation,
+            readback: result.readback,
+          });
+        } catch (error) {
+          sendLoginResponse(400, {
+            ok: false,
+            error: {
+              code: "agent_capital_review_failed",
+              message: walletDiagnosticErrorMessage(error),
+            },
+          });
+        }
         return;
       }
       if (requestPath === "/api/wallet/approvals/create") {

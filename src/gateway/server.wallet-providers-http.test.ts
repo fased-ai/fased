@@ -7,6 +7,15 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { Keypair } from "@solana/web3.js";
 import { describe, expect, test, vi } from "vitest";
+
+const { prepareOrReconcileReviewedAgentCapitalAction } = vi.hoisted(() => ({
+  prepareOrReconcileReviewedAgentCapitalAction: vi.fn(),
+}));
+
+vi.mock("../agents/agent-capital-runtime.js", () => ({
+  prepareOrReconcileReviewedAgentCapitalAction,
+}));
+
 import { clearRuntimeConfigSnapshot } from "../config/config.js";
 import {
   SIGNER_PROTOCOL_V2,
@@ -420,6 +429,125 @@ const baseConfig = {
     approvalAuth: { mode: "none" },
   },
 };
+
+test("creates Agent Capital review only through the authenticated wallet route", async () => {
+  await withTempConfig({
+    cfg: {
+      ...baseConfig,
+      env: {
+        vars: {
+          FASED_WALLET_LOCAL_SIGNER_SOCKET: "/tmp/fased-agent-capital.sock",
+          FASED_WALLET_SOLANA_RPC_URL__PROFILE_1: "https://api.devnet.solana.com",
+        },
+      },
+    },
+    run: async () => {
+      const signer = Keypair.generate().publicKey.toBase58();
+      upsertNamedWallet({
+        walletId: "profile-1",
+        name: "Profile 1",
+        providerId: "local-socket-signer",
+        addresses: { solana: signer },
+        metadata: { role: "profile", purpose: "profile" },
+        env: process.env,
+      });
+      const contract = await import("../agents/fased-agent-capital-contract.generated.js");
+      const initialize = contract.FASED_AGENT_CAPITAL_CONTRACT.instructions.find(
+        (instruction) => instruction.action === "initialize_capital_offer",
+      );
+      expect(initialize).toBeDefined();
+      const instruction = {
+        action: "initialize_capital_offer",
+        programId: contract.FASED_AGENT_CAPITAL_CONTRACT.programId,
+        dataBase64: Buffer.from(initialize?.discriminator ?? []).toString("base64"),
+        keys: (initialize?.accounts ?? []).map((account) => ({
+          pubkey: "address" in account ? account.address : signer,
+          isSigner: account.signer,
+          isWritable: account.writable,
+        })),
+      };
+      const now = new Date().toISOString();
+      prepareOrReconcileReviewedAgentCapitalAction.mockResolvedValueOnce({
+        state: "pending",
+        requestId: "agent-capital-review-1",
+        approval: {
+          id: "agent-capital-review-1",
+          createdAt: now,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          status: "pending",
+          requestedBy: "agent-capital",
+          payload: {
+            chain: "solana",
+            actionKind: "signer_review",
+            providerId: "local-socket-signer",
+            walletId: "profile-1",
+          },
+        },
+      });
+      const server = createGatewayHttpServer({
+        canvasHost: null,
+        clients: new Set(),
+        controlUiEnabled: false,
+        controlUiBasePath: "/ui",
+        openAiChatCompletionsEnabled: false,
+        openResponsesEnabled: false,
+        handleHooksRequest: async () => false,
+        resolvedAuth,
+      });
+      const response = createResponse();
+      await dispatch(
+        server,
+        createRequest({
+          method: "POST",
+          path: "/api/wallet/agent-capital/review",
+          authorization: "Bearer root-token",
+          body: { walletId: "profile-1", workflowId: "offer-7-initialize", instruction },
+        }),
+        response.res,
+      );
+      expect(response.res.statusCode).toBe(200);
+      expect(JSON.parse(response.getBody())).toMatchObject({
+        ok: true,
+        mode: "manual",
+        request: { id: "agent-capital-review-1", status: "pending" },
+      });
+      expect(prepareOrReconcileReviewedAgentCapitalAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          socketPath: "/tmp/fased-agent-capital.sock",
+          rpcUrl: "https://api.devnet.solana.com",
+          cluster: "devnet",
+          walletId: "profile-1",
+          walletPublicKey: signer,
+          workflowId: "offer-7-initialize",
+          instruction,
+        }),
+      );
+
+      const rejected = createResponse();
+      await dispatch(
+        server,
+        createRequest({
+          method: "POST",
+          path: "/api/wallet/agent-capital/review",
+          authorization: "Bearer root-token",
+          body: {
+            walletId: "profile-1",
+            workflowId: "offer-7-initialize",
+            instruction,
+            rpcUrl: "https://attacker.invalid",
+          },
+        }),
+        rejected.res,
+      );
+      expect(rejected.res.statusCode).toBe(400);
+      expect(JSON.parse(rejected.getBody())).toMatchObject({
+        ok: false,
+        error: { code: "invalid_request" },
+      });
+      expect(prepareOrReconcileReviewedAgentCapitalAction).toHaveBeenCalledTimes(1);
+    },
+  });
+});
 
 describe("wallet providers HTTP", () => {
   test("accepts local-socket-signer when patching default provider", async () => {
@@ -2079,6 +2207,8 @@ describe("wallet providers HTTP", () => {
                 controller,
                 recoveryAuthority: Keypair.generate().publicKey.toBase58(),
                 authorityGeneration: "4",
+                createdSlot: "1",
+                createdUnixTimestamp: "1",
                 finalizedSlot: 99,
                 attachments: [],
                 updatedAt: new Date().toISOString(),

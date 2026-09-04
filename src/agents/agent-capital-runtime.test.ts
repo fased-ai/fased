@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { Keypair } from "@solana/web3.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +17,7 @@ vi.mock("../wallet/solana-rpc-read-fetch.js", () => ({ fetchPinnedSolanaRpcRead 
 import {
   deriveAgentCapitalRequestId,
   executeReviewedAgentCapitalAction,
+  prepareOrReconcileReviewedAgentCapitalAction,
   validateAgentCapitalInstruction,
   type AgentCapitalInstruction,
 } from "./agent-capital-runtime.js";
@@ -99,6 +103,112 @@ describe("Agent Capital reviewed runtime contract", () => {
     expect(() => validateAgentCapitalInstruction(bind, profile)).toThrow(
       "multi-authority binding remains an explicit owner ceremony",
     );
+  });
+
+  it("returns a durable pending approval without executing the signer review", async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), "fased-agent-capital-review-"));
+    const signer = Keypair.generate().publicKey.toBase58();
+    const initialize = instruction("initialize_capital_offer", signer);
+    const intent = {
+      type: "solana.agentCapitalAction" as const,
+      cluster: "devnet" as const,
+      ...initialize,
+    };
+    const requestId = deriveAgentCapitalRequestId({
+      walletId: "profile-1",
+      workflowId: "offer-7-initialize",
+      instruction: initialize,
+    });
+    const policyHash = `sha256:${"a".repeat(64)}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+    const operations: string[] = [];
+    callLocalSocketSigner.mockImplementation(
+      async (_socketPath: string, request: { op: string }) => {
+        operations.push(request.op);
+        switch (request.op) {
+          case "v2.capabilities":
+            return {
+              ready: true,
+              capabilities: {
+                intentTypes: ["solana.agentCapitalAction"],
+                features: [
+                  "reviewedAgentCapitalActions",
+                  "signerOwnedStateRecheck",
+                  "durableReviewAuthorization",
+                  "ambiguousBroadcastReconciliation",
+                ],
+              },
+            };
+          case "v2.policy.get":
+            return { hash: policyHash };
+          case "v2.review.get":
+            throw new Error("signer review not found");
+          case "v2.review.prepare":
+            return {
+              requestId,
+              walletId: "profile-1",
+              intentType: "solana.agentCapitalAction",
+              intentDigest: `sha256:${"b".repeat(64)}`,
+              policyHash,
+              mode: "reviewed",
+              nonce: "nonce-1",
+              semanticIntent: intent,
+              walletPublicKey: signer,
+              artifactKind: "solana-transaction",
+              artifactDigest: `sha256:${"c".repeat(64)}`,
+              transactionDigest: `sha256:${"d".repeat(64)}`,
+              asset: "agent-capital:action",
+              amount: "6500000",
+              destination: FASED_AGENT_CAPITAL_CONTRACT.programId,
+              policyOperation: "agentCapital.initialize_capital_offer",
+              requiredPrograms: [FASED_AGENT_CAPITAL_CONTRACT.programId],
+              requiredRole: "profile",
+              issuedAt: now.toISOString(),
+              state: "prepared",
+              preparedAt: now.toISOString(),
+              expiresAt,
+              updatedAt: now.toISOString(),
+            };
+          default:
+            throw new Error(`unexpected signer operation ${request.op}`);
+        }
+      },
+    );
+    try {
+      const result = await prepareOrReconcileReviewedAgentCapitalAction({
+        socketPath: "/tmp/fased-agent-capital.sock",
+        rpcUrl: "https://rpc.invalid",
+        cluster: "devnet",
+        walletId: "profile-1",
+        walletPublicKey: signer,
+        workflowId: "offer-7-initialize",
+        instruction: initialize,
+        env: { ...process.env, FASED_STATE_DIR: stateDir },
+      });
+      expect(result).toMatchObject({
+        state: "pending",
+        requestId,
+        approval: {
+          id: requestId,
+          status: "pending",
+          payload: {
+            actionKind: "signer_review",
+            signerIntentType: "solana.agentCapitalAction",
+            signerRequiredRole: "profile",
+          },
+        },
+      });
+      expect(operations).toEqual([
+        "v2.capabilities",
+        "v2.policy.get",
+        "v2.review.get",
+        "v2.review.prepare",
+      ]);
+      expect(operations).not.toContain("v2.review.execute");
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("recovers an ambiguous broadcast, reads finalized state, and never submits a duplicate", async () => {
