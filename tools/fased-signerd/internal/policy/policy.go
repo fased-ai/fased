@@ -109,7 +109,7 @@ func Normalize(input Policy) (Policy, error) {
 			ReviewedDestinations: rawAsset.ReviewedDestinations,
 			TypedSATDestinations: rawAsset.TypedSATDestinations,
 		}
-		if asset.Asset == "solana:native" || asset.Asset == "sat:action" || asset.Asset == "sat:capital:lamports" || asset.Asset == "federation:bond-challenge" {
+		if asset.Asset == "solana:native" || asset.Asset == "sat:action" || asset.Asset == "sat:capital:lamports" || asset.Asset == "agent-capital:action" || asset.Asset == "federation:bond-challenge" {
 			// canonical as-is
 		} else if strings.HasPrefix(asset.Asset, "solana:spl:") {
 			mint, err := normalizePublicKey(strings.TrimPrefix(asset.Asset, "solana:spl:"), "policy asset mint")

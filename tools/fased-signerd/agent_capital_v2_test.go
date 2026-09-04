@@ -62,3 +62,49 @@ func TestAgentCapitalIntentBindsGeneratedProgramActionAccountsAndAmount(t *testi
 		t.Fatalf("wrong signer error = %v", err)
 	}
 }
+
+func TestAgentCapitalProfileActionUsesExactPolicyAndIndependentFeeReservation(t *testing.T) {
+	wallet := solana.NewWallet().PublicKey()
+	contract := agentCapitalInstructionContractsV1["initialize_capital_offer"]
+	data := make([]byte, contract.DataSize)
+	copy(data[:8], contract.Discriminator[:])
+	keys := make([]signerSATAccountV2, len(contract.Accounts))
+	for index, account := range contract.Accounts {
+		key := solana.NewWallet().PublicKey()
+		if account.IsSigner {
+			key = wallet
+		}
+		if account.Address != "" {
+			key = solana.MustPublicKeyFromBase58(account.Address)
+		}
+		keys[index] = signerSATAccountV2{Pubkey: key.String(), IsSigner: account.IsSigner, IsWritable: account.IsWritable}
+	}
+	fixture := signerIntentV2{
+		Type: intentSolanaAgentCapitalAction, Cluster: "devnet", Action: "initialize_capital_offer",
+		ProgramID: agentCapitalProgramIDV1, DataBase64: base64.StdEncoding.EncodeToString(data), Keys: keys,
+	}
+	intent, err := normalizeAgentCapitalIntentV2(fixture, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.Asset != "agent-capital:action" || intent.Amount.String() != "1" || intent.RequiredRole != "profile" {
+		t.Fatalf("unexpected Agent Capital profile effect: %#v", intent)
+	}
+	policy, err := normalizeSignerPolicyV2(signerPolicyV2{
+		WalletID: "profile", Role: "profile", Operations: []string{intent.PolicyOperation}, Programs: intent.RequiredPrograms,
+		Assets: []signerPolicyAssetV2{
+			{Asset: "agent-capital:action", Destinations: []string{agentCapitalProgramIDV1}, MaxPerTx: "1", MaxDaily: "1"},
+			{Asset: "solana:native", Destinations: []string{agentCapitalProgramIDV1}, MaxPerTx: "6500000", MaxDaily: "6500000"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservations, err := policyReservationsForIntentV2(policy, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reservations) != 2 || reservations[0].Asset != "agent-capital:action" || reservations[1].Asset != "solana:native" {
+		t.Fatalf("unexpected Agent Capital reservations: %#v", reservations)
+	}
+}

@@ -306,6 +306,54 @@ describe("strict owner policy input", () => {
     ).toThrow("requires the Associated Token program");
   });
 
+  it("accepts exact role-bound Agent Capital actions and rejects cross-role grants", () => {
+    const program = destination;
+    const assets = [
+      {
+        asset: "agent-capital:action",
+        destinations: [program],
+        maxPerTx: "1",
+        maxDaily: "4",
+      },
+      {
+        asset: "solana:native",
+        destinations: [program],
+        maxPerTx: "6500000",
+        maxDaily: "26000000",
+      },
+    ];
+    const profile = normalizeOwnerPolicy({
+      walletId: "profile",
+      role: "profile",
+      operations: [`agentCapital.initialize_capital_offer@${program}`],
+      programs: [program],
+      assets,
+    });
+    expect(profile.operations).toEqual([`agentCapital.initialize_capital_offer@${program}`]);
+
+    expect(() =>
+      normalizeOwnerPolicy({
+        ...profile,
+        role: "vault",
+      }),
+    ).toThrow("not an allowed program-bound Agent Capital action for vault");
+    expect(() =>
+      normalizeOwnerPolicy({
+        ...profile,
+        operations: [`agentCapital.unknown_action@${program}`],
+      }),
+    ).toThrow("not an allowed program-bound Agent Capital action for profile");
+
+    const vault = normalizeOwnerPolicy({
+      walletId: "vault",
+      role: "vault",
+      operations: [`agentCapital.request_vault_exit@${program}`],
+      programs: [program],
+      assets,
+    });
+    expect(vault.operations).toEqual([`agentCapital.request_vault_exit@${program}`]);
+  });
+
   it("requires the fixed native fee reserve for on-chain policies but not federation-only proof signing", () => {
     expect(() =>
       normalizeOwnerPolicy({

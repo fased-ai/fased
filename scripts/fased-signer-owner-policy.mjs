@@ -28,7 +28,7 @@ const BASE58_INDEX = new Map(
 const POLICY_KEYS = ["walletId", "role", "operations", "programs", "assets"];
 const ASSET_KEYS = ["asset", "destinations", "maxPerTx", "maxDaily"];
 const STORED_POLICY_KEYS = [...POLICY_KEYS.slice(0, 2), "version", ...POLICY_KEYS.slice(2), "hash"];
-const POLICY_ROLES = new Set(["agent", "mining", "vault"]);
+const POLICY_ROLES = new Set(["agent", "mining", "vault", "profile"]);
 const POLICY_OPERATIONS = new Set([
   "solana.nativeTransfer",
   "solana.splTransferChecked",
@@ -77,15 +77,34 @@ const SAT_MINING_ACTIONS = new Set([
 const SAT_LOOKUP_TABLE_ACTIONS = new Set(["create", "extend", "deactivate", "close"]);
 const VAULT_BOND_ACTIONS = new Set([
   "cancelBondUnlock",
+  "cancelBondUnlockV3",
+  "claimBondEpochRewardsV3",
   "claimBondStakingRewards",
   "claimUnallocatedStakingRewards",
   "finalizeBondUnlock",
+  "finalizeBondUnlockV3",
   "increaseBondPosition",
+  "increaseBondPositionV3",
   "openBondPosition",
+  "registerBondEpochPositionV3",
   "requestBondUnlock",
+  "requestBondUnlockV3",
   "syncBondStakingPosition",
   "syncBondStakingRewards",
   "updateBondTierPolicy",
+]);
+const PROFILE_AGENT_CAPITAL_ACTIONS = new Set([
+  "activate_capital_offer",
+  "cancel_capital_offer",
+  "initialize_capital_offer",
+  "record_vault_result",
+]);
+const VAULT_AGENT_CAPITAL_ACTIONS = new Set([
+  "claim_vault_sat",
+  "deposit_capital_offer",
+  "finalize_vault_exit",
+  "refund_cancelled_position",
+  "request_vault_exit",
 ]);
 const ASSOCIATED_TOKEN_PROGRAM_ACTIONS = new Set([
   "claimBondStakingRewards",
@@ -424,6 +443,7 @@ function normalizeAssetName(value, field) {
     value === "solana:native" ||
     value === "sat:action" ||
     value === "sat:capital:lamports" ||
+    value === "agent-capital:action" ||
     value === "federation:bond-challenge"
   ) {
     return value;
@@ -443,7 +463,9 @@ function normalizePolicyOperation(value, role, field) {
   if (POLICY_OPERATIONS.has(value)) {
     return value;
   }
-  const match = /^(sat|satLookup|vaultBond)\.([A-Za-z][A-Za-z0-9]*)@(.+)$/u.exec(value);
+  const match = /^(sat|satLookup|vaultBond|agentCapital)\.([A-Za-z][A-Za-z0-9_]*)@(.+)$/u.exec(
+    value,
+  );
   if (!match) {
     if (value === "solana.satAction" || value === "solana.vaultBondAction") {
       throw new Error(`${field} must name an exact action bound to its SAT program`);
@@ -464,8 +486,17 @@ function normalizePolicyOperation(value, role, field) {
     ) {
       throw new Error(`${field} is not an allowed typed Mining lookup-table action`);
     }
-  } else if (role !== "vault" || !VAULT_BOND_ACTIONS.has(action)) {
-    throw new Error(`${field} is not an allowed program-bound Vault bond action`);
+  } else if (family === "vaultBond") {
+    if (role !== "vault" || !VAULT_BOND_ACTIONS.has(action)) {
+      throw new Error(`${field} is not an allowed program-bound Vault bond action`);
+    }
+  } else if (
+    !(
+      (role === "profile" && PROFILE_AGENT_CAPITAL_ACTIONS.has(action)) ||
+      (role === "vault" && VAULT_AGENT_CAPITAL_ACTIONS.has(action))
+    )
+  ) {
+    throw new Error(`${field} is not an allowed program-bound Agent Capital action for ${role}`);
   }
   return `${family}.${action}@${program}`;
 }
@@ -536,7 +567,7 @@ export function normalizeOwnerPolicy(value) {
   requireExactKeys(object, POLICY_KEYS, "policy");
   const walletId = requireCanonicalWalletID(object.walletId);
   if (typeof object.role !== "string" || !POLICY_ROLES.has(object.role)) {
-    throw new Error("policy role must be agent, mining, or vault");
+    throw new Error("policy role must be agent, mining, vault, or profile");
   }
   const operations = requireUniqueStrings(
     object.operations,
@@ -1430,6 +1461,8 @@ export const __testing = Object.freeze({
   SAT_MINING_ACTIONS,
   SAT_LOOKUP_TABLE_ACTIONS,
   VAULT_BOND_ACTIONS,
+  PROFILE_AGENT_CAPITAL_ACTIONS,
+  VAULT_AGENT_CAPITAL_ACTIONS,
   assertSafeExecutable,
   encodeBase58,
   normalizeLockedStoredPolicy,
