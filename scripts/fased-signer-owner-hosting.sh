@@ -18,6 +18,7 @@ RUNUSER_BIN="/usr/sbin/runuser"
 ENV_BIN="/usr/bin/env"
 STAT_BIN="/usr/bin/stat"
 FLOCK_BIN="/usr/bin/flock"
+SHA256SUM_BIN="/usr/bin/sha256sum"
 JQ_BIN="/usr/bin/jq"
 TAILSCALE_BIN="/usr/bin/tailscale"
 OWNER_LOCK="${FASED_SIGNER_OWNER_LOCK:-/run/lock/fased-signer-owner.lock}"
@@ -33,6 +34,7 @@ OUTPUT_GID="${FASED_SIGNER_OUTPUT_GID:-0}"
 usage() {
   cat >&2 <<'EOF'
 usage: fased-signer-owner wallet <command> [typed fased-signerd admin flags]
+       fased-signer-owner policy <get|put> [typed fased-signerd admin flags]
        fased-signer-owner webauthn-enroll [authenticator label]
 
 Allowed commands:
@@ -44,6 +46,10 @@ Allowed commands:
   rotation-status
   rotation-commit
 
+Policy commands:
+  get
+  put (requires --confirm-digest sha256:<exact-policy-file-digest>)
+
 The launcher supplies the signer control socket, runs one bounded native
 administrative command as the signer owner, and exits. It never grants the
 ordinary operator or Gateway persistent control-socket access.
@@ -51,6 +57,7 @@ EOF
 }
 
 ENROLLMENT=0
+ADMIN_DOMAIN=""
 LABEL=""
 if [[ "${1:-}" == "webauthn-enroll" ]]; then
   [[ $# -le 2 ]] || {
@@ -64,11 +71,27 @@ if [[ "${1:-}" == "webauthn-enroll" ]]; then
     exit 64
   }
   shift "$#"
+elif [[ "${1:-}" == "policy" ]]; then
+  [[ $# -ge 2 ]] || {
+    usage
+    exit 64
+  }
+  ADMIN_DOMAIN="policy"
+  command_name="$2"
+  shift 2
+  case "$command_name" in
+    get|put) ;;
+    *)
+      usage
+      exit 64
+      ;;
+  esac
 else
   [[ $# -ge 2 && "$1" == "wallet" ]] || {
     usage
     exit 64
   }
+  ADMIN_DOMAIN="wallet"
   command_name="$2"
   shift 2
   case "$command_name" in
@@ -89,7 +112,7 @@ for argument in "$@"; do
   esac
 done
 
-for executable in "$SIGNER_BIN" "$RUNUSER_BIN" "$ENV_BIN" "$STAT_BIN" "$FLOCK_BIN"; do
+for executable in "$SIGNER_BIN" "$RUNUSER_BIN" "$ENV_BIN" "$STAT_BIN" "$FLOCK_BIN" "$SHA256SUM_BIN"; do
   [[ -f "$executable" && -x "$executable" && ! -L "$executable" ]] || {
     echo "Required root-controlled executable is missing or unsafe: $executable" >&2
     exit 1
@@ -318,14 +341,27 @@ run_hosting_enrollment() {
 args=("$@")
 output_path=""
 input_path=""
+policy_path=""
+confirm_digest=""
+forward_args=()
 for ((index = 0; index < ${#args[@]}; index++)); do
   case "${args[$index]}" in
+    --confirm-digest)
+      ((index + 1 < ${#args[@]})) || {
+        echo "--confirm-digest requires a value." >&2
+        exit 64
+      }
+      confirm_digest="${args[$((index + 1))]}"
+      index=$((index + 1))
+      ;;
     --output)
       ((index + 1 < ${#args[@]})) || {
         echo "--output requires a path." >&2
         exit 64
       }
       output_path="${args[$((index + 1))]}"
+      forward_args+=("${args[$index]}" "${args[$((index + 1))]}")
+      index=$((index + 1))
       ;;
     --recovery-file)
       ((index + 1 < ${#args[@]})) || {
@@ -333,9 +369,38 @@ for ((index = 0; index < ${#args[@]}; index++)); do
         exit 64
       }
       input_path="${args[$((index + 1))]}"
+      forward_args+=("${args[$index]}" "${args[$((index + 1))]}")
+      index=$((index + 1))
+      ;;
+    --policy-file)
+      ((index + 1 < ${#args[@]})) || {
+        echo "--policy-file requires a path." >&2
+        exit 64
+      }
+      policy_path="${args[$((index + 1))]}"
+      forward_args+=("${args[$index]}" "${args[$((index + 1))]}")
+      index=$((index + 1))
+      ;;
+    *)
+      forward_args+=("${args[$index]}")
       ;;
   esac
 done
+args=("${forward_args[@]}")
+
+if [[ "$ADMIN_DOMAIN" == "policy" && "$command_name" == "put" ]]; then
+  [[ -n "$policy_path" ]] || {
+    echo "Policy put requires --policy-file." >&2
+    exit 64
+  }
+  [[ "$confirm_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Policy put requires an exact lowercase sha256:<hex> --confirm-digest." >&2
+    exit 64
+  }
+elif [[ -n "$policy_path" || -n "$confirm_digest" ]]; then
+  echo "Policy-file confirmation is accepted only for policy put." >&2
+  exit 64
+fi
 
 if [[ "$ENROLLMENT" == "1" ]]; then
   if [[ "${FASED_SIGNER_OWNER_LOCAL:-0}" == "1" ]]; then
@@ -379,6 +444,26 @@ if [[ -n "$input_path" ]]; then
   done
 fi
 
+if [[ -n "$policy_path" ]]; then
+  [[ "$policy_path" == /* && -f "$policy_path" && ! -L "$policy_path" ]] || {
+    echo "Policy input must be an absolute non-symlink regular file." >&2
+    exit 1
+  }
+  staged_policy="$work_dir/policy.json"
+  install -m 0600 -o "$SIGNER_USER" -g "$SIGNER_USER" "$policy_path" "$staged_policy"
+  read -r actual_policy_digest _ < <("$SHA256SUM_BIN" "$staged_policy")
+  actual_policy_digest="sha256:$actual_policy_digest"
+  [[ "$actual_policy_digest" == "$confirm_digest" ]] || {
+    echo "Policy input digest does not match --confirm-digest." >&2
+    exit 1
+  }
+  for ((index = 0; index < ${#args[@]}; index++)); do
+    if [[ "${args[$index]}" == "--policy-file" ]]; then
+      args[$((index + 1))]="$staged_policy"
+    fi
+  done
+fi
+
 staged_output=""
 if [[ -n "$output_path" ]]; then
   [[ "$output_path" == /* && ! -e "$output_path" && ! -L "$output_path" ]] || {
@@ -409,7 +494,7 @@ fi
   HOME="$SIGNER_HOME" \
   LANG="C.UTF-8" \
   PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-  "$SIGNER_BIN" admin wallet "$command_name" \
+  "$SIGNER_BIN" admin "$ADMIN_DOMAIN" "$command_name" \
   --control-socket "$CONTROL_SOCKET" \
   "${args[@]}"
 
