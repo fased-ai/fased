@@ -1,6 +1,6 @@
 ---
 name: fased-release-manager
-description: Use for every task involving Fased, including status, diagnosis, focused fixes, lifecycle work, persistent approved plans, protected delivery, and explicitly requested releases. Automatically route through Sol Advisor orchestration without requiring the owner to name it.
+description: Use for every task involving Fased, including status, diagnosis, fix, lifecycle, approved-plan, protected-delivery, and authorized-release work. Route through Sol Advisor automatically.
 ---
 
 # Fased Release Manager
@@ -10,8 +10,7 @@ scan parent directories, other worktrees, or archives unless requested.
 
 ## Start once
 
-1. Invoke `sol-advisor:orchestration`; it selects route, role, delegation, and
-   review. Default solo. Delegate only when it materially saves time.
+1. Invoke `sol-advisor:orchestration`. Default solo; delegate only when useful.
 2. Select the newest owner-chosen controlling plan and one mode. Print:
    `PLAN: <path or name> | MODE: <mode> | CHECKPOINT: <id> | STATUS: <status> | NEXT: <predicate>`
 3. Preserve unrelated dirty work. Resume the plan's first incomplete checkpoint;
@@ -48,18 +47,15 @@ Treat “fix and release” as one conditional authorization:
    advances the selected channel.
 6. Read back the public tag and release result.
 
-The ordinary bounded target is under ten minutes when GitHub infrastructure is
-responsive: about two minutes for focused PR CI and six minutes for the one
-cached, parallel tag-bound build and publication. Never merge the product fix
-and then open a standalone version PR when release authority was already present.
+When GitHub is responsive, target under ten minutes: about two for PR CI and six
+for one cached, parallel tag-bound build/publication. Do not merge a fix and then
+open a standalone version PR when release authority was already present.
 The protected owner-created annotated tag is the publication approval; the
 initial tag-bound workflow must not add a second environment-review pause.
 
-Continue through those steps without requesting the same authority again. Stop
-only for an actual failed predicate, changed identity, owner stop, or authority
-that was not included in the request. A request for a fix without release
-authority ends after the protected merge. If the same predicate fails twice,
-report it and reassess its owner instead of repeating the command.
+Do not re-request the same authority. Stop only for a failed predicate, changed
+identity, owner stop, or missing authority. A fix without release authority ends
+after protected merge. If the same predicate fails twice, report instead of retrying.
 
 ## Fix the literal predicate first
 
