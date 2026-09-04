@@ -4,7 +4,10 @@ import { PublicKey } from "@solana/web3.js";
 import { callLocalSocketSigner } from "../wallet/providers/local-socket-signer-adapter.js";
 import { fetchPinnedSolanaRpcRead } from "../wallet/solana-rpc-read-fetch.js";
 import type { WalletProviderJupiterReviewV2 } from "../wallet/wallet-provider-adapter.js";
-import { createSignerReviewApprovalRequest } from "../wallet/wallet-send-approvals.js";
+import {
+  createSignerReviewApprovalRequest,
+  type WalletSendApprovalRequest,
+} from "../wallet/wallet-send-approvals.js";
 import {
   FASED_AGENT_CAPITAL_CONTRACT,
   FASED_AGENT_CAPITAL_PROGRAM_ID,
@@ -36,6 +39,18 @@ export type AgentCapitalReadback = {
     accountKind?: string;
   }>;
 };
+
+export type ReviewedAgentCapitalActionResult =
+  | {
+      state: "pending";
+      requestId: string;
+      approval: WalletSendApprovalRequest;
+    }
+  | {
+      state: "confirmed";
+      operation: AgentCapitalOperation;
+      readback: AgentCapitalReadback;
+    };
 
 const instructionByAction = new Map(
   FASED_AGENT_CAPITAL_CONTRACT.instructions.map((instruction) => [instruction.action, instruction]),
@@ -238,7 +253,7 @@ async function readback(params: {
   }
 }
 
-export async function executeReviewedAgentCapitalAction(params: {
+export async function prepareOrReconcileReviewedAgentCapitalAction(params: {
   socketPath: string;
   rpcUrl: string;
   cluster: "local" | "devnet" | "mainnet-beta";
@@ -247,7 +262,7 @@ export async function executeReviewedAgentCapitalAction(params: {
   workflowId: string;
   instruction: AgentCapitalInstruction;
   env?: NodeJS.ProcessEnv;
-}): Promise<{ operation: AgentCapitalOperation; readback: AgentCapitalReadback }> {
+}): Promise<ReviewedAgentCapitalActionResult> {
   const instruction = validateAgentCapitalInstruction(params.instruction, params.walletPublicKey);
   await signerCapabilities(params.socketPath);
   const intent = {
@@ -311,7 +326,7 @@ export async function executeReviewedAgentCapitalAction(params: {
       memo: `Reviewed Agent Capital action: ${instruction.action}`,
       env: params.env,
     });
-    throw new Error(`Agent Capital review ${approval.id} is pending in Wallet Approvals`);
+    return { state: "pending", requestId, approval };
   }
   const operation = await reconcileOperation({
     socketPath: params.socketPath,
@@ -327,6 +342,7 @@ export async function executeReviewedAgentCapitalAction(params: {
     );
   }
   return {
+    state: "confirmed",
     operation,
     readback: await readback({
       rpcUrl: params.rpcUrl,
@@ -334,4 +350,21 @@ export async function executeReviewedAgentCapitalAction(params: {
       instruction,
     }),
   };
+}
+
+export async function executeReviewedAgentCapitalAction(params: {
+  socketPath: string;
+  rpcUrl: string;
+  cluster: "local" | "devnet" | "mainnet-beta";
+  walletId: string;
+  walletPublicKey: string;
+  workflowId: string;
+  instruction: AgentCapitalInstruction;
+  env?: NodeJS.ProcessEnv;
+}): Promise<{ operation: AgentCapitalOperation; readback: AgentCapitalReadback }> {
+  const result = await prepareOrReconcileReviewedAgentCapitalAction(params);
+  if (result.state === "pending") {
+    throw new Error(`Agent Capital review ${result.approval.id} is pending in Wallet Approvals`);
+  }
+  return { operation: result.operation, readback: result.readback };
 }
