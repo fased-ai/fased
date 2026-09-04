@@ -9,6 +9,30 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 )
 
+func TestControlUIReviewDevnetCapitalBoundary(t *testing.T) {
+	intent := signerIntentV2{Type: intentSolanaAgentCapitalAction, Cluster: "devnet", Action: "initialize_capital_offer", ProgramID: agentCapitalProgramIDV1}
+	if !allowsControlUIReviewIntentV2(intent, "profile") {
+		t.Fatal("exact Devnet Profile initialization must allow owner confirmation")
+	}
+	for _, mutate := range []func(*signerIntentV2){
+		func(i *signerIntentV2) { i.Cluster = "mainnet-beta" },
+		func(i *signerIntentV2) { i.Cluster = "" },
+		func(i *signerIntentV2) { i.Action = "deposit_capital_offer" },
+		func(i *signerIntentV2) { i.ProgramID = solana.NewWallet().PublicKey().String() },
+	} {
+		changed := intent
+		mutate(&changed)
+		if allowsControlUIReviewIntentV2(changed, "profile") {
+			t.Fatal("expanded capital authority accepted")
+		}
+	}
+	for _, role := range []string{"agent", "mining", "vault", "strategy", ""} {
+		if allowsControlUIReviewIntentV2(intent, role) {
+			t.Fatalf("wrong role %s accepted", role)
+		}
+	}
+}
+
 func agentCapitalDepositFixtureV2() (signerIntentV2, solana.PublicKey) {
 	wallet := solana.NewWallet().PublicKey()
 	contract := agentCapitalInstructionContractsV1["deposit_capital_offer"]

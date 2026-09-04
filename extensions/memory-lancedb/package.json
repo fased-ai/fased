@@ -1,6 +1,6 @@
 {
   "name": "@fased/memory-lancedb",
-  "version": "0.1.76-rc.151",
+  "version": "0.1.76-rc.152",
   "private": true,
   "description": "FasedAgent LanceDB-backed long-term memory plugin with auto-recall/capture",
   "type": "module",

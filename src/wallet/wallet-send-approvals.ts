@@ -65,6 +65,20 @@ export type WalletSendApprovalStatus =
   | "failed"
   | "expired";
 
+// This is only a request for exact owner confirmation. The signer independently
+// enforces the pinned program, verified Devnet genesis, policy and device state.
+export function isDevnetCapitalOwnerConfirmation(
+  review: Pick<WalletProviderJupiterReviewV2, "intentType" | "requiredRole" | "semanticIntent">,
+): boolean {
+  return (
+    review.intentType === "solana.agentCapitalAction" &&
+    review.requiredRole === "profile" &&
+    review.semanticIntent.type === "solana.agentCapitalAction" &&
+    review.semanticIntent.cluster === "devnet" &&
+    review.semanticIntent.action === "initialize_capital_offer"
+  );
+}
+
 export type WalletSendApprovalPayload = {
   chain: "solana";
   actionKind?: "send" | "solana_swap" | "signer_review";
@@ -2710,7 +2724,8 @@ export async function approveWalletSendRequest(params: {
         storedReview.state === "prepared" &&
         !params.reviewAuthorization &&
         (storedReview.intentType === "solana.nativeTransfer" ||
-          storedReview.intentType === "solana.splTransferChecked")
+          storedReview.intentType === "solana.splTransferChecked" ||
+          isDevnetCapitalOwnerConfirmation(storedReview))
           ? { type: "control-ui", proof: { proofId: storedReview.nonce } }
           : undefined;
       if (

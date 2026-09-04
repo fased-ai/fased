@@ -384,16 +384,16 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 				return signerReviewExecutionResultV2{}, err
 			}
 		case "control-ui":
-			if !isTypedTransferIntentV2(intent.Intent.Type) || (policy.Role != "agent" && policy.Role != "vault") {
-				return signerReviewExecutionResultV2{}, errors.New("Control UI confirmation is restricted to exact reviewed Agent or Vault transfers")
+			if !allowsControlUIReviewIntentV2(intent.Intent, policy.Role) {
+				return signerReviewExecutionResultV2{}, errors.New("Control UI confirmation is restricted to exact reviewed transfers or Devnet Profile Capital Offer initialization")
 			}
-			if policy.Role == "vault" && s.webauthn != nil {
+			if (policy.Role == "vault" || policy.Role == "profile") && s.webauthn != nil {
 				health, healthErr := s.webauthn.health()
 				if healthErr != nil {
 					return signerReviewExecutionResultV2{}, healthErr
 				}
 				if health.CredentialCount > 0 {
-					return signerReviewExecutionResultV2{}, errors.New("this Vault has a signer-owned approval device; WebAuthn authorization is required")
+					return signerReviewExecutionResultV2{}, errors.New("this wallet has a signer-owned approval device; WebAuthn authorization is required")
 				}
 			}
 			controlUIAuthorization = true

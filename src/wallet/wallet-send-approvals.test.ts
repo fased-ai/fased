@@ -19,6 +19,7 @@ import * as walletProviderResolver from "./wallet-provider-resolver.js";
 import { resolveWalletRuntimeConfig, resolveWalletStatePaths } from "./wallet-runtime-config.js";
 import {
   approveWalletSendRequest,
+  isDevnetCapitalOwnerConfirmation,
   createOrExecuteWalletSend,
   createSignerReviewApprovalRequest,
   createWalletSendApprovalRequest,
@@ -48,6 +49,35 @@ vi.mock("./wallet-approval-auth.js", () => ({
 }));
 
 let tempDir = "";
+
+it("limits no-passkey Capital confirmation to Devnet Profile initialization", () => {
+  const review = {
+    intentType: "solana.agentCapitalAction" as const,
+    requiredRole: "profile" as const,
+    semanticIntent: {
+      type: "solana.agentCapitalAction" as const,
+      cluster: "devnet" as const,
+      action: "initialize_capital_offer" as const,
+      programId: "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz", // pragma: allowlist secret -- public program ID
+      dataBase64: "AA==",
+      keys: [],
+    },
+  };
+  expect(isDevnetCapitalOwnerConfirmation(review)).toBe(true);
+  expect(isDevnetCapitalOwnerConfirmation({ ...review, requiredRole: "vault" })).toBe(false);
+  expect(
+    isDevnetCapitalOwnerConfirmation({
+      ...review,
+      semanticIntent: { ...review.semanticIntent, cluster: "mainnet-beta" },
+    }),
+  ).toBe(false);
+  expect(
+    isDevnetCapitalOwnerConfirmation({
+      ...review,
+      semanticIntent: { ...review.semanticIntent, action: "deposit_capital_offer" },
+    }),
+  ).toBe(false);
+});
 
 function testConfig(cfg: unknown): FasedAgentConfig {
   return cfg as FasedAgentConfig;
@@ -780,7 +810,7 @@ describe("wallet-send-approvals", () => {
         assetSymbol: "USDC",
         assetName: "USD Coin",
         assetDecimals: 6,
-        program: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        program: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // pragma: allowlist secret -- public USDC mint
       },
       requestedBy: "owner",
       settlementContext: {
@@ -792,7 +822,7 @@ describe("wallet-send-approvals", () => {
 
     const links = listWalletSettlementLinks({ taskId: "task-spl", limit: 10 });
     expect(links[0]?.requestId).toBe(request.id);
-    expect(links[0]?.program).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    expect(links[0]?.program).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"); // pragma: allowlist secret -- public USDC mint
     expect(links[0]?.contract).toBeUndefined();
     const entries = readWalletAuditEntries({ limit: 10 });
     const requestAudit = entries.find((entry) => entry.details?.requestId === request.id);
@@ -801,7 +831,7 @@ describe("wallet-send-approvals", () => {
       assetSymbol: "USDC",
       assetName: "USD Coin",
       assetDecimals: 6,
-      program: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      program: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // pragma: allowlist secret -- public USDC mint
     });
   });
 
