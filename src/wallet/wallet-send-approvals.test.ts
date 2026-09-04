@@ -19,6 +19,7 @@ import * as walletProviderResolver from "./wallet-provider-resolver.js";
 import { resolveWalletRuntimeConfig, resolveWalletStatePaths } from "./wallet-runtime-config.js";
 import {
   approveWalletSendRequest,
+  isDevnetCapitalOwnerConfirmation,
   createOrExecuteWalletSend,
   createSignerReviewApprovalRequest,
   createWalletSendApprovalRequest,
@@ -48,6 +49,35 @@ vi.mock("./wallet-approval-auth.js", () => ({
 }));
 
 let tempDir = "";
+
+it("limits no-passkey Capital confirmation to Devnet Profile initialization", () => {
+  const review = {
+    intentType: "solana.agentCapitalAction" as const,
+    requiredRole: "profile" as const,
+    semanticIntent: {
+      type: "solana.agentCapitalAction" as const,
+      cluster: "devnet" as const,
+      action: "initialize_capital_offer" as const,
+      programId: "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz",
+      dataBase64: "AA==",
+      keys: [],
+    },
+  };
+  expect(isDevnetCapitalOwnerConfirmation(review)).toBe(true);
+  expect(isDevnetCapitalOwnerConfirmation({ ...review, requiredRole: "vault" })).toBe(false);
+  expect(
+    isDevnetCapitalOwnerConfirmation({
+      ...review,
+      semanticIntent: { ...review.semanticIntent, cluster: "mainnet-beta" },
+    }),
+  ).toBe(false);
+  expect(
+    isDevnetCapitalOwnerConfirmation({
+      ...review,
+      semanticIntent: { ...review.semanticIntent, action: "deposit_capital_offer" },
+    }),
+  ).toBe(false);
+});
 
 function testConfig(cfg: unknown): FasedAgentConfig {
   return cfg as FasedAgentConfig;

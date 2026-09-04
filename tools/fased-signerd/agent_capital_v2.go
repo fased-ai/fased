@@ -125,6 +125,17 @@ func agentCapitalSnapshotAddressesV2(intent normalizedIntentV2, wallet solana.Pu
 	return addresses, nil
 }
 
+// The Devnet exception still enters exact policy, verified-genesis, account-state,
+// simulation, nonce and replay checks. It does not authorize arbitrary Profile use.
+func allowsControlUIReviewIntentV2(intent signerIntentV2, role string) bool {
+	if isTypedTransferIntentV2(intent.Type) && (role == "agent" || role == "vault") {
+		return true
+	}
+	return role == "profile" && intent.Type == intentSolanaAgentCapitalAction &&
+		intent.Cluster == "devnet" && intent.Action == "initialize_capital_offer" &&
+		intent.ProgramID == agentCapitalProgramIDV1
+}
+
 func resolveAgentCapitalReviewStateV2(rpcURLs []string, wallet solana.PublicKey, intent normalizedIntentV2) (normalizedIntentV2, signerOwnedAccountSnapshotV2, []string, error) {
 	verified, err := solanaRPCURLsForClusterV2(rpcURLs, intent.Intent.Cluster)
 	if err != nil {
