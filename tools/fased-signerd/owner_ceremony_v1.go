@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,8 @@ import (
 
 const ownerCeremonyIntentTypeV1 = "solana.owner-ceremony.v1"
 
+const ownerCeremonyAtomicAgentMiningVaultBindingV1 = "atomic_agent_mining_vault_binding"
+
 type ownerCeremonyAccountV1 struct {
 	Name           string `json:"name"`
 	Pubkey         string `json:"pubkey"`
@@ -28,8 +31,16 @@ type ownerCeremonyAccountV1 struct {
 }
 
 type ownerCeremonyRequestV1 struct {
-	RequestID  string                   `json:"requestId"`
-	Cluster    string                   `json:"cluster"`
+	RequestID    string                       `json:"requestId"`
+	Cluster      string                       `json:"cluster"`
+	Action       string                       `json:"action"`
+	ProgramID    string                       `json:"programId"`
+	DataBase64   string                       `json:"dataBase64"`
+	Accounts     []ownerCeremonyAccountV1     `json:"accounts"`
+	Instructions []ownerCeremonyInstructionV1 `json:"instructions,omitempty"`
+}
+
+type ownerCeremonyInstructionV1 struct {
 	Action     string                   `json:"action"`
 	ProgramID  string                   `json:"programId"`
 	DataBase64 string                   `json:"dataBase64"`
@@ -40,6 +51,7 @@ type ownerCeremonyResultV1 struct {
 	RequestID           string   `json:"requestId"`
 	Action              string   `json:"action"`
 	ProgramID           string   `json:"programId"`
+	ProgramIDs          []string `json:"programIds,omitempty"`
 	FeePayer            string   `json:"feePayer"`
 	RequiredSigners     []string `json:"requiredSigners"`
 	WritableAccounts    []string `json:"writableAccounts"`
@@ -105,6 +117,8 @@ type normalizedOwnerCeremonyV1 struct {
 	Digest        string
 	Program       solana.PublicKey
 	Instruction   solana.Instruction
+	Instructions  []solana.Instruction
+	Programs      []solana.PublicKey
 	FeePayer      solana.PublicKey
 	FeePayerID    string
 	SignerWallets []string
@@ -114,6 +128,12 @@ type normalizedOwnerCeremonyV1 struct {
 }
 
 func (s *signerServiceV2) normalizeOwnerCeremonyV1(input ownerCeremonyRequestV1) (normalizedOwnerCeremonyV1, error) {
+	if strings.TrimSpace(input.Action) == ownerCeremonyAtomicAgentMiningVaultBindingV1 {
+		return s.normalizeAtomicAgentMiningVaultBindingV1(input)
+	}
+	if len(input.Instructions) != 0 {
+		return normalizedOwnerCeremonyV1{}, errors.New("single owner ceremony cannot include nested instructions")
+	}
 	requestID, err := validateRequestIDV2(input.RequestID)
 	if err != nil {
 		return normalizedOwnerCeremonyV1{}, err
@@ -227,13 +247,184 @@ func (s *signerServiceV2) normalizeOwnerCeremonyV1(input ownerCeremonyRequestV1)
 	}
 	return normalizedOwnerCeremonyV1{
 		Request: canonical, Digest: "sha256:" + hex.EncodeToString(digest[:]), Program: program,
-		Instruction: solana.NewInstruction(program, accounts, data), FeePayer: feePayer, FeePayerID: feePayerID,
+		Instruction:  solana.NewInstruction(program, accounts, data),
+		Instructions: []solana.Instruction{solana.NewInstruction(program, accounts, data)}, Programs: []solana.PublicKey{program},
+		FeePayer: feePayer, FeePayerID: feePayerID,
 		SignerWallets: signerWallets, SignerKeys: signerKeys, RPCURLs: rpcURLs, Writable: writable,
 	}, nil
 }
 
+func ownerCeremonyInstructionRequestV1(requestID, cluster string, input ownerCeremonyInstructionV1) ownerCeremonyRequestV1 {
+	return ownerCeremonyRequestV1{
+		RequestID: requestID, Cluster: cluster, Action: input.Action, ProgramID: input.ProgramID,
+		DataBase64: input.DataBase64, Accounts: input.Accounts,
+	}
+}
+
+func canonicalOwnerCeremonyInstructionV1(input ownerCeremonyRequestV1) ownerCeremonyInstructionV1 {
+	return ownerCeremonyInstructionV1{
+		Action: input.Action, ProgramID: input.ProgramID, DataBase64: input.DataBase64, Accounts: input.Accounts,
+	}
+}
+
+func appendUniqueStringsV1(target []string, values ...string) []string {
+	seen := make(map[string]struct{}, len(target)+len(values))
+	for _, value := range target {
+		seen[value] = struct{}{}
+	}
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		target = append(target, value)
+	}
+	return target
+}
+
+func (s *signerServiceV2) normalizeAtomicAgentMiningVaultBindingV1(input ownerCeremonyRequestV1) (normalizedOwnerCeremonyV1, error) {
+	requestID, err := validateRequestIDV2(input.RequestID)
+	if err != nil {
+		return normalizedOwnerCeremonyV1{}, err
+	}
+	cluster, err := normalizeSolanaClusterV2(input.Cluster)
+	if err != nil || cluster != "devnet" {
+		return normalizedOwnerCeremonyV1{}, errors.New("owner ceremony v1 is restricted to Devnet")
+	}
+	if strings.TrimSpace(input.ProgramID) != "" || strings.TrimSpace(input.DataBase64) != "" || len(input.Accounts) != 0 || len(input.Instructions) != 3 {
+		return normalizedOwnerCeremonyV1{}, errors.New("atomic Agent mining/Vault binding requires exactly three nested instructions and no top-level instruction")
+	}
+	expectedActions := []string{"sat_migrate_agent_record_v2", "bind_agent_mining", "bind_satcoin_vault"}
+	for index, action := range expectedActions {
+		if strings.TrimSpace(input.Instructions[index].Action) != action {
+			return normalizedOwnerCeremonyV1{}, errors.New("atomic Agent mining/Vault binding instruction order changed")
+		}
+	}
+
+	miningBinding, err := s.normalizeOwnerCeremonyV1(ownerCeremonyInstructionRequestV1(requestID+"-agent", cluster, input.Instructions[1]))
+	if err != nil {
+		return normalizedOwnerCeremonyV1{}, fmt.Errorf("atomic Agent mining binding is invalid: %w", err)
+	}
+	vaultBinding, err := s.normalizeOwnerCeremonyV1(ownerCeremonyInstructionRequestV1(requestID+"-vault", cluster, input.Instructions[2]))
+	if err != nil {
+		return normalizedOwnerCeremonyV1{}, fmt.Errorf("atomic Satcoin Vault binding is invalid: %w", err)
+	}
+	if len(miningBinding.SignerKeys) != 2 || len(vaultBinding.SignerKeys) != 2 ||
+		!miningBinding.FeePayer.Equals(vaultBinding.FeePayer) ||
+		!miningBinding.SignerKeys[0].Equals(vaultBinding.SignerKeys[0]) ||
+		!miningBinding.SignerKeys[1].Equals(vaultBinding.SignerKeys[1]) ||
+		!equalSortedStringsV2(miningBinding.RPCURLs, vaultBinding.RPCURLs) {
+		return normalizedOwnerCeremonyV1{}, errors.New("atomic Agent mining/Vault binding authorities or RPC profiles changed")
+	}
+	profile := miningBinding.SignerKeys[0]
+	mining := miningBinding.SignerKeys[1]
+	if profile.Equals(mining) {
+		return normalizedOwnerCeremonyV1{}, errors.New("Profile controller and Mining controller must be distinct")
+	}
+
+	migration := input.Instructions[0]
+	satcoinProgram := solana.MustPublicKeyFromBase58("H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF")
+	program, err := solana.PublicKeyFromBase58(strings.TrimSpace(migration.ProgramID))
+	if err != nil || !program.Equals(satcoinProgram) {
+		return normalizedOwnerCeremonyV1{}, errors.New("atomic Satcoin migration program changed")
+	}
+	data, err := base64.StdEncoding.Strict().DecodeString(strings.TrimSpace(migration.DataBase64))
+	if err != nil || len(data) != 9 || data[0] != 132 || binary.LittleEndian.Uint64(data[1:]) != 1 || base64.StdEncoding.EncodeToString(data) != migration.DataBase64 {
+		return normalizedOwnerCeremonyV1{}, errors.New("atomic Satcoin migration data changed")
+	}
+	expectedMigrationAccounts := []struct {
+		name       string
+		key        solana.PublicKey
+		isSigner   bool
+		isWritable bool
+	}{
+		{"controller", mining, true, false},
+		{"permanent_mining_id", mining, false, false},
+		{"sat_agent_record", solana.PublicKey{}, false, true},
+		{"sat_miner_capital_state", solana.PublicKey{}, false, false},
+		{"sat_protocol_generation_state", solana.PublicKey{}, false, false},
+	}
+	record, _, err := solana.FindProgramAddress([][]byte{[]byte("sat_agent_record"), mining[:]}, program)
+	if err != nil {
+		return normalizedOwnerCeremonyV1{}, err
+	}
+	capital, _, err := solana.FindProgramAddress([][]byte{[]byte("sat_miner_capital_state"), mining[:]}, program)
+	if err != nil {
+		return normalizedOwnerCeremonyV1{}, err
+	}
+	generation, _, err := solana.FindProgramAddress([][]byte{[]byte("sat_protocol_generation_state_v2")}, program)
+	if err != nil {
+		return normalizedOwnerCeremonyV1{}, err
+	}
+	expectedMigrationAccounts[2].key = record
+	expectedMigrationAccounts[3].key = capital
+	expectedMigrationAccounts[4].key = generation
+	if len(migration.Accounts) != len(expectedMigrationAccounts) {
+		return normalizedOwnerCeremonyV1{}, errors.New("atomic Satcoin migration account count changed")
+	}
+	migrationMetas := make(solana.AccountMetaSlice, 0, len(migration.Accounts))
+	for index, expected := range expectedMigrationAccounts {
+		raw := migration.Accounts[index]
+		key, keyErr := solana.PublicKeyFromBase58(strings.TrimSpace(raw.Pubkey))
+		if keyErr != nil || raw.Name != expected.name || raw.IsSigner != expected.isSigner || raw.IsWritable != expected.isWritable || !key.Equals(expected.key) {
+			return normalizedOwnerCeremonyV1{}, fmt.Errorf("atomic Satcoin migration account %s changed", expected.name)
+		}
+		if expected.isSigner {
+			if normalizeWalletID(raw.SignerWalletID) != miningBinding.SignerWallets[1] {
+				return normalizedOwnerCeremonyV1{}, errors.New("atomic Satcoin migration signer wallet changed")
+			}
+		} else if strings.TrimSpace(raw.SignerWalletID) != "" {
+			return normalizedOwnerCeremonyV1{}, errors.New("atomic Satcoin migration non-signer names a signer wallet")
+		}
+		migrationMetas = append(migrationMetas, &solana.AccountMeta{PublicKey: key, IsSigner: raw.IsSigner, IsWritable: raw.IsWritable})
+	}
+
+	miningAccounts := input.Instructions[1].Accounts
+	vaultAccounts := input.Instructions[2].Accounts
+	if len(miningAccounts) != 7 || len(vaultAccounts) != 15 ||
+		miningAccounts[0].Pubkey != profile.String() || vaultAccounts[0].Pubkey != profile.String() ||
+		miningAccounts[1].Pubkey != mining.String() || vaultAccounts[1].Pubkey != mining.String() || vaultAccounts[2].Pubkey != mining.String() ||
+		miningAccounts[2].Pubkey != vaultAccounts[3].Pubkey ||
+		miningAccounts[3].Pubkey != record.String() || vaultAccounts[6].Pubkey != record.String() ||
+		miningAccounts[4].Pubkey != vaultAccounts[4].Pubkey ||
+		vaultAccounts[5].Pubkey != mining.String() || vaultAccounts[7].Pubkey != capital.String() ||
+		vaultAccounts[13].Pubkey != program.String() {
+		return normalizedOwnerCeremonyV1{}, errors.New("atomic Agent mining/Vault binding cross-instruction identity changed")
+	}
+
+	canonical := input
+	canonical.RequestID, canonical.Cluster, canonical.Action = requestID, cluster, ownerCeremonyAtomicAgentMiningVaultBindingV1
+	canonical.Instructions = []ownerCeremonyInstructionV1{
+		{Action: expectedActions[0], ProgramID: program.String(), DataBase64: base64.StdEncoding.EncodeToString(data), Accounts: migration.Accounts},
+		canonicalOwnerCeremonyInstructionV1(miningBinding.Request),
+		canonicalOwnerCeremonyInstructionV1(vaultBinding.Request),
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return normalizedOwnerCeremonyV1{}, err
+	}
+	digest := sha256.Sum256(encoded)
+	writable := appendUniqueStringsV1(nil, record.String())
+	writable = appendUniqueStringsV1(writable, miningBinding.Writable...)
+	writable = appendUniqueStringsV1(writable, vaultBinding.Writable...)
+	migrationInstruction := solana.NewInstruction(program, migrationMetas, data)
+	return normalizedOwnerCeremonyV1{
+		Request: canonical, Digest: "sha256:" + hex.EncodeToString(digest[:]), Program: program,
+		Instruction:  migrationInstruction,
+		Instructions: []solana.Instruction{migrationInstruction, miningBinding.Instruction, vaultBinding.Instruction},
+		Programs:     []solana.PublicKey{program, miningBinding.Program, vaultBinding.Program},
+		FeePayer:     miningBinding.FeePayer, FeePayerID: miningBinding.FeePayerID,
+		SignerWallets: append([]string(nil), miningBinding.SignerWallets...),
+		SignerKeys:    append([]solana.PublicKey(nil), miningBinding.SignerKeys...),
+		RPCURLs:       append([]string(nil), miningBinding.RPCURLs...), Writable: writable,
+	}, nil
+}
+
 func buildOwnerCeremonyTransactionV1(normalized normalizedOwnerCeremonyV1, blockhash solana.Hash) (*solana.Transaction, error) {
-	tx, err := solana.NewTransaction([]solana.Instruction{normalized.Instruction}, blockhash, solana.TransactionPayer(normalized.FeePayer))
+	if len(normalized.Instructions) == 0 {
+		return nil, errors.New("owner ceremony has no exact instruction set")
+	}
+	tx, err := solana.NewTransaction(normalized.Instructions, blockhash, solana.TransactionPayer(normalized.FeePayer))
 	if err != nil {
 		return nil, err
 	}
@@ -274,6 +465,9 @@ func ownerCeremonyResultFromV1(normalized normalizedOwnerCeremonyV1, operation s
 		WritableAccounts: append([]string(nil), normalized.Writable...), IntentDigest: normalized.Digest,
 		SignedTxSHA256: operation.TransactionDigest, Signature: operation.Signature, State: operation.State,
 		SimulationSigVerify: sigVerify,
+	}
+	for _, program := range normalized.Programs {
+		result.ProgramIDs = append(result.ProgramIDs, program.String())
 	}
 	for _, key := range normalized.SignerKeys {
 		result.RequiredSigners = append(result.RequiredSigners, key.String())

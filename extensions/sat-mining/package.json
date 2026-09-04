@@ -1,6 +1,6 @@
 {
   "name": "@fased/sat-mining",
-  "version": "0.1.76-rc.147",
+  "version": "0.1.76-rc.148",
   "private": true,
   "description": "SAT mining plugin scaffold for FasedAgent",
   "type": "module",

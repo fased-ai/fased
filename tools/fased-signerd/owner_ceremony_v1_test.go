@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -29,6 +30,53 @@ func createOwnerCeremonyWalletV1(t *testing.T, keys *signerKeyManagerV2, walletI
 		t.Fatal(err)
 	}
 	return wallet
+}
+
+func ownerCeremonyAtomicBindingFixtureV1(t *testing.T, profile, mining signerWalletRecordV2) ownerCeremonyRequestV1 {
+	t.Helper()
+	program := solana.MustPublicKeyFromBase58("H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF")
+	miningKey := solana.MustPublicKeyFromBase58(mining.PublicKey)
+	record, _, err := solana.FindProgramAddress([][]byte{[]byte("sat_agent_record"), miningKey[:]}, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capital, _, err := solana.FindProgramAddress([][]byte{[]byte("sat_miner_capital_state"), miningKey[:]}, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, _, err := solana.FindProgramAddress([][]byte{[]byte("sat_protocol_generation_state_v2")}, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := make([]byte, 9)
+	data[0] = 132
+	binary.LittleEndian.PutUint64(data[1:], 1)
+	miningBinding := ownerCeremonyBindingFixtureV1("bind_agent_mining", profile, mining)
+	vaultBinding := ownerCeremonyBindingFixtureV1("bind_satcoin_vault", profile, mining)
+	miningBinding.Accounts[3].Pubkey = record.String()
+	vaultBinding.Accounts[3].Pubkey = miningBinding.Accounts[2].Pubkey
+	vaultBinding.Accounts[4].Pubkey = miningBinding.Accounts[4].Pubkey
+	vaultBinding.Accounts[5].Pubkey = mining.PublicKey
+	vaultBinding.Accounts[6].Pubkey = record.String()
+	vaultBinding.Accounts[7].Pubkey = capital.String()
+	vaultBinding.Accounts[13].Pubkey = program.String()
+	return ownerCeremonyRequestV1{
+		RequestID: "owner-ceremony-atomic-binding-0001", Cluster: "devnet", Action: ownerCeremonyAtomicAgentMiningVaultBindingV1,
+		Instructions: []ownerCeremonyInstructionV1{
+			{
+				Action: "sat_migrate_agent_record_v2", ProgramID: program.String(), DataBase64: base64.StdEncoding.EncodeToString(data),
+				Accounts: []ownerCeremonyAccountV1{
+					{Name: "controller", Pubkey: mining.PublicKey, IsSigner: true, SignerWalletID: mining.WalletID},
+					{Name: "permanent_mining_id", Pubkey: mining.PublicKey},
+					{Name: "sat_agent_record", Pubkey: record.String(), IsWritable: true},
+					{Name: "sat_miner_capital_state", Pubkey: capital.String()},
+					{Name: "sat_protocol_generation_state", Pubkey: generation.String()},
+				},
+			},
+			canonicalOwnerCeremonyInstructionV1(miningBinding),
+			canonicalOwnerCeremonyInstructionV1(vaultBinding),
+		},
+	}
 }
 
 func ownerCeremonyCreateFixtureV1(t *testing.T, profile, recovery signerWalletRecordV2) ownerCeremonyRequestV1 {
@@ -332,5 +380,73 @@ func TestOwnerCeremonyRequiresControlExactContractRolesSimulationAndReplayFence(
 	duplicate, err := service.executeOwnerCeremonyV1(fixture)
 	if err != nil || duplicate.State != operationConfirmed || signedSimulations.Load() != 1 || sends.Load() != 1 {
 		t.Fatalf("owner ceremony replay fence changed: result=%#v err=%v", duplicate, err)
+	}
+}
+
+func TestOwnerCeremonyAtomicAgentMiningVaultBindingIsExact(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
+		var body struct {
+			ID any `json:"id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": body.ID, "result": solanaDevnetGenesisHashV2,
+		})
+	}))
+	defer server.Close()
+	store, keys := openTestSignerV2(t)
+	keys.genesisHash = func(string) (string, error) { return solanaDevnetGenesisHashV2, nil }
+	profile := createOwnerCeremonyWalletV1(t, keys, "atomic-profile", "profile", server.URL)
+	mining := createOwnerCeremonyWalletV1(t, keys, "atomic-mining", "mining", server.URL)
+	service := &signerServiceV2{store: store, keys: keys}
+	fixture := ownerCeremonyAtomicBindingFixtureV1(t, profile, mining)
+	normalized, err := service.normalizeOwnerCeremonyV1(fixture)
+	if err != nil {
+		t.Fatalf("exact atomic Agent mining/Vault binding was rejected: %v", err)
+	}
+	var blockhash solana.Hash
+	blockhash[0] = 7
+	tx, err := buildOwnerCeremonyTransactionV1(normalized, blockhash)
+	if err != nil || len(tx.Message.Instructions) != 3 || len(tx.Signatures) != 2 || !normalized.FeePayer.Equals(solana.MustPublicKeyFromBase58(profile.PublicKey)) {
+		t.Fatalf("atomic binding transaction layout changed: instructions=%d signatures=%d payer=%s err=%v", len(tx.Message.Instructions), len(tx.Signatures), normalized.FeePayer, err)
+	}
+
+	reordered := fixture
+	reordered.RequestID = "owner-ceremony-atomic-reordered"
+	reordered.Instructions = append([]ownerCeremonyInstructionV1(nil), fixture.Instructions...)
+	reordered.Instructions[0], reordered.Instructions[1] = reordered.Instructions[1], reordered.Instructions[0]
+	if _, err := service.normalizeOwnerCeremonyV1(reordered); err == nil || !strings.Contains(err.Error(), "order changed") {
+		t.Fatalf("atomic binding accepted reordered instructions: %v", err)
+	}
+
+	changedGeneration := fixture
+	changedGeneration.RequestID = "owner-ceremony-atomic-generation"
+	changedGeneration.Instructions = append([]ownerCeremonyInstructionV1(nil), fixture.Instructions...)
+	changedData := make([]byte, 9)
+	changedData[0] = 132
+	binary.LittleEndian.PutUint64(changedData[1:], 2)
+	changedGeneration.Instructions[0].DataBase64 = base64.StdEncoding.EncodeToString(changedData)
+	if _, err := service.normalizeOwnerCeremonyV1(changedGeneration); err == nil || !strings.Contains(err.Error(), "migration data changed") {
+		t.Fatalf("atomic binding accepted a changed migration generation: %v", err)
+	}
+
+	changedIdentity := fixture
+	changedIdentity.RequestID = "owner-ceremony-atomic-identity"
+	changedIdentity.Instructions = append([]ownerCeremonyInstructionV1(nil), fixture.Instructions...)
+	changedIdentity.Instructions[2].Accounts = append([]ownerCeremonyAccountV1(nil), fixture.Instructions[2].Accounts...)
+	changedIdentity.Instructions[2].Accounts[4].Pubkey = solana.NewWallet().PublicKey().String()
+	if _, err := service.normalizeOwnerCeremonyV1(changedIdentity); err == nil || !strings.Contains(err.Error(), "cross-instruction identity changed") {
+		t.Fatalf("atomic binding accepted mismatched AgentMiningBinding accounts: %v", err)
+	}
+
+	extra := fixture
+	extra.RequestID = "owner-ceremony-atomic-extra"
+	extra.Instructions = append(append([]ownerCeremonyInstructionV1(nil), fixture.Instructions...), fixture.Instructions[2])
+	if _, err := service.normalizeOwnerCeremonyV1(extra); err == nil || !strings.Contains(err.Error(), "exactly three") {
+		t.Fatalf("atomic binding accepted an extra instruction: %v", err)
 	}
 }
