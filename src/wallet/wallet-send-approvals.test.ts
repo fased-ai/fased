@@ -822,7 +822,7 @@ describe("wallet-send-approvals", () => {
 
     const links = listWalletSettlementLinks({ taskId: "task-spl", limit: 10 });
     expect(links[0]?.requestId).toBe(request.id);
-    expect(links[0]?.program).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    expect(links[0]?.program).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"); // pragma: allowlist secret -- public USDC mint
     expect(links[0]?.contract).toBeUndefined();
     const entries = readWalletAuditEntries({ limit: 10 });
     const requestAudit = entries.find((entry) => entry.details?.requestId === request.id);
@@ -831,7 +831,7 @@ describe("wallet-send-approvals", () => {
       assetSymbol: "USDC",
       assetName: "USD Coin",
       assetDecimals: 6,
-      program: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      program: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // pragma: allowlist secret -- public USDC mint
     });
   });
 
