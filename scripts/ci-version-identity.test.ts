@@ -29,8 +29,8 @@ describe("release version inventory", () => {
     expect(validateCurrentVersionInventory(fixture())).toBe("1.2.3");
   });
 
-  it("accepts the synchronized rc.147 beta-candidate identity", () => {
-    expect(validateCurrentVersionInventory(fixture("0.1.76-rc.147"))).toBe("0.1.76-rc.147");
+  it("accepts the synchronized rc.148 beta-candidate identity", () => {
+    expect(validateCurrentVersionInventory(fixture("0.1.76-rc.148"))).toBe("0.1.76-rc.148");
   });
 
   it("rejects mismatched extension identity", () => {
