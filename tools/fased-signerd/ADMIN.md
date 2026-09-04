@@ -32,6 +32,23 @@ allowlisted native command as the signer owner, safely hands off an explicitly
 requested output file, and exits. It does not add the human operator to the
 signer group or grant persistent control-socket access.
 
+Protected Local and Hosting owners also use the same bounded helper to inspect
+or replace one reviewed signer policy without exposing the signer control
+socket:
+
+```bash
+sudo ~/.fased/bin/fased-signer-owner policy get --wallet-id <wallet-id>
+sudo ~/.fased/bin/fased-signer-owner policy put \
+  --wallet-id <wallet-id> \
+  --expected-version <current-version> \
+  --policy-file /absolute/path/to/reviewed-policy.json \
+  --confirm-digest sha256:<exact-policy-file-digest>
+```
+
+The helper verifies the owner-supplied digest, copies the policy into a private
+signer-owned ceremony directory, and removes that staged copy on exit. The
+native signer still enforces the expected policy version.
+
 The Gateway user must not own, read, or connect to the operator/control sockets.
 Do not add an HTTP, Gateway, Node.js, MCP, or generic socket relay.
 

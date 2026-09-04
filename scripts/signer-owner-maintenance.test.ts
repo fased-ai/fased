@@ -29,6 +29,11 @@ describe("Hosting signer-owner maintenance launcher", () => {
     expect(launcher).toContain("--control-socket");
     expect(launcher).toContain("recovery-export|recovery-import|export-raw");
     expect(launcher).toContain("rotate-successor|rotation-status|rotation-commit");
+    expect(launcher).toContain("get|put");
+    expect(launcher).toContain("put (requires --confirm-digest sha256:<exact-policy-file-digest>)");
+    expect(launcher).toContain('actual_policy_digest="sha256:$actual_policy_digest"');
+    expect(launcher).toContain('staged_policy="$work_dir/policy.json"');
+    expect(launcher).toContain('"$SIGNER_BIN" admin "$ADMIN_DOMAIN" "$command_name"');
     expect(launcher).toContain('[[ ! -e "$UPDATE_GATE" && ! -e "$UPDATE_JOURNAL" ]]');
     expect(launcher).toContain(
       "--control-socket|--control-socket=*|--operator-socket|--operator-socket=*",
