@@ -131,9 +131,17 @@ func allowsControlUIReviewIntentV2(intent signerIntentV2, role string) bool {
 	if isTypedTransferIntentV2(intent.Type) && (role == "agent" || role == "vault") {
 		return true
 	}
-	return role == "profile" && intent.Type == intentSolanaAgentCapitalAction &&
-		intent.Cluster == "devnet" && intent.Action == "initialize_capital_offer" &&
-		intent.ProgramID == agentCapitalProgramIDV1
+	if intent.Type != intentSolanaAgentCapitalAction || intent.Cluster != "devnet" || intent.ProgramID != agentCapitalProgramIDV1 {
+		return false
+	}
+	switch intent.Action {
+	case "initialize_capital_offer", "cancel_capital_offer", "succeed_empty_capital_offer":
+		return role == "profile"
+	case "deposit_capital_offer_generation":
+		return role == "vault"
+	default:
+		return false
+	}
 }
 
 func resolveAgentCapitalReviewStateV2(rpcURLs []string, wallet solana.PublicKey, intent normalizedIntentV2) (normalizedIntentV2, signerOwnedAccountSnapshotV2, []string, error) {

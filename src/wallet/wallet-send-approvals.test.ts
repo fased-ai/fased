@@ -50,7 +50,7 @@ vi.mock("./wallet-approval-auth.js", () => ({
 
 let tempDir = "";
 
-it("limits no-passkey Capital confirmation to Devnet Profile initialization", () => {
+it("limits no-passkey Capital confirmation to exact Devnet preparation roles", () => {
   const review = {
     intentType: "solana.agentCapitalAction" as const,
     requiredRole: "profile" as const,
@@ -64,6 +64,43 @@ it("limits no-passkey Capital confirmation to Devnet Profile initialization", ()
     },
   };
   expect(isDevnetCapitalOwnerConfirmation(review)).toBe(true);
+  for (const action of ["cancel_capital_offer", "succeed_empty_capital_offer"] as const) {
+    expect(
+      isDevnetCapitalOwnerConfirmation({
+        ...review,
+        semanticIntent: { ...review.semanticIntent, action },
+      }),
+    ).toBe(true);
+    expect(
+      isDevnetCapitalOwnerConfirmation({
+        ...review,
+        requiredRole: "vault",
+        semanticIntent: { ...review.semanticIntent, action },
+      }),
+    ).toBe(false);
+  }
+  const deposit = {
+    ...review,
+    requiredRole: "vault" as const,
+    semanticIntent: {
+      ...review.semanticIntent,
+      action: "deposit_capital_offer_generation" as const,
+    },
+  };
+  expect(isDevnetCapitalOwnerConfirmation(deposit)).toBe(true);
+  expect(isDevnetCapitalOwnerConfirmation({ ...deposit, requiredRole: "profile" })).toBe(false);
+  expect(
+    isDevnetCapitalOwnerConfirmation({
+      ...deposit,
+      semanticIntent: { ...deposit.semanticIntent, cluster: "mainnet-beta" },
+    }),
+  ).toBe(false);
+  expect(
+    isDevnetCapitalOwnerConfirmation({
+      ...deposit,
+      semanticIntent: { ...deposit.semanticIntent, programId: "11111111111111111111111111111111" },
+    }),
+  ).toBe(false);
   expect(isDevnetCapitalOwnerConfirmation({ ...review, requiredRole: "vault" })).toBe(false);
   expect(
     isDevnetCapitalOwnerConfirmation({

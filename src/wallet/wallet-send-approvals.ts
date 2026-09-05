@@ -72,10 +72,15 @@ export function isDevnetCapitalOwnerConfirmation(
 ): boolean {
   return (
     review.intentType === "solana.agentCapitalAction" &&
-    review.requiredRole === "profile" &&
     review.semanticIntent.type === "solana.agentCapitalAction" &&
     review.semanticIntent.cluster === "devnet" &&
-    review.semanticIntent.action === "initialize_capital_offer"
+    review.semanticIntent.programId === "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz" && // pragma: allowlist secret -- public program ID
+    ((review.requiredRole === "profile" &&
+      ["initialize_capital_offer", "cancel_capital_offer", "succeed_empty_capital_offer"].includes(
+        review.semanticIntent.action ?? "",
+      )) ||
+      (review.requiredRole === "vault" &&
+        review.semanticIntent.action === "deposit_capital_offer_generation"))
   );
 }
 
