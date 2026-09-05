@@ -4,9 +4,9 @@ export const FASED_AGENT_CAPITAL_CONTRACT = {
   $schema: "fased.agent-capital-interface.v1",
   source: {
     repository: "https://github.com/fased-ai/agent-protocol",
-    commit: "847d0192ef10623778dbe94575c3e35d0dd14ff3", // pragma: allowlist secret
-    tree: "1b620fe687a81751e5558e27b13d3a36fe3816aa", // pragma: allowlist secret
-    idlSha256: "sha256:91c86295de1d45f83fea1827e05b52f907da9e5162f93d2d22be6a2b1489e608", // pragma: allowlist secret
+    commit: "d84f3a7eb11352de62f2eee6a40fde5b45893e18", // pragma: allowlist secret
+    tree: "9f42290410748b5993967dd3caf43f40a93fc952", // pragma: allowlist secret
+    idlSha256: "sha256:06b88678725f189e1b6dc220bc2564b8ce3b8305cc423f54ad3c515789d05272", // pragma: allowlist secret
   },
   programId: "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz", // pragma: allowlist secret
   generation: 1,
@@ -278,6 +278,54 @@ export const FASED_AGENT_CAPITAL_CONTRACT = {
       args: [
         {
           name: "lamports",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "participant",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "capital_offer",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "mining_vault",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "vault_authority",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "vault_position",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111",
+        },
+      ],
+    },
+    {
+      action: "deposit_capital_offer_generation",
+      discriminator: [21, 42, 57, 203, 26, 57, 240, 18],
+      dataSize: 24,
+      args: [
+        {
+          name: "lamports",
+          type: "u64",
+        },
+        {
+          name: "expected_generation",
           type: "u64",
         },
       ],
@@ -628,6 +676,73 @@ export const FASED_AGENT_CAPITAL_CONTRACT = {
         },
       ],
     },
+    {
+      action: "succeed_empty_capital_offer",
+      discriminator: [99, 118, 247, 88, 174, 51, 239, 62],
+      dataSize: 32,
+      args: [
+        {
+          name: "expected_generation",
+          type: "u64",
+        },
+        {
+          name: "open_slot",
+          type: "u64",
+        },
+        {
+          name: "close_slot",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "profile_controller",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "agent_capital_vault_binding",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "capital_offer",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "mining_vault",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "history",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "vault_miner_capital",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "satcoin_program",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111",
+        },
+      ],
+    },
   ],
   accounts: [
     {
@@ -645,6 +760,10 @@ export const FASED_AGENT_CAPITAL_CONTRACT = {
     {
       name: "CapitalOffer",
       discriminator: [217, 11, 49, 163, 27, 216, 133, 22],
+    },
+    {
+      name: "CapitalOfferHistory",
+      discriminator: [83, 130, 170, 93, 98, 119, 236, 146],
     },
     {
       name: "FasedAgentRecord",

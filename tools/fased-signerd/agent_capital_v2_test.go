@@ -87,6 +87,33 @@ func TestAgentCapitalIntentBindsGeneratedProgramActionAccountsAndAmount(t *testi
 	}
 }
 
+func TestGenerationDepositRetainsVaultSpendAndBindsGeneration(t *testing.T) {
+	fixture, wallet := agentCapitalDepositFixtureV2()
+	fixture.Action = "deposit_capital_offer_generation"
+	contract := agentCapitalInstructionContractsV1[fixture.Action]
+	data := make([]byte, contract.DataSize)
+	copy(data[:8], contract.Discriminator[:])
+	binary.LittleEndian.PutUint64(data[8:], 1_000_000_000)
+	binary.LittleEndian.PutUint64(data[16:], 2)
+	fixture.DataBase64 = base64.StdEncoding.EncodeToString(data)
+	intent, err := normalizeAgentCapitalIntentV2(fixture, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.RequiredRole != "vault" || intent.Asset != "solana:native" || intent.Amount.String() != "1000000000" {
+		t.Fatal("generation deposit lost its Vault principal spend classification")
+	}
+	binary.LittleEndian.PutUint64(data[16:], 3)
+	fixture.DataBase64 = base64.StdEncoding.EncodeToString(data)
+	changed, err := normalizeAgentCapitalIntentV2(fixture, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.Digest == changed.Digest {
+		t.Fatal("generation did not change intent hash")
+	}
+}
+
 func TestAgentCapitalProfileActionUsesExactPolicyAndIndependentFeeReservation(t *testing.T) {
 	wallet := solana.NewWallet().PublicKey()
 	contract := agentCapitalInstructionContractsV1["initialize_capital_offer"]

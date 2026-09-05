@@ -309,6 +309,7 @@ export async function prepareOrReconcileReviewedAgentCapitalAction(params: {
       instructionByAction.get(instruction.action) &&
       [
         "deposit_capital_offer",
+        "deposit_capital_offer_generation",
         "claim_vault_sat",
         "finalize_vault_exit",
         "refund_cancelled_position",
@@ -321,7 +322,11 @@ export async function prepareOrReconcileReviewedAgentCapitalAction(params: {
       role,
       walletId: params.walletId,
       requestedBy: "agent-capital",
-      assetSymbol: instruction.action === "deposit_capital_offer" ? "SOL" : "CAPITAL",
+      assetSymbol: ["deposit_capital_offer", "deposit_capital_offer_generation"].includes(
+        instruction.action,
+      )
+        ? "SOL"
+        : "CAPITAL",
       assetName: "Agent Capital action",
       memo: `Reviewed Agent Capital action: ${instruction.action}`,
       env: params.env,
