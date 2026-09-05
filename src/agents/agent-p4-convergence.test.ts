@@ -89,8 +89,14 @@ describe("P4 cross-repository money-foundation convergence", () => {
         tree: "fa337572d34002c32ff9ed7d2122ee56c666ce55", // pragma: allowlist secret
       }),
     });
-    expect(FASED_AGENT_CAPITAL_CONTRACT.source.commit).toBe(source.agentProtocol.commit);
-    expect(FASED_AGENT_CAPITAL_CONTRACT.source.tree).toBe(source.agentProtocol.tree);
+    // The unchanged money-foundation fixtures retain their original provenance;
+    // the successor Capital interface is pinned to its own canonical delivery.
+    expect(FASED_AGENT_CAPITAL_CONTRACT.source.commit).toBe(
+      "d84f3a7eb11352de62f2eee6a40fde5b45893e18", // pragma: allowlist secret -- public commit
+    );
+    expect(FASED_AGENT_CAPITAL_CONTRACT.source.tree).toBe(
+      "9f42290410748b5993967dd3caf43f40a93fc952", // pragma: allowlist secret -- public tree
+    );
   });
 
   it("accepts all canonical SAT/SOL records and rejects every red fixture", () => {
@@ -170,9 +176,11 @@ describe("P4 cross-repository money-foundation convergence", () => {
     ] as const;
     const signer = deterministicKey(1);
     const requestIds = new Set<string>();
+    const successor = ["succeed_empty_capital_offer", "deposit_capital_offer_generation"] as const;
     for (const [pathName, actions] of [
       ["cancelled", cancelled],
       ["activated", activated],
+      ["successor", successor],
     ] as const) {
       for (const [index, action] of actions.entries()) {
         const validated = validateAgentCapitalInstruction(instruction(action, signer), signer);
@@ -186,10 +194,10 @@ describe("P4 cross-repository money-foundation convergence", () => {
       }
     }
     expect(
-      new Set([...cancelled, ...activated]),
+      new Set([...cancelled, ...activated, ...successor]),
       "both paths must cover every generated Agent Capital action",
     ).toEqual(new Set(FASED_AGENT_CAPITAL_CONTRACT.instructions.map((entry) => entry.action)));
-    expect(requestIds.size).toBe(cancelled.length + activated.length);
+    expect(requestIds.size).toBe(cancelled.length + activated.length + successor.length);
   });
 
   it("keeps protected money unreachable and distinct binding signatures explicit", () => {

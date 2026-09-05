@@ -60,11 +60,13 @@ function buildContract(repo) {
     "cancel_capital_offer",
     "claim_vault_sat",
     "deposit_capital_offer",
+    "deposit_capital_offer_generation",
     "finalize_vault_exit",
     "initialize_capital_offer",
     "record_vault_result",
     "refund_cancelled_position",
     "request_vault_exit",
+    "succeed_empty_capital_offer",
   ];
   const names = idl.instructions.map((entry) => entry.name);
   if (JSON.stringify(names) !== JSON.stringify(expected)) {

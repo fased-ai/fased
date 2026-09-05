@@ -17,7 +17,7 @@ import (
 
 func agentCapitalRoleV1(action string) string {
 	switch action {
-	case "deposit_capital_offer", "claim_vault_sat", "finalize_vault_exit", "refund_cancelled_position", "request_vault_exit":
+	case "deposit_capital_offer", "deposit_capital_offer_generation", "claim_vault_sat", "finalize_vault_exit", "refund_cancelled_position", "request_vault_exit":
 		return "vault"
 	default:
 		return "profile"
@@ -86,7 +86,7 @@ func normalizeAgentCapitalIntentV2(input signerIntentV2, wallet solana.PublicKey
 	digest := sha256.Sum256(encoded)
 	amount := big.NewInt(1)
 	asset := "agent-capital:action"
-	if action == "deposit_capital_offer" {
+	if action == "deposit_capital_offer" || action == "deposit_capital_offer_generation" {
 		amount = new(big.Int).SetUint64(binary.LittleEndian.Uint64(data[8:16]))
 		if amount.Sign() <= 0 {
 			return normalizedIntentV2{}, errors.New("Agent Capital deposit must be positive")
