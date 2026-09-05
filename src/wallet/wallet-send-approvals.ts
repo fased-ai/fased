@@ -76,11 +76,21 @@ export function isDevnetCapitalOwnerConfirmation(
     review.semanticIntent.cluster === "devnet" &&
     review.semanticIntent.programId === "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz" && // pragma: allowlist secret -- public program ID
     ((review.requiredRole === "profile" &&
-      ["initialize_capital_offer", "cancel_capital_offer", "succeed_empty_capital_offer"].includes(
-        review.semanticIntent.action ?? "",
-      )) ||
+      [
+        "initialize_capital_offer",
+        "cancel_capital_offer",
+        "succeed_empty_capital_offer",
+        "activate_capital_offer",
+        "record_vault_result",
+      ].includes(review.semanticIntent.action ?? "")) ||
       (review.requiredRole === "vault" &&
-        review.semanticIntent.action === "deposit_capital_offer_generation"))
+        [
+          "deposit_capital_offer_generation",
+          "claim_vault_sat",
+          "request_vault_exit",
+          "finalize_vault_exit",
+          "refund_cancelled_position",
+        ].includes(review.semanticIntent.action ?? "")))
   );
 }
 

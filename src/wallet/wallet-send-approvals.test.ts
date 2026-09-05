@@ -50,7 +50,7 @@ vi.mock("./wallet-approval-auth.js", () => ({
 
 let tempDir = "";
 
-it("limits no-passkey Capital confirmation to exact Devnet preparation roles", () => {
+it("limits no-passkey Capital confirmation to exact Devnet lifecycle roles", () => {
   const review = {
     intentType: "solana.agentCapitalAction" as const,
     requiredRole: "profile" as const,
@@ -64,7 +64,12 @@ it("limits no-passkey Capital confirmation to exact Devnet preparation roles", (
     },
   };
   expect(isDevnetCapitalOwnerConfirmation(review)).toBe(true);
-  for (const action of ["cancel_capital_offer", "succeed_empty_capital_offer"] as const) {
+  for (const action of [
+    "cancel_capital_offer",
+    "succeed_empty_capital_offer",
+    "activate_capital_offer",
+    "record_vault_result",
+  ] as const) {
     expect(
       isDevnetCapitalOwnerConfirmation({
         ...review,
@@ -88,6 +93,31 @@ it("limits no-passkey Capital confirmation to exact Devnet preparation roles", (
     },
   };
   expect(isDevnetCapitalOwnerConfirmation(deposit)).toBe(true);
+  for (const action of [
+    "claim_vault_sat",
+    "request_vault_exit",
+    "finalize_vault_exit",
+    "refund_cancelled_position",
+  ] as const) {
+    const candidate = { ...deposit, semanticIntent: { ...deposit.semanticIntent, action } };
+    expect(isDevnetCapitalOwnerConfirmation(candidate)).toBe(true);
+    expect(isDevnetCapitalOwnerConfirmation({ ...candidate, requiredRole: "profile" })).toBe(false);
+    expect(
+      isDevnetCapitalOwnerConfirmation({
+        ...candidate,
+        semanticIntent: { ...candidate.semanticIntent, cluster: "mainnet-beta" },
+      }),
+    ).toBe(false);
+    expect(
+      isDevnetCapitalOwnerConfirmation({
+        ...candidate,
+        semanticIntent: {
+          ...candidate.semanticIntent,
+          programId: "11111111111111111111111111111111",
+        },
+      }),
+    ).toBe(false);
+  }
   expect(isDevnetCapitalOwnerConfirmation({ ...deposit, requiredRole: "profile" })).toBe(false);
   expect(
     isDevnetCapitalOwnerConfirmation({

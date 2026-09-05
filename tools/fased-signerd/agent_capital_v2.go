@@ -135,9 +135,11 @@ func allowsControlUIReviewIntentV2(intent signerIntentV2, role string) bool {
 		return false
 	}
 	switch intent.Action {
-	case "initialize_capital_offer", "cancel_capital_offer", "succeed_empty_capital_offer":
+	case "initialize_capital_offer", "cancel_capital_offer", "succeed_empty_capital_offer",
+		"activate_capital_offer", "record_vault_result":
 		return role == "profile"
-	case "deposit_capital_offer_generation":
+	case "deposit_capital_offer_generation", "claim_vault_sat", "request_vault_exit",
+		"finalize_vault_exit", "refund_cancelled_position":
 		return role == "vault"
 	default:
 		return false
