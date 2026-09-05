@@ -135,6 +135,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		}
 	case "policy":
 		switch args[1] {
+		case "budget":
+			return runSignerAdminPolicyBudget(args[2:], stdout)
 		case "get":
 			return runSignerAdminPolicyGet(args[2:], stdout)
 		case "put":
@@ -903,6 +905,23 @@ func runSignerAdminPolicyGet(args []string, stdout io.Writer) error {
 		return err
 	}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.policy.get", walletID, nil, stdout)
+}
+
+func runSignerAdminPolicyBudget(args []string, stdout io.Writer) error {
+	fs, common := newSignerAdminFlagSet("policy budget")
+	var walletID string
+	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
+	if err := parseSignerAdminFlags(fs, args); err != nil {
+		return err
+	}
+	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
+		return err
+	}
+	walletID, err := validateSignerAdminWalletID(walletID)
+	if err != nil {
+		return err
+	}
+	return callAndWriteSignerAdmin(common.controlSocket, "v2.policy.budget", walletID, nil, stdout)
 }
 
 func runSignerAdminPolicyPut(args []string, stdout io.Writer) error {

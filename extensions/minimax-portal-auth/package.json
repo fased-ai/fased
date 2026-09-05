@@ -1,6 +1,6 @@
 {
   "name": "@fased/minimax-portal-auth",
-  "version": "0.1.76-rc.154",
+  "version": "0.1.76-rc.155",
   "private": true,
   "description": "FasedAgent MiniMax Portal OAuth provider plugin",
   "type": "module",

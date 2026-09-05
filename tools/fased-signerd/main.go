@@ -222,7 +222,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" || req.Operator != nil {
 			return errors.New("invalid signer request")
 		}
-	case "v2.network.get", "v2.policy.get", "v2.wallet.get", "v2.wallet.readiness", "v2.wallet.reencrypt", "v2.wallet.rotation.status", "v2.jupiter.trigger.history", "v2.keeperFeePayer.get":
+	case "v2.network.get", "v2.policy.get", "v2.policy.budget", "v2.wallet.get", "v2.wallet.readiness", "v2.wallet.reencrypt", "v2.wallet.rotation.status", "v2.jupiter.trigger.history", "v2.keeperFeePayer.get":
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -378,6 +378,7 @@ func parseArgs() signerConfig {
 		"v2.rpcProfile.create":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 12),
 		"v2.rpcProfile.bind":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_NETWORK", 30),
 		"v2.policy.get":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
+		"v2.policy.budget":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.put":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.tighten":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.activateBaseline":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 30),
