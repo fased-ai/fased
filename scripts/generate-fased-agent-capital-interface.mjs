@@ -42,6 +42,12 @@ function dataSize(args) {
       if (arg.type === "u32") {
         return size + 4;
       }
+      if (JSON.stringify(arg.type) === JSON.stringify({ array: ["u8", 32] })) {
+        return size + 32;
+      }
+      if (JSON.stringify(arg.type) === JSON.stringify({ array: ["u32", 16] })) {
+        return size + 64;
+      }
       throw new Error(`unsupported Agent Capital argument type ${JSON.stringify(arg.type)}`);
     }, 0)
   );
@@ -59,6 +65,9 @@ function buildContract(repo) {
     "bind_satcoin_vault",
     "cancel_capital_offer",
     "claim_vault_sat",
+    "commit_vault_cycle",
+    "compact_vault_pending_cycle",
+    "configure_vault_mining",
     "deposit_capital_offer",
     "deposit_capital_offer_generation",
     "finalize_vault_exit",
@@ -66,6 +75,7 @@ function buildContract(repo) {
     "record_vault_result",
     "refund_cancelled_position",
     "request_vault_exit",
+    "reveal_vault_cycle",
     "succeed_empty_capital_offer",
   ];
   const names = idl.instructions.map((entry) => entry.name);

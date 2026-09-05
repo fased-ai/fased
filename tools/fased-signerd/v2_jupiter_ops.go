@@ -35,6 +35,22 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 	var transaction signerSolanaTransactionEnvelopeV2
 	var artifact signerReviewArtifactInputV2
 	switch {
+	case intent.Intent.Type == intentSolanaVaultMining:
+		if req.Transaction != nil || req.Mode != jupiterReviewModeReviewedV2 {
+			return signerReviewV2{}, errors.New("Vault mining requires reference-only reviewed preparation")
+		}
+		policy, policyErr := s.store.getPolicy(walletID)
+		if policyErr != nil {
+			return signerReviewV2{}, policyErr
+		}
+		if policy.Role != "agent" {
+			return signerReviewV2{}, errors.New("Vault mining requires Agent executor role")
+		}
+		if err := validateReviewPolicyV2(policy, intent, req.Mode); err != nil {
+			return signerReviewV2{}, err
+		}
+		validated, artifact, _, err = s.resolveVaultReviewV1(walletID, intent, nil)
+		defer zeroBytes(validated.RawUnsigned)
 	case intent.Intent.Type == intentSolanaJupiterSwap:
 		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
 		if networkErr != nil {
@@ -246,6 +262,9 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	var rpcURLs []string
 	var message []byte
 	switch {
+	case intent.Intent.Type == intentSolanaVaultMining:
+		validated, _, rpcURLs, err = s.resolveVaultReviewV1(walletID, intent, &review)
+		defer zeroBytes(validated.RawUnsigned)
 	case intent.Intent.Type == intentSolanaJupiterSwap:
 		rpcURLs, err = s.keys.SolanaRPCURLsV2(walletID)
 		if err != nil {
@@ -448,6 +467,17 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			return signerReviewExecutionResultV2{}, proofErr
 		}
 	}
+	if intent.Intent.Type == intentSolanaVaultMining {
+		// Recheck after owner proof consumption and immediately before signing.
+		current, _, urls, stateErr := s.resolveVaultReviewV1(walletID, intent, &review)
+		if stateErr != nil {
+			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, stateErr)
+			return signerReviewExecutionResultV2{}, stateErr
+		}
+		zeroBytes(validated.RawUnsigned)
+		validated, rpcURLs = current, urls
+		defer zeroBytes(current.RawUnsigned)
+	}
 	if isSignerOwnedTriggerIntentV2(intent) {
 		currentStateDigest, _, stateErr := s.jupiterTriggerReviewStateV2(walletID, walletPublicKey, intent, privateKey)
 		if stateErr == nil && currentStateDigest != review.StateDigest {
@@ -586,8 +616,17 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	}
 	signedDigestBytes := sha256.Sum256(signedRaw)
 	signedDigest := "sha256:" + hex.EncodeToString(signedDigestBytes[:])
-	signedTxBase64 := base64.StdEncoding.EncodeToString(signedRaw)
-	operation, err = s.store.markBroadcastClaim(operation.RequestID, attempt, signature.String(), signedDigest, signedTxBase64)
+	defer zeroBytes(signedRaw)
+	if intent.Intent.Type == intentSolanaVaultMining {
+		if err := simulateSignedAtomicOpenCommitV2(rpcURLs, validated.Transaction); err != nil {
+			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, errors.New("signed Vault simulation failed"))
+			return signerReviewExecutionResultV2{}, errors.New("signed Vault simulation failed")
+		}
+		operation, err = s.markVaultBroadcastV1(operation.RequestID, attempt, signature.String(), signedDigest, signedRaw)
+	} else {
+		signedTxBase64 := base64.StdEncoding.EncodeToString(signedRaw)
+		operation, err = s.store.markBroadcastClaim(operation.RequestID, attempt, signature.String(), signedDigest, signedTxBase64)
+	}
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
 	}
@@ -602,7 +641,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	}
 
 	envelope := review.Transaction
-	if envelope == nil {
+	if envelope == nil && artifact.Kind != signerReviewArtifactVaultReferenceV1 {
 		return result, errors.New("signed signer review transaction envelope is missing")
 	}
 	if err := broadcastSignedOnceV2(rpcURLs, signedRaw, signature); err != nil {

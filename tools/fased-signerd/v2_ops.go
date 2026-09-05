@@ -847,6 +847,48 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(commitment)
+	case "v2.vaultMining.binding.inspect":
+		var body vaultMiningBindingRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		policy, err := s.store.getPolicy(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		if policy.Role != "agent" {
+			return nil, errors.New("Vault inspection requires Agent executor wallet")
+		}
+		wallet, err := s.keys.PublicRecord(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		address, err := solana.PublicKeyFromBase58(wallet.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+		urls, err := s.keys.SolanaRPCURLsV2(req.WalletID)
+		if err != nil {
+			return nil, errSignerNetworkPendingV2
+		}
+		result, err := inspectVaultMiningBindingV1(urls, address, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.vaultMining.commitment.allocate":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerVaultMiningAllocateV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.allocateReviewedVaultCommitmentV1(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
 	case "v2.satCommitment.binding.get":
 		var body signerSATCommitmentBindingRequestV1
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
@@ -874,7 +916,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 
 func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2, error) {
 	switch strings.TrimSpace(req.Intent.Type) {
-	case intentSolanaVaultBondAction, intentSolanaAgentCapitalAction, intentSolanaMoneyFoundation, intentFederationBondChallenge:
+	case intentSolanaVaultBondAction, intentSolanaAgentCapitalAction, intentSolanaVaultMining, intentSolanaMoneyFoundation, intentFederationBondChallenge:
 		return signerOperationV2{}, errors.New("Vault bond, Agent Capital, money-foundation, and federation intents require signer-owned reviewed authorization")
 	}
 	walletRecord, err := s.keys.PublicRecord(req.IntentWalletID())
@@ -1875,7 +1917,22 @@ func (s *signerServiceV2) reconcile(requestID, walletID string) (signerOperation
 	case "failed":
 		return s.store.markFailed(requestID, errors.New("Solana transaction failed on chain"))
 	}
-	raw, signedTx, artifactErr := decodeStoredSignedOperationV2(operation)
+	var raw []byte
+	var signedTx *solana.Transaction
+	var artifactErr error
+	if operation.IntentType == intentSolanaVaultMining {
+		if _, err := signerVaultReleaseContextV1("devnet", solanaDevnetGenesisHashV2); err != nil {
+			return operation, err
+		}
+		rpcURLs, err = solanaRPCURLsForClusterV2(rpcURLs, "devnet")
+		if err != nil {
+			return operation, err
+		}
+		raw, signedTx, artifactErr = s.keys.decodeVaultBroadcastV1(operation)
+	} else {
+		raw, signedTx, artifactErr = decodeStoredSignedOperationV2(operation)
+	}
+	defer zeroBytes(raw)
 	if artifactErr != nil {
 		return s.store.markUnknown(requestID, artifactErr)
 	}

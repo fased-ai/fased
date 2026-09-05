@@ -6,6 +6,162 @@ import {
 } from "./local-socket-signer-protocol.js";
 
 describe("local socket signer protocol", () => {
+  it("accepts semantic Vault reviews without generic transaction authority", () => {
+    const intent = {
+      type: "solana.vaultMining",
+      cluster: "devnet",
+      action: "commit_vault_cycle",
+      vaultMining: {
+        profile: "Vote111111111111111111111111111111111111111",
+        permanentMining: "So11111111111111111111111111111111111111112",
+        reference: `sha256:${"a".repeat(64)}`,
+        cycleId: "43",
+        committedLamports: "1000000000",
+        authorityGeneration: "1",
+        bindingGeneration: "1",
+        activationGeneration: "7",
+        maxRentLamports: "5000000",
+        maxFeeLamports: "5000",
+        minFinalizedSlot: "101",
+      },
+    };
+    const request = {
+      op: "v2.review.prepare",
+      walletId: "executor",
+      request: {
+        requestId: "vault-review",
+        policyHash: `sha256:${"b".repeat(64)}`,
+        mode: "reviewed",
+        intent,
+      },
+    };
+    expect(parseLocalSocketSignerRequest(request)).toEqual(request);
+    const key = intent.vaultMining.profile;
+    const digest = `sha256:${"b".repeat(64)}`;
+    const review = {
+      requestId: "vault-review",
+      walletId: "executor",
+      intentType: intent.type,
+      intentDigest: digest,
+      policyHash: digest,
+      mode: "reviewed",
+      nonce: "c".repeat(64),
+      semanticIntent: intent,
+      walletPublicKey: key,
+      artifactKind: "vault-commitment-reference",
+      artifactDigest: digest,
+      stateDigest: digest,
+      stateSlot: 101,
+      vaultReference: {
+        scope: {
+          profile: key,
+          permanentMining: key,
+          binding: key,
+          authority: key,
+          executor: key,
+          keeper: key,
+          authorityGeneration: 1,
+          bindingGeneration: 1,
+        },
+        commitment: { cluster: "devnet", programId: key, protocolGeneration: "2", cycleId: "43" },
+        reference: intent.vaultMining.reference,
+        blockhash: key,
+        transactionDigest: digest,
+      },
+      asset: "vault-mining:action",
+      amount: "1",
+      destination: key,
+      policyOperation: "vaultMining.commit_vault_cycle",
+      requiredPrograms: [key],
+      requiredRole: "agent",
+      issuedAt: "2026-09-05T00:00:00Z",
+      preparedAt: "2026-09-05T00:00:00Z",
+      expiresAt: "2026-09-05T00:02:00Z",
+      updatedAt: "2026-09-05T00:00:00Z",
+      state: "prepared",
+    };
+    expect(validateLocalSocketSignerResult("v2.review.prepare", review)).toBe(true);
+    for (const change of [
+      { messageBase64: "secret" },
+      { vaultReference: undefined },
+      { intentType: "solana.transfer" },
+      { artifactKind: "solana-transaction" },
+    ]) {
+      expect(validateLocalSocketSignerResult("v2.review.prepare", { ...review, ...change })).toBe(
+        false,
+      );
+    }
+    for (const field of [
+      { nonceBase64: "secret" },
+      { allocationFP: [1000000] },
+      { dataBase64: "secret" },
+    ]) {
+      expect(() =>
+        parseLocalSocketSignerRequest({
+          ...request,
+          request: {
+            ...request.request,
+            intent: { ...intent, vaultMining: { ...intent.vaultMining, ...field } },
+          },
+        }),
+      ).toThrow("invalid signer request");
+    }
+  });
+  it("accepts only public typed Vault binding inspection", () => {
+    const key = "11111111111111111111111111111111";
+    const request = {
+      op: "v2.vaultMining.binding.inspect" as const,
+      walletId: "executor",
+      request: {
+        cluster: "devnet",
+        profile: key,
+        permanentMining: key,
+        minFinalizedSlot: 100,
+      },
+    };
+    expect(parseLocalSocketSignerRequest(request)).not.toBeNull();
+    for (const extra of [
+      { rpcUrl: "https://untrusted.invalid" },
+      { nonce: "secret" },
+      { minFinalizedSlot: 0 },
+    ]) {
+      expect(() =>
+        parseLocalSocketSignerRequest({ ...request, request: { ...request.request, ...extra } }),
+      ).toThrow("invalid signer request");
+    }
+    const result = {
+      verification: "account-bindings-only",
+      scope: {
+        profile: key,
+        permanentMining: key,
+        binding: key,
+        authority: key,
+        executor: key,
+        keeper: key,
+        authorityGeneration: 1,
+        bindingGeneration: 1,
+      },
+      finalizedSlot: 100,
+      stateDigest: `sha256:${"a".repeat(64)}`,
+      fundedLamports: "1000000000",
+      activeCommitLamports: "0",
+      entryPaused: true,
+    };
+    expect(validateLocalSocketSignerResult(request.op, result)).toBe(true);
+    expect(
+      validateLocalSocketSignerResult(request.op, {
+        ...result,
+        verification: "deployment-verified",
+      }),
+    ).toBe(false);
+    expect(validateLocalSocketSignerResult(request.op, { ...result, nonce: "secret" })).toBe(false);
+    expect(
+      validateLocalSocketSignerResult(request.op, {
+        ...result,
+        scope: { ...result.scope, privateKey: "secret" },
+      }),
+    ).toBe(false);
+  });
   it("accepts the complete native signer-v2 capabilities health payload", () => {
     const health = {
       details: "fased-signerd protocol-v2 ready",

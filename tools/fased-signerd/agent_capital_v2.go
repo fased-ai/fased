@@ -35,6 +35,9 @@ func normalizeAgentCapitalIntentV2(input signerIntentV2, wallet solana.PublicKey
 	if err != nil {
 		return normalizedIntentV2{}, err
 	}
+	if strings.TrimSpace(input.Action) == "commit_vault_cycle" || strings.TrimSpace(input.Action) == "reveal_vault_cycle" {
+		return normalizedIntentV2{}, errors.New("Vault mining requires the signer-owned Vault commitment path; generic instruction data is disabled")
+	}
 	contract, ok := agentCapitalInstructionContractsV1[strings.TrimSpace(input.Action)]
 	if !ok {
 		return normalizedIntentV2{}, fmt.Errorf("unsupported Agent Capital action %q", input.Action)
@@ -128,6 +131,9 @@ func agentCapitalSnapshotAddressesV2(intent normalizedIntentV2, wallet solana.Pu
 // The Devnet exception still enters exact policy, verified-genesis, account-state,
 // simulation, nonce and replay checks. It does not authorize arbitrary Profile use.
 func allowsControlUIReviewIntentV2(intent signerIntentV2, role string) bool {
+	if intent.Type == intentSolanaVaultMining {
+		return role == "agent" && intent.Cluster == "devnet" && intent.VaultMining != nil && (intent.Action == "commit_vault_cycle" || intent.Action == "reveal_vault_cycle")
+	}
 	if isTypedTransferIntentV2(intent.Type) && (role == "agent" || role == "vault") {
 		return true
 	}
@@ -136,7 +142,7 @@ func allowsControlUIReviewIntentV2(intent signerIntentV2, role string) bool {
 	}
 	switch intent.Action {
 	case "initialize_capital_offer", "cancel_capital_offer", "succeed_empty_capital_offer",
-		"activate_capital_offer", "record_vault_result":
+		"activate_capital_offer", "record_vault_result", "configure_vault_mining", "compact_vault_pending_cycle":
 		return role == "profile"
 	case "deposit_capital_offer_generation", "claim_vault_sat", "request_vault_exit",
 		"finalize_vault_exit", "refund_cancelled_position":
