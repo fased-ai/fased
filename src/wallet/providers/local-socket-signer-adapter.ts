@@ -176,6 +176,8 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.satLookup.binding.get": 5_000,
   "v2.satCommitment.allocate": 5_000,
   "v2.satCommitment.binding.get": 5_000,
+  "v2.vaultMining.binding.inspect": 30_000,
+  "v2.vaultMining.commitment.allocate": 30_000,
   "v2.keeperFeePayer.get": 5_000,
   "v2.keeperFeePayer.ensure": 10_000,
   getAddresses: 10_000,

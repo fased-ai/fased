@@ -270,6 +270,30 @@ const SignerFederationBondChallengeV2Schema = Type.Object(
 export const SignerIntentV2Schema = Type.Union([
   Type.Object(
     {
+      type: Type.Literal("solana.vaultMining"),
+      cluster: Type.Literal("devnet"),
+      action: Type.Union([Type.Literal("commit_vault_cycle"), Type.Literal("reveal_vault_cycle")]),
+      vaultMining: Type.Object(
+        {
+          profile: Type.String({ minLength: 1 }),
+          permanentMining: Type.String({ minLength: 1 }),
+          reference: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+          cycleId: Type.String({ pattern: "^[1-9][0-9]*$" }),
+          committedLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
+          authorityGeneration: Type.String({ pattern: "^[1-9][0-9]*$" }),
+          bindingGeneration: Type.String({ pattern: "^[1-9][0-9]*$" }),
+          activationGeneration: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
+          maxRentLamports: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
+          maxFeeLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
+          minFinalizedSlot: Type.String({ pattern: "^[1-9][0-9]*$" }),
+        },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
       type: Type.Literal("solana.nativeTransfer"),
       destination: Type.String(),
       lamports: Type.String(),
@@ -622,6 +646,40 @@ const SignerSatCommitmentProtocolGenerationV1Schema = Type.String({
   maxLength: 128,
   pattern: "^[^\\u0000-\\u001f\\u007f]+$",
 });
+
+const VaultMiningBindingRequestV1Schema = Type.Object(
+  {
+    cluster: Type.Literal("devnet"),
+    profile: SignerSatCommitmentProgramIdV1Schema,
+    permanentMining: SignerSatCommitmentProgramIdV1Schema,
+    minFinalizedSlot: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+  },
+  { additionalProperties: false },
+);
+const VaultMiningBindingResultV1Schema = Type.Object(
+  {
+    verification: Type.Literal("account-bindings-only"),
+    scope: Type.Object(
+      {
+        profile: SignerSatCommitmentProgramIdV1Schema,
+        permanentMining: SignerSatCommitmentProgramIdV1Schema,
+        binding: SignerSatCommitmentProgramIdV1Schema,
+        authority: SignerSatCommitmentProgramIdV1Schema,
+        executor: SignerSatCommitmentProgramIdV1Schema,
+        keeper: SignerSatCommitmentProgramIdV1Schema,
+        authorityGeneration: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        bindingGeneration: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+      },
+      { additionalProperties: false },
+    ),
+    finalizedSlot: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    stateDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+    fundedLamports: Type.String({ pattern: "^[0-9]+$" }),
+    activeCommitLamports: Type.String({ pattern: "^[0-9]+$" }),
+    entryPaused: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
 
 const SignerSatCommitmentAllocationV1Schema = Type.Union([
   Type.Array(Type.Integer({ minimum: 0, maximum: 0xffff_ffff }), {
@@ -1045,9 +1103,32 @@ export const LocalSocketSignerRequestSchema = Type.Union(
     ),
     Type.Object(
       {
+        op: Type.Literal("v2.vaultMining.binding.inspect"),
+        walletId: Type.String({ minLength: 1 }),
+        request: VaultMiningBindingRequestV1Schema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
         op: Type.Literal("v2.satCommitment.allocate"),
         walletId: Type.String({ minLength: 1 }),
         request: SignerSatCommitmentAllocateRequestV1Schema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.vaultMining.commitment.allocate"),
+        walletId: Type.String({ minLength: 1 }),
+        request: Type.Object(
+          {
+            binding: VaultMiningBindingRequestV1Schema,
+            commitment: SignerSatCommitmentAllocateRequestV1Schema,
+            activationGeneration: Type.String({ pattern: "^[1-9][0-9]*$" }),
+          },
+          { additionalProperties: false },
+        ),
       },
       { additionalProperties: false },
     ),
@@ -1314,8 +1395,21 @@ export const LocalSocketSignerReviewV2Schema = Type.Object(
       Type.Literal("solana-transaction"),
       Type.Literal("domain-separated-message"),
       Type.Literal("jupiter-trigger-state"),
+      Type.Literal("vault-commitment-reference"),
     ]),
     artifactDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+    vaultReference: Type.Optional(
+      Type.Object(
+        {
+          scope: VaultMiningBindingResultV1Schema.properties.scope,
+          commitment: SignerSatCommitmentBindingRequestV1Schema,
+          reference: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+          blockhash: Type.String({ minLength: 1 }),
+          transactionDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
     transaction: Type.Optional(SignerSolanaTransactionEnvelopeV2Schema),
     messageBase64: Type.Optional(Type.String()),
     stateDigest: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$" })),
@@ -1360,6 +1454,7 @@ const LocalSocketSignerReviewBindingV2Schema = Type.Object(
       Type.Literal("solana-transaction"),
       Type.Literal("domain-separated-message"),
       Type.Literal("jupiter-trigger-state"),
+      Type.Literal("vault-commitment-reference"),
     ]),
     artifactDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
     transactionDigest: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$" })),
@@ -1495,6 +1590,31 @@ export function parseLocalSocketSignerRequest(input: unknown): LocalSocketSigner
   if (!Value.Check(LocalSocketSignerRequestSchema, input)) {
     throw new Error("invalid signer request");
   }
+  if (input.op === "v2.vaultMining.commitment.allocate") {
+    const { binding, commitment } = input.request;
+    if (
+      binding.cluster !== commitment.cluster ||
+      commitment.cluster !== "devnet" ||
+      commitment.protocolGeneration !== "2" ||
+      commitment.allocationFp.length !== 16 ||
+      commitment.allocationFp.reduce((sum, value) => sum + value, 0) !== 1_000_000
+    ) {
+      throw new Error(
+        "invalid signer request: Vault allocation requires the exact generation-2 domain",
+      );
+    }
+  }
+  if (
+    (input.op === "v2.execute" || input.op === "v2.review.prepare") &&
+    input.request.intent.type === "solana.vaultMining" &&
+    (input.op !== "v2.review.prepare" ||
+      input.request.mode !== "reviewed" ||
+      input.request.transaction !== undefined)
+  ) {
+    throw new Error(
+      "invalid signer request: Vault mining requires signer-owned reviewed preparation",
+    );
+  }
   if (
     input.op === "v2.satCommitment.allocate" &&
     input.request.allocationFp.reduce((sum, value) => sum + value, 0) !== 1_000_000
@@ -1543,6 +1663,20 @@ export function parseLocalSocketSignerResponseEnvelope(
   return input;
 }
 
+function validVaultReviewPayload(review: Static<typeof LocalSocketSignerReviewV2Schema>): boolean {
+  if (review.artifactKind === "vault-commitment-reference") {
+    return (
+      review.intentType === "solana.vaultMining" &&
+      review.vaultReference !== undefined &&
+      review.transaction === undefined &&
+      review.messageBase64 === undefined &&
+      review.stateDigest !== undefined &&
+      review.stateSlot !== undefined
+    );
+  }
+  return review.vaultReference === undefined && review.intentType !== "solana.vaultMining";
+}
+
 export function validateLocalSocketSignerResult(
   op: LocalSocketSignerRequest["op"],
   result: unknown,
@@ -1586,14 +1720,22 @@ export function validateLocalSocketSignerResult(
       return Value.Check(LocalSocketSignerOperationV2Schema, result);
     case "v2.satLookup.binding.get":
       return Value.Check(LocalSocketSignerSatLookupBindingV2Schema, result);
+    case "v2.vaultMining.binding.inspect":
+      return Value.Check(VaultMiningBindingResultV1Schema, result);
     case "v2.satCommitment.allocate":
+    case "v2.vaultMining.commitment.allocate":
     case "v2.satCommitment.binding.get":
       return Value.Check(LocalSocketSignerSatCommitmentBindingV1Schema, result);
     case "v2.review.get":
     case "v2.review.prepare":
-      return Value.Check(LocalSocketSignerReviewV2Schema, result);
+      return (
+        Value.Check(LocalSocketSignerReviewV2Schema, result) && validVaultReviewPayload(result)
+      );
     case "v2.review.execute":
-      return Value.Check(LocalSocketSignerReviewExecutionV2Schema, result);
+      return (
+        Value.Check(LocalSocketSignerReviewExecutionV2Schema, result) &&
+        validVaultReviewPayload(result.review)
+      );
     case "v2.review.authorization.begin":
       return Value.Check(LocalSocketSignerReviewAuthorizationBeginV2Schema, result);
     case "v2.review.authorization.finish":
