@@ -722,6 +722,13 @@ func TestSignerAdminPolicyGetPutAndWalletReencrypt(t *testing.T) {
 			wantOp: "v2.policy.get", resultJSON: `{"walletId":"agent","version":4}`,
 		},
 		{
+			name: "policy budget",
+			args: func(socket string) []string {
+				return []string{"policy", "budget", "--control-socket", socket, "--wallet-id", "agent"}
+			},
+			wantOp: "v2.policy.budget", resultJSON: `{"walletId":"agent","policyVersion":4,"usageDayUTC":"2026-09-05","assets":[]}`,
+		},
+		{
 			name: "policy put",
 			args: func(socket string) []string {
 				return []string{"policy", "put", "--control-socket", socket, "--wallet-id", "agent", "--expected-version", "4", "--policy-file", policyPath}

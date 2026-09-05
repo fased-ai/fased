@@ -438,6 +438,15 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(policy)
+	case "v2.policy.budget":
+		if err := requireControlSocketV2(control); err != nil {
+			return nil, err
+		}
+		budget, err := s.store.policyBudgetV2(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(budget)
 	case "v2.policy.put":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")
