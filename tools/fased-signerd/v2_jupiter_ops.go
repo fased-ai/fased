@@ -385,7 +385,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			}
 		case "control-ui":
 			if !allowsControlUIReviewIntentV2(intent.Intent, policy.Role) {
-				return signerReviewExecutionResultV2{}, errors.New("Control UI confirmation is restricted to exact reviewed transfers or Devnet Profile Capital Offer initialization")
+				return signerReviewExecutionResultV2{}, errors.New("Control UI confirmation is restricted to exact reviewed transfers or role-bound Devnet Capital Offer preparation and generation deposit")
 			}
 			if (policy.Role == "vault" || policy.Role == "profile") && s.webauthn != nil {
 				health, healthErr := s.webauthn.health()

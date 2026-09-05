@@ -1,6 +1,6 @@
 {
   "name": "@fased/imessage",
-  "version": "0.1.76-rc.152",
+  "version": "0.1.76-rc.153",
   "private": true,
   "description": "FasedAgent iMessage channel plugin",
   "type": "module",

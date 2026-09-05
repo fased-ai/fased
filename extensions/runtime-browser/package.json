@@ -1,6 +1,6 @@
 {
   "name": "@fased/browser-runtime",
-  "version": "0.1.76-rc.152",
+  "version": "0.1.76-rc.153",
   "private": true,
   "description": "Optional browser runtime for Fased Agent",
   "files": [
@@ -15,7 +15,7 @@
     "ws": "8.21.0"
   },
   "peerDependencies": {
-    "@fased/fased": "^0.1.76-rc.152"
+    "@fased/fased": "^0.1.76-rc.153"
   },
   "peerDependenciesMeta": {
     "@fased/fased": {
