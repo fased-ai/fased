@@ -33,11 +33,14 @@ func TestControlUIReviewDevnetCapitalBoundary(t *testing.T) {
 	}
 }
 
-func TestControlUIReviewDevnetSuccessorRoles(t *testing.T) {
+func TestControlUIReviewDevnetLifecycleRoles(t *testing.T) {
 	for action, wantRole := range map[string]string{
 		"cancel_capital_offer": "profile", "succeed_empty_capital_offer": "profile", "deposit_capital_offer_generation": "vault",
+		"activate_capital_offer": "profile", "record_vault_result": "profile",
+		"claim_vault_sat": "vault", "request_vault_exit": "vault",
+		"finalize_vault_exit": "vault", "refund_cancelled_position": "vault",
 	} {
-		for _, role := range []string{"profile", "vault", "agent", "mining", "strategy", ""} {
+		for _, role := range []string{"profile", "vault", "agent", "mining", "strategy", "keeper", ""} {
 			intent := signerIntentV2{Type: intentSolanaAgentCapitalAction, Cluster: "devnet", Action: action, ProgramID: agentCapitalProgramIDV1}
 			if allowsControlUIReviewIntentV2(intent, role) != (role == wantRole) {
 				t.Fatalf("wrong role decision: %s %s", action, role)
@@ -53,7 +56,7 @@ func TestControlUIReviewDevnetSuccessorRoles(t *testing.T) {
 			}
 		}
 	}
-	for _, action := range []string{"activate_capital_offer", "deposit_capital_offer", "record_vault_result", "finalize_vault_exit", ""} {
+	for _, action := range []string{"bind_satcoin_vault", "deposit_capital_offer", "commit_cycle", "unknown", ""} {
 		for _, role := range []string{"profile", "vault"} {
 			if allowsControlUIReviewIntentV2(signerIntentV2{Type: intentSolanaAgentCapitalAction, Cluster: "devnet", Action: action, ProgramID: agentCapitalProgramIDV1}, role) {
 				t.Fatal("unapproved action exception")
