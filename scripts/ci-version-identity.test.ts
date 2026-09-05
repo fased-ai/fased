@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { validateCurrentVersionInventory } from "./ci-version-identity.mjs";
 
@@ -29,8 +30,10 @@ describe("release version inventory", () => {
     expect(validateCurrentVersionInventory(fixture())).toBe("1.2.3");
   });
 
-  it("accepts the synchronized rc.148 beta-candidate identity", () => {
-    expect(validateCurrentVersionInventory(fixture("0.1.76-rc.152"))).toBe("0.1.76-rc.152");
+  it("validates the actual checkout release identity across brand and extensions", () => {
+    const root = fileURLToPath(new URL("../", import.meta.url));
+    const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    expect(validateCurrentVersionInventory(root)).toBe(version);
   });
 
   it("rejects mismatched extension identity", () => {
