@@ -158,7 +158,7 @@ describe("local socket signer protocol", () => {
     expect(
       validateLocalSocketSignerResult(request.op, {
         ...result,
-        scope: { ...result.scope, privateKey: "secret" }, // dummy rejection fixture; pragma: allowlist secret
+        scope: { ...result.scope, privateKey: "secret" }, // pragma: allowlist secret
       }),
     ).toBe(false);
   });
