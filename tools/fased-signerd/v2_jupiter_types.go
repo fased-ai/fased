@@ -15,7 +15,7 @@ import (
 
 const (
 	solanaNativeMintV2     = "So11111111111111111111111111111111111111112"
-	jupiterAggregatorV6V2  = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+	jupiterAggregatorV6V2  = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4" // public program ID; pragma: allowlist secret
 	jupiterSubmissionRPCV2 = "rpc"
 
 	jupiterReviewPreparedV2       = "prepared"
@@ -199,8 +199,8 @@ func normalizeJupiterTriggerExpiryV2(raw string) (string, error) {
 
 func isSupportedTriggerTransferProgramV2(program string) bool {
 	return program == "11111111111111111111111111111111" ||
-		program == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
-		program == "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+		program == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" || // public program ID; pragma: allowlist secret
+		program == "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" // public program ID; pragma: allowlist secret
 }
 
 func triggerTransferProgramMatchesMintV2(mint, program string) bool {

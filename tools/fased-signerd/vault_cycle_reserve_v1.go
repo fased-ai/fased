@@ -47,7 +47,7 @@ func validateVaultCycleReserveV1(scope vaultCommitmentScopeV1, cycleID uint64, s
 	if !bytes.Equal(p[:8], []byte{152, 0, 0, 0, 0, 0, 0, 0}) || p[8] != 1 || p[9] != 1 || p[10] != protocolBump || p[11] != 1 || !bytes.Equal(p[32:40], make([]byte, 8)) || bytes.Equal(p[72:104], make([]byte, 32)) || u64(p, 104) == 0 || u64(p, 104) > snapshot.Slot || u64(p, 112) != expectedActivation {
 		return errors.New("Vault public entry is disabled or activation changed")
 	}
-	if hex.EncodeToString(p[40:72]) != "ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c" {
+	if hex.EncodeToString(p[40:72]) != "ec935a84a00d6bd8269b856b84328684e3d977a5f0fb758fd3884cd310a6934c" { // public economics digest; pragma: allowlist secret
 		return errors.New("Vault protocol economics digest mismatch")
 	}
 	if !bytes.Equal(c[:8], []byte{149, 0, 0, 0, 0, 0, 0, 0}) || u64(c, 8) != cycleID || c[32] != 1 || u64(c, 40) != 16 || !bytes.Equal(c[48:80], make([]byte, 32)) || snapshot.Slot < u64(c, 344) || snapshot.Slot >= u64(c, 352) {
