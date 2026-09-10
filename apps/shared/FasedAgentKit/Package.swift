@@ -14,8 +14,8 @@ let package = Package(
         .library(name: "FasedAgentChatUI", targets: ["FasedAgentChatUI"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/steipete/ElevenLabsKit", exact: "0.1.0"),
-        .package(url: "https://github.com/gonzalezreal/textual", exact: "0.3.1"),
+        .package(url: "https://github.com/steipete/ElevenLabsKit", exact: "0.1.1"),
+        .package(url: "https://github.com/gonzalezreal/textual", exact: "0.5.0"),
     ],
     targets: [
         .target(
