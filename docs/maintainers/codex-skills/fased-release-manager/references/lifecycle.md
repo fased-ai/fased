@@ -194,3 +194,9 @@ branch receipt may mark its independently exercised product predicates `PASS`
 only when `public-installer-acquisition` remains explicitly `SUPPORTING` and
 the receipt binds both statuses. Such a mixed receipt cannot close PUBLIC0,
 owner Local, real Hosting, publication acquisition, or stable acceptance.
+
+## Owner privilege preparation
+
+Before authorized privileged installation work, ask the owner to run `sudo -v`
+in their terminal; never handle the password. After confirmation, check
+`sudo -n true` once. Never execute project code as root.

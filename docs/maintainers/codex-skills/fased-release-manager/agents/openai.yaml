@@ -1,4 +1,4 @@
 interface:
   display_name: "Fased Release Manager"
   short_description: "Route all Fased work efficiently and safely"
-  default_prompt: "Use $fased-release-manager for this Fased task with automatic Sol Advisor routing. Follow only the newest owner-selected controlling plan, resume its first incomplete checkpoint, and treat release authorization as permission rather than readiness proof. Fix and focused-test literal failures before CI or release work, and preserve explicit irreversible boundaries."
+  default_prompt: "Use $fased-release-manager to resume the active checkpoint with focused verification and authorized protected Git delivery; load lifecycle or release details only when needed."
