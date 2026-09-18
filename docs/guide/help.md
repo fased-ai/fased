@@ -17,7 +17,7 @@ Check that tool's permissions and service connection. Retry a small read-only ta
 
 ## A wallet action is unclear
 
-Check its transaction status and balances before resubmitting. Keep keys and recovery phrases private. Follow [wallet setup](/plugins/crypto/wallet-page) or the [legacy SAT troubleshooting guide](/plugins/crypto/mining-troubleshooting).
+Check its transaction status and balances before resubmitting. Keep keys and recovery phrases private. Follow [wallet setup](/plugins/crypto/wallet-page) for your installed release.
 
 ## Still stuck
 

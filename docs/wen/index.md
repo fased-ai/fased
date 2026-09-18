@@ -7,7 +7,7 @@ WEN — World Economy Network — is a financial game built around companies man
 
 The WEN app is the ordinary way to participate. Fased is optional: a personal agent for deeper research and automation.
 
-<Note>Fased's new WEN integration is in development. The features below are planned, not instructions for an available release.</Note>
+<Note>Fased's WEN integration is in development. The features below are planned, not instructions for an available release.</Note>
 
 ## The planned WEN desk
 
@@ -19,7 +19,3 @@ The WEN app is the ordinary way to participate. Fased is optional: a personal ag
 Fased does not receive preferential prices, mining allocations or rewards. Automation follows the same product rules and cannot guarantee returns.
 
 Read [WEN automation](/wen/automation) for permissions and limits. WEN's economic rules belong in its own documentation; this guide covers your agent.
-
-## Existing SAT users
-
-Older cycle-based mining is a separate workflow. Preserve your wallet and recovery data, and follow the [legacy SAT guide](/plugins/crypto/mining-page) for your installed version. Those commands do not enable the new WEN campaigns.

@@ -935,9 +935,7 @@
             "pages": [
               "guide/reference",
               "install/installer",
-              "plugins/crypto/wallet-roles-and-policies",
-              "plugins/crypto/mining-page",
-              "plugins/crypto/mining-troubleshooting"
+              "plugins/crypto/wallet-roles-and-policies"
             ]
           }
         ]
