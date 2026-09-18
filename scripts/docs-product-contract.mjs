@@ -201,8 +201,8 @@ for (const page of [
   "install/vps",
   "install/installer",
   "plugins/crypto/wallet-roles-and-policies",
-  "wen/index",
-  "wen/automation",
+  "plugins/crypto/mining-page",
+  "plugins/crypto/mining-troubleshooting",
 ]) {
   if (!navigationText.includes(`"${page}"`)) {
     fail(`docs navigation omits ${page}`);

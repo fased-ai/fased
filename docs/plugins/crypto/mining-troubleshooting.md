@@ -1,12 +1,10 @@
 ---
-title: "WEN mining"
-summary: "Planned funded acquisition campaigns in WEN."
+title: "Mining availability"
+summary: "WEN campaign integration is in development."
 ---
 
-WEN mining is being redesigned around funded acquisition campaigns. It is not available through the new Fased integration yet.
+The planned WEN mining integration is not ready for activation in Fased. Installing the agent or connecting a wallet does not enable it.
 
-The planned experience lets you choose a purchase budget and maximum price, receive allocations when a campaign meets your conditions, and claim or stake the acquired SAT. Unused capital is not charged simply for remaining deposited.
+Wait for published release instructions before funding a campaign through Fased. You can use the agent for research and everyday tasks now.
 
-WEN provides the ordinary participant experience. Fased is an optional personal agent for comparing opportunities and managing authorized strategies.
-
-There are no activation instructions on this page. Follow [Fased and WEN](/wen/index) for the current scope and [wallet safety](/guide/wallets) before enabling financial actions.
+See [WEN mining](/plugins/crypto/mining-page) for the planned experience and [wallet safety](/guide/wallets) for general precautions.
