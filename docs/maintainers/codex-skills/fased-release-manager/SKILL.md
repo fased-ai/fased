@@ -17,12 +17,12 @@ requested; preserve independent review required by the controlling plan.
 
 Load this file plus at most one reference, only for the current predicate:
 
-| Predicate | Reference |
-| --- | --- |
-| Test selection, disk cleanup, harness or protected delivery | [tests](references/tests.md) |
-| Installer, updater, signer custody, service or migration | [lifecycle](references/lifecycle.md) |
-| Explicit fundamental lifecycle redesign | [redesign](references/lifecycle-redesign.md) |
-| Authorized release/tag/publication | [release](references/release.md) |
+| Predicate                                                   | Reference                                    |
+| ----------------------------------------------------------- | -------------------------------------------- |
+| Test selection, disk cleanup, harness or protected delivery | [tests](references/tests.md)                 |
+| Installer, updater, signer custody, service or migration    | [lifecycle](references/lifecycle.md)         |
+| Explicit fundamental lifecycle redesign                     | [redesign](references/lifecycle-redesign.md) |
+| Authorized release/tag/publication                          | [release](references/release.md)             |
 
 Use the existing owner installation for authorized runtime proof; fresh Local or
 Hosting environments remain owner-authorized. Never handle sudo passwords or run

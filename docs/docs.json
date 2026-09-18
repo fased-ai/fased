@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "Fased",
-  "description": "Fased docs for the agent you run yourself: setup, chat, tasks, tools, wallets, Satcoin mining, and Fased Network.",
+  "description": "Self-hosted Fased Agent: tasks, tools, protected wallets and optional admitted WEN automation.",
   "theme": "mint",
   "modeToggle": {
     "default": "dark"
@@ -37,6 +37,10 @@
   },
   "navbar": {
     "links": [
+      {
+        "label": "WEN docs",
+        "href": "https://docs.wen.network"
+      },
       {
         "label": "Links",
         "href": "/links",
@@ -1181,6 +1185,10 @@
             "tab": "Wallets & Network",
             "groups": [
               {
+                "group": "WEN integration",
+                "pages": ["wen/index", "wen/automation"]
+              },
+              {
                 "group": "Wallets",
                 "pages": [
                   "plugins/crypto/wallet-page",
@@ -1191,7 +1199,7 @@
                 ]
               },
               {
-                "group": "Mining",
+                "group": "Legacy SAT operations",
                 "pages": [
                   "plugins/crypto/mining-page",
                   "plugins/crypto/mining-mainnet-sync",
