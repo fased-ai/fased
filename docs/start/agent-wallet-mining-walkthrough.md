@@ -6,6 +6,8 @@ title: "Agent, Wallets, And Mining Walkthrough"
 sidebarTitle: "Agent + Wallets + Mining"
 ---
 
+<Warning>Legacy SAT guide. Use these instructions only for existing positions on your installed version. They do not enable the new WEN mining campaigns. Preserve your wallet and recovery data. See [Fased and WEN](/wen/index) for the planned integration.</Warning>
+
 # Agent, Wallets, And Mining Walkthrough
 
 This is the guided path from a fresh Fased install to a working Agent, wallet

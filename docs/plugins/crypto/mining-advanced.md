@@ -8,6 +8,8 @@ title: "Advanced Satcoin Mining"
 sidebarTitle: "Advanced mining"
 ---
 
+<Warning>Legacy SAT guide. Use these instructions only for existing positions on your installed version. They do not enable the new WEN mining campaigns. Preserve your wallet and recovery data. See [Fased and WEN](/wen/index) for the planned integration.</Warning>
+
 # Advanced Satcoin mining
 
 Advanced mining is about keeping the loop stable while you tune capital posture,

@@ -7,6 +7,8 @@ read_when:
 title: "Fased Agent Setup"
 ---
 
+<Note>For the shorter current guide, start with [Fased](/index). This page retains detailed setup reference. Its SAT mining instructions describe the legacy workflow, not the new WEN campaigns.</Note>
+
 # Fased Agent Setup
 
 Fased Agent is the agent workbench you run through one of two setup profiles:

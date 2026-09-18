@@ -6,6 +6,8 @@ read_when:
 title: "mining"
 ---
 
+<Warning>Legacy SAT guide. Use these instructions only for existing positions on your installed version. They do not enable the new WEN mining campaigns. Preserve your wallet and recovery data. See [Fased and WEN](/wen/index) for the planned integration.</Warning>
+
 # `fased mining`
 
 SAT mining command surface for terminal-first operators.

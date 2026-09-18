@@ -9,7 +9,7 @@ title: "Getting Started"
 # Getting Started
 
 The shortest path is install, connect one model, and send one browser message.
-Wallets, channels, skills, and Mining can wait.
+You can add tools, channels and wallets later.
 
 ## 1. Install
 
@@ -84,55 +84,6 @@ If it fails, check **Agent > Models**, then **Logs**.
 If the browser receives the reply, the first-run path is complete.
 </Check>
 
-## Add only what you need
-
-<CardGroup cols={2}>
-  <Card title="Channels" href="/channels" icon="message-circle">
-    Connect Telegram, Discord, WhatsApp, Slack, or another supported chat app.
-  </Card>
-  <Card title="Wallets" href="/plugins/crypto/wallet-page" icon="wallet">
-    Create a role-ready Agent, Mining, or Vault wallet.
-  </Card>
-  <Card title="Mining" href="/plugins/crypto/mining-page" icon="coins">
-    Verify SAT runtime readiness, fund the Mining wallet, and start Mining.
-  </Card>
-  <Card title="Skills" href="/tools/skills" icon="blocks">
-    Install a skill, then grant wallet authority separately if it needs any.
-  </Card>
-</CardGroup>
-
-<AccordionGroup>
-  <Accordion title="What installs where">
-    Local commands run under your OS account. On supported Linux/systemd,
-    protected Local separates the Gateway and signer into per-profile service
-    identities and uses normal administrator authorization only for the
-    bounded bootstrap/owner boundary. macOS remains same-user. Hosting
-    separates the human `app` operator, `fased-gateway` service, and
-    `fased-signer` service; root is only for bootstrap and exact-tag recovery.
-  </Accordion>
-
-  <Accordion title="Update later">
-    ```bash
-    fased update status
-    fased update
-    ```
-
-    Stable release tags are the default. The development channel is an explicit
-    opt-in.
-
-  </Accordion>
-
-  <Accordion title="Wallet and Mining risk boundary">
-    Choose wallet roles explicitly and keep only working value in hot roles.
-    Never paste private keys or recovery passwords into chat or the ordinary
-    browser UI. Read the [wallet roles](/plugins/crypto/wallet-roles-and-policies)
-    and [risk disclaimer](/legal/disclaimer) before moving funds.
-  </Accordion>
-</AccordionGroup>
-
 ## Next
 
-- [Install choices and recovery](/install)
-- [Onboarding details](/start/wizard)
-- [Control UI](/web/control-ui)
-- [Agent, wallet, and Mining walkthrough](/start/agent-wallet-mining-walkthrough)
+Try [everyday tasks](/guide/everyday), choose [tools](/guide/tools), or read [troubleshooting](/guide/help) if setup fails.

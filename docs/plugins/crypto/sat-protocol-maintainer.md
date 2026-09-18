@@ -8,6 +8,8 @@ title: "SAT Protocol Maintainer"
 sidebarTitle: "SAT maintainer"
 ---
 
+<Warning>Legacy SAT guide. Use these instructions only for existing positions on your installed version. They do not enable the new WEN mining campaigns. Preserve your wallet and recovery data. See [Fased and WEN](/wen/index) for the planned integration.</Warning>
+
 # SAT Protocol Maintainer
 
 The SAT protocol maintainer is operator tooling for protocol upkeep. Mining

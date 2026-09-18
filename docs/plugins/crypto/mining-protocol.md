@@ -8,6 +8,8 @@ title: "Satcoin Mining API And Protocol"
 sidebarTitle: "Mining API"
 ---
 
+<Warning>Legacy SAT guide. Use these instructions only for existing positions on your installed version. They do not enable the new WEN mining campaigns. Preserve your wallet and recovery data. See [Fased and WEN](/wen/index) for the planned integration.</Warning>
+
 # Satcoin mining API and protocol
 
 This is the technical map for Satcoin (SAT) mining inside Fased Agent.

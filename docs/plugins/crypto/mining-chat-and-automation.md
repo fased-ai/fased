@@ -7,6 +7,8 @@ read_when:
 title: "Mining Chat and Automation"
 ---
 
+<Warning>Legacy SAT guide. Use these instructions only for existing positions on your installed version. They do not enable the new WEN mining campaigns. Preserve your wallet and recovery data. See [Fased and WEN](/wen/index) for the planned integration.</Warning>
+
 # Mining Chat and Automation
 
 `@mining` is the chat handle for Satcoin mining operations. It uses the
