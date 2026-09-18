@@ -15,6 +15,5 @@ The main guide covers ordinary use. These references provide detail when you nee
 | Schedules                  | [Automation](/automation/cron-jobs)                                                              |
 | Wallets                    | [Setup](/plugins/crypto/wallet-page), [policies](/plugins/crypto/wallet-roles-and-policies)      |
 | Network                    | [Network reference](/start/federation)                                                           |
-| Existing SAT positions     | [Legacy mining](/plugins/crypto/mining-page), [recovery](/plugins/crypto/mining-troubleshooting) |
 
 Detailed pages retain their existing URLs. Older translations and developer material remain in the [source repository](https://github.com/fased-ai/fased/tree/main/docs); the shortened English guide is the current starting point. Implementation notes are not promises that a feature is released.

@@ -1,5 +1,5 @@
 ---
-summary: "Set up Fased Agent with tasks, tools, wallets, Fased Network, and Satcoin mining."
+summary: "Set up Fased Agent with tasks, tools, wallets, Fased Network, and planned WEN automation."
 read_when:
   - Onboarding a new assistant instance
   - Reviewing safety/permission implications
@@ -7,7 +7,7 @@ read_when:
 title: "Fased Agent Setup"
 ---
 
-<Note>For the shorter current guide, start with [Fased](/index). This page retains detailed setup reference. Its SAT mining instructions describe the legacy workflow, not the new WEN campaigns.</Note>
+<Note>Start with the [current Fased guide](/index). WEN automation is [in development](/wen/index).</Note>
 
 # Fased Agent Setup
 
@@ -19,7 +19,7 @@ Fased Agent is the agent workbench you run through one of two setup profiles:
   VPS target.
 
 Start with the Gateway and browser dashboard, then add models, skills, services,
-chat apps, tasks, wallets, Fased Network, or Satcoin mining only when they have
+chat apps, tasks, wallets, Fased Network, or planned WEN automation only when they have
 a specific job.
 
 Use this page after first boot to turn a working install into a real Agent
@@ -73,7 +73,7 @@ flowchart TB
   agent --> tools["Tools + plugins"]
   agent --> wallets["Wallet use"]
   agent --> network["Fased Network"]
-  agent --> mining["Satcoin mining"]
+  agent --> mining["planned WEN automation"]
 
   classDef entry fill:#120605,stroke:#ff5a36,color:#ffffff;
   classDef core fill:#071018,stroke:#12cfff,color:#ffffff;
@@ -89,7 +89,7 @@ The recommended order is:
 2. connect one trusted model
 3. send the first browser chat
 4. add skills, services, memory, chat apps, and tasks
-5. add wallets, Fased Network, or Satcoin mining only when the base agent is ready
+5. add wallets, Fased Network, or planned WEN automation only when the base agent is ready
 
 ## Conservative Defaults
 
@@ -149,19 +149,19 @@ Useful links:
 Fased works without wallets or Satcoin. Add wallets, Fased Network, or Satcoin
 modules only when they have a specific job:
 
-| Path           | When to use it                                                                                           |
-| -------------- | -------------------------------------------------------------------------------------------------------- |
-| Wallet use     | When the Agent needs wallet roles, reviewed sends, balances, payment history, or wallet-connected skills |
-| Fased Network  | When the Agent needs a public handle, services, or trust                                                 |
-| Satcoin mining | When the Agent will mine, claim, and build mining history                                                |
-| Bond           | When held SAT should support a stronger trust role                                                       |
+| Path                   | When to use it                                                                                           |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| Wallet use             | When the Agent needs wallet roles, reviewed sends, balances, payment history, or wallet-connected skills |
+| Fased Network          | When the Agent needs a public handle, services, or trust                                                 |
+| planned WEN automation | When the Agent will mine, claim, and build mining history                                                |
+| Bond                   | When held SAT should support a stronger trust role                                                       |
 
 Relevant pages:
 
 - [Wallet](/plugins/crypto/wallet-page)
 - [Fased Network](/start/federation)
 - [Mining](/plugins/crypto/mining-page)
-- [Advanced SAT mining](/plugins/crypto/mining-advanced)
+- [Advanced planned WEN automation](/plugins/crypto/mining-advanced)
 - [Bond overview](/start/bond-operator-economy)
 
 ## Chat Apps And Tasks

@@ -22,4 +22,4 @@ Follow [wallet setup](/plugins/crypto/wallet-page) for the supported screens and
 
 Protect your machine, backups and service credentials. Self-hosting does not make an unsafe permission safe.
 
-New WEN automation is [in development](/wen/index). Existing SAT users should use the [legacy recovery guidance](/plugins/crypto/mining-troubleshooting) for their installed version.
+WEN automation is [in development](/wen/index). Its wallet setup and permissions will be documented when the integration is ready.

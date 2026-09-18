@@ -924,7 +924,12 @@
           },
           {
             "group": "Optional WEN",
-            "pages": ["wen/index", "wen/automation"]
+            "pages": [
+              "wen/index",
+              "wen/automation",
+              "plugins/crypto/mining-page",
+              "plugins/crypto/mining-troubleshooting"
+            ]
           },
           {
             "group": "Troubleshooting",
@@ -935,9 +940,7 @@
             "pages": [
               "guide/reference",
               "install/installer",
-              "plugins/crypto/wallet-roles-and-policies",
-              "plugins/crypto/mining-page",
-              "plugins/crypto/mining-troubleshooting"
+              "plugins/crypto/wallet-roles-and-policies"
             ]
           }
         ]
