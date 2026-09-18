@@ -1,155 +1,38 @@
 ---
 name: fased-release-manager
-description: Use for every task involving Fased, including status, diagnosis, fix, lifecycle, approved-plan, protected-delivery, and authorized-release work. Route through Sol Advisor automatically.
+description: Fased implementation, active-plan execution, protected Git delivery, lifecycle changes and explicitly authorized releases. Questions use relevant source only.
 ---
 
-# Fased Release Manager
+# Fased workflow
 
-Work only in `/home/fc/fasedbot/fased` or an explicitly selected worktree. Do not
-scan parent directories, other worktrees, or archives unless requested.
+Use the selected checkout and scoped AGENTS.md; universal instructions own generic
+editing, authority, evidence, context budgets and preservation. Work solo unless
+requested; preserve independent review required by the controlling plan.
 
-## Start once
+- Questions/reports: inspect the relevant source/checkpoint and answer; no delivery workflow.
+- Implementation: start at the current checkpoint in `/home/fc/fasedbot/docs/wen/execution.md`. Complete the connected journey and affected checks, not isolated helper milestones. Continue authorized local work without repeated approvals.
+- Delivery: classify the final diff once, use the protected PR, merge only the authorized exact passing head, then read back canonical identity. Never bypass branch protection.
+- Ordinary fixes use focused checks and produce no release artifact.
+- When parallel work is authorized, agree the shared interface first; assign disjoint files and one integration owner in the existing tracker. Keep custody/accounting/recovery changes under that owner. Delegate only independent work that removes waiting; integrate and verify one connected milestone before reporting completion. Do not create a task or evidence receipt per helper.
 
-1. Invoke `sol-advisor:orchestration`. Default solo; delegate only when useful.
-2. Select the newest owner-chosen controlling plan and one mode. Print:
-   `PLAN: <path or name> | MODE: <mode> | CHECKPOINT: <id> | STATUS: <status> | NEXT: <predicate>`
-3. Preserve unrelated dirty work. Resume the plan's first incomplete checkpoint;
-   superseded plans are evidence only.
+Load this file plus at most one reference, only for the current predicate:
 
-The newest owner plan controls; superseded plans are evidence only.
+| Predicate | Reference |
+| --- | --- |
+| Test selection, disk cleanup, harness or protected delivery | [tests](references/tests.md) |
+| Installer, updater, signer custody, service or migration | [lifecycle](references/lifecycle.md) |
+| Explicit fundamental lifecycle redesign | [redesign](references/lifecycle-redesign.md) |
+| Authorized release/tag/publication | [release](references/release.md) |
 
-- `REPORT`: inspect and answer without mutation.
-- `FIX`: one failure, one correction, focused proof. Default mode.
-- `LIFECYCLE`: installer, updater, privilege, service, or migration behavior.
-- `RELEASE`: when the owner explicitly says to release, publish, or create the
-  next tag.
+Use the existing owner installation for authorized runtime proof; fresh Local or
+Hosting environments remain owner-authorized. Never handle sudo passwords or run
+project code as root. Managed releases are GitHub-only; npm is not managed update
+authority. Reuse saved GitHub authentication; do not restart pending device flows.
 
-Use `FIX` or `LIFECYCLE` to close the reported failure before entering
-`RELEASE`.
+Finish source edits before verification, freeze fingerprinted inputs, refresh
+source-bound artifacts once, and reuse unchanged binaries/evidence. Update the
+tracker's current checkpoint once per meaningful milestone. Apply mandatory disk
+hygiene from tests.md before final reporting; retain keys, state and unique work.
 
-## Soft budgets
-
-- Load this file plus at most one reference; use at most six targeted discovery calls and a 6,000-token soft context budget.
-- Every tool call must discover, edit, or verify; after discovery use at most twelve additional tool calls.
-- Never repeat unchanged state. Explain commands over one minute and report every 60 seconds.
-
-## Execute one owner-authorized chain
-
-Treat “fix and release” as one conditional authorization:
-
-1. Reserve the next unused version before opening delivery and put that version,
-   the fix, and its nearest focused regression in the same protected PR.
-2. Run only that regression, directly coupled contracts, and changed-file
-   formatting. Do not add a full-package rerun after the focused predicate passes.
-3. Run changed-surface CI once and squash-merge the exact passing head.
-4. Create the annotated tag at that merged commit.
-5. Dispatch one tag-bound workflow that builds once, attests, publishes and
-   advances the selected channel.
-6. Read back the public tag and release result.
-
-When GitHub is responsive, target under ten minutes: about two for PR CI and six
-for one cached, parallel tag-bound build/publication. Do not merge a fix and then
-open a standalone version PR when release authority was already present.
-The protected owner-created annotated tag is the publication approval; the
-initial tag-bound workflow must not add a second environment-review pause.
-
-Do not re-request the same authority. Stop only for a failed predicate, changed
-identity, owner stop, or missing authority. A fix without release authority ends
-after protected merge. If the same predicate fails twice, report instead of retrying.
-
-## Fix the literal predicate first
-
-For every Fased issue, default to:
-
-1. Preserve and inspect that exact environment and command.
-2. Identify the first divergent predicate.
-3. Add the nearest red-capable regression when needed.
-4. Make one coherent correction.
-5. Run that test, directly coupled contracts, and changed-file formatting.
-6. Report or continue the active plan.
-
-`reproduce -> focused regression -> fix -> focused test -> one literal runtime proof when required -> one PR/CI -> merge`
-
-Keep diagnosis on the focused predicate. `fix and ship` means one locally
-proven final diff, one push, one protected PR, one changed-surface CI result,
-and an authorized exact-head squash merge.
-
-Never create a container, VM, disposable user/home, or simulated fresh install
-for an ordinary correction. Use focused checks, then the affected existing owner
-installation only when runtime proof is required. Substituted, non-interactive,
-preseeded, container, or agent-created machines can never receive Local `PASS`.
-Fresh Local is owner-run on an independent machine using the documented curl,
-`fased status`, and `fased update`; accept literal owner output when unreachable.
-
-For Hosting failures, inventory prerequisites, private network, generation,
-readiness, onboarding, hardening, recovery, and identical retry before fixing.
-Exercise adjacent durable transitions once; never publish first-error patches.
-
-## Load details only when selected
-
-- Tests, fixtures, protected delivery, workspace/cache hygiene:
-  [references/tests.md](references/tests.md)
-- Installer, updater, Local/Hosting, signer, service, state, or migration:
-  [references/lifecycle.md](references/lifecycle.md)
-- Fundamental lifecycle trust redesign, only when truly selected:
-  [references/lifecycle-redesign.md](references/lifecycle-redesign.md)
-- Explicit candidate, publication, or stable action:
-  [references/release.md](references/release.md)
-
-Docs/skills run their validator; workflows run static contracts; permission or
-fixture changes run their exact regression. Avoid unrelated installs, builds,
-containers, systemd, full suites, or CodeQL.
-
-## Runtime and artifact discipline
-
-Lead lifecycle reports with literal user commands and distinguish `documented`,
-`implemented`, and `proven`. Managed users never maintain build tools, internal
-paths, services, or journals.
-
-Ordinary fixes use focused checks and produce no release artifact. An authorized
-release uses one tag-bound workflow to build Linux-x64 once, attest those exact
-bytes, run the production bootstrap/trust verifier, publish, and advance the
-channel. The tag ref and peeled commit bind every official attestation.
-Metadata-only promotion resumes an already published release without rebuilding.
-
-The ordinary RC workflow is Linux-x64 only: one release job that never dispatches,
-depends on, or waits for ARM64 or macOS. Portable supplements use a distinct,
-explicitly owner-selected workflow only for a requested multi-platform release.
-Assemble Linux-x64 once per public version because its JavaScript and native Go
-binaries bind the version, commit, tree, and digest. Reuse dependency downloads
-and Go compilation caches, never a prior assembled release or duplicate build.
-
-Fresh Local and Hosting checks are owner-initiated after publication. Update the
-existing owner-Local installation only when the owner authorizes it. Use literal
-output supplied by the owner for an unreachable fresh Local machine, and connect
-to a VPS only when the owner provides access. These checks report product
-acceptance; they do not enter the default fix-and-release chain.
-
-## Evidence and authority
-
-Use only `PASS`, `FAIL`, `BLOCKED`, `SUPPORTING`, `WAIVED`, and `N/A`. Source,
-mock, fixture, container, or substituted transport evidence never becomes
-owner-Local, real-Hosting, or public `PASS`. Bind completion claims to the exact
-identity required by the selected reference.
-
-Managed publication is GitHub-only; npm is never managed install/update
-authority. Never bypass protected checks. Repository/full security scans require
-owner authorization.
-
-## Branch and workspace discipline
-
-- Prefer one owner workspace, `main`, and one task branch/worktree. Preserve any
-  unique inactive work in a verified bundle; remove the task worktree, branch
-  and tracking ref only after exact merged-tree validation.
-- Cache immutable artifacts/tools/one predecessor, never installations,
-  journals, Wallets or signer state. Use `$XDG_CACHE_HOME/fased-dev` and exact
-  task-created `/tmp/fased-*` directories; remove only classified residues.
-- Before an authorized host install or update that may require privilege, ask
-  the owner to run `sudo -v` once in their own terminal so the sudo credential
-  cache is active. Never request, accept, echo, or handle the sudo password in
-  chat or tool input. After the owner confirms, check `sudo -n true` once. If
-  unavailable, report `NOT RUN: sudo credential expired`; never poll or start a
-  password prompt.
-
-The canonical skill is `docs/maintainers/codex-skills/fased-release-manager/`.
-Synchronize the installed copy only after the canonical folder and harness validator pass.
+Canonical source: `docs/maintainers/codex-skills/fased-release-manager/`.
+Validate canonical instructions before syncing installed copies and checking the harness.
