@@ -1,12 +1,25 @@
 ---
 title: "Fased and WEN"
-description: "Optional personal automation under the same economic rules."
+summary: "An optional personal companion for WEN."
 ---
 
-WEN is the retail financial game. Fased is your optional self-hosted agent for research, tools, wallets and authorized strategies. The ordinary redesigned WEN journey does not require Fased.
+WEN — World Economy Network — is a financial game built around companies managing positions across independent economies, starting with SAT.
 
-The successor WEN integration remains subject to exact program/client binding and installed acceptance. Legacy SAT commands do not activate campaign mining.
+The WEN app is the ordinary way to participate. Fased is optional: a personal agent for deeper research and automation.
 
-Keep protected wallets, spending policies, reconciliation and recovery. Replace personal cycle/reveal orchestration for new mining with a thin campaign adapter. Advanced portfolio choices and [automation](/wen/automation) use the same prices, rights and limits as retail.
+<Note>Fased's new WEN integration is in development. The features below are planned, not instructions for an available release.</Note>
 
-Shared economics and fees belong in [WEN documentation](https://docs.wen.network/). Installation, wallet security and runtime recovery remain in these Fased docs.
+## The planned WEN desk
+
+- Compare acquisition opportunities and portfolio allocations.
+- Set budgets for mining campaigns and other supported purchases.
+- Manage approved staking, claims and rebalancing.
+- Track results and flag actions that need your attention.
+
+Fased does not receive preferential prices, mining allocations or rewards. Automation follows the same product rules and cannot guarantee returns.
+
+Read [WEN automation](/wen/automation) for permissions and limits. WEN's economic rules belong in its own documentation; this guide covers your agent.
+
+## Existing SAT users
+
+Older cycle-based mining is a separate workflow. Preserve your wallet and recovery data, and follow the [legacy SAT guide](/plugins/crypto/mining-page) for your installed version. Those commands do not enable the new WEN campaigns.

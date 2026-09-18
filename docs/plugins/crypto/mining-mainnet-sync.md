@@ -8,7 +8,7 @@ title: "SAT Mainnet Sync"
 sidebarTitle: "Mainnet Sync"
 ---
 
-<Warning>Legacy SAT operating reference. Cycle/commit/reveal commands apply only to their accepted protocol and installed version. The new WEN campaign design has a separate adapter and deployment binding; it is not enabled by this guide. Read [Fased and WEN](/wen/index) before choosing an operating path. Historical claims and recovery remain version-specific.</Warning>
+<Warning>Legacy SAT guide. Use these instructions only for existing positions on your installed version. They do not enable the new WEN mining campaigns. Preserve your wallet and recovery data. See [Fased and WEN](/wen/index) for the planned integration.</Warning>
 
 # SAT Mainnet Sync
 
