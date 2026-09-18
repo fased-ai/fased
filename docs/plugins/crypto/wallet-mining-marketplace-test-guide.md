@@ -7,8 +7,6 @@ read_when:
 title: "Wallet, Mining, and Marketplace Test Guide"
 ---
 
-<Warning>Legacy SAT operating reference. Cycle/commit/reveal commands apply only to their accepted protocol and installed version. The new WEN campaign design has a separate adapter and deployment binding; it is not enabled by this guide. Read [Fased and WEN](/wen/index) before choosing an operating path. Historical claims and recovery remain version-specific.</Warning>
-
 # Wallet, Mining, and Marketplace Test Guide
 
 Use this checklist after pulling, rebuilding, and restarting the agent and UI.

@@ -6,8 +6,6 @@ title: "Agent, Wallets, And Mining Walkthrough"
 sidebarTitle: "Agent + Wallets + Mining"
 ---
 
-<Warning>Legacy SAT operating reference. Cycle/commit/reveal commands apply only to their accepted protocol and installed version. The new WEN campaign design has a separate adapter and deployment binding; it is not enabled by this guide. Read [Fased and WEN](/wen/index) before choosing an operating path. Historical claims and recovery remain version-specific.</Warning>
-
 # Agent, Wallets, And Mining Walkthrough
 
 This is the guided path from a fresh Fased install to a working Agent, wallet

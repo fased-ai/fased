@@ -8,8 +8,6 @@ title: "SAT Mainnet Sync"
 sidebarTitle: "Mainnet Sync"
 ---
 
-<Warning>Legacy SAT operating reference. Cycle/commit/reveal commands apply only to their accepted protocol and installed version. The new WEN campaign design has a separate adapter and deployment binding; it is not enabled by this guide. Read [Fased and WEN](/wen/index) before choosing an operating path. Historical claims and recovery remain version-specific.</Warning>
-
 # SAT Mainnet Sync
 
 Fased Agent ships pre-launch without active Satcoin mainnet IDs.
