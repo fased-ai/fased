@@ -7,11 +7,15 @@ title: "Fased"
 
 # Fased
 
-**Run Agent. Mine SAT. Build Trust.**
+**Your personal agent. Your tools. Your limits.**
 
 Fased Agent is the agent you run yourself. Start with tasks and the browser
-dashboard. Add wallets, services, Fased Network, and Satcoin mining when the
+dashboard. Add wallets, services, Fased Network, and admitted financial tools when the
 work is ready for them.
+
+WEN is the separate retail game. Fased is optional advanced automation, not a
+mining prerequisite. Read [Fased and WEN](/wen/index) for the successor integration
+and its release boundaries.
 
 Start by choosing one of two setup profiles:
 

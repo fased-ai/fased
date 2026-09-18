@@ -7,6 +7,8 @@ read_when:
 title: "Mining Chat and Automation"
 ---
 
+<Warning>Legacy SAT operating reference. Cycle/commit/reveal commands apply only to their accepted protocol and installed version. The new WEN campaign design has a separate adapter and deployment binding; it is not enabled by this guide. Read [Fased and WEN](/wen/index) before choosing an operating path. Historical claims and recovery remain version-specific.</Warning>
+
 # Mining Chat and Automation
 
 `@mining` is the chat handle for Satcoin mining operations. It uses the
