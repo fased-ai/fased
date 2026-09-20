@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.25.12-bookworm@sha256:ea341baa9bd5ba6784f6d7161ace70544349a6242d54d34a0fbfd2c4d51c9d58 AS signer-builder
+FROM golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS signer-builder
 
 # BuildKit defines these automatically from the requested --platform. Redeclare
 # them without defaults so an arm64 build cannot silently compile an amd64 signer.
@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM scratch AS signer-artifact
 COPY --from=signer-builder /out/fased-signerd /fased-signerd
 
-FROM node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
+FROM node:25-bookworm@sha256:78839ac448c23517f8eab2e8f7943d9b4f73979eb7f8bed2c73dbf72ff869e7b
 
 # The pinned Node image currently ships npm with a vulnerable node-tar release.
 # Keep npm available for runtime/plugin operations while replacing its bundled
