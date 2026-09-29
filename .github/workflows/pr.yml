@@ -308,7 +308,10 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          pre-commit run detect-secrets --from-ref "$BASE" --to-ref HEAD
+          if ! pre-commit run detect-secrets --from-ref "$BASE" --to-ref HEAD; then
+            git diff -- .secrets.baseline
+            exit 1
+          fi
           pre-commit run detect-private-key --from-ref "$BASE" --to-ref HEAD
 
       - name: Audit changed workflows
