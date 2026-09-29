@@ -1,5 +1,5 @@
 import { defineConfig, type UserConfig } from "vitest/config";
-import baseConfig from "./vitest.config.ts";
+import baseConfig from "../vitest.config.ts";
 const base = baseConfig as UserConfig;
 export default defineConfig({
   ...base,
