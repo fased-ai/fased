@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { PublicKey } from "@solana/web3.js";
 import { describe, it, expect } from "vitest";
 import { buildWenCampaignOwnerInstruction as build } from "./wen-campaign-instruction.js";
@@ -46,41 +47,22 @@ describe("campaign canonical owner instructions", () => {
     ["stop", "0", 139],
     ["top-up", "1000", 143],
     ["withdraw", "1000", 138],
-  ])("matches SAT portable builder for %s", async (operation, amountLamports, op) => {
-    const sdk = await import(
-      new URL("../../../wen/node_modules/@solana/kit/dist/index.node.mjs", import.meta.url).href
+  ])("matches SAT portable builder for %s", async (operation, amountLamports) => {
+    const fixture = JSON.parse(
+      readFileSync(new URL("./fixtures/campaign-owner-instructions.json", import.meta.url), "utf8"),
     );
-    const portable = await import(
-      new URL(
-        "../../../token/sat/wen-genesis/client/campaign-owner-instruction.mjs",
-        import.meta.url,
-      ).href
+    const expected = fixture.vectors.find(
+      (vector: { operation: string }) => vector.operation === operation,
     );
-    const hex = (k: PublicKey) => k.toBuffer().toString("hex");
-    const expected = await portable.buildCampaignOwnerInstruction(sdk, {
-      program: hex(program),
-      owner: hex(owner),
-      issuer: hex(issuer),
-      mint: hex(mint),
-      op,
-      positionRent: 100n,
-      position: {
-        address: hex(position),
-        owner: hex(program),
-        executable: false,
-        data: Array.from(data),
-        lamports: 1100n,
-      },
-      ...(op === 139 ? {} : { amount: BigInt(amountLamports) }),
-    });
+    expect(expected.amountLamports).toBe(amountLamports);
     const result = build({ ...input, operation, amountLamports }, snapshot);
-    expect(Array.from(result.instruction.data)).toEqual(Array.from(expected.instruction.data));
+    expect(Array.from(result.instruction.data)).toEqual(Array.from(expected.data));
     expect(
       result.instruction.keys.map((k) => ({
         address: k.pubkey.toBase58(),
         role: (k.isSigner ? 2 : 0) + (k.isWritable ? 1 : 0),
       })),
-    ).toEqual(expected.instruction.accounts);
+    ).toEqual(expected.accounts);
     expect(result.rpcAuthenticated).toBe(false);
     expect(result.signingEnabled).toBe(false);
   });

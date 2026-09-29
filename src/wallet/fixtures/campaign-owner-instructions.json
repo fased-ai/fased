@@ -1,0 +1,55 @@
+{
+  "source": "token/sat/wen-genesis/client/campaign-owner-instruction.mjs",
+  "sourceSha256": "76b47a07289d2bde3eaaed08f9f4a58b620117a11536b803c69bce8a33e0b5f5",
+  "vectors": [
+    {
+      "operation": "stop",
+      "amountLamports": "0",
+      "data": [139],
+      "accounts": [
+        {
+          "address": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+          "role": 3
+        },
+        {
+          "address": "BZJwi3rPUsiH9wgUcZKLQeaLDACepSLZFvK7U2XsqWPQ",
+          "role": 1
+        }
+      ]
+    },
+    {
+      "operation": "top-up",
+      "amountLamports": "1000",
+      "data": [143, 232, 3, 0, 0, 0, 0, 0, 0],
+      "accounts": [
+        {
+          "address": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+          "role": 3
+        },
+        {
+          "address": "BZJwi3rPUsiH9wgUcZKLQeaLDACepSLZFvK7U2XsqWPQ",
+          "role": 1
+        },
+        {
+          "address": "11111111111111111111111111111111",
+          "role": 0
+        }
+      ]
+    },
+    {
+      "operation": "withdraw",
+      "amountLamports": "1000",
+      "data": [138, 232, 3, 0, 0, 0, 0, 0, 0],
+      "accounts": [
+        {
+          "address": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+          "role": 3
+        },
+        {
+          "address": "BZJwi3rPUsiH9wgUcZKLQeaLDACepSLZFvK7U2XsqWPQ",
+          "role": 1
+        }
+      ]
+    }
+  ]
+}

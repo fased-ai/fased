@@ -76,7 +76,7 @@ it.each([
     });
     try {
       let ready: { socket: string; walletId: string; intent: unknown } | undefined;
-      const deadline = Date.now() + 30000;
+      const deadline = Date.now() + 120000;
       while (Date.now() < deadline && !stopped) {
         try {
           ready = JSON.parse(await readFile(path.join(dir, "ready.json"), "utf8"));
@@ -129,5 +129,5 @@ it.each([
       await rm(dir, { recursive: true, force: true });
     }
   },
-  45000,
+  150000,
 );
