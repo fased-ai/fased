@@ -27,6 +27,7 @@ it("attaches only explicit local profile and drains on checkpoint/stop", async (
   try {
     vi.stubEnv("FASED_WEN_LOCAL_RECOVERY_PROFILE", "/local/candidate.json");
     plugin.register({
+      registerTool: vi.fn(),
       pluginConfig: undefined,
       registerGatewayMethod() {},
       registerService(value: typeof service) {
@@ -72,6 +73,7 @@ it.each(["wen.mining.review.refresh", "wen.mining.claim.refresh"])(
     try {
       vi.stubEnv("FASED_WEN_LOCAL_RECOVERY_PROFILE", "/local/candidate.json");
       plugin.register({
+        registerTool: vi.fn(),
         registerGatewayMethod(name: string, fn: typeof handler, opts: unknown) {
           if (name === method) {
             handler = fn;
@@ -150,6 +152,7 @@ it("loads campaign independently and disables its gateway on checkpoint and inva
     vi.stubEnv("FASED_WEN_LOCAL_RECOVERY_PROFILE", "");
     vi.stubEnv("FASED_WEN_LOCAL_CAMPAIGN_PROFILE", "/local/campaign.json");
     plugin.register({
+      registerTool: vi.fn(),
       registerGatewayMethod(name: string, fn: typeof handler) {
         if (name === "wen.campaign.approval.prepare") {
           handler = fn;
