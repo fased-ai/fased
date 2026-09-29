@@ -36,6 +36,54 @@ afterEach(() => {
 });
 
 describe("discoverFasedAgentPlugins", () => {
+  it("loads a bundled plugin from its lock-bound implementation directory", async () => {
+    const stateDir = makeTempDir();
+    const codeRoot = path.join(stateDir, "managed", "plugin-code");
+    const dataRoot = path.join(stateDir, "plugin-data");
+    const bundledRoot = path.join(stateDir, "bundled");
+    const lockPath = path.join(stateDir, "plugin.lock.json");
+    const root = path.join(bundledRoot, "runtime-browser");
+    fs.mkdirSync(root, { recursive: true });
+    fs.mkdirSync(codeRoot, { recursive: true });
+    fs.mkdirSync(dataRoot, { recursive: true });
+    fs.writeFileSync(path.join(root, "index.ts"), "export default function () {}", "utf8");
+    fs.writeFileSync(
+      path.join(root, "fased.plugin.json"),
+      JSON.stringify({ id: "browser-runtime", configSchema: { type: "object" } }),
+      "utf8",
+    );
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        type: "fased-plugin-lock",
+        entries: [
+          {
+            id: "browser-runtime",
+            directory: "runtime-browser",
+            origin: "bundled",
+            digest: `sha256:${"a".repeat(64)}`,
+            apiCapability: "fased.plugin.v1",
+            required: false,
+          },
+        ],
+      }),
+    );
+    const result = await withEnvAsync(
+      {
+        FASED_STATE_DIR: stateDir,
+        FASED_BUNDLED_PLUGINS_DIR: bundledRoot,
+        FASED_PLUGIN_CODE_ROOT: codeRoot,
+        FASED_PLUGIN_DATA_ROOT: dataRoot,
+        FASED_PLUGIN_LOCK_PATH: lockPath,
+      },
+      async () => discoverFasedAgentPlugins({}),
+    );
+    expect(result.candidates.map((candidate) => path.basename(candidate.rootDir))).toEqual([
+      "runtime-browser",
+    ]);
+    expect(result.diagnostics).toEqual([]);
+  });
   it("uses the managed lock as the bundled plugin index", async () => {
     const stateDir = makeTempDir();
     const codeRoot = path.join(stateDir, "managed", "plugin-code");

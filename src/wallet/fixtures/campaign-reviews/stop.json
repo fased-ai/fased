@@ -1,0 +1,71 @@
+{
+  "requestId": "review-request-001",
+  "walletId": "miner",
+  "walletPublicKey": "GJ5svpPX8HK3pvqii2yNPcA6bTuTxD5fWtTZExspRmAo",
+  "intentType": "wen.campaign.stop.v1",
+  "intentDigest": "sha256:c3f8068d1c324b17f0e7003739c8fc7534c34d2154734865e31f798ff7c927c9",
+  "policyHash": "sha256:d01ad64d2b482ee5a7c511d0afff86c8d61a775a964eb1e938480e1860b30310",
+  "mode": "reviewed",
+  "nonce": "231de781819679b1d6ac87d46476d5716ae9bd3b47f44235de8e74342e9ba9d3",
+  "semanticIntent": {
+    "Version": 1,
+    "RequestID": "review-request-001",
+    "WalletID": "miner",
+    "WalletPublicKey": "GJ5svpPX8HK3pvqii2yNPcA6bTuTxD5fWtTZExspRmAo",
+    "PolicyHash": "sha256:d01ad64d2b482ee5a7c511d0afff86c8d61a775a964eb1e938480e1860b30310",
+    "Pins": {
+      "DescriptorSHA256": "",
+      "CapabilitySHA256": "",
+      "OfferSHA256": "",
+      "ProgramID": "65MW4hoqMQm4Zz39pJMZFFYDNJZjGqjsPfdy9FhiX6Rb",
+      "Genesis": "5nefsueHERz3qAPgU8s9DYBpkZXUgNQBxCcKJ5KvoZEK",
+      "SourceAccount": "",
+      "AdmissionAccount": "",
+      "CodeSHA256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+      "DeploymentSlot": 50,
+      "UpgradeAuthority": null
+    },
+    "Action": {
+      "Operation": "stop",
+      "Program": "65MW4hoqMQm4Zz39pJMZFFYDNJZjGqjsPfdy9FhiX6Rb",
+      "Economy": "8ZrswTcthX417csgtjSAAt6rrThhj4E4QRp5k4eRhc5L",
+      "Position": "9PnuR1zjg3Z5CNLfMcAbmBHgtkF9h5sEouUm9nzJj9Ho",
+      "Amount": 0
+    },
+    "Binding": {
+      "Message": "gAEABAjjP7F77/uC7d6DooCovNNuyHVVngrTI6Y11ZoCHwfvmHy0LTrfTAA13tNrjwtZtwiFg8eUZxPphTh0TGhlnw1uS2gFmku7Xi9gPjyXKFXVGcpNImwIne+xmYUuJepcauehVk3XeA37VQ5NfGW5CiIHvgbvYvf744PxjY/kVJpvNHBsyroAdCZD8PtpFJoesX0XxsKki+D7uWkulvrOAeUHkfkqPrPuauAO3b8OqIvf2OjB9iTiGfUqYX5G/+11rwO1tkMW5/GODVLbPO6Abqjrrx4TOWEqZBWR0a8SRRdmvEtn8EPyovXXEG7KR8AsQaWry6X0osZPiutj9kJJ7iQGRyB6Yma4nABVuS6XSibxxHxStNI56FhFOjn9fOypg8QBBwcAAQQFBgIDAYsA",
+      "Blockhash": "5nefsueHERz3qAPgU8s9DYBpkZXUgNQBxCcKJ5KvoZEK",
+      "Position": {
+        "Slot": 110,
+        "ReferenceSlot": 111,
+        "Address": "9PnuR1zjg3Z5CNLfMcAbmBHgtkF9h5sEouUm9nzJj9Ho",
+        "Owner": "65MW4hoqMQm4Zz39pJMZFFYDNJZjGqjsPfdy9FhiX6Rb",
+        "Executable": false,
+        "Data": "V0VOUlBPUzIBAAAAAAAAAOM/sXvv+4Lt3oOigKi8027IdVWeCtMjpjXVmgIfB++Y0ESRPMSLg0oCs2UsMbL6QsQJfysoNhHqNGH1IY1wctbxp5xlz6ZYCMGAhOQuTL8lPsva5LOKlx1sQLDWnMA2vwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkfkqPrPuauAO3b8OqIvf2OjB9iTiGfUqYX5G/+11rwMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "Lamports": 1100,
+        "Rent": 100,
+        "AccountingSHA256": "b810ed0a1b54626cbf0728e8e32c88594359791383e8e1f801a460395e1bfb27"
+      },
+      "Fee": 4500,
+      "MaxFee": 5000,
+      "CurrentHeight": 100,
+      "LastValidHeight": 200,
+      "ExpiresSlot": 132
+    }
+  },
+  "artifactKind": "wen-campaign-owner-v1",
+  "artifactDigest": "sha256:c3f8068d1c324b17f0e7003739c8fc7534c34d2154734865e31f798ff7c927c9",
+  "stateDigest": "b1454a40d5b77adc364be37d4fe4e9834ee4e40077f6bd8e26abf267b450250d",
+  "stateSlot": 110,
+  "asset": "solana:native",
+  "amount": "5000",
+  "destination": "8ZrswTcthX417csgtjSAAt6rrThhj4E4QRp5k4eRhc5L",
+  "policyOperation": "wen.campaign.stop.v1",
+  "requiredPrograms": ["65MW4hoqMQm4Zz39pJMZFFYDNJZjGqjsPfdy9FhiX6Rb"],
+  "issuedAt": "2026-09-25T13:48:03.247972307Z",
+  "state": "prepared",
+  "preparedAt": "2026-09-25T13:48:03.247972307Z",
+  "expiresAt": "2026-09-25T13:50:03.247972307Z",
+  "updatedAt": "2026-09-25T13:48:03.247972307Z",
+  "transactionDigest": "sha256:ab7757d7c4f0927f3930f3d44835c9c020a0acfdd0f1b842978b1280d00b29b3"
+}

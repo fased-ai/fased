@@ -644,7 +644,7 @@ function discoverBundledLockEntry(params: {
   diagnostics: PluginDiagnostic[];
   seen: Set<string>;
 }) {
-  const rootDir = path.join(params.bundledRoot, params.entry.id);
+  const rootDir = path.join(params.bundledRoot, params.entry.directory ?? params.entry.id);
   const manifest = loadPluginManifest(rootDir);
   if (!manifest.ok || manifest.manifest.id !== params.entry.id) {
     params.diagnostics.push({

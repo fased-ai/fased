@@ -77,6 +77,27 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 	}
 
 	switch args[0] {
+	case "wen-campaign":
+		return runSignerAdminCampaignV1(args[1], args[2:], stdin, stdout)
+	case "wen-mining":
+		if args[1] == "install-preimage" {
+			return runSignerAdminMiningPreimageV1(args[2:], stdin, stdout)
+		}
+		if args[1] == "install-claim-review" {
+			return runSignerAdminMiningClaimBootstrapV1(args[2:], stdin, stdout)
+		}
+		if args[1] == "install-commit-review" {
+			return runSignerAdminMiningBootstrapV1(args[2:], stdin, stdout)
+		}
+		if args[1] == "install-reveal-review" {
+			return runSignerAdminMiningReviewV1(args[2:], stdin, stdout)
+		}
+		return signerAdminUsageError()
+	case "wen-btc":
+		if args[1] == "install-route" {
+			return runSignerAdminWENRouteInstallV1(args[2:], stdin, stdout)
+		}
+		return signerAdminUsageError()
 	case "service":
 		switch args[1] {
 		case "health":
@@ -243,7 +264,7 @@ func runSignerAdminOwnerCeremonyV1(args []string, stdin io.Reader, stdout io.Wri
 }
 
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {service|wallet|owner-ceremony|keeper|policy|network|rpc-profile|jupiter|webauthn|migration} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {service|wallet|owner-ceremony|keeper|policy|network|rpc-profile|jupiter|webauthn|migration|wen-campaign} <command> [flags]")
 }
 
 func runSignerAdminKeeperFeePayerV2(args []string, ensure bool, stdout io.Writer) error {

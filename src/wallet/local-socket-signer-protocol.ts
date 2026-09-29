@@ -2,6 +2,69 @@ import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../mining/sat-vnext-release-contract.generated.js";
 import { SIGNER_PROTOCOL_V2 } from "./signer-protocol-v2.generated.js";
+import { WenBondClaimStoredReviewSchema } from "./wen-bond-claim-review-contract.js";
+import { WenBondPurchaseStoredReviewSchema } from "./wen-bond-purchase-review-contract.js";
+import {
+  WenBtcClaimIntentSchema,
+  validateWenBtcClaimIntent,
+  isWenBtcClaimPreparation,
+} from "./wen-btc-claim-preparation-contract.js";
+import { isWenBtcInspection } from "./wen-btc-inspection-contract.js";
+import { WenBtcIntentCandidateSchema, validateWenBtcIntentCandidate } from "./wen-btc-intent.js";
+import { isWenBtcPreparation } from "./wen-btc-preparation-contract.js";
+import { isWenBtcRoutePreview } from "./wen-btc-route-preview-contract.js";
+import {
+  isWenCampaignAuthorizationBegin,
+  isWenCampaignAuthorizationFinish,
+} from "./wen-campaign-authorization-contract.js";
+import { WenCampaignStoredReviewSchema } from "./wen-campaign-review-contract.js";
+import {
+  WenCampaignJourneyRequestSchema,
+  WenCampaignReviewRequestSchema,
+  WenCampaignJourneyResultSchema,
+  validateWenCampaignJourneyRequest,
+  validateWenCampaignReviewRequest,
+} from "./wen-campaign-service-contract.js";
+import { WenMarketStoredReviewSchema } from "./wen-market-review-contract.js";
+import {
+  WenMiningClaimProposalRequestSchema,
+  validateWenMiningClaimProposalRequest,
+  isWenMiningClaimProposal,
+} from "./wen-mining-claim-proposal-contract.js";
+import {
+  WenMiningFundingIntentSchema,
+  validateWenMiningFundingIntent,
+  isWenMiningFundingPreparation,
+} from "./wen-mining-funding-preparation-contract.js";
+import {
+  WenMiningIntentCandidateSchema,
+  validateWenMiningIntentCandidate,
+} from "./wen-mining-intent.js";
+import { isWenMiningPreparation } from "./wen-mining-preparation-contract.js";
+import {
+  WenMiningRecoveryRequestSchema,
+  validateWenMiningRecoveryRequest,
+  isWenMiningRecoveryResult,
+} from "./wen-mining-recovery-contract.js";
+import {
+  isWenMiningAuthorizationBegin,
+  isWenMiningAuthorizationFinish,
+} from "./wen-mining-review-authorization-contract.js";
+import {
+  WenMiningReviewPrepareRequestSchema,
+  validateWenMiningReviewPrepareRequest,
+  isWenMiningStoredReview,
+} from "./wen-mining-review-preparation-contract.js";
+import {
+  WenNativeClaimIntentSchema,
+  validateWenNativeClaimIntent,
+  isWenNativeClaimPreparation,
+} from "./wen-native-claim-preparation-contract.js";
+import {
+  WenWithdrawalIntentSchema,
+  validateWenWithdrawalIntent,
+  isWenWithdrawalPreparation,
+} from "./wen-withdrawal-preparation-contract.js";
 
 const WalletChainSchema = Type.Literal("solana");
 
@@ -1103,6 +1166,149 @@ export const LocalSocketSignerRequestSchema = Type.Union(
     ),
     Type.Object(
       {
+        op: Type.Literal("v2.wenBTCClaim.prepare"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenBtcClaimIntentSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenMiningFunding.prepare"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenMiningFundingIntentSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenNativeClaim.prepare"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenNativeClaimIntentSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenWithdrawal.prepare"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenWithdrawalIntentSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Union([
+          Type.Literal("v2.wenMarket.journey"),
+          Type.Literal("v2.wenBondPurchase.journey"),
+          Type.Literal("v2.wenBondClaim.journey"),
+        ]),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenCampaignJourneyRequestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Union([
+          Type.Literal("v2.wenMarket.review.prepare"),
+          Type.Literal("v2.wenBondPurchase.review.prepare"),
+          Type.Literal("v2.wenBondClaim.review.prepare"),
+        ]),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenCampaignReviewRequestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenCampaign.journey"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenCampaignJourneyRequestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenCampaign.review.prepare"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenCampaignReviewRequestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenMining.claim.journey"),
+        walletId: Type.String({ minLength: 1 }),
+        request: Type.Union([
+          Type.Object(
+            {
+              requestId: Type.String({ pattern: "^[A-Za-z0-9_:.-]{8,128}$" }),
+              action: Type.Literal("execute"),
+              proof: Type.Object(
+                { proofId: Type.String({ minLength: 1 }) },
+                { additionalProperties: false },
+              ),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              requestId: Type.String({ pattern: "^[A-Za-z0-9_:.-]{8,128}$" }),
+              action: Type.Literal("recover"),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenMining.claim.review.prepare"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenMiningReviewPrepareRequestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenMining.claim.propose"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenMiningClaimProposalRequestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenMining.claim.recover"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenMiningRecoveryRequestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenMining.prepare"),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenMiningIntentCandidateSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Union([
+          Type.Literal("v2.wenBtc.inspect"),
+          Type.Literal("v2.wenBtc.prepare"),
+          Type.Literal("v2.wenBtc.route.preview"),
+        ]),
+        walletId: Type.String({ minLength: 1 }),
+        request: WenBtcIntentCandidateSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
         op: Type.Literal("v2.vaultMining.binding.inspect"),
         walletId: Type.String({ minLength: 1 }),
         request: VaultMiningBindingRequestV1Schema,
@@ -1590,6 +1796,53 @@ export function parseLocalSocketSignerRequest(input: unknown): LocalSocketSigner
   if (!Value.Check(LocalSocketSignerRequestSchema, input)) {
     throw new Error("invalid signer request");
   }
+  if (input.op === "v2.wenBTCClaim.prepare") {
+    validateWenBtcClaimIntent(input.request);
+  }
+  if (input.op === "v2.wenMiningFunding.prepare") {
+    validateWenMiningFundingIntent(input.request);
+  }
+  if (input.op === "v2.wenNativeClaim.prepare") {
+    validateWenNativeClaimIntent(input.request);
+  }
+  if (input.op === "v2.wenWithdrawal.prepare") {
+    validateWenWithdrawalIntent(input.request);
+  }
+  if (
+    input.op === "v2.wenCampaign.journey" ||
+    input.op === "v2.wenMarket.journey" ||
+    input.op === "v2.wenBondPurchase.journey" ||
+    input.op === "v2.wenBondClaim.journey"
+  ) {
+    validateWenCampaignJourneyRequest(input.request);
+  }
+  if (
+    input.op === "v2.wenCampaign.review.prepare" ||
+    input.op === "v2.wenMarket.review.prepare" ||
+    input.op === "v2.wenBondPurchase.review.prepare" ||
+    input.op === "v2.wenBondClaim.review.prepare"
+  ) {
+    validateWenCampaignReviewRequest(input.request);
+  }
+  if (input.op === "v2.wenMining.claim.review.prepare") {
+    validateWenMiningReviewPrepareRequest(input.request);
+  }
+  if (input.op === "v2.wenMining.claim.propose") {
+    validateWenMiningClaimProposalRequest(input.request);
+  }
+  if (input.op === "v2.wenMining.claim.recover") {
+    validateWenMiningRecoveryRequest(input.request);
+  }
+  if (input.op === "v2.wenMining.prepare") {
+    validateWenMiningIntentCandidate(input.request);
+  }
+  if (
+    input.op === "v2.wenBtc.inspect" ||
+    input.op === "v2.wenBtc.prepare" ||
+    input.op === "v2.wenBtc.route.preview"
+  ) {
+    validateWenBtcIntentCandidate(input.request);
+  }
   if (input.op === "v2.vaultMining.commitment.allocate") {
     const { binding, commitment } = input.request;
     if (
@@ -1720,6 +1973,41 @@ export function validateLocalSocketSignerResult(
       return Value.Check(LocalSocketSignerOperationV2Schema, result);
     case "v2.satLookup.binding.get":
       return Value.Check(LocalSocketSignerSatLookupBindingV2Schema, result);
+    case "v2.wenBtc.route.preview":
+      return isWenBtcRoutePreview(result);
+    case "v2.wenBTCClaim.prepare":
+      return isWenBtcClaimPreparation(result);
+    case "v2.wenMiningFunding.prepare":
+      return isWenMiningFundingPreparation(result);
+    case "v2.wenNativeClaim.prepare":
+      return isWenNativeClaimPreparation(result);
+    case "v2.wenWithdrawal.prepare":
+      return isWenWithdrawalPreparation(result);
+    case "v2.wenBondClaim.review.prepare":
+      return Value.Check(WenBondClaimStoredReviewSchema, result);
+    case "v2.wenBondPurchase.review.prepare":
+      return Value.Check(WenBondPurchaseStoredReviewSchema, result);
+    case "v2.wenMarket.review.prepare":
+      return Value.Check(WenMarketStoredReviewSchema, result);
+    case "v2.wenCampaign.review.prepare":
+      return Value.Check(WenCampaignStoredReviewSchema, result);
+    case "v2.wenBondClaim.journey":
+    case "v2.wenBondPurchase.journey":
+    case "v2.wenMarket.journey":
+    case "v2.wenCampaign.journey":
+      return Value.Check(WenCampaignJourneyResultSchema, result);
+    case "v2.wenMining.claim.review.prepare":
+      return isWenMiningStoredReview(result);
+    case "v2.wenMining.claim.propose":
+      return isWenMiningClaimProposal(result);
+    case "v2.wenMining.claim.recover":
+      return isWenMiningRecoveryResult(result);
+    case "v2.wenMining.prepare":
+      return isWenMiningPreparation(result);
+    case "v2.wenBtc.prepare":
+      return isWenBtcPreparation(result);
+    case "v2.wenBtc.inspect":
+      return isWenBtcInspection(result);
     case "v2.vaultMining.binding.inspect":
       return Value.Check(VaultMiningBindingResultV1Schema, result);
     case "v2.satCommitment.allocate":
@@ -1737,12 +2025,23 @@ export function validateLocalSocketSignerResult(
         validVaultReviewPayload(result.review)
       );
     case "v2.review.authorization.begin":
-      return Value.Check(LocalSocketSignerReviewAuthorizationBeginV2Schema, result);
+      return (
+        Value.Check(LocalSocketSignerReviewAuthorizationBeginV2Schema, result) ||
+        isWenMiningAuthorizationBegin(result) ||
+        isWenCampaignAuthorizationBegin(result)
+      );
+    case "v2.wenMining.claim.journey":
+      return isWenClaimJourneyResult(result);
     case "v2.review.authorization.finish":
-      return Value.Check(LocalSocketSignerReviewAuthorizationFinishV2Schema, result);
+      return (
+        Value.Check(LocalSocketSignerReviewAuthorizationFinishV2Schema, result) ||
+        isWenMiningAuthorizationFinish(result) ||
+        isWenCampaignAuthorizationFinish(result)
+      );
     case "getAddresses":
       return Value.Check(LocalSocketSignerAddressMapSchema, result);
     case "getBalance":
       return Value.Check(LocalSocketSignerBalanceResultSchema, result);
   }
 }
+import { isWenClaimJourneyResult } from "./wen-claim-journey-contract.js";

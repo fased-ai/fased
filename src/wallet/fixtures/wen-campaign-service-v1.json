@@ -1,0 +1,110 @@
+{
+  "identity": {
+    "requestId": "review-request-001",
+    "walletId": "miner",
+    "digest": "abababababababababababababababababababababababababababababababab"
+  },
+  "requests": [
+    {
+      "requestId": "review-request-001",
+      "action": "execute",
+      "proof": {
+        "proofId": "proof-001"
+      }
+    },
+    {
+      "requestId": "review-request-001",
+      "action": "recover"
+    },
+    {
+      "requestId": "review-request-001",
+      "action": "expire"
+    },
+    {
+      "requestId": "review-request-001",
+      "action": "cancel"
+    }
+  ],
+  "responses": [
+    {
+      "ok": true,
+      "result": {
+        "requestId": "review-request-001",
+        "walletId": "miner",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "outcome": "reserved",
+        "recoveryRequired": true
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "requestId": "review-request-001",
+        "walletId": "miner",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "outcome": "signing",
+        "recoveryRequired": true
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "requestId": "review-request-001",
+        "walletId": "miner",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "outcome": "signed",
+        "recoveryRequired": true
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "requestId": "review-request-001",
+        "walletId": "miner",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "outcome": "submission-uncertain",
+        "recoveryRequired": true
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "requestId": "review-request-001",
+        "walletId": "miner",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "outcome": "finalized-success",
+        "recoveryRequired": false
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "requestId": "review-request-001",
+        "walletId": "miner",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "outcome": "finalized-failed",
+        "recoveryRequired": false
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "requestId": "review-request-001",
+        "walletId": "miner",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "outcome": "cancelled",
+        "recoveryRequired": false
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "requestId": "review-request-001",
+        "walletId": "miner",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "outcome": "expired",
+        "recoveryRequired": false
+      }
+    }
+  ]
+}

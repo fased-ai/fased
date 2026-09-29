@@ -14,6 +14,7 @@ export type PluginLockEntry = {
   digest: string;
   apiCapability: string;
   required: boolean;
+  directory?: string;
 };
 
 export type PluginLock = {
@@ -68,7 +69,11 @@ export function canonicalPluginLock(value: unknown): PluginLock {
       !DIGEST.test(entry.digest) ||
       typeof entry.apiCapability !== "string" ||
       !CAPABILITY.test(entry.apiCapability) ||
-      typeof entry.required !== "boolean"
+      typeof entry.required !== "boolean" ||
+      (entry.directory !== undefined &&
+        (entry.origin !== "bundled" ||
+          typeof entry.directory !== "string" ||
+          !ID.test(entry.directory)))
     ) {
       throw new Error("plugin lock entries are not canonical and digest-bound");
     }
@@ -79,6 +84,7 @@ export function canonicalPluginLock(value: unknown): PluginLock {
       digest: entry.digest,
       apiCapability: entry.apiCapability,
       required: entry.required,
+      ...(entry.directory === undefined ? {} : { directory: entry.directory }),
     };
   });
   return { schemaVersion: 1, type: "fased-plugin-lock", entries };

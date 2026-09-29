@@ -386,6 +386,8 @@ describe("wallet-provider-registry", () => {
               controller,
               recoveryAuthority: recovery,
               authorityGeneration: "1",
+              createdSlot: "1",
+              createdUnixTimestamp: "1788350400",
               finalizedSlot: 5,
               updatedAt: new Date().toISOString(),
               attachments: [],

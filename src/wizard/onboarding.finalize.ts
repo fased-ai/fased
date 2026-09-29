@@ -1272,7 +1272,7 @@ export function formatOperatorReadinessSummary(
       return "Agent wallet";
     }
     if (title === "Mining wallet separate") {
-      return "Mining wallet";
+      return "Legacy mining wallet";
     }
     if (title === "Vault wallet present") {
       return "Vault wallet";
@@ -1302,7 +1302,12 @@ export function formatOperatorReadinessSummary(
     }
     return item.summary;
   };
-  const summaryLines = items.map((item) => `${noteLabel(titleLabel(item.title))}: ${tone(item)}`);
+  const summaryLines = items
+    .filter(
+      (item) =>
+        item.title !== "Mining wallet separate" || item.summary !== "Optional and not configured",
+    )
+    .map((item) => `${noteLabel(titleLabel(item.title))}: ${tone(item)}`);
   const nextActionLines: string[] = [];
   if (items.some((item) => item.summary === "Passkey setup incomplete")) {
     nextActionLines.push(noteBullet("Wallet: finish passkey before higher-risk automation."));
@@ -1316,15 +1321,8 @@ export function formatOperatorReadinessSummary(
     items.some((item) => item.title === "Mining wallet separate" && item.summary === "Conflict")
   ) {
     nextActionLines.push(
-      noteBullet("Mining: move Mining to a separate wallet before paid Agent flows."),
+      noteBullet("Legacy Mining: resolve its wallet conflict before paid Agent flows."),
     );
-  } else if (
-    items.some(
-      (item) =>
-        item.title === "Mining wallet separate" && item.summary === "Optional and not configured",
-    )
-  ) {
-    nextActionLines.push(noteBullet("Mining: optional. Create/import @wallet:mining later."));
   }
   if (
     !options?.federationActivationPending &&

@@ -1,0 +1,15 @@
+{
+  "operation": "acceptance",
+  "descriptorSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "capabilitySha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "offerSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "genesis": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+  "programId": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+  "sourceAccount": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+  "maxCashRaw": "500000000",
+  "maxCostRaw": "10000000",
+  "maxFeeLamports": "5000",
+  "maxRentLamports": "5000000",
+  "minFinalizedSlot": "100",
+  "expiresSlot": "200"
+}

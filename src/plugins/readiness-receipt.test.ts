@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withEnv } from "../test-utils/env.js";
-import { writePluginReadinessReceipt } from "./readiness-receipt.js";
+import { canonicalPluginLock, writePluginReadinessReceipt } from "./readiness-receipt.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -40,6 +40,31 @@ function fixture(status: "loaded" | "disabled" | "error" = "loaded") {
 }
 
 describe("managed plugin readiness receipt", () => {
+  it("rejects unsafe or store-scoped bundled directories", () => {
+    const entry = {
+      id: "demo",
+      origin: "bundled",
+      digest: `sha256:${"a".repeat(64)}`,
+      apiCapability: "fased.plugin.v1",
+      required: false,
+    };
+    const lock = (value: unknown) =>
+      canonicalPluginLock({
+        schemaVersion: 1,
+        type: "fased-plugin-lock",
+        entries: [{ ...entry, directory: value }],
+      });
+    expect(() => lock("../outside")).toThrow(/canonical/);
+    expect(() => lock("runtime/browser")).toThrow(/canonical/);
+    expect(() =>
+      canonicalPluginLock({
+        schemaVersion: 1,
+        type: "fased-plugin-lock",
+        entries: [{ ...entry, origin: "store", directory: "runtime-browser" }],
+      }),
+    ).toThrow(/canonical/);
+    expect(lock("runtime-browser").entries[0].directory).toBe("runtime-browser");
+  });
   it("binds the exact lock, generation, digest and mandatory load outcome", () => {
     const current = fixture();
     const generationId = `sha256:${"a".repeat(64)}`;

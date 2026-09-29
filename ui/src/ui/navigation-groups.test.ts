@@ -9,6 +9,7 @@ describe("workflow navigation groups", () => {
       "chat",
       "agents",
       "wallet",
+      "wen",
       "mining",
       "federation",
       "marketplace",

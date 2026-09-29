@@ -47,7 +47,6 @@ import { lockSignerOwnedWalletForArchive } from "../wallet/local-socket-signer-a
 import { readSignerOwnedWalletReadiness } from "../wallet/local-socket-signer-lifecycle.js";
 import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
 import { resolveNativeSignerWalletId } from "../wallet/native-signer-wallet-id.js";
-import { discoverSolanaNetworkFromRpc } from "../wallet/solana-network-discovery.js";
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
@@ -1621,12 +1620,13 @@ export async function runOnboardingWizard(
           message: "Wallet role (required)",
           options: [
             { value: "agent", label: "Agent" },
-            { value: "mining", label: "Mining" },
             { value: "vault", label: "Vault" },
           ],
         });
-        if (walletPurpose !== "agent" && walletPurpose !== "mining" && walletPurpose !== "vault") {
-          throw new Error("Wallet role selection is required; Agent is never selected silently.");
+        if (walletPurpose !== "agent" && walletPurpose !== "vault") {
+          throw new Error(
+            "Select an Agent or Vault wallet; legacy Mining wallets use recovery controls.",
+          );
         }
         const selfHostedAction = await prompter.select<"create" | "import">({
           message: "Wallet action",
@@ -1636,26 +1636,6 @@ export async function runOnboardingWizard(
           ],
           initialValue: "create",
         });
-        if (walletPurpose === "mining") {
-          const existingMiningWalletId = satMiningAttachment.walletId ?? "";
-          const existingMiningWallet = readWalletProviderRegistry(process.env).wallets.find(
-            (wallet) => wallet.id === "mining",
-          );
-          if (existingMiningWalletId || existingMiningWallet) {
-            await prompter.note(
-              [
-                `Mining wallet already exists: ${existingMiningWalletId || "mining"}.`,
-                "Open it to continue, or use the reviewed Replace/Archive flow after mining is stopped, rewards and capital are settled, and backup/readiness checks pass.",
-              ].join("\n"),
-              "Mining",
-            );
-            addAnotherWallet = await prompter.confirm({
-              message: "Run another wallet setup action?",
-              initialValue: false,
-            });
-            continue;
-          }
-        }
         const mode =
           selfHostedAction === "import"
             ? ("local-signer-import" as const)
@@ -1842,53 +1822,19 @@ export async function runOnboardingWizard(
             };
           }
           if (chain === "solana" && walletId) {
-            const currentMiningWalletId = satMiningAttachment.walletId ?? "";
             if (isAgentWallet) {
               await prompter.note(
                 [
                   noteHeading("Agent wallet"),
                   noteBullet(`${walletName} · @wallet:${walletId}`),
                   "",
-                  noteHeading("Mining optional"),
-                  noteBullet("Mining uses a separate wallet."),
-                  noteBullet("Create/import a Mining wallet later if you want SAT mining."),
+                  noteHeading("WEN optional"),
+                  noteBullet(
+                    "WEN mining positions are funded in the WEN app; Fased needs no personal Mining wallet for them.",
+                  ),
                 ].join("\n"),
-                "Mining",
+                "WEN",
               );
-            } else {
-              const shouldAttach = walletPurpose === "mining" && currentMiningWalletId !== walletId;
-              if (shouldAttach) {
-                const miningNetwork = await discoverSolanaNetworkFromRpc(effectiveRpcUrl);
-                satMiningAttachment = {
-                  walletId,
-                  network: miningNetwork,
-                };
-                nextConfig = assignWalletToSatMining(nextConfig, {
-                  walletId,
-                  network: miningNetwork,
-                });
-                await prompter.note(
-                  [
-                    noteHeading("Mining wallet"),
-                    noteBullet(`${walletName} · @wallet:${walletId}`),
-                    noteBullet(
-                      "Receive-only until the signer network and an owner-reviewed Mining policy are acknowledged.",
-                    ),
-                    noteBullet(
-                      "Open Wallet > Policy after onboarding; fund and start workers only after it reports acknowledged.",
-                    ),
-                  ].join("\n"),
-                  "Mining",
-                );
-              } else if (currentMiningWalletId && currentMiningWalletId !== walletId) {
-                await prompter.note(
-                  [
-                    noteHeading("Mining wallet"),
-                    noteBullet(`Keeping existing: ${currentMiningWalletId}`),
-                  ].join("\n"),
-                  "Mining",
-                );
-              }
             }
             const currentBondWallet = federationBondWalletId ?? "";
             if (currentBondWallet !== walletId) {
@@ -1940,7 +1886,9 @@ export async function runOnboardingWizard(
           "",
           noteHeading("Assignments"),
           noteBullet(`Agent wallet: ${describeWalletRef(readAgentWalletSummary())}`),
-          noteBullet(`SAT mining wallet: ${describeWalletRef(readRoleWallet("mining"))}`),
+          ...(readRoleWallet("mining").walletId
+            ? [noteBullet(`Legacy mining wallet: ${describeWalletRef(readRoleWallet("mining"))}`)]
+            : []),
           noteBullet(`Vault wallet: ${describeWalletRef(readRoleWallet("vault"))}`),
           noteBullet(
             `Fased Network bond Vault: ${

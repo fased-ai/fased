@@ -1,0 +1,1119 @@
+{
+  "$schema": "sat.release-descriptor.v2",
+  "descriptorVersion": 2,
+  "stage": "deployed-release",
+  "source": {
+    "status": "BOUND",
+    "sourceDigest": "c57038cb1fb17088ee6529f42200bb40718708a540567af5126c6258e68fa109"
+  },
+  "componentGenerations": {
+    "status": "BOUND",
+    "ownerClaimCapability": "1f495762f3b16aa75c444918997dcb862be8a6a7d89fee58124ab2972945df90",
+    "btcSubscriptionCapability": "89668d083ddab950516f0a20235f95b6eaf3fac316d52c40b14b9bf84985bee8",
+    "btcClaimCapability": "705a4223636431c4e323897e68b23d2d9fd2b6027220ccf28b432ce57993e77c",
+    "stakingChangeCapability": "6d19520c218f3db852b3e1257a6c8fe37acaadc91758b601e1a05ff02ea625ff",
+    "miningCommitmentCapability": "b6b7e534506abccf8c17673fdec6cee1050799b2684b9316dbe74724e1ab9ea2"
+  },
+  "build": { "status": "BOUND" },
+  "interfaces": {
+    "status": "BOUND",
+    "contractDigest": "6f2e01e4b471c35cb5b5591e08946733febbeebec3280dd2ee6362c525d1671c",
+    "ownerClaimHandoff": {
+      "schema": "wen.owner-claim-handoff-candidate.v1",
+      "stage": "source-candidate",
+      "publicEntryEnabled": false,
+      "operation": "native-staking-claim",
+      "instruction": {
+        "accounts": [
+          {
+            "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+            "role": "owner",
+            "signer": true,
+            "writable": true
+          },
+          {
+            "address": "F1rF8exeX8gK2jhQCdybtfyqbtmi23Qpomj4ePByMaKL",
+            "role": "sale",
+            "signer": false,
+            "writable": false
+          },
+          {
+            "address": "EdFyo7zufjWHirBtRdq9hsfXTE8w1dZGwAqB718Mr6yK",
+            "role": "activation",
+            "signer": false,
+            "writable": false
+          },
+          {
+            "address": "AjiHLVSadHavGpF5zmahpUY3nPkKzaYRW2SFR23XN6vg",
+            "role": "receipt",
+            "signer": false,
+            "writable": false
+          },
+          {
+            "address": "FGHdkyxH3U1zSDMggn16vKGGTGwCfNSGAHDbiwCRG7Wh",
+            "role": "source",
+            "signer": false,
+            "writable": true
+          },
+          {
+            "address": "66xVWAgPhqpGUPSZxQUCFBoTt4VBns17EaLv431Cq64k",
+            "role": "cohort",
+            "signer": false,
+            "writable": false
+          },
+          {
+            "address": "8b4AgYyCcUz8MFaKagSSYDzfUv6cGUF37Hc7GL393cCr",
+            "role": "history",
+            "signer": false,
+            "writable": false
+          },
+          {
+            "address": "8B728LyHZSojdQrgoyB2zJPyA49zNoRFk8CJikAGF7DP",
+            "role": "claim",
+            "signer": false,
+            "writable": true
+          },
+          {
+            "address": "GJQLNFNPeoTEMqwkHzp6urZCRwMNV19NSMHVErRTZ6T1",
+            "role": "inventory",
+            "signer": false,
+            "writable": true
+          },
+          {
+            "address": "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV",
+            "role": "destination",
+            "signer": false,
+            "writable": true
+          },
+          {
+            "address": "FvzgETvEngQSNrZDCNe8HakLkfya9QVGpxuLwJVYHhWr",
+            "role": "satMint",
+            "signer": false,
+            "writable": false
+          },
+          {
+            "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+            "role": "token2022Program",
+            "signer": false,
+            "writable": false
+          },
+          {
+            "address": "11111111111111111111111111111111",
+            "role": "systemProgram",
+            "signer": false,
+            "writable": false
+          }
+        ],
+        "dataLength": 17,
+        "name": "staking_release::claim_instruction",
+        "opcode": 42,
+        "vector": {
+          "data": [42, 30, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0],
+          "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+        }
+      },
+      "instructionDigest": "1545c6d6d5786cb68789586768aac05577e474175a14cf162fd968ea7d458149",
+      "paidLayout": {
+        "fields": [
+          ["magic", 0, 8, "bytes"],
+          ["version", 8, 1, "u8"],
+          ["reserved", 9, 2, "zero"],
+          ["bump", 11, 1, "u8"],
+          ["padding", 12, 4, "zero"],
+          ["source", 16, 32, "pubkey"],
+          ["owner", 48, 32, "pubkey"],
+          ["gross", 80, 8, "u64le"],
+          ["net", 88, 8, "u64le"],
+          ["weight", 96, 8, "u64le"],
+          ["day", 104, 8, "u64le"]
+        ],
+        "length": 112,
+        "magic": "WENNSCL1",
+        "review": "SOURCE_REVIEWED_FIELDS",
+        "source": "src/staking_release.rs",
+        "version": 1
+      },
+      "sourceDigest": "c57038cb1fb17088ee6529f42200bb40718708a540567af5126c6258e68fa109",
+      "contractDigest": "6f2e01e4b471c35cb5b5591e08946733febbeebec3280dd2ee6362c525d1671c",
+      "portableClient": "client/staking-claim-client.mjs",
+      "delegation": "NOT_BOUND",
+      "deployment": "NOT_BOUND",
+      "fasedAcknowledgement": "NOT_BOUND",
+      "capabilityDigest": "1f495762f3b16aa75c444918997dcb862be8a6a7d89fee58124ab2972945df90"
+    },
+    "btcSubscriptionHandoff": {
+      "schema": "wen.btc-subscription-handoff-candidate.v1",
+      "stage": "source-candidate",
+      "publicEntryEnabled": false,
+      "operations": ["acceptance", "acquisition"],
+      "instructions": [
+        {
+          "accounts": [
+            {
+              "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+              "role": "buyer",
+              "signer": true,
+              "writable": true
+            },
+            {
+              "address": "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV",
+              "role": "source",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "Ei8ckDVAUFrVfuRe4ndmV68MxPDpZrkvLb7xMPEGywbL",
+              "role": "treasury",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "2ktgiq7GNkitdMWCLmUtZm4qM8UEWerKXcL4WtAaRfPP",
+              "role": "acquisitionCash",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "2tjH1S3HZMKLuY1DDN8j9WcMqStdrnDxeRfNdeFmvL2o",
+              "role": "workingCash",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "5PpPrc5qK4CeEDA2EBG3qxGkP1a7kMkwmjQcfxG679Jg",
+              "role": "record",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "k7FaK87WHGVXzkaoHb7CdVPgkKDQhZ29VLDeBVbDfYn",
+              "role": "cashMint",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              "role": "tokenProgram",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "11111111111111111111111111111111",
+              "role": "systemProgram",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "ARYXocwUWGFicH6QX16Vs9iCkLToGkKZLiuZNjmKVYju",
+              "role": "receipt",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "sTzB4JfxSctxFF1G2Sdn2EV1E3j9E6T2QDtwCAmQgho",
+              "role": "epoch",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "3vYHgnzE3PRmnXdFoRy6MWBnsm2zuPGhbTPyyCezN5GD",
+              "role": "promises",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "4pPVbyd2eviH95sD8GEBSVWnBBXGq9Z4WsuSa743MW87",
+              "role": "releases",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "FvzgETvEngQSNrZDCNe8HakLkfya9QVGpxuLwJVYHhWr",
+              "role": "satMint",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "BW3HRBMrmdmbrbNx1pPSg6p5NTJofWDWnXJg1S7WctmF",
+              "role": "reserveLedger",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "F1rF8exeX8gK2jhQCdybtfyqbtmi23Qpomj4ePByMaKL",
+              "role": "sale",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "6N2aM37SrZcyeyHS9cpVTM2F9tkmJZjwCa8d5sCRr3hR",
+              "role": "satCustody",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+              "role": "token2022Program",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "EdFyo7zufjWHirBtRdq9hsfXTE8w1dZGwAqB718Mr6yK",
+              "role": "activation",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "MjM1MMgf6CuHeLYkuxsc2c22Kpga1m1LMX3YSRQwHC1",
+              "role": "pool",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
+              "role": "config",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "9E666eAaxuRXMha3bb3QiubusTWLDFdeDh89hAPDo7wR",
+              "role": "satPoolVault",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "7CcftKm72FEjJ8cpMCJsVBN2V1MuDBeDQMQvuiYtMCKn",
+              "role": "cashPoolVault",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "3xt9Yw8n1QCnpmzmWJgwqMB6Kp1u2tZfvPmcAzddtEjp",
+              "role": "lpMint",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "Hm6qjvRFhSSFLcz1R7iazuRzjeQKSLv9CdUibj4oSJYe",
+              "role": "lpCustody",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
+              "role": "btcMint",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "2xea9jWJ9eca3dFiefTeSPP85c6qXqunCqL2h2JNffMW",
+              "role": "admission",
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "dataLength": 569,
+          "name": "btc_subscription_acceptance::instruction",
+          "opcode": 111,
+          "vector": {
+            "data": [
+              111, 87, 69, 78, 66, 84, 67, 79, 49, 208, 59, 76, 4, 181, 45, 34, 181, 78, 20, 219,
+              71, 3, 74, 83, 99, 92, 143, 19, 223, 135, 217, 101, 177, 174, 80, 203, 174, 222, 237,
+              185, 171, 88, 56, 81, 154, 139, 34, 9, 18, 247, 83, 135, 127, 121, 76, 132, 146, 125,
+              88, 83, 87, 137, 144, 34, 125, 83, 64, 112, 5, 145, 107, 8, 2, 10, 10, 10, 10, 10, 10,
+              10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+              10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+              11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 9, 30, 115, 209, 122,
+              85, 38, 212, 72, 229, 137, 174, 165, 175, 231, 194, 44, 214, 28, 91, 102, 168, 106,
+              66, 122, 178, 98, 48, 149, 20, 229, 92, 4, 121, 213, 91, 242, 49, 192, 110, 238, 116,
+              197, 110, 206, 104, 21, 7, 253, 177, 178, 222, 163, 244, 142, 81, 2, 177, 205, 162,
+              86, 188, 19, 143, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
+              26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 27, 27, 27, 27, 27, 27,
+              27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27,
+              27, 27, 27, 27, 27, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+              28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+              28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+              28, 28, 28, 28, 28, 28, 1, 0, 0, 0, 0, 0, 0, 0, 0, 202, 154, 59, 0, 0, 0, 0, 0, 160,
+              114, 78, 24, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 202, 154, 59, 0, 0, 0, 0, 0, 80, 57,
+              39, 140, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 132, 215, 23, 0, 0, 0, 0, 128, 74, 93, 5, 0, 0, 0, 0,
+              128, 150, 152, 0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 200,
+              0, 0, 0, 0, 0, 0, 0, 201, 0, 0, 0, 0, 0, 0, 0, 87, 69, 78, 65, 67, 84, 48, 49, 11, 11,
+              11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+              11, 11, 11, 11, 11, 11, 11, 11, 11, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+              6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 188, 58, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+              0, 0, 0, 0, 202, 154, 59, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0
+            ],
+            "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+        },
+        {
+          "accounts": [
+            {
+              "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+              "role": "payer",
+              "signer": true,
+              "writable": true
+            },
+            {
+              "address": "5PpPrc5qK4CeEDA2EBG3qxGkP1a7kMkwmjQcfxG679Jg",
+              "role": "record",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "Gp442cSUKtsnc7GABuFVJq48JTg5qEN7XwRnXpebWaPP",
+              "role": "acquisitionCash",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "2poys8aGy427mSkhn4oordqbbHgSBiY961ziaGDBAzi6",
+              "role": "reserveBTC",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "2tjH1S3HZMKLuY1DDN8j9WcMqStdrnDxeRfNdeFmvL2o",
+              "role": "workingCash",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "11111111111111111111111111111111",
+              "role": "systemProgram",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "6HAuqASbHEh4w4REJEUUUCginTLfj1kwCh215ZLtMkrT",
+              "role": "usdcFeed",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "FABsR4ySfXEhnjaozjs5rYHt9vVHm2enwDmk6gAF82tJ",
+              "role": "btcFeed",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              "role": "route0",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "GGztQqQ6pCPaJQnNpXBgELr5cs3WwDakRbh1iEMzjgSJ",
+              "role": "route1",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "7R6YPobmAMsc6faFQDGpAfUy5m5j9ADZaZrzMf6fCEP3",
+              "role": "route2",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "5hgFJ3Th2MVoX9UKSxFBZBFjETPeYeMsn7TNFBPCna1Z",
+              "role": "route3",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "4ecxjG9Yw73EXtWQZ8cciGgCBaMsNS5HB2zS9XRMLzRB",
+              "role": "route4",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "4iYFsZcZXQLTfykuzRwY19SxRja53Vm6jSf6CuTx6Kjt",
+              "role": "route5",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "xoCQaHiZ1K5n6Fgg9vehp5DhN2yRR1KmtfvceSLvRSB",
+              "role": "route6",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+              "role": "route7",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
+              "role": "route8",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+              "role": "route9",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+              "role": "route10",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "D8cy77BBepLMngZx6ZukaTff5hCt1HrWyKk3Hnd9oitf",
+              "role": "route11",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+              "role": "route12",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+              "role": "route13",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+              "role": "jupiterProgram",
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "dataLength": 516,
+          "name": "btc_subscription_execution::instruction",
+          "opcode": 112,
+          "vector": {
+            "data": [
+              112, 87, 69, 78, 66, 84, 67, 79, 49, 208, 59, 76, 4, 181, 45, 34, 181, 78, 20, 219,
+              71, 3, 74, 83, 99, 92, 143, 19, 223, 135, 217, 101, 177, 174, 80, 203, 174, 222, 237,
+              185, 171, 88, 56, 81, 154, 139, 34, 9, 18, 247, 83, 135, 127, 121, 76, 132, 146, 125,
+              88, 83, 87, 137, 144, 34, 125, 83, 64, 112, 5, 145, 107, 8, 2, 10, 10, 10, 10, 10, 10,
+              10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+              10, 10, 10, 10, 10, 198, 250, 122, 243, 190, 219, 173, 58, 61, 101, 243, 106, 171,
+              201, 116, 49, 177, 187, 228, 194, 210, 246, 224, 228, 124, 166, 2, 3, 69, 47, 93, 97,
+              9, 30, 115, 209, 122, 85, 38, 212, 72, 229, 137, 174, 165, 175, 231, 194, 44, 214, 28,
+              91, 102, 168, 106, 66, 122, 178, 98, 48, 149, 20, 229, 92, 4, 121, 213, 91, 242, 49,
+              192, 110, 238, 116, 197, 110, 206, 104, 21, 7, 253, 177, 178, 222, 163, 244, 142, 81,
+              2, 177, 205, 162, 86, 188, 19, 143, 234, 237, 13, 149, 66, 200, 38, 8, 60, 88, 102,
+              192, 28, 248, 111, 39, 72, 63, 91, 3, 202, 11, 153, 229, 7, 221, 61, 54, 171, 171,
+              143, 62, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27,
+              27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 28, 28, 28, 28, 28, 28, 28, 28,
+              28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+              28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+              28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+              202, 154, 59, 0, 0, 0, 0, 0, 160, 114, 78, 24, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+              202, 154, 59, 0, 0, 0, 0, 0, 80, 57, 39, 140, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 132, 215, 23, 0,
+              0, 0, 0, 128, 74, 93, 5, 0, 0, 0, 0, 128, 150, 152, 0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 0,
+              0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 0, 0, 0, 0, 201, 0, 0, 0, 0, 0, 0, 0,
+              14, 0, 0, 1, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 193, 32, 155, 51, 65, 214, 156, 129, 0,
+              1, 0, 0, 0, 26, 100, 0, 1, 0, 132, 215, 23, 0, 0, 0, 0, 128, 26, 6, 0, 0, 0, 0, 0, 50,
+              0, 0
+            ],
+            "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+        }
+      ],
+      "instructionDigest": "d98ee461a5f61e9b41fd3e76035115834764f8427c19f86d871dbbfae7da23fe",
+      "sourceDigest": "c57038cb1fb17088ee6529f42200bb40718708a540567af5126c6258e68fa109",
+      "contractDigest": "6f2e01e4b471c35cb5b5591e08946733febbeebec3280dd2ee6362c525d1671c",
+      "portableClient": "client/btc-subscription-client.mjs",
+      "delegation": "NOT_BOUND",
+      "deployment": "NOT_BOUND",
+      "fasedAcknowledgement": "NOT_BOUND",
+      "capabilityDigest": "89668d083ddab950516f0a20235f95b6eaf3fac316d52c40b14b9bf84985bee8"
+    },
+    "btcClaimHandoff": {
+      "schema": "wen.btc-claim-handoff-candidate.v1",
+      "stage": "source-candidate",
+      "publicEntryEnabled": false,
+      "operations": ["fee-staking-btc-claim", "mining-staking-btc-claim"],
+      "instructions": [
+        {
+          "accounts": [
+            {
+              "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+              "role": "owner",
+              "signer": true,
+              "writable": true
+            },
+            {
+              "address": "F1rF8exeX8gK2jhQCdybtfyqbtmi23Qpomj4ePByMaKL",
+              "role": "sale",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "EdFyo7zufjWHirBtRdq9hsfXTE8w1dZGwAqB718Mr6yK",
+              "role": "activation",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "5hnimR6YKb4SeQvoCRDLFHF1Scyc9DVjMEdmPFsPPPry",
+              "role": "tranche",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "66xVWAgPhqpGUPSZxQUCFBoTt4VBns17EaLv431Cq64k",
+              "role": "cohort",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "8b4AgYyCcUz8MFaKagSSYDzfUv6cGUF37Hc7GL393cCr",
+              "role": "history",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "7wMUtBsxatGJavhZ7dSa8nYdp2jkJQ7EgMz9Qu1kT8m1",
+              "role": "settlement",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "EBrnuoEV9cL1zJrvKU24bAAPQ1Qk9AWgrhLsLuDBPtWT",
+              "role": "fallbackClaim",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "Cfn46vDrvc5GaGHZzKbM5c77AiMrB3EBuBB5TJnsgeV7",
+              "role": "paid",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "BmkgHnCipEw8GbEVXscqCKyWYASshQeMMJrswPj1kD3w",
+              "role": "btcVault",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV",
+              "role": "destination",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "G8GQFWdjfqsb1sB2KtS3fgNwcdyrcwq2X8bCbPTUz1Hg",
+              "role": "routeAuthority",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
+              "role": "btcMint",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "11111111111111111111111111111111",
+              "role": "systemProgram",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              "role": "tokenProgram",
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "dataLength": 17,
+          "name": "btc_settlement::claim_instruction",
+          "opcode": 53,
+          "vector": {
+            "data": [53, 10, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0],
+            "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+        },
+        {
+          "accounts": [
+            {
+              "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+              "role": "owner",
+              "signer": true,
+              "writable": true
+            },
+            {
+              "address": "F1rF8exeX8gK2jhQCdybtfyqbtmi23Qpomj4ePByMaKL",
+              "role": "sale",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "EdFyo7zufjWHirBtRdq9hsfXTE8w1dZGwAqB718Mr6yK",
+              "role": "activation",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "49brvvDHnsTSzZHpL3uGiLWwohBc1FFtPLm7JfCZcc2w",
+              "role": "tranche",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "66xVWAgPhqpGUPSZxQUCFBoTt4VBns17EaLv431Cq64k",
+              "role": "cohort",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "8b4AgYyCcUz8MFaKagSSYDzfUv6cGUF37Hc7GL393cCr",
+              "role": "history",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "HbKN16pLP8SEz6ykKcUZikeRyk5jNhyxA57A1kUf9FLX",
+              "role": "settlement",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "HFSvZYVVbjwdoJE2c7mceQjfQdBsTfFyJU4ynYetvDeV",
+              "role": "fallbackClaim",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "HLLt889xRNF4HpkyVEPSYFqjjfCW1gangjF6K81xVgLL",
+              "role": "paid",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "BSevtibbv6e9Az4XHcgcR8N8nfbfPb8U5VWC4bpnQu3n",
+              "role": "btcVault",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV",
+              "role": "destination",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "gZL6HQqnLg7SBnU3gkPYpJoELDupcByd215WnrdhoXd",
+              "role": "routeAuthority",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
+              "role": "btcMint",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "11111111111111111111111111111111",
+              "role": "systemProgram",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              "role": "tokenProgram",
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "dataLength": 25,
+          "name": "btc_settlement::claim_instruction_for_source",
+          "opcode": 101,
+          "vector": {
+            "data": [101, 7, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0],
+            "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+        }
+      ],
+      "instructionDigest": "bd8791d3f434d6c0f3ce18f424fddfaf7aa719b24cdbabcc02bd352819cf4f2e",
+      "sourceDigest": "c57038cb1fb17088ee6529f42200bb40718708a540567af5126c6258e68fa109",
+      "contractDigest": "6f2e01e4b471c35cb5b5591e08946733febbeebec3280dd2ee6362c525d1671c",
+      "portableClient": "client/btc-claim-preparation.mjs",
+      "deployment": "NOT_BOUND",
+      "fasedAcknowledgement": "NOT_BOUND",
+      "capabilityDigest": "705a4223636431c4e323897e68b23d2d9fd2b6027220ccf28b432ce57993e77c"
+    },
+    "stakingChangeHandoff": {
+      "schema": "wen.staking-change-handoff-candidate.v1",
+      "stage": "source-candidate",
+      "publicEntryEnabled": false,
+      "operations": ["deposit", "requestExit"],
+      "instructions": [
+        {
+          "accounts": [
+            {
+              "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+              "role": "owner",
+              "signer": true,
+              "writable": true
+            },
+            {
+              "address": "F1rF8exeX8gK2jhQCdybtfyqbtmi23Qpomj4ePByMaKL",
+              "role": "sale",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "EdFyo7zufjWHirBtRdq9hsfXTE8w1dZGwAqB718Mr6yK",
+              "role": "activation",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "Di8SzMk97MunSZ7kj25KPYBZJBkvzw7kh81ZmVL6LnD7",
+              "role": "pool",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "G8HVLWCtsq9eZfGnntpkr3hQ1htUxKsNQeFufAigubo",
+              "role": "position",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "8b4AgYyCcUz8MFaKagSSYDzfUv6cGUF37Hc7GL393cCr",
+              "role": "previousHistory",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "G6bDPUBUDQ213L8KcAKQnGVGYsFgyc5pqgbWGtrxDhjr",
+              "role": "nextHistory",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "Gn6mziK9Li7tewG2dUg7ZYCoFtLu9wWFVv59g6aGrcdD",
+              "role": "custody",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "FvzgETvEngQSNrZDCNe8HakLkfya9QVGpxuLwJVYHhWr",
+              "role": "satMint",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV",
+              "role": "source",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "11111111111111111111111111111111",
+              "role": "systemProgram",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+              "role": "token2022Program",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "9aqP2wzEi9EJjm8wuaMemdfQRphDoVqwVmadQSJ6uPMx",
+              "role": "index",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "GrFSi7g6YSyFK98oSuaAZVbrpzpnm6P82Hsp7GKaBGYH",
+              "role": "previousPoint",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "Bs8aSWKtw7erJiAqj83uTgEHdmu5DJmf6umJeSCQwr6z",
+              "role": "nextPoint",
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "dataLength": 33,
+          "name": "stake_history::change_instruction#deposit",
+          "opcode": 34,
+          "vector": {
+            "data": [
+              34, 64, 66, 15, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 9, 0,
+              0, 0, 0, 0, 0, 0
+            ],
+            "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+        },
+        {
+          "accounts": [
+            {
+              "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+              "role": "owner",
+              "signer": true,
+              "writable": true
+            },
+            {
+              "address": "F1rF8exeX8gK2jhQCdybtfyqbtmi23Qpomj4ePByMaKL",
+              "role": "sale",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "EdFyo7zufjWHirBtRdq9hsfXTE8w1dZGwAqB718Mr6yK",
+              "role": "activation",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "Di8SzMk97MunSZ7kj25KPYBZJBkvzw7kh81ZmVL6LnD7",
+              "role": "pool",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "G8HVLWCtsq9eZfGnntpkr3hQ1htUxKsNQeFufAigubo",
+              "role": "position",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "8b4AgYyCcUz8MFaKagSSYDzfUv6cGUF37Hc7GL393cCr",
+              "role": "previousHistory",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "G6bDPUBUDQ213L8KcAKQnGVGYsFgyc5pqgbWGtrxDhjr",
+              "role": "nextHistory",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "Gn6mziK9Li7tewG2dUg7ZYCoFtLu9wWFVv59g6aGrcdD",
+              "role": "custody",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "FvzgETvEngQSNrZDCNe8HakLkfya9QVGpxuLwJVYHhWr",
+              "role": "satMint",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV",
+              "role": "source",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "11111111111111111111111111111111",
+              "role": "systemProgram",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+              "role": "token2022Program",
+              "signer": false,
+              "writable": false
+            },
+            {
+              "address": "9aqP2wzEi9EJjm8wuaMemdfQRphDoVqwVmadQSJ6uPMx",
+              "role": "index",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "GrFSi7g6YSyFK98oSuaAZVbrpzpnm6P82Hsp7GKaBGYH",
+              "role": "previousPoint",
+              "signer": false,
+              "writable": true
+            },
+            {
+              "address": "Bs8aSWKtw7erJiAqj83uTgEHdmu5DJmf6umJeSCQwr6z",
+              "role": "nextPoint",
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "dataLength": 33,
+          "name": "stake_history::change_instruction#exit",
+          "opcode": 35,
+          "vector": {
+            "data": [
+              35, 64, 66, 15, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 9, 0,
+              0, 0, 0, 0, 0, 0
+            ],
+            "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+        }
+      ],
+      "instructionDigest": "59f6683639aa756dd0c5ee964774a5a02ba38577202da05abd30b5e1854d117f",
+      "sourceDigest": "c57038cb1fb17088ee6529f42200bb40718708a540567af5126c6258e68fa109",
+      "contractDigest": "6f2e01e4b471c35cb5b5591e08946733febbeebec3280dd2ee6362c525d1671c",
+      "portableClient": "client/staking-change-preparation.mjs",
+      "deployment": "NOT_BOUND",
+      "fasedAcknowledgement": "NOT_BOUND",
+      "capabilityDigest": "6d19520c218f3db852b3e1257a6c8fe37acaadc91758b601e1a05ff02ea625ff"
+    },
+    "miningCommitmentHandoff": {
+      "schema": "wen.mining-commitment-handoff-candidate.v1",
+      "stage": "source-candidate",
+      "publicEntryEnabled": false,
+      "operations": ["commit", "reveal"],
+      "instructions": [
+        {
+          "accounts": [
+            {
+              "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+              "role": "owner",
+              "signer": true,
+              "writable": false
+            },
+            {
+              "address": "DDrCBrtV7yUAePuPcaqgmcdJehY8eotnXoqUrnSPkaP5",
+              "role": "entry",
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "dataLength": 33,
+          "name": "mining_commitment::commit_instruction",
+          "opcode": 54,
+          "vector": {
+            "data": [
+              54, 91, 39, 166, 200, 78, 205, 49, 138, 22, 93, 190, 73, 85, 89, 15, 171, 64, 52, 114,
+              178, 139, 248, 213, 31, 243, 84, 254, 203, 114, 113, 107, 155
+            ],
+            "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+        },
+        {
+          "accounts": [
+            {
+              "address": "gBxS1f6uyyGPuW5MzGBukidSb71jdsCb5fZaoSzULE5",
+              "role": "owner",
+              "signer": true,
+              "writable": false
+            },
+            {
+              "address": "DDrCBrtV7yUAePuPcaqgmcdJehY8eotnXoqUrnSPkaP5",
+              "role": "entry",
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "dataLength": 41,
+          "name": "mining_commitment::reveal_instruction",
+          "opcode": 55,
+          "vector": {
+            "data": [
+              55, 160, 15, 184, 11, 208, 7, 232, 3, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23,
+              23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23
+            ],
+            "program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+        }
+      ],
+      "instructionDigest": "0ec473fecf08174e889ba9188ed74105d49f7c814188973c60e35af2da1333eb",
+      "entryLayout": {
+        "magic": "WENMEN01",
+        "version": 1,
+        "length": 272,
+        "fields": [
+          ["magic", 0, 8],
+          ["version", 8, 1],
+          ["committed", 9, 1],
+          ["revealed", 10, 1],
+          ["bump", 11, 1],
+          ["reserved", 12, 4],
+          ["program", 16, 32],
+          ["economy", 48, 32],
+          ["offer", 80, 32],
+          ["owner", 112, 32],
+          ["vault", 144, 32],
+          ["nonce", 176, 8],
+          ["capital", 184, 8],
+          ["open", 192, 8],
+          ["digest", 200, 32],
+          ["allocation", 232, 8],
+          ["salt", 240, 32]
+        ]
+      },
+      "sourceDigest": "c57038cb1fb17088ee6529f42200bb40718708a540567af5126c6258e68fa109",
+      "contractDigest": "6f2e01e4b471c35cb5b5591e08946733febbeebec3280dd2ee6362c525d1671c",
+      "portableClient": "client/mining-commitment-client.mjs",
+      "delegation": "NOT_BOUND",
+      "deployment": "NOT_BOUND",
+      "fasedAcknowledgement": "NOT_BOUND",
+      "capabilityDigest": "b6b7e534506abccf8c17673fdec6cee1050799b2684b9316dbe74724e1ab9ea2"
+    }
+  },
+  "deployment": {
+    "status": "BOUND",
+    "reason": "synthetic test only",
+    "ownerClaim": {
+      "program": "0707070707070707070707070707070707070707070707070707070707070707",
+      "deploymentSlot": "50",
+      "deployedBytesHash": "0202020202020202020202020202020202020202020202020202020202020202",
+      "upgradeAuthority": null,
+      "genesis": "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC"
+    },
+    "stakingChange": {
+      "program": "0707070707070707070707070707070707070707070707070707070707070707",
+      "deploymentSlot": "50",
+      "deployedBytesHash": "0202020202020202020202020202020202020202020202020202020202020202",
+      "upgradeAuthority": null,
+      "genesis": "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC"
+    },
+    "btcClaim": {
+      "program": "0707070707070707070707070707070707070707070707070707070707070707",
+      "deploymentSlot": "50",
+      "deployedBytesHash": "0202020202020202020202020202020202020202020202020202020202020202",
+      "upgradeAuthority": null,
+      "genesis": "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC"
+    },
+    "btcSubscription": {
+      "program": "0707070707070707070707070707070707070707070707070707070707070707",
+      "deploymentSlot": "50",
+      "deployedBytesHash": "0202020202020202020202020202020202020202020202020202020202020202",
+      "upgradeAuthority": null,
+      "genesis": "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC"
+    },
+    "miningCommitment": {
+      "program": "0707070707070707070707070707070707070707070707070707070707070707",
+      "deploymentSlot": "50",
+      "deployedBytesHash": "0202020202020202020202020202020202020202020202020202020202020202",
+      "upgradeAuthority": null,
+      "genesis": "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC"
+    }
+  },
+  "runtimeCompatibility": {
+    "status": "BOUND",
+    "reason": "synthetic test only",
+    "ownerClaimCapability": "1f495762f3b16aa75c444918997dcb862be8a6a7d89fee58124ab2972945df90",
+    "btcSubscriptionCapability": "89668d083ddab950516f0a20235f95b6eaf3fac316d52c40b14b9bf84985bee8",
+    "btcClaimCapability": "705a4223636431c4e323897e68b23d2d9fd2b6027220ccf28b432ce57993e77c",
+    "stakingChangeCapability": "6d19520c218f3db852b3e1257a6c8fe37acaadc91758b601e1a05ff02ea625ff",
+    "miningCommitmentCapability": "b6b7e534506abccf8c17673fdec6cee1050799b2684b9316dbe74724e1ab9ea2"
+  },
+  "publication": { "status": "NOT_BOUND", "reason": "test only" },
+  "receiptBinding": { "status": "NOT_BOUND", "reason": "test only" },
+  "descriptorDigest": "sha256:41d71b2223237ae7615f3af155e49b53ddf2add6b4c3a59da60ea31ab1c9daa3"
+}

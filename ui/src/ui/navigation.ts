@@ -8,6 +8,7 @@ export const TAB_GROUPS = [
       "chat",
       "agents",
       "wallet",
+      "wen",
       "mining",
       "federation",
       "marketplace",
@@ -27,6 +28,7 @@ export type Tab =
   | "federation"
   | "marketplace"
   | "wallet"
+  | "wen"
   | "mining"
   | "channels"
   | "services"
@@ -51,6 +53,7 @@ const TAB_PATHS: Record<Tab, string> = {
   federation: "/federation",
   marketplace: "/marketplace",
   wallet: "/wallet",
+  wen: "/wen",
   mining: "/mining",
   channels: "/channels",
   services: "/services",
@@ -170,6 +173,8 @@ export function iconForTab(tab: Tab): IconName {
       return "store";
     case "wallet":
       return "wallet";
+    case "wen":
+      return "globe";
     case "mining":
       return "zap";
     case "channels":
@@ -219,6 +224,8 @@ export function titleForTab(tab: Tab) {
       return "Marketplace";
     case "wallet":
       return "Wallets";
+    case "wen":
+      return "WEN";
     case "mining":
       return "Mining";
     case "channels":
@@ -286,8 +293,10 @@ export function subtitleForTab(tab: Tab) {
       return "Fased Network offers, requests, reviews, and dispute workflow.";
     case "wallet":
       return "Wallet status, policy, provider health, and runtime health.";
+    case "wen":
+      return "Review owner-authorized WEN actions and reconcile their outcomes.";
     case "mining":
-      return "";
+      return "Legacy SAT cycle runtime and recovery.";
     case "channels":
       return "Connect chat apps, channel accounts, and command routing.";
     case "services":

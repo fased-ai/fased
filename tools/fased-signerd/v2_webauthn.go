@@ -857,6 +857,24 @@ func normalizeSignerReviewIntentV2(raw json.RawMessage) (json.RawMessage, string
 }
 
 func reviewBindingFromStoredReviewV2(review signerReviewV2, policy signerPolicyV2) (signerReviewBindingV2, error) {
+	if review.ArtifactKind == wenBondClaimArtifactKindV2 {
+		return wenBondClaimStoredBindingV2(review, policy)
+	}
+	if review.ArtifactKind == wenBondPurchaseArtifactKindV2 {
+		return wenBondPurchaseStoredBindingV2(review, policy)
+	}
+	if review.ArtifactKind == wenMarketArtifactKindV1 {
+		return wenMarketStoredBindingV1(review, policy)
+	}
+	if review.ArtifactKind == wenCampaignClaimStakeArtifactKindV1 {
+		return wenCampaignClaimStakeStoredBindingV1(review, policy)
+	}
+	if review.ArtifactKind == wenCampaignArtifactKindV1 {
+		return wenCampaignStoredBindingV1(review, policy)
+	}
+	if review.IntentType == intentWENMiningClaimV1 {
+		return wenMiningClaimStoredBindingV1(review, policy)
+	}
 	if review.State != jupiterReviewPreparedV2 {
 		return signerReviewBindingV2{}, fmt.Errorf("signer review is already %s", review.State)
 	}

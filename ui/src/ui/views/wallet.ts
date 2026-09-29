@@ -586,27 +586,27 @@ export function resolveOperatorWalletRoles(
 
   const mining: OperatorWalletRoleSummary = miningWallet
     ? {
-        title: "SAT Mining",
+        title: "Legacy SAT Mining",
         summary: miningWallet.name,
         detail:
-          "SAT mining uses the singleton @wallet:mining wallet for capital, cycle history, and restart recovery. Keep it separate from Agent wallets.",
+          "This dedicated @wallet:mining wallet retains historical SAT cycle recovery. New WEN campaigns use owner-authorized positions and do not require it.",
         tone: "success",
         walletId: miningWallet.id,
       }
     : miningWalletId
       ? {
-          title: "SAT Mining",
+          title: "Legacy SAT Mining",
           summary: miningWalletId,
           detail:
-            "SAT runtime points at @wallet:mining, but that wallet is not visible in the current wallet list. Refresh mining and wallet state before SAT mining.",
+            "Historical SAT recovery points at @wallet:mining, but that wallet is not visible in the current wallet list. Refresh legacy mining and wallet state before recovery.",
           tone: "warn",
           walletId: miningWalletId,
         }
       : {
-          title: "SAT Mining",
+          title: "Legacy SAT Mining",
           summary: "Not configured",
           detail:
-            "Create or import @wallet:mining in onboarding or CLI if you want SAT participation. Mining is optional and should not be assumed by Fased Network join.",
+            "WEN does not require a Mining wallet. This dedicated role belongs to the legacy SAT cycle runtime and recovery; use an owner-authorized wallet for new WEN positions.",
           tone: "neutral",
         };
 
@@ -4032,7 +4032,7 @@ export function renderWallet(props: WalletViewProps) {
                 <span>Name (optional)</span>
                 <input
                   .value=${props.createName ?? ""}
-                  placeholder="Uses Agent, Agent 2, Vault, or Mining"
+                  placeholder="Uses Agent, Agent 2, or Vault"
                   autocomplete="off"
                   @input=${(event: Event) =>
                     props.onCreateNameChange?.((event.target as HTMLInputElement).value)}
@@ -4055,7 +4055,7 @@ export function renderWallet(props: WalletViewProps) {
                 >
                   <option value="" disabled>Select a role</option>
                   <option value="agent">Agent</option>
-                  <option value="mining">Mining</option>
+                  <option value="mining">Mining (legacy recovery)</option>
                   <option value="vault">Vault</option>
                   <option value="profile">Profile</option>
                   <option value="strategy">Strategy (deny-all)</option>

@@ -22,6 +22,7 @@ import {
   SAT_INSTRUCTION_DISCRIMINATORS,
   SAT_PROTOCOL_CONSTANTS,
 } from "./protocol-contract.js";
+import { assertSatRewardAdmissionForAction } from "./reward-admission.js";
 import {
   inspectSatAddressLookupTable,
   inspectSatChainSlot,
@@ -31,6 +32,7 @@ import {
   inspectSatMinerCapitalsByAuthority,
   inspectSatMinerCyclesByAddress,
   inspectSatVNextRuntimeActivation,
+  inspectSatVNextRewardAdmission,
   inspectSatVNextKeeperChainContext,
 } from "./rpc-read.js";
 import { resolveSatSignerCodec } from "./signer-codec-manifest.js";
@@ -1043,6 +1045,7 @@ async function submitInstruction(
   if (SAT_RUNTIME_PROTOCOL_GENERATION !== "sat-v2") {
     assertSatVNextRuntimeBinding(resolveSatCluster(params.cfg), effectiveEnv);
     await inspectSatVNextRuntimeActivation(params.cfg as unknown as SatMiningConfig);
+    await assertSatRewardAdmissionForAction(params.actionOverride, inspectSatVNextRewardAdmission);
   }
   if (resolveSatProviderId(params.cfg, effectiveEnv) !== "local-socket-signer") {
     throw new Error("SAT mining unattended submission currently requires local-socket-signer");

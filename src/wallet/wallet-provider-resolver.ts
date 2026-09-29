@@ -150,27 +150,25 @@ export function resolveWalletProviderId(
       typeof cfg.plugins?.entries?.["sat-mining"]?.config?.walletId === "string"
         ? cfg.plugins.entries["sat-mining"]?.config?.walletId.trim()
         : "";
+    const defaultWallet = registry.defaultWalletId?.trim()
+      ? registry.wallets.find((entry) => entry.id === registry.defaultWalletId?.trim())
+      : undefined;
     const satWallet = satWalletId
       ? registry.wallets.find((entry) => entry.id === satWalletId)
       : undefined;
-    if (satWallet?.providerId) {
-      registryProvider = satWallet.providerId;
+    // Generic owner actions follow the selected wallet. The legacy mining
+    // wallet remains a fallback for installations without a default wallet.
+    if (defaultWallet?.providerId || satWallet?.providerId) {
+      registryProvider = defaultWallet?.providerId ?? satWallet?.providerId ?? null;
     } else {
-      const defaultWallet = registry.defaultWalletId?.trim()
-        ? registry.wallets.find((entry) => entry.id === registry.defaultWalletId?.trim())
-        : undefined;
-      if (defaultWallet?.providerId) {
-        registryProvider = defaultWallet.providerId;
-      } else {
-        const distinctProviders = [...new Set(registry.wallets.map((entry) => entry.providerId))];
-        if (distinctProviders.length === 1) {
-          registryProvider = distinctProviders[0] ?? null;
-        } else if (
-          registry.providers["local-socket-signer"]?.enabled &&
-          !registry.providers["embedded-keystore"]?.enabled
-        ) {
-          registryProvider = "local-socket-signer";
-        }
+      const distinctProviders = [...new Set(registry.wallets.map((entry) => entry.providerId))];
+      if (distinctProviders.length === 1) {
+        registryProvider = distinctProviders[0] ?? null;
+      } else if (
+        registry.providers["local-socket-signer"]?.enabled &&
+        !registry.providers["embedded-keystore"]?.enabled
+      ) {
+        registryProvider = "local-socket-signer";
       }
     }
   } catch {

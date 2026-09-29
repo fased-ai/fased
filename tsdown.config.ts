@@ -20,7 +20,35 @@ const channelRuntimeExternals = [
   /^opusscript(?:\/.*)?$/,
 ];
 
+// WEN client contracts are consumed by version-bound clients, not necessarily
+// by a CLI command. Keep them in both managed and ordinary build graphs.
+const wenClientEntries = {
+  "wallet/wen-market-review-contract": "src/wallet/wen-market-review-contract.ts",
+  "wallet/wen-bond-purchase-review-contract": "src/wallet/wen-bond-purchase-review-contract.ts",
+  "wallet/wen-bond-claim-review-contract": "src/wallet/wen-bond-claim-review-contract.ts",
+  "wallet/wen-campaign-review-contract": "src/wallet/wen-campaign-review-contract.ts",
+  "wallet/wen-mining-recovery-profile": "src/wallet/wen-mining-recovery-profile.ts",
+  "wallet/wen-claim-journey-contract": "src/wallet/wen-claim-journey-contract.ts",
+  "agents/agent-capital-runtime": "src/agents/agent-capital-runtime.ts",
+  "wallet/wen-native-claim-preparation": "src/wallet/wen-native-claim-preparation.ts",
+  "wallet/wen-native-claim-preparation-contract":
+    "src/wallet/wen-native-claim-preparation-contract.ts",
+  "wallet/wen-btc-claim-preparation": "src/wallet/wen-btc-claim-preparation.ts",
+  "wallet/wen-btc-claim-preparation-contract": "src/wallet/wen-btc-claim-preparation-contract.ts",
+  "wallet/wen-withdrawal-preparation": "src/wallet/wen-withdrawal-preparation.ts",
+  "wallet/wen-mining-preparation": "src/wallet/wen-mining-preparation.ts",
+  "wallet/wen-btc-preparation": "src/wallet/wen-btc-preparation.ts",
+  "wallet/wen-btc-inspection": "src/wallet/wen-btc-inspection.ts",
+  "wallet/wen-btc-route-preview": "src/wallet/wen-btc-route-preview.ts",
+};
+
 const baseEntries = [
+  {
+    entry: wenClientEntries,
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
   {
     entry: "src/index.ts",
     env,
@@ -88,6 +116,12 @@ const fullRuntimeEntries = [
 
 const preservedCoreConfig = {
   entry: {
+    ...wenClientEntries,
+    // Bundled core plugins are compiled separately and need the public SDK
+    // exports even when no application entry imports those exports directly.
+    "plugin-sdk/index": "src/plugin-sdk/index.ts",
+    "plugin-sdk/sat-runtime": "src/plugin-sdk/sat-runtime.ts",
+    "plugin-sdk/device-pair": "src/plugin-sdk/device-pair.ts",
     index: "src/index.ts",
     entry: "src/entry.ts",
     "daemon-cli": "src/cli/daemon-cli.ts",

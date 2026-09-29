@@ -70,7 +70,7 @@ describe("lifecycle generation plugin lock", () => {
 
     await writeBundledPluginLock(root);
     const lock = JSON.parse(await fs.readFile(path.join(root, "plugin.lock.json"), "utf8")) as {
-      entries: Array<{ id: string }>;
+      entries: Array<{ id: string; directory?: string }>;
     };
 
     expect(lock.entries.map((entry) => entry.id)).toEqual([
@@ -78,6 +78,8 @@ describe("lifecycle generation plugin lock", () => {
       "memory-core",
       "sat-mining",
     ]);
+    expect(lock.entries[0].directory).toBe("runtime-browser");
+    expect(lock.entries[1].directory).toBeUndefined();
   });
 
   it("rejects duplicate manifest ids from different bundled directories", async () => {

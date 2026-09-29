@@ -516,7 +516,7 @@ function dashboardWalletRoleSummary(props: OverviewProps): DashboardWalletRoleSu
       title: "Mining",
       count: 0,
       sol: 0,
-      help: "Mining wallets are dedicated to SAT mining capital and should stay separate from Agent wallets.",
+      help: "Mining wallets are retained for historical SAT cycle recovery. New WEN positions do not require a dedicated Mining wallet.",
     },
     vault: {
       role: "vault",
@@ -570,10 +570,10 @@ const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   },
   {
     id: "mining",
-    title: "Mining",
+    title: "Legacy Mining",
     source: "sat.mining.status",
     icon: "zap",
-    summary: "Mining runtime state and next operator action.",
+    summary: "Historical SAT cycle state and recovery actions.",
   },
   {
     id: "network",
@@ -789,7 +789,7 @@ function renderWidgetBody(
             tab: "mining",
             title: "SAT",
             value: context.miningSatcoin,
-            help: "Current SAT token balance for the configured Mining wallet.",
+            help: "SAT balance of the retained historical Mining wallet. New WEN positions use their owner-authorized wallet.",
           })}
           ${renderLinkedSummaryCard(props, {
             tab: "mining",

@@ -176,6 +176,26 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.satLookup.binding.get": 5_000,
   "v2.satCommitment.allocate": 5_000,
   "v2.satCommitment.binding.get": 5_000,
+  "v2.wenBtc.inspect": 30_000,
+  "v2.wenMining.prepare": 30_000,
+  "v2.wenBondClaim.journey": 30_000,
+  "v2.wenBondClaim.review.prepare": 30_000,
+  "v2.wenBondPurchase.journey": 30_000,
+  "v2.wenBondPurchase.review.prepare": 30_000,
+  "v2.wenMarket.journey": 30_000,
+  "v2.wenMarket.review.prepare": 30_000,
+  "v2.wenCampaign.journey": 30_000,
+  "v2.wenCampaign.review.prepare": 30_000,
+  "v2.wenMining.claim.journey": 30_000,
+  "v2.wenMining.claim.review.prepare": 30_000,
+  "v2.wenMining.claim.propose": 120_000,
+  "v2.wenMining.claim.recover": 120_000,
+  "v2.wenBTCClaim.prepare": 30_000,
+  "v2.wenMiningFunding.prepare": 30_000,
+  "v2.wenNativeClaim.prepare": 30_000,
+  "v2.wenWithdrawal.prepare": 30_000,
+  "v2.wenBtc.prepare": 30_000,
+  "v2.wenBtc.route.preview": 30_000,
   "v2.vaultMining.binding.inspect": 30_000,
   "v2.vaultMining.commitment.allocate": 30_000,
   "v2.keeperFeePayer.get": 5_000,
@@ -312,6 +332,10 @@ async function callSocket<T>(
       }
     });
     socket.on("error", (err) => finish(err));
+    const incompleteResponse = () =>
+      finish(new Error("local socket signer closed before a complete response"));
+    socket.once("end", incompleteResponse);
+    socket.once("close", incompleteResponse);
   });
 }
 

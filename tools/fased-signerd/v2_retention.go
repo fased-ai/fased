@@ -244,6 +244,7 @@ func (s *signerStoreV2) maintainStateAtV2(force bool) error {
 			}
 		}
 
+		wenPinnedUsage, wenPinAll := wenReservedUsageKeysV1(tx)
 		usage := tx.Bucket(bucketSignerUsageV2)
 		usageCursor := usage.Cursor()
 		for key, _ := usageCursor.First(); key != nil; key, _ = usageCursor.Next() {
@@ -255,7 +256,7 @@ func (s *signerStoreV2) maintainStateAtV2(force bool) error {
 			if err != nil {
 				return errors.New("invalid durable signer usage day")
 			}
-			if now.Sub(day) > signerUsageRetentionV2 {
+			if now.Sub(day) > signerUsageRetentionV2 && !wenPinAll && !wenPinnedUsage[string(key)] {
 				if err := usageCursor.Delete(); err != nil {
 					return err
 				}

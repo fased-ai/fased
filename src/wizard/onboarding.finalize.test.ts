@@ -333,6 +333,29 @@ describe("formatStrictRemoteAccessDetails", () => {
 });
 
 describe("formatOperatorReadinessSummary", () => {
+  it("does not ask new users to create a legacy Mining wallet", () => {
+    const text = formatOperatorReadinessSummary([
+      {
+        title: "Mining wallet separate",
+        summary: "Optional and not configured",
+        detail: "No legacy wallet",
+        tone: "neutral",
+      },
+    ]);
+    expect(text).not.toContain("LEGACY MINING WALLET");
+    expect(text).not.toContain("Create/import @wallet:mining");
+    const legacyConflict = formatOperatorReadinessSummary([
+      {
+        title: "Mining wallet separate",
+        summary: "Conflict",
+        detail: "Legacy and Agent roles overlap",
+        tone: "warn",
+      },
+    ]);
+    expect(legacyConflict).toContain("LEGACY MINING WALLET");
+    expect(legacyConflict).toContain("resolve its wallet conflict");
+  });
+
   it("reports default Fased Network auto-connect as pending during root activation", () => {
     const text = formatOperatorReadinessSummary(
       [

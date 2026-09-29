@@ -33,6 +33,23 @@ func TestApplicationUpdateGateBlocksMutationsButAllowsHealth(t *testing.T) {
 	}
 }
 
+func TestApplicationUpdateGateWENJourneys(t *testing.T) {
+	gatePath := filepath.Join(t.TempDir(), "active")
+	if err := os.WriteFile(gatePath, []byte("paired-update\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"v2.wenCampaign.journey", "v2.wenBondPurchase.journey", "v2.wenBondClaim.journey", "v2.wenMarket.journey", "v2.wenCampaign.admission.install", "v2.wenBondPurchase.admission.install", "v2.wenBondClaim.admission.install"} {
+		for _, control := range []bool{false, true} {
+			if err := enforceApplicationUpdateGate(gatePath, operation, control, os.Geteuid(), os.Getegid()); err == nil || !strings.Contains(err.Error(), "temporarily disabled") {
+				t.Fatalf("WEN mutation crossed the active update gate: %s control=%v err=%v", operation, control, err)
+			}
+		}
+	}
+	if err := enforceApplicationUpdateGate(gatePath, "v2.wenBtc.route.preview", false, os.Geteuid(), os.Getegid()); err != nil {
+		t.Fatalf("read-only BTC preview was blocked: %v", err)
+	}
+}
+
 func TestApplicationUpdateGateFailsClosedForUntrustedGateAndOpensOnlyWhenAbsent(t *testing.T) {
 	directory := t.TempDir()
 	gatePath := filepath.Join(directory, "active")

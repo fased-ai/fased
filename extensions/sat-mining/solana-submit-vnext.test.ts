@@ -6,6 +6,7 @@ const {
   inspectSatCycleRegistryMeta,
   inspectSatMinerCapital,
   inspectSatVNextRuntimeActivation,
+  inspectSatVNextRewardAdmission,
   ids,
 } = vi.hoisted(() => {
   const ids = {
@@ -83,6 +84,7 @@ const {
       permanentMiningId: ids.permanentMiningId,
     })),
     inspectSatVNextRuntimeActivation: vi.fn(async () => ({ active: true })),
+    inspectSatVNextRewardAdmission: vi.fn(async () => {}),
   };
 });
 
@@ -117,6 +119,7 @@ vi.mock("./src/rpc-read.js", async (importOriginal) => ({
   inspectSatCycleRegistryMeta,
   inspectSatMinerCapital,
   inspectSatVNextRuntimeActivation,
+  inspectSatVNextRewardAdmission,
 }));
 
 vi.mock("./src/submission-service.js", async (importOriginal) => ({
