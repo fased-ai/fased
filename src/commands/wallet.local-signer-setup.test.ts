@@ -1043,6 +1043,38 @@ describe("walletSetupCommand native signer boundary", () => {
     }
   });
 
+  it("uses a standard import identity and rejects a granting default policy", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-standard-import-"));
+    const configPath = path.join(root, "fased.json");
+    const importPath = path.join(root, "keypair.json");
+    await fs.writeFile(configPath, "{}\n");
+    await fs.writeFile(importPath, JSON.stringify(Array(64).fill(1)), { mode: 0o600 });
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+    try {
+      await expect(
+        walletSetupCommand({ log: vi.fn() } as never, {
+          mode: "local-signer-import",
+          chain: "solana",
+          importFile: importPath,
+          rpcUrl: "https://rpc.example/solana",
+          nonInteractive: true,
+          noDoctor: true,
+        }),
+      ).rejects.toThrow(/requested read-only policy/);
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining(["--wallet-id", "wallet_1", "--read-only"]),
+        expect.anything(),
+      );
+      expect(readWalletProviderRegistry(process.env).wallets).toHaveLength(0);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("imports through the native signer with the keypair passed only by file descriptor", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-native-import-"));
     const configPath = path.join(root, "fased.json");

@@ -58,6 +58,12 @@ describe("release version inventory", () => {
     expect(() => validateCurrentVersionInventory(root)).toThrow(/core peer/u);
   });
 
+  it("rejects a package-only release bump before building artifacts", () => {
+    const root = fixture("0.1.76-rc.162");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "0.1.76-rc.163" }));
+    expect(() => validateCurrentVersionInventory(root)).toThrow(/brand version/u);
+  });
+
   it("rejects mismatched brand identity", () => {
     const root = fixture();
     writeFileSync(join(root, "src", "brand.ts"), 'FASED_PRODUCT_VERSION = "1.2.4";\n');
