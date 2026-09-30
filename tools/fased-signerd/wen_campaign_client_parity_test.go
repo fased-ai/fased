@@ -17,7 +17,7 @@ import (
 // Compare independent Fased reconstruction with the WEN app's shared SDK.
 // No RPC, owner keys, deployment admission, or signed transaction is involved.
 func TestWENCampaignRetailClientParity(t *testing.T) {
-	root, err := filepath.Abs("../../../token/sat/wen-genesis")
+	root, err := filepath.Abs("testdata/wen-protocol")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -58,9 +58,9 @@ func TestWENNativeClaimStatePortableParity(t *testing.T) {
 		t.Fatal(e)
 	}
 	cwd, _ := os.Getwd()
-	root := filepath.Clean(filepath.Join(cwd, "../../.."))
+	root := filepath.Clean(filepath.Join(cwd, "../.."))
 	script := `import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';import {readFileSync} from 'node:fs';
-const root=process.argv[1],r=createRequire(root+'/wen/package.json'),sdk=await import(pathToFileURL(r.resolve('@solana/kit'))),client=root+'/token/sat/wen-genesis/client/';
+const root=process.argv[1],r=createRequire(root+'/package.json'),sdk=await import(pathToFileURL(r.resolve('@solana/kit'))),client=root+'/tools/fased-signerd/testdata/wen-protocol/client/';
 const {validateNativeClaimEntitlement}=await import(pathToFileURL(client+'staking-claim-entitlement.mjs')),{buildNativeClaimInstruction}=await import(pathToFileURL(client+'staking-claim-builder.mjs')),{validateSatMint,validateSatCustody,satTransferNet,TOKEN_2022}=await import(pathToFileURL(client+'sat-token.mjs'));
 const input=JSON.parse(readFileSync(0,'utf8')),id={...input.identity,award:BigInt(input.identity.award),from:BigInt(input.identity.from),now:43n*86400n},ix=await buildNativeClaimInstruction(sdk,id),hex=a=>Buffer.from(sdk.getAddressEncoder().encode(a)).toString('hex'),[collector]=await sdk.getProgramDerivedAddress({programAddress:id.program,seeds:['wen-sat-collector-v1',sdk.getAddressEncoder().encode(id.sale)]});
 for(let index=0;index<input.vectors.length;index++){const v=input.vectors[index],r=v.records;for(const a of Object.values(r))if(a)a.data=new Uint8Array(Buffer.from(a.data,'base64'));let ok=false,net;

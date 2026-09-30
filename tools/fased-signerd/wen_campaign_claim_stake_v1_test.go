@@ -57,12 +57,12 @@ func TestWENCampaignClaimStakeParityV1(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		cmd := exec.CommandContext(ctx, "node", "--input-type=module", "-e", `
 import {compileClaimToStake} from './client/claim-to-stake-builder.mjs';
-import * as sdk from '../../../wen/node_modules/@solana/kit/dist/index.node.mjs';
+import * as sdk from '@solana/kit';
 let raw='';for await(const b of process.stdin)raw+=b;const x=JSON.parse(raw),v=x.v,s=x.s;
 const issuer=Buffer.from(s.Position.Data,'base64').subarray(48,80);const asAddress=sdk.getAddressDecoder().decode(issuer);
 const p=await compileClaimToStake(sdk,{kind:'campaign',input:{program:s.Program,owner:s.Owner,sale:s.Economy,issuer:asAddress,minimumNet:970n,day:BigInt(v.day),last:BigInt(v.last),aggregateFrom:BigInt(v.aggregateFrom),page:0n,mask:s.Mask,windows:s.Windows.map(w=>({window:w.Window.Address,vault:w.Vault.Address}))},lifetime:{blockhash:x.hash,currentBlockHeight:100n,lastValidBlockHeight:200n}});
 console.log(JSON.stringify({data:Buffer.from(p.instruction.data).toString('hex'),accounts:p.instruction.accounts,message:Buffer.from(p.transaction.messageBytes).toString('hex')}));`)
-		cmd.Dir, _ = filepath.Abs("../../../token/sat/wen-genesis")
+		cmd.Dir, _ = filepath.Abs("testdata/wen-protocol")
 		raw, _ := json.Marshal(map[string]any{"v": v, "s": s, "hash": hash.String()})
 		cmd.Stdin = bytes.NewReader(raw)
 		out, e := cmd.CombinedOutput()

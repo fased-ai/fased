@@ -17,7 +17,7 @@ import (
 )
 
 func TestWENCampaignAtomicSetupRetailParity(t *testing.T) {
-	root, e := filepath.Abs("../../../token/sat/wen-genesis")
+	root, e := filepath.Abs("testdata/wen-protocol")
 	if e != nil {
 		t.Fatal(e)
 	}

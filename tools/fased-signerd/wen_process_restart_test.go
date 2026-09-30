@@ -40,7 +40,7 @@ func verifyWENFreshProcess(t *testing.T, dbPath, request string, raw []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestWENFreshProcessReservation$", "-test.v")
-	cmd.Env = append(os.Environ(), "WEN_TEST_RESTART_DB="+dbPath, "WEN_TEST_RESTART_REQUEST="+request, "WEN_TEST_RESTART_HASH="+hex.EncodeToString(sum[:]))
+	cmd.Env = append(os.Environ(), "TMPDIR="+os.TempDir(), "WEN_TEST_RESTART_DB="+dbPath, "WEN_TEST_RESTART_REQUEST="+request, "WEN_TEST_RESTART_HASH="+hex.EncodeToString(sum[:]))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fresh process recovery: %v\n%s", err, output)
 	} else if !strings.Contains(string(output), "--- PASS: TestWENFreshProcessReservation") {
@@ -49,7 +49,7 @@ func verifyWENFreshProcess(t *testing.T, dbPath, request string, raw []byte) {
 	badSum := sum
 	badSum[0] ^= 1
 	negative := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestWENFreshProcessReservation$", "-test.v")
-	negative.Env = append(os.Environ(), "WEN_TEST_RESTART_DB="+dbPath, "WEN_TEST_RESTART_REQUEST="+request, "WEN_TEST_RESTART_HASH="+hex.EncodeToString(badSum[:]))
+	negative.Env = append(os.Environ(), "TMPDIR="+os.TempDir(), "WEN_TEST_RESTART_DB="+dbPath, "WEN_TEST_RESTART_REQUEST="+request, "WEN_TEST_RESTART_HASH="+hex.EncodeToString(badSum[:]))
 	output, err := negative.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "persisted reservation changed across process restart") {
 		t.Fatalf("wrong journal digest was not rejected: %v\n%s", err, output)
@@ -73,9 +73,17 @@ func TestWENFreshProcessReservation(t *testing.T) {
 	if dbPath == "" {
 		t.Skip("parent subprocess fixture only")
 	}
-	relative, err := filepath.Rel(os.TempDir(), dbPath)
+	tempRoot := os.TempDir()
+	if configured := os.Getenv("GOTMPDIR"); configured != "" {
+		rel, err := filepath.Rel(tempRoot, configured)
+		if err != nil || !filepath.IsAbs(configured) || strings.HasPrefix(rel, "..") {
+			t.Fatal("Go test temporary root is outside OS temporary directory")
+		}
+		tempRoot = configured
+	}
+	relative, err := filepath.Rel(tempRoot, dbPath)
 	if err != nil || !strings.HasPrefix(relative, "TestWEN") || strings.HasPrefix(relative, "..") {
-		t.Fatal("restart database is not a disposable WEN test fixture")
+		t.Fatalf("restart database is not a disposable WEN test fixture: relative=%q temp=%q", relative, os.TempDir())
 	}
 	s, err := openSignerStoreV2(dbPath)
 	if err != nil {

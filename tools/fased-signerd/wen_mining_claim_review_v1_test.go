@@ -16,11 +16,11 @@ import (
 func miningClaimReviewDescriptor(t *testing.T, p wenStakingPinsV1) ([]byte, wenStakingPinsV1) {
 	t.Helper()
 	cwd, _ := os.Getwd()
-	root := filepath.Clean(filepath.Join(cwd, "../../.."))
+	root := filepath.Clean(filepath.Join(cwd, "../.."))
 	output := filepath.Join(t.TempDir(), "descriptor.json")
 	program := solana.MustPublicKeyFromBase58(p.ProgramID)
 	args, _ := json.Marshal(map[string]any{"program": hex.EncodeToString(program[:]), "genesis": p.Genesis, "deployedBytesHash": p.CodeSHA256})
-	script := `import {pathToFileURL} from 'node:url';import {writeFileSync} from 'node:fs';const p=JSON.parse(process.argv[3]);const {claimDescriptorFixture}=await import(pathToFileURL(process.argv[1]+'/token/sat/wen-genesis/scripts/claim-descriptor-fixture.mjs'));const f=await claimDescriptorFixture({...p,deploymentSlot:1n,upgradeAuthority:null},p.genesis);writeFileSync(process.argv[2],f.bytes,{flag:'wx'});`
+	script := `import {pathToFileURL} from 'node:url';import {writeFileSync} from 'node:fs';const p=JSON.parse(process.argv[3]);const {claimDescriptorFixture}=await import(pathToFileURL(process.argv[1]+'/tools/fased-signerd/testdata/wen-protocol/scripts/claim-descriptor-fixture.mjs'));const f=await claimDescriptorFixture({...p,deploymentSlot:1n,upgradeAuthority:null},p.genesis);writeFileSync(process.argv[2],f.bytes,{flag:'wx'});`
 	cmd := exec.Command("node", "--input-type=module", "-e", script, root, output, string(args))
 	if out, e := cmd.CombinedOutput(); e != nil {
 		t.Fatalf("%v %s", e, out)

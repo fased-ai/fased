@@ -35,8 +35,8 @@ func miningDescriptorFixture(t *testing.T, p wenMiningPinsV1) ([]byte, wenMining
 	}
 	program := solana.MustPublicKeyFromBase58(p.ProgramID)
 	cwd, _ := os.Getwd()
-	root := filepath.Clean(filepath.Join(cwd, "../../.."))
-	script := `import {readFileSync} from 'node:fs';import {pathToFileURL} from 'node:url';const root=process.argv[1],x=JSON.parse(readFileSync(0,'utf8'));const {claimDescriptorFixture}=await import(pathToFileURL(root+'/token/sat/wen-genesis/scripts/claim-descriptor-fixture.mjs'));const b=await claimDescriptorFixture({program:x.program,deployedBytesHash:x.code,deploymentSlot:BigInt(x.slot),upgradeAuthority:x.authority},x.genesis);console.log(JSON.stringify({raw:Buffer.from(b.bytes).toString('base64'),sha:b.sha256,cap:b.miningCapabilityDigest}));`
+	root := filepath.Clean(filepath.Join(cwd, "../.."))
+	script := `import {readFileSync} from 'node:fs';import {pathToFileURL} from 'node:url';const root=process.argv[1],x=JSON.parse(readFileSync(0,'utf8'));const {claimDescriptorFixture}=await import(pathToFileURL(root+'/tools/fased-signerd/testdata/wen-protocol/scripts/claim-descriptor-fixture.mjs'));const b=await claimDescriptorFixture({program:x.program,deployedBytesHash:x.code,deploymentSlot:BigInt(x.slot),upgradeAuthority:x.authority},x.genesis);console.log(JSON.stringify({raw:Buffer.from(b.bytes).toString('base64'),sha:b.sha256,cap:b.miningCapabilityDigest}));`
 	var authority any
 	if p.UpgradeAuthority != nil {
 		authority = hex.EncodeToString(p.UpgradeAuthority[:])

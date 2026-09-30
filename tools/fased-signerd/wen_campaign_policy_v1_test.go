@@ -64,7 +64,7 @@ import {buildCampaignOwnerInstruction} from './client/campaign-owner-instruction
 let text='';for await(const x of process.stdin)text+=x;const {a,s,owner}=JSON.parse(text),{sdk}=await campaignKeeperFixture(),enc=sdk.getAddressEncoder(),hex=k=>Buffer.from(enc.encode(k)).toString('hex');
 const account=x=>({address:hex(x.Address),owner:hex(x.Owner),executable:x.Executable,lamports:BigInt(x.Lamports),data:[...Buffer.from(x.Data,'base64')]});
 const q=a.Policy,p=Buffer.from(s.Data,'base64');const x=await buildCampaignOwnerInstruction(sdk,{op:160,program:hex(a.Program),owner:hex(owner),issuer:p.subarray(48,80).toString('hex'),mint:p.subarray(80,112).toString('hex'),position:account(s),window:account(s.PolicyWindow),now:BigInt(s.Now),positionRent:BigInt(s.Rent),terms:{maxPrice:BigInt(q.MaxPrice),daily:BigInt(q.Daily),total:BigInt(q.Total),expiry:BigInt(q.Expiry),maxWait:BigInt(q.MaxWait),enabled:BigInt(q.Enabled)}});console.log(JSON.stringify({data:Buffer.from(x.instruction.data).toString('hex'),accounts:x.instruction.accounts}));`)
-	cmd.Dir, _ = filepath.Abs("../../../token/sat/wen-genesis")
+	cmd.Dir, _ = filepath.Abs("testdata/wen-protocol")
 	raw, _ := json.Marshal(map[string]any{"a": a, "s": s, "owner": owner})
 	cmd.Stdin = bytes.NewReader(raw)
 	out, e := cmd.CombinedOutput()

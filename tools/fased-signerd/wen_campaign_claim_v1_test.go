@@ -39,7 +39,7 @@ for(const slots of [[0],[0,2,5,7]]){
  const ix=await buildCampaignClaimInstruction(f.sdk,{program:hex(f.id.program),owner:hex(f.id.owner),mask:snapshot.Mask,position:js(snapshot.Position),page:js(snapshot.Page),destination:js(snapshot.Destination),windows:snapshot.Windows.map(w=>({window:js(w.Window),vault:js(w.Vault)}))});
  rows.push({snapshot,data:Buffer.from(ix.instruction.data).toString('hex'),accounts:ix.instruction.accounts,net:Number(ix.netSatRaw),purchase:Number(ix.purchaseLamports)});
 }console.log(JSON.stringify(rows));`)
-	cmd.Dir, _ = filepath.Abs("../../../token/sat/wen-genesis")
+	cmd.Dir, _ = filepath.Abs("testdata/wen-protocol")
 	raw, e := cmd.CombinedOutput()
 	if e != nil {
 		t.Fatalf("SDK %v %s", e, raw)

@@ -18,8 +18,8 @@ func fundingDescriptorFixture(t *testing.T) ([]byte, wenStakingPinsV1) {
 	program := solana.MustPublicKeyFromBase58(v.ProgramID)
 	p := wenStakingPinsV1{ProgramID: v.ProgramID, Genesis: v.Genesis, CodeSHA256: wenHashV1([]byte("funding code")), DeploymentSlot: 5}
 	cwd, _ := os.Getwd()
-	root := filepath.Clean(filepath.Join(cwd, "../../.."))
-	script := `import {readFileSync} from 'node:fs';import {pathToFileURL} from 'node:url';const root=process.argv[1],x=JSON.parse(readFileSync(0,'utf8'));const {miningFundingDescriptor}=await import(pathToFileURL(root+'/token/sat/wen-genesis/tests/support/portfolio-descriptor.mjs'));const vector=JSON.parse(readFileSync(root+'/fased/tools/fased-signerd/testdata/wen-mining-funding-candidate.json')).instruction;const {binding:b}=await miningFundingDescriptor(vector,{program:x.program,deployedBytesHash:x.code,deploymentSlot:5n,upgradeAuthority:null},x.genesis);console.log(JSON.stringify({raw:Buffer.from(b.bytes).toString('base64'),sha:b.sha256,cap:b.portfolioMiningFundingCapabilityDigest}));`
+	root := filepath.Clean(filepath.Join(cwd, "../.."))
+	script := `import {readFileSync} from 'node:fs';import {pathToFileURL} from 'node:url';const root=process.argv[1],x=JSON.parse(readFileSync(0,'utf8'));const {miningFundingDescriptor}=await import(pathToFileURL(root+'/tools/fased-signerd/testdata/wen-protocol/tests/support/portfolio-descriptor.mjs'));const vector=JSON.parse(readFileSync(root+'/tools/fased-signerd/testdata/wen-mining-funding-candidate.json')).instruction;const {binding:b}=await miningFundingDescriptor(vector,{program:x.program,deployedBytesHash:x.code,deploymentSlot:5n,upgradeAuthority:null},x.genesis);console.log(JSON.stringify({raw:Buffer.from(b.bytes).toString('base64'),sha:b.sha256,cap:b.portfolioMiningFundingCapabilityDigest}));`
 	input, _ := json.Marshal(map[string]string{"program": hex.EncodeToString(program[:]), "code": p.CodeSHA256, "genesis": p.Genesis})
 	cmd := exec.Command("node", "--input-type=module", "-e", script, root)
 	cmd.Stdin = bytes.NewReader(input)

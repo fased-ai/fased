@@ -13,9 +13,9 @@ import (
 
 func TestWENMiningClaimDescriptor(t *testing.T) {
 	cwd, _ := os.Getwd()
-	root := filepath.Clean(filepath.Join(cwd, "../../.."))
+	root := filepath.Clean(filepath.Join(cwd, "../.."))
 	output := filepath.Join(t.TempDir(), "descriptor.json")
-	script := `import {pathToFileURL} from 'node:url';import {writeFileSync} from 'node:fs';const {claimDescriptorFixture}=await import(pathToFileURL(process.argv[1]+'/token/sat/wen-genesis/scripts/claim-descriptor-fixture.mjs'));const f=await claimDescriptorFixture({program:'11'.repeat(32),deployedBytesHash:'22'.repeat(32),deploymentSlot:1n,upgradeAuthority:null},'fixture');writeFileSync(process.argv[2],f.bytes,{flag:'wx'});`
+	script := `import {pathToFileURL} from 'node:url';import {writeFileSync} from 'node:fs';const {claimDescriptorFixture}=await import(pathToFileURL(process.argv[1]+'/tools/fased-signerd/testdata/wen-protocol/scripts/claim-descriptor-fixture.mjs'));const f=await claimDescriptorFixture({program:'11'.repeat(32),deployedBytesHash:'22'.repeat(32),deploymentSlot:1n,upgradeAuthority:null},'fixture');writeFileSync(process.argv[2],f.bytes,{flag:'wx'});`
 	cmd := exec.Command("node", "--input-type=module", "-e", script, root, output)
 	if out, e := cmd.CombinedOutput(); e != nil {
 		t.Fatalf("fixture: %v %s", e, out)

@@ -52,8 +52,8 @@ func TestWENBTCClaimInstructionPortableParity(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	root := filepath.Clean(filepath.Join(cwd, "../../.."))
-	script := `import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';import {readFileSync} from 'node:fs';const root=process.argv[1],r=createRequire(root+'/wen/package.json'),sdk=await import(pathToFileURL(r.resolve('@solana/kit')));const {buildBtcClaimInstruction}=await import(pathToFileURL(root+'/token/sat/wen-genesis/client/btc-claim-builder.mjs'));const inputs=JSON.parse(readFileSync(0,'utf8')),out=[];for(const v of inputs){const i=await buildBtcClaimInstruction(sdk,{program:v.programId,sale:v.sale,owner:v.owner,destination:v.destination,day:BigInt(v.day),from:BigInt(v.from),source:v.source==='fee'?{kind:'fee'}:{kind:'mining',offer:BigInt(v.offer)}});out.push({data:Buffer.from(i.data).toString('hex'),accounts:i.accounts});}console.log(JSON.stringify(out));`
+	root := filepath.Clean(filepath.Join(cwd, "../.."))
+	script := `import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';import {readFileSync} from 'node:fs';const root=process.argv[1],r=createRequire(root+'/package.json'),sdk=await import(pathToFileURL(r.resolve('@solana/kit')));const {buildBtcClaimInstruction}=await import(pathToFileURL(root+'/tools/fased-signerd/testdata/wen-protocol/client/btc-claim-builder.mjs'));const inputs=JSON.parse(readFileSync(0,'utf8')),out=[];for(const v of inputs){const i=await buildBtcClaimInstruction(sdk,{program:v.programId,sale:v.sale,owner:v.owner,destination:v.destination,day:BigInt(v.day),from:BigInt(v.from),source:v.source==='fee'?{kind:'fee'}:{kind:'mining',offer:BigInt(v.offer)}});out.push({data:Buffer.from(i.data).toString('hex'),accounts:i.accounts});}console.log(JSON.stringify(out));`
 	type row struct {
 		Address  string `json:"address"`
 		Signer   bool   `json:"isSigner"`

@@ -158,9 +158,9 @@ func TestWENMiningClaimSettlementPortableParity(t *testing.T) {
 	}
 	input := map[string]any{"s": map[string]any{"roster": account(s.Roster), "receipt": account(s.Receipt), "claim": account(s.Claim)}, "e": map[string]any{"program": v.ProgramID, "economy": v.Economy, "offer": ix.Accounts()[2].PublicKey.String(), "entry": ix.Accounts()[5].PublicKey.String(), "owner": w.String(), "id": "1", "open": "1000", "capacity": "100", "minimumFill": "1", "ordinal": "0"}}
 	cwd, _ := os.Getwd()
-	root := filepath.Clean(filepath.Join(cwd, "../../.."))
+	root := filepath.Clean(filepath.Join(cwd, "../.."))
 	output := filepath.Join(t.TempDir(), "result.json")
-	script := `import {readFileSync,writeFileSync} from 'node:fs';import {pathToFileURL} from 'node:url';const root=process.argv[1],sdk=await import(pathToFileURL(root+'/wen/node_modules/@solana/kit/dist/index.node.mjs'));const {validateMiningClaimSettlement}=await import(pathToFileURL(root+'/token/sat/wen-genesis/client/mining-claim-settlement.mjs'));const {s,e}=JSON.parse(readFileSync(0,'utf8'));for(const a of Object.values(s))a.data=new Uint8Array(Buffer.from(a.data,'base64'));for(const k of ['id','open','capacity','minimumFill','ordinal'])e[k]=BigInt(e[k]);const out=await validateMiningClaimSettlement(sdk,s,e);writeFileSync(process.argv[2],JSON.stringify(out,(_,v)=>typeof v==='bigint'?v.toString():v));`
+	script := `import {readFileSync,writeFileSync} from 'node:fs';import {pathToFileURL} from 'node:url';const root=process.argv[1],sdk=await import(pathToFileURL(root+'/node_modules/@solana/kit/dist/index.node.mjs'));const {validateMiningClaimSettlement}=await import(pathToFileURL(root+'/tools/fased-signerd/testdata/wen-protocol/client/mining-claim-settlement.mjs'));const {s,e}=JSON.parse(readFileSync(0,'utf8'));for(const a of Object.values(s))a.data=new Uint8Array(Buffer.from(a.data,'base64'));for(const k of ['id','open','capacity','minimumFill','ordinal'])e[k]=BigInt(e[k]);const out=await validateMiningClaimSettlement(sdk,s,e);writeFileSync(process.argv[2],JSON.stringify(out,(_,v)=>typeof v==='bigint'?v.toString():v));`
 	raw, _ := json.Marshal(input)
 	cmd := exec.Command("node", "--input-type=module", "-e", script, root, output)
 	cmd.Stdin = bytes.NewReader(raw)

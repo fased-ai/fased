@@ -15,6 +15,10 @@ func stakingDescriptorFixture(t *testing.T) ([]byte, wenStakingPinsV1) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	raw, eCompact := wenCompactV1(raw)
+	if eCompact != nil {
+		t.Fatal(eCompact)
+	}
 	var d struct {
 		Interfaces struct {
 			H struct {

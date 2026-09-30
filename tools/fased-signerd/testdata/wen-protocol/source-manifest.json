@@ -1,0 +1,306 @@
+{
+  "scope": "Test-only canonical portable client snapshot. SDK imports use the declared dev dependency; formatting and equivalent lint corrections normalized. The frozen synthetic interface retains only claim-descriptor inputs; never release authority.",
+  "files": [
+    {
+      "path": "client/btc-accounts.mjs",
+      "sourceSha256": "d7d1526c603b7eba72ace92635615774109ce2124a450b0051cc39912928bde0",
+      "snapshotSha256": "05a2fda9f11de82b8702c59f80e0011dd7f431c6d2a2ff6dada30c4b6f307c48"
+    },
+    {
+      "path": "client/btc-claim-builder.mjs",
+      "sourceSha256": "e7d5b40137eb68af207259f30d06814395da14c3ccbbdeae851c96a3f876a15c",
+      "snapshotSha256": "36d7434747d6ac511148b9e97a495cdfe59b84619db192c760702c95331eff99"
+    },
+    {
+      "path": "client/btc-claim-descriptor.mjs",
+      "sourceSha256": "7f5f4e51731e7f22efc6526dec158bbf8145e2b07dc1863fc218f74490630ec5",
+      "snapshotSha256": "e73cd2d1214a5ca7ee93c46377450f167cad34de0562dd6f43e93124ed9f0cf3"
+    },
+    {
+      "path": "client/btc-claim-preparation.mjs",
+      "sourceSha256": "c78e9a119fb168017ee6f9707ae40054eaf67ea1ebca68901b2b080649fa7b98",
+      "snapshotSha256": "232e56beb0a2456b53a09b3a71db8c8313922ad096c2c2f28639980cb6647b37"
+    },
+    {
+      "path": "client/btc-owner-reward.mjs",
+      "sourceSha256": "e7ddf727b65384c382913f7524bcccd90d52f62dc7b79166619b4de5ff8591b0",
+      "snapshotSha256": "e36347f67732f49dd01723d74031630685b6304ce1636d3ee0365fa9c88face6"
+    },
+    {
+      "path": "client/btc-owner-rpc.mjs",
+      "sourceSha256": "ef6330326f996ff3183042e4dca39fa866f276468e39900c9f95f7b828c02dde",
+      "snapshotSha256": "062cb478c2b69b5ee3e4fe30d9008cf9830f1c1f7617b7bad0945e756c5bd7b4"
+    },
+    {
+      "path": "client/btc-readback.mjs",
+      "sourceSha256": "ff75d76eb28eaee6605c1ad757bd99ca4babb8767c1556cc37bda6fd7123ca3e",
+      "snapshotSha256": "124a6a93fee12a39d38d3622571c10fd718f1f3c78cf328ea1bb0edfdda5096d"
+    },
+    {
+      "path": "client/btc-transfer-preview.mjs",
+      "sourceSha256": "75a97624b78ac19b3e6aaf0b18225dcd90ee61e888a1950f9e2c1cade2d003ea",
+      "snapshotSha256": "3fa92a4bbd61565c39de82f6bf78712709527e74771b8795c6d0ed68dc121aca"
+    },
+    {
+      "path": "client/campaign-accounting-context.mjs",
+      "sourceSha256": "2ec147c1a74d257ea1a6f2767f58e4e832ded28f2e973d30b57fc5d05ff9a1a5",
+      "snapshotSha256": "967de0729cc2e17a9c496872e0bf8046f72334c9060ac8a5de0d20482598627c"
+    },
+    {
+      "path": "client/campaign-accounting-rpc.mjs",
+      "sourceSha256": "ca0aabb6fc1232e864655ea800a15e2c9e23b46c2007ba33ab0adb7bb1f416ec",
+      "snapshotSha256": "537a71c3b95eb112f1356ae003f58a46c55085fc8d515e758eb1353e29e8d881"
+    },
+    {
+      "path": "client/campaign-claim-fixture.mjs",
+      "sourceSha256": "79d0e0d37f0c8b7b52213edf9b5fa211a1a5b36d42077d6d236ff448ea8274a1",
+      "snapshotSha256": "7e620b0d9052764ec7786bf57fb6eece337026023e732ecb0497f9ec85f7a584"
+    },
+    {
+      "path": "client/campaign-claim-instruction.mjs",
+      "sourceSha256": "e99541da838602c5658ec264d028348c71eb3ce21cde1dbeb294b111afbf1500",
+      "snapshotSha256": "9efdc2d25f3a08f007a03ee38e5c20b674c206c3ca18c03cd3ec8fbc1cdcdec1"
+    },
+    {
+      "path": "client/campaign-keeper-fixture.mjs",
+      "sourceSha256": "feacfb4043770b2c5a6ee994c4c2e55d664e85f5639f19eb13bed99763274417",
+      "snapshotSha256": "e4082e2d7ab71e42be172310f75868943030df0cf69430d47a23b2230189e4c7"
+    },
+    {
+      "path": "client/campaign-owner-instruction.mjs",
+      "sourceSha256": "76b47a07289d2bde3eaaed08f9f4a58b620117a11536b803c69bce8a33e0b5f5",
+      "snapshotSha256": "bfe06a89cd2dc39c51c7c7c168ae5f5803c5369fe4ce2bb9ac0a17c7bfc7b740"
+    },
+    {
+      "path": "client/campaign-owner-rpc.mjs",
+      "sourceSha256": "3481cc4f7897d6d735b1c281d7d6120c7829794a6e5d71ae79dd842c44649b06",
+      "snapshotSha256": "30cc2853ea90b5409598d2acf6b9f36bacb8cba028ffc241190ad65d6fa18581"
+    },
+    {
+      "path": "client/campaign-read-window.mjs",
+      "sourceSha256": "1f1a178bf0ceb0e410207b4f2844906849ef1ede9201fc7c45cb11e6cf57406a",
+      "snapshotSha256": "e2cb18ac761ddb3957879a0dcce4b4ee9bd337ded3970e101c2dcb76f1a811aa"
+    },
+    {
+      "path": "client/campaign-retail.mjs",
+      "sourceSha256": "8bfaae3d6cbc08e8e2dc4bc4f56602d6dd6158b6baf8651daee18792fba25d1d",
+      "snapshotSha256": "b9673b9866b7733c6f5ec240352f594b8c0413eb1a4b849066d920eaeecc4e94"
+    },
+    {
+      "path": "client/campaign-setup-instruction.mjs",
+      "sourceSha256": "ea49efa07f51d6d8a6355bfcd260a6a81b35c64a2651ba9be9abbb83315a61fa",
+      "snapshotSha256": "74abfaf85fe5e6405dfcf25cfa9f1b774cf397c3d28a195afe18fa65a23bb019"
+    },
+    {
+      "path": "client/campaign-setup-rpc.mjs",
+      "sourceSha256": "78f2f6d632bba9f943418ed7048b1730f556de1203ef894189a15ed36bda391e",
+      "snapshotSha256": "540dd57db2f1dcdc6be09f737cb1ee11fc36703a5ea3a3c6b46405327f41471c"
+    },
+    {
+      "path": "client/claim-costs.mjs",
+      "sourceSha256": "63be1dd6838f3d7ca7414d9d1e8fa546aaa0e5ff0fcce626404ddcebbe84a4da",
+      "snapshotSha256": "8c6e55d91840ed95f3716a162ca159e86827934a9640cc4db04dae91694f344c"
+    },
+    {
+      "path": "client/claim-descriptor.mjs",
+      "sourceSha256": "5cc78f0c6aa648e3d7977dbf764a604666721bc9be3d32acf57d5a6c6115a0d7",
+      "snapshotSha256": "f8c901df004a7732280b30908fbaca5802545f9f4fd937af0507951b95c099e1"
+    },
+    {
+      "path": "client/claim-to-stake-builder.mjs",
+      "sourceSha256": "6e0ba5e5a715613e01e5e1ce0e5edab6cca9dfa46a2bf32e326faf75f418d86c",
+      "snapshotSha256": "1bcfda96cdf71312e855b067586a4e36dc88d39eca418f971207edf7e787247a"
+    },
+    {
+      "path": "client/contribution-session.mjs",
+      "sourceSha256": "2c5da60e7ad267f54e40d13b065cc7e25e56c98c3f555656d9c833f950ab693f",
+      "snapshotSha256": "24f51ed8fd0af66b038d5e1cbd529e04c18ec8ad6bb68f3185ab0303da5b6812"
+    },
+    {
+      "path": "client/descriptor.mjs",
+      "sourceSha256": "c46ccf1989942db911b21ca0cb5b994e4671f930e447c0c5f1f1f3ef0598059d",
+      "snapshotSha256": "33a9690c45def37b41ff9f8e62c4d02414674d42b1b21c958f4a6640f08c2aa1"
+    },
+    {
+      "path": "client/inventory-accounts.mjs",
+      "sourceSha256": "50f69507f47a8c3b27afed773da5376e42cbca10d2e07a88517ed291c13a27a3",
+      "snapshotSha256": "ef746605639560339a830f7a11eedc63748f25665f9b974ca53bd2760c151771"
+    },
+    {
+      "path": "client/inventory-claim-builder.mjs",
+      "sourceSha256": "d5809b5eb2530730f6911c3ef38deebb6ab9257eac7b20c469fff796e5434e81",
+      "snapshotSha256": "6067f42fe14d71e49f68db0f325ea60ec238555fb43b271fcd403d982e46b0af"
+    },
+    {
+      "path": "client/inventory-claim-descriptor.mjs",
+      "sourceSha256": "ab3129087c50a4e05d02f4fcfeb5f7a936e46706cefdc61c627f151bd0fd06a5",
+      "snapshotSha256": "54e2fa50f918e8d900d7f0bf1e82b1b8c25707116f091251587bb8dc5b671c9f"
+    },
+    {
+      "path": "client/inventory-claim-rpc.mjs",
+      "sourceSha256": "80cd1e55593b82e71fa6a6650303fbdf5721b1c5a8a0bd2c40d3fe0580701766",
+      "snapshotSha256": "d4fe0977885a51302a7fd4d50b1dee6df3d5c35ddd507f0de9fd8e20f51abaf6"
+    },
+    {
+      "path": "client/mining-claim-account.mjs",
+      "sourceSha256": "83d46887d3dd1b6334ddcc98b787c31165584b3a16d528fc881a32d0603b1a53",
+      "snapshotSha256": "10852479e506fd6e8c6a5d21492fa159e0a82f8047cb203a05614670e59a7777"
+    },
+    {
+      "path": "client/mining-claim-costs.mjs",
+      "sourceSha256": "98ea1b503ce0dc3dfcced56236ed3d733d8503dfd9ddb794cccd926e7d0d8000",
+      "snapshotSha256": "5a5be32b27dd8b1b297ce82844b320aaf1101201e8bb1ee4106b3f7d51ae1b70"
+    },
+    {
+      "path": "client/mining-claim-instruction.mjs",
+      "sourceSha256": "7595b29e93b425ff9e85a37d0b1bb854e6fe8ac37b98d37ba04ff2718d2e5a7f",
+      "snapshotSha256": "762c036c8b3a388546ca92a5bb794aaadc7b698cde4b9c447220f7f451ea1ce6"
+    },
+    {
+      "path": "client/mining-claim-settlement.mjs",
+      "sourceSha256": "e0a9d4f6656bc4b08ecaf742cf1708a2bebb953e5587d7daca3e3fc2ef96fab9",
+      "snapshotSha256": "9c0b6e8fa291abf419c3332f0c08ff47ebd93207b9b7249f1876cb3c8dc02923"
+    },
+    {
+      "path": "client/network-profile.mjs",
+      "sourceSha256": "5f85aafcc34cf932c45fdc036478787c066fadfa841df34e707286baa23b561c",
+      "snapshotSha256": "13f4588e36ff44cbc486dd7900926138ec34d26272cd17a58e52c1956737b29a"
+    },
+    {
+      "path": "client/portfolio-mining-funding-descriptor.mjs",
+      "sourceSha256": "d659501e2a30fe802cecd75d8a102c006531a8fc7fba281b382b8a6ca792cb2d",
+      "snapshotSha256": "88c9a04e227d7cf8edd10ecdcf42c5ff35b20125d5decf1841c91fd6ea87dd54"
+    },
+    {
+      "path": "client/portfolio-vault-candidate.mjs",
+      "sourceSha256": "85a6928f944e71e7c6350294336a0763d7d083e59aeea398bd9200fba8c3f176",
+      "snapshotSha256": "aed9f4b379bbbdc140e2cc183b1887af3eb050122ded9fa9ec38c21c311d6d89"
+    },
+    {
+      "path": "client/portfolio-vault-descriptor.mjs",
+      "sourceSha256": "7bb1aaeb03d91066269c0de46b3bd38e6e194f067920b8c0a40c0e32d9bef9dc",
+      "snapshotSha256": "2e229e0265ec1c3dc899944fb7b6910c3bc861d12a59bf47297c4c0ad8354747"
+    },
+    {
+      "path": "client/program.mjs",
+      "sourceSha256": "7366a23742d94d61ede408c92498eae44db9f94aaeee34512499da5ec918d405",
+      "snapshotSha256": "c19119e8c029dff7b00361ba11eff4779bd0b1f1e836eac8f7f5709b906c8332"
+    },
+    {
+      "path": "client/promise-receipt.mjs",
+      "sourceSha256": "49181d20bbdc03d6981c1c1fd0e1c61dd6101cb24a288e790fca4f1b14ca18e4",
+      "snapshotSha256": "058639bc6d9aa43e5fa506863fc0ba3f1bac903f50f1209d2d75cb7db8662261"
+    },
+    {
+      "path": "client/quote-mint.mjs",
+      "sourceSha256": "8337174a3ef045e231232d86ffc7d84ed9ebbb07e1f5f1a6add2b8aa9ebe5d06",
+      "snapshotSha256": "06d6c99cb25d9c2384408c590e29318ba1ff97c9dbe41e2fc2d9e89c22e9edcd"
+    },
+    {
+      "path": "client/quote-token.mjs",
+      "sourceSha256": "b76603cef4e5bb3eb72ed7a78a0b64d34d585246b057fd91470bca3043227abf",
+      "snapshotSha256": "04ecae988685f24f6df80848932da85c604a54f8609c1eee7afae0025955e414"
+    },
+    {
+      "path": "client/rpc-readback.mjs",
+      "sourceSha256": "34cc6b6f3dbb381adeba7a4f36bfc72d99d8985b352fbaa327b04c8e7dfe53f7",
+      "snapshotSha256": "2ceae66bc0c1892643378d418c12596c89afdf647017c8a39a376ad94444dfdc"
+    },
+    {
+      "path": "client/sale.mjs",
+      "sourceSha256": "9d3db28e007bb4c3700e3adf6702b73e3d71abcb64e4835147daf4af10e75961",
+      "snapshotSha256": "917f4e9db7a5cdefe10b25a7ff478990545faa8afc63074766f639fc0aa9a43a"
+    },
+    {
+      "path": "client/sat-token.mjs",
+      "sourceSha256": "876e892a138962be1224614514d845fcae6a2a43a8c98584751cd4a28f4a4d04",
+      "snapshotSha256": "4b4613b94f7ac7ec91d27216bf042b0fe812c50f3a90d6dca636b0a33fc923ac"
+    },
+    {
+      "path": "client/staking-accounts.mjs",
+      "sourceSha256": "b7d144f38c39c4ecb6341ab3e7eefc6649f62dc0c62ad0a2e0108d38c8ad6343",
+      "snapshotSha256": "eafa04568bb592ba4b6f9d458c01bad6f8f341a0c39522a776ca164c8c30501b"
+    },
+    {
+      "path": "client/staking-activation.mjs",
+      "sourceSha256": "3b46c47549608e3faaba6350670cdb674ddc7558fbed967438d3279c08918ea4",
+      "snapshotSha256": "ab4f0faf97b63977c89691f41944982458a5ae201e527576e78916698d76a457"
+    },
+    {
+      "path": "client/staking-claim-builder.mjs",
+      "sourceSha256": "6f84ae465262252014b70a2a72996146ef600cee0b42f38d942de4a9da1265b9",
+      "snapshotSha256": "b6b8299789297afaa7aca4ccd98da30c5e6847d4d0f8af0dcee9a432e1c808c1"
+    },
+    {
+      "path": "client/staking-claim-client.mjs",
+      "sourceSha256": "d923362b9a953e5157517501b6f6ae9898d677228be6d6a52835046306290e42",
+      "snapshotSha256": "06ecf1e3f8f067c9b7c1d59b45fbbf201d7905fc8f2a3d2cb8165ddf80484de5"
+    },
+    {
+      "path": "client/staking-claim-compute.mjs",
+      "sourceSha256": "c20194dc2623b6fc2226ba4cb280845d849ca87751688f68f063d9d5ee106bca",
+      "snapshotSha256": "6b3bf1ce6de947b948662354dc9dd821946c92ac1ae3d6c0e990b2535b87cd1b"
+    },
+    {
+      "path": "client/staking-claim-entitlement.mjs",
+      "sourceSha256": "3c7eb7cfb4c55b9f6104c43ef8294c602ebb50999f0433f37d845d2827ba8b77",
+      "snapshotSha256": "68be9f037b2578e52bc5b26af4b23f5ff21c0c464c6d45abbe0b7a2953df57a6"
+    },
+    {
+      "path": "client/staking-claim-receipt.mjs",
+      "sourceSha256": "0f073aa45ba31190d11988ab6ed6a923fcfccf6bbf6a9bd6101da732f98ce16b",
+      "snapshotSha256": "2722a95b2993d0cde2612a0a715bcc2ebc18cfe9323488eb444a322629c138cd"
+    },
+    {
+      "path": "client/staking-claim-rpc.mjs",
+      "sourceSha256": "d1c03066eebab3a8501af0d24422b4f02badce6820a48e855a72deffdf6fa47c",
+      "snapshotSha256": "c08b16cef6c48e5b17e6eb1f7821d3a7fdf2ffbb2c9d8a0ab09803db32c3d647"
+    },
+    {
+      "path": "client/staking-claim-session.mjs",
+      "sourceSha256": "422c422596ab4d08c5124f95ffcb9c5e6234e222e92c24a81e3f1c8d8717e0d8",
+      "snapshotSha256": "a9ea9f9e76dbc90fc5e8c601fee9e70c6dad7c558bd2e49d9876a983754ff213"
+    },
+    {
+      "path": "client/staking-release-readback.mjs",
+      "sourceSha256": "4f8d79d358e5c08407367e8d642b31912666dc6b50beac90a28fa22794c83cf3",
+      "snapshotSha256": "7c2d0136fe4ead23b8ad608e478eacf6f7f50d008824f975c6b2dabde05f8367"
+    },
+    {
+      "path": "client/staking-release.mjs",
+      "sourceSha256": "080064019999631be01af9a8fe9ebaa8ae4f8b1ae0112a4c8da65882f15ad8cb",
+      "snapshotSha256": "6c67955ab16f78e82b40c97b379b18142a8867ff3b541ea3e6584bdfa2709b1c"
+    },
+    {
+      "path": "client/transaction.mjs",
+      "sourceSha256": "1829140b67a67264e54505b19681be6d5302ddfec1906421f3883fb2c3a4e119",
+      "snapshotSha256": "fe35a0e3e35eca6f799220fe770b2d8c3f7cfe3afd69de31e0b05889c319a3c5"
+    },
+    {
+      "path": "client/wallet-compute-budget.mjs",
+      "sourceSha256": "fec7e284dce387e44d0b7771f7608858a4a6d53494d7b6d78f2f9c7ac71a77e7",
+      "snapshotSha256": "9f5a136800e241a7c2bad4ab6c7bdbc2d9c64500ae2ece30164faa945f2306ea"
+    },
+    {
+      "path": "client/wallet-standard.mjs",
+      "sourceSha256": "7efc0c4e800980c08c1662182c05bb37f855858b7c37bb6fd3d210b3ef6ea5b4",
+      "snapshotSha256": "7c3d76ced1bc3d0a43c24388a7f648f78298f2d9481dc0cc878c47b709e58fcc"
+    },
+    {
+      "path": "scripts/canonical-interface.json",
+      "snapshotSha256": "0cf7b7489eee22349488e6bec99a39fa6feaed602b42396d9bee4606c9d05ddb"
+    },
+    {
+      "path": "scripts/claim-descriptor-fixture.mjs",
+      "snapshotSha256": "65c0d329506ad57d6c0aa8e314e73d228686451d38401f0a5ace83e24763203d"
+    },
+    {
+      "path": "scripts/generate-genesis-interface.mjs",
+      "snapshotSha256": "4f3e2338ce2847b347a09b20188471bd3db9366eb26cc902d1cd497e3663dba1"
+    },
+    {
+      "path": "tests/support/portfolio-descriptor.mjs",
+      "snapshotSha256": "31a20816b507e2030783ada7c62fcc97214b3fca9e71cbfc4ae644c9fc8b353b"
+    }
+  ]
+}

@@ -104,9 +104,9 @@ func TestWENMiningClaimPortableParity(t *testing.T) {
 		}
 	}
 	cwd, _ := os.Getwd()
-	root := filepath.Clean(filepath.Join(cwd, "../../.."))
+	root := filepath.Clean(filepath.Join(cwd, "../.."))
 	output := filepath.Join(t.TempDir(), "parity.json")
-	script := `import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';import {readFileSync,writeFileSync} from 'node:fs';const root=process.argv[1],r=createRequire(root+'/wen/package.json'),sdk=await import(pathToFileURL(r.resolve('@solana/kit')));const {buildMiningClaimInstruction}=await import(pathToFileURL(root+'/token/sat/wen-genesis/client/mining-claim-instruction.mjs'));const out=[];for(const v of JSON.parse(readFileSync(0,'utf8'))){const i=await buildMiningClaimInstruction(sdk,{program:v.programId,sale:v.economy,owner:v.owner,id:BigInt(v.id),nonce:BigInt(v.nonce),ordinal:BigInt(v.ordinal),operation:v.operation,...(v.operation==='sat'?{destination:v.destination}:{})});out.push({data:Buffer.from(i.data).toString('hex'),accounts:i.accounts});}writeFileSync(process.argv[2],JSON.stringify(out),{flag:'wx'});`
+	script := `import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';import {readFileSync,writeFileSync} from 'node:fs';const root=process.argv[1],r=createRequire(root+'/package.json'),sdk=await import(pathToFileURL(r.resolve('@solana/kit')));const {buildMiningClaimInstruction}=await import(pathToFileURL(root+'/tools/fased-signerd/testdata/wen-protocol/client/mining-claim-instruction.mjs'));const out=[];for(const v of JSON.parse(readFileSync(0,'utf8'))){const i=await buildMiningClaimInstruction(sdk,{program:v.programId,sale:v.economy,owner:v.owner,id:BigInt(v.id),nonce:BigInt(v.nonce),ordinal:BigInt(v.ordinal),operation:v.operation,...(v.operation==='sat'?{destination:v.destination}:{})});out.push({data:Buffer.from(i.data).toString('hex'),accounts:i.accounts});}writeFileSync(process.argv[2],JSON.stringify(out),{flag:'wx'});`
 	raw, _ := json.Marshal(inputs)
 	cmd := exec.Command("node", "--input-type=module", "-e", script, root, output)
 	cmd.Stdin = bytes.NewReader(raw)

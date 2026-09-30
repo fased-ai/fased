@@ -11,6 +11,10 @@ func TestWENCommonClientDescriptorV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	raw, eCompact := wenCompactV1(raw)
+	if eCompact != nil {
+		t.Fatal(eCompact)
+	}
 	var d struct {
 		Interfaces struct {
 			Staking struct {
