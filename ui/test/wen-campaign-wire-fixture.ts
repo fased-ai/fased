@@ -11,6 +11,8 @@ import { createWenCampaignGatewayProfile } from "../../src/wallet/wen-campaign-g
 
 const goModuleCache =
   process.env.GOMODCACHE || execFileSync("go", ["env", "GOMODCACHE"], { encoding: "utf8" }).trim();
+const goBuildCache =
+  process.env.GOCACHE || execFileSync("go", ["env", "GOCACHE"], { encoding: "utf8" }).trim();
 
 // Test-only HTTP adapter around actual gateway handlers and actual Unix client.
 // The Unix peer is the compiled Go signer test service; only Solana RPC is simulated.
@@ -33,7 +35,7 @@ export async function startCampaignWireFixture(
     cwd: path.join(root, "tools/fased-signerd"),
     env: {
       ...process.env,
-      GOCACHE: "/tmp/fased-go-build-cache",
+      GOCACHE: goBuildCache,
       GOMODCACHE: goModuleCache,
       WEN_BROWSER_TEST_DIR: dir,
       WEN_BROWSER_TEST_ORIGIN: origin,
@@ -57,13 +59,7 @@ export async function startCampaignWireFixture(
     const timer = setTimeout(() => child.kill("SIGTERM"), 5000);
     const code = await finished;
     clearTimeout(timer);
-    await writeFile(
-      path.join(
-        root,
-        `.artifacts/wen-campaign-transport-2026-09-17/signer-${operation}-subprocess.log`,
-      ),
-      log,
-    );
+    await writeFile(path.join(dir, "signer-subprocess.log"), log);
     return code;
   }
   let review;

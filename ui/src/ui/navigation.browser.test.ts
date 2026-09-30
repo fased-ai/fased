@@ -22,12 +22,12 @@ describe("control UI workflow navigation", () => {
   it("opens the WEN Desk on its own route", async () => {
     const app = mountApp("/wen");
     await vi.waitFor(() =>
-      expect(app.textContent).toContain("No WEN campaign adapter is configured"),
+      expect(app.textContent).toContain("Connect a WEN-enabled Fased instance"),
     );
 
     expect(app.tab).toBe("wen");
     expect(window.location.pathname).toBe("/wen");
-    expect(app.textContent).toContain("WEN Desk");
+    expect(app.querySelector('section[aria-label="WEN desk"]')).not.toBeNull();
     expect(app.querySelector("wen-review-panel")).toBeNull();
   });
 

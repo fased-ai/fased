@@ -64,6 +64,32 @@ describe("exact changed-test runner", () => {
     );
   });
 
+  it("runs WEN wire tests with their private signer and passkey command fixture", () => {
+    const commands = createChangedTestCommands(
+      [
+        "ui/src/ui/views/wallet.test.ts",
+        "ui/src/ui/views/skills-dialog.browser.test.ts",
+        "ui/src/ui/views/wen-campaign-wire.browser.test.ts",
+        "ui/src/ui/views/wen-bond-claim-wire.browser.test.ts",
+        "ui/src/ui/views/wen-bond-purchase-wire.browser.test.ts",
+      ],
+      "ui",
+    );
+    expect(commands).toHaveLength(3);
+    expect(commands[0]?.args).toContain("vitest.changed-node.config.ts");
+    expect(commands[1]?.args).toContain("vitest.config.ts");
+    expect(commands[1]?.args).not.toContain("src/ui/views/wen-campaign-wire.browser.test.ts");
+    expect(commands[2]?.args).toEqual(
+      expect.arrayContaining([
+        "--config",
+        "vitest.campaign-wire.config.ts",
+        "src/ui/views/wen-campaign-wire.browser.test.ts",
+        "src/ui/views/wen-bond-claim-wire.browser.test.ts",
+        "src/ui/views/wen-bond-purchase-wire.browser.test.ts",
+      ]),
+    );
+  });
+
   it("rejects live, e2e, traversal, and unsupported test paths", () => {
     for (const path of [
       "src/gateway/server.live.test.ts",

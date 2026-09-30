@@ -1696,7 +1696,6 @@ function renderSkillDetail(skill: SkillStatusEntry, props: SkillsProps) {
             type="button"
             @click=${(e: Event) => {
               (e.currentTarget as HTMLElement).closest("dialog")?.close();
-              props.onDetailClose();
             }}
           >
             Close

@@ -9,6 +9,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GROUPS = Object.freeze(["unit", "gateway", "extensions", "ui"]);
 const ROUTABLE_TEST_RE = /\.test\.ts$/u;
 const NON_ROUTINE_TEST_RE = /\.(?:e2e|live)\.test\.ts$/u;
+const WEN_WIRE_TESTS = new Set([
+  "ui/src/ui/views/wen-campaign-wire.browser.test.ts",
+  "ui/src/ui/views/wen-bond-claim-wire.browser.test.ts",
+  "ui/src/ui/views/wen-bond-purchase-wire.browser.test.ts",
+]);
 
 function fail(message) {
   throw new Error(`ci-run-changed-tests: ${message}`);
@@ -45,7 +50,11 @@ export function classifyChangedTestPath(value) {
     return Object.freeze({
       path,
       group: "ui",
-      kind: path.endsWith(".browser.test.ts") ? "ui-browser" : "ui-node",
+      kind: WEN_WIRE_TESTS.has(path)
+        ? "ui-wen-wire"
+        : path.endsWith(".browser.test.ts")
+          ? "ui-browser"
+          : "ui-node",
     });
   }
   if (/^(?:src|scripts|test)\//u.test(path)) {
@@ -142,6 +151,17 @@ export function createChangedTestCommands(paths, group) {
   if (browserPaths.length > 0) {
     commands.push(
       vitestCommand("vitest.config.ts", browserPaths, {
+        cwd: resolve(repoRoot, "ui"),
+        stripUiPrefix: true,
+      }),
+    );
+  }
+  const wirePaths = selected
+    .filter((entry) => entry.kind === "ui-wen-wire")
+    .map((entry) => entry.path);
+  if (wirePaths.length > 0) {
+    commands.push(
+      vitestCommand("vitest.campaign-wire.config.ts", wirePaths, {
         cwd: resolve(repoRoot, "ui"),
         stripUiPrefix: true,
       }),

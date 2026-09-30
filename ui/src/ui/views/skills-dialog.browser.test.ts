@@ -1,5 +1,3 @@
-/* @vitest-environment jsdom */
-
 import { render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SkillStatusEntry, SkillStatusReport } from "../types.ts";
@@ -171,12 +169,12 @@ describe("renderSkills", () => {
     expect(showModal).toHaveBeenCalledTimes(1);
     expect(container.querySelector("dialog")?.hasAttribute("open")).toBe(true);
     const text = normalizeText(container);
-    expect(text).toContain("Agent use");
+    expect(container.querySelector("[data-testid=skill-attach-agent]")).not.toBeNull();
     expect(text).toContain("Agent skills");
     expect(text).toContain("Tool grants");
   });
 
-  it("renders a ClawHub install target selector with Agent names", () => {
+  it("does not render public acquisition controls from a retained ClawHub target", () => {
     const container = document.createElement("div");
     const onTargetChange = vi.fn();
 
@@ -194,15 +192,9 @@ describe("renderSkills", () => {
     const select = container.querySelector<HTMLSelectElement>(
       '[data-testid="clawhub-install-target"]',
     );
-    expect(select?.value).toBe("agent:research");
-    expect(normalizeText(container)).toContain("Shared library - reusable");
-    expect(normalizeText(container)).toContain("Research");
-    expect(normalizeText(container)).not.toContain("Research workspace");
-
-    select!.value = "shared";
-    select!.dispatchEvent(new Event("change"));
-
-    expect(onTargetChange).toHaveBeenCalledWith("shared");
+    expect(select).toBeNull();
+    expect(container.querySelector("[data-testid=clawhub-results]")).toBeNull();
+    expect(onTargetChange).not.toHaveBeenCalled();
   });
 
   it("renders ClawHub marketplace safety status in skill details", async () => {
@@ -252,7 +244,7 @@ describe("renderSkills", () => {
     expect(text).toContain("tools: web.fetch");
     expect(text).toContain("Archive scan: 1 warning");
     expect(text).toContain("approval required: permission digest changed");
-    expect(text).toContain("Review update");
+    expect(text).not.toContain("Review update");
   });
 
   it("shows dependency install plan and runs the Test skill action from the detail modal", async () => {
@@ -392,8 +384,8 @@ describe("renderSkills", () => {
     await Promise.resolve();
 
     const text = normalizeText(container);
-    expect(text).toContain("Agent Skills");
-    expect(text).toContain("Allow Assistant to use this skill");
+    expect(text).toContain("Agent skills");
+    expect(text).toContain("Allow on Agent");
 
     container.querySelector<HTMLButtonElement>(".md-preview-dialog__body .btn.primary")?.click();
     expect(onAttach).toHaveBeenCalledWith("repo-skill", "main");
@@ -486,9 +478,7 @@ describe("renderSkills", () => {
     const text = normalizeText(container);
     expect(text).toContain("Skill config");
     expect(text).toContain("EXTRA_TOKEN");
-    expect(text).toContain("Typed config");
     expect(text).toContain("Advanced JSON");
-    expect(text).toContain("skills.entries.repo-skill.config.mode ok");
 
     const envInput = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
       (input) => input.placeholder === "Saved in config",
@@ -629,7 +619,7 @@ describe("renderSkills", () => {
 
     const installedText =
       container.querySelector(".skills-card")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-    expect(installedText).toContain("bundled");
+    expect(installedText).toContain("Built-in Skills");
     expect(installedText).toContain("Ready");
     expect(installedText).toContain("Needs API key");
     expect(installedText).toContain("Needs dependency");
