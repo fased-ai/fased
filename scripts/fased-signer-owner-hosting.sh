@@ -35,7 +35,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: fased-signer-owner wallet <command> [typed fased-signerd admin flags]
        fased-signer-owner policy <get|put> [typed fased-signerd admin flags]
-       fased-signer-owner wen-market <install-draft|install-admission> --wallet-id <id>
+       fased-signer-owner wen-market <install-draft|install-budget|install-admission> --wallet-id <id>
          --request-file <absolute-json-path> --confirm-digest sha256:<file-digest>
        fased-signer-owner webauthn-enroll [authenticator label]
 
@@ -79,7 +79,7 @@ elif [[ "${1:-}" == "wen-market" ]]; then
   command_name="$2"
   shift 2
   case "$command_name" in
-    install-draft|install-admission) ;;
+    install-draft|install-budget|install-admission) ;;
     *) usage; exit 64 ;;
   esac
 elif [[ "${1:-}" == "policy" ]]; then

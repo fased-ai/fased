@@ -32,7 +32,7 @@ func (s *signerServiceV2) marketAdminWithFactoryV1(ctx context.Context, req requ
 			return nil, e
 		}
 		return marshalSignerResultV2(map[string]string{"walletId": req.WalletID, "draftSha256": hash, "status": "draft-installed"})
-	case "v2.wenMarket.admission.install":
+	case "v2.wenMarket.admission.install", "v2.wenMarket.budget.install":
 		var body wenMarketAdmissionInstallRequestV1
 		if e := decodeSignerAdminStrictJSON(req.Request, &body); e != nil {
 			return nil, e
@@ -42,6 +42,12 @@ func (s *signerServiceV2) marketAdminWithFactoryV1(ctx context.Context, req requ
 		}
 		if !wenReservationHashV1(body.ExpectedSHA256) {
 			return nil, errors.New("invalid market admission digest")
+		}
+		if req.Op == "v2.wenMarket.budget.install" {
+			if e := s.installWENMarketBudgetV1(cfg, req.WalletID, body.RequestID, body.ExpectedSHA256, control); e != nil {
+				return nil, e
+			}
+			return marshalSignerResultV2(map[string]string{"walletId": req.WalletID, "requestId": body.RequestID, "artifactDigest": body.ExpectedSHA256, "status": "budget-installed"})
 		}
 		if e := s.installWENMarketAdmissionV1(ctx, cfg, req.WalletID, body.RequestID, body.ExpectedSHA256, control, factory); e != nil {
 			return nil, e

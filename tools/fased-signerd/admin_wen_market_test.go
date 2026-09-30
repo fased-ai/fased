@@ -8,7 +8,7 @@ import (
 )
 
 func TestWENMarketAdminCLI(t *testing.T) {
-	for _, action := range []string{"install-draft", "install-admission"} {
+	for _, action := range []string{"install-draft", "install-budget", "install-admission"} {
 		for _, mode := range []string{"ok", "wallet", "hash", "status", "extra"} {
 			t.Run(action+"/"+mode, func(t *testing.T) {
 				var body any
@@ -29,6 +29,10 @@ func TestWENMarketAdminCLI(t *testing.T) {
 					receipt["requestId"] = "review-request-001"
 					receipt["artifactDigest"] = hash
 					receipt["status"] = "admission-installed"
+					if action == "install-budget" {
+						op = "v2.wenMarket.budget.install"
+						receipt["status"] = "budget-installed"
+					}
 				}
 				switch mode {
 				case "wallet":

@@ -81,10 +81,8 @@ func marketBrowserSignerFixtureV1(t *testing.T, host, origin string) (*signerSer
 	if e != nil {
 		t.Fatal(e)
 	}
-	for scope, n := range wenMarketReservationScopesV1(a) {
-		if e = store.configureWENBudgetV1(scope, n); e != nil {
-			t.Fatal(e)
-		}
+	if e = service.installWENMarketBudgetV1(cfg, "miner", a.RequestID, digest, true); e != nil {
+		t.Fatal(e)
 	}
 	if e = service.installWENMarketAdmissionV1(context.Background(), cfg, "miner", a.RequestID, digest, true, factory); e != nil {
 		t.Fatal(e)

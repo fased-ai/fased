@@ -40,7 +40,7 @@ const admission = [
   digest,
 ];
 it("forwards only the market command and wallet, stripping file-confirmation flags", () => {
-  for (const action of ["install-draft", "install-admission"]) {
+  for (const action of ["install-draft", "install-budget", "install-admission"]) {
     const args = [...admission];
     args[1] = action;
     const result = parse(args);

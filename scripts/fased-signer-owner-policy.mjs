@@ -30,6 +30,7 @@ const ASSET_KEYS = ["asset", "destinations", "maxPerTx", "maxDaily"];
 const STORED_POLICY_KEYS = [...POLICY_KEYS.slice(0, 2), "version", ...POLICY_KEYS.slice(2), "hash"];
 const POLICY_ROLES = new Set(["agent", "mining", "vault", "profile"]);
 const POLICY_OPERATIONS = new Set([
+  "wen.market.buy.v1",
   "solana.nativeTransfer",
   "solana.splTransferChecked",
   "federation.bondChallenge",
@@ -533,6 +534,24 @@ function validatePolicyRelationships(policy) {
     if (!hasTokenProgram || !hasSPLAsset) {
       throw new Error(
         "solana.splTransferChecked requires a token program and explicit SPL asset; signer-funded associated-token-account creation is not permitted",
+      );
+    }
+  }
+  if (operations.has("wen.market.buy.v1")) {
+    const cash = policy.assets.filter((asset) => asset.asset.startsWith("solana:spl:"));
+    const native = policy.assets.find((asset) => asset.asset === "solana:native");
+    if (
+      !programs.has(TOKEN_PROGRAM) ||
+      !programs.has(TOKEN_2022_PROGRAM) ||
+      programs.size < 3 ||
+      !native ||
+      cash.length !== 1 ||
+      native.destinations.length !== 1 ||
+      cash[0].destinations.length !== 1 ||
+      native.destinations[0] !== cash[0].destinations[0]
+    ) {
+      throw new Error(
+        "wen.market.buy.v1 requires explicit market programs and one matching native/cash pool destination",
       );
     }
   }
