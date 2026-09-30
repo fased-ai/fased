@@ -2220,7 +2220,7 @@ export async function walletSetupCommand(
       throw new Error("Invalid compatibility role");
     }
     const standardIdentity = nextStandardWalletIdentity(readWalletProviderRegistry(env).wallets);
-    const defaultId = options.role === undefined ? standardIdentity.id : role;
+    const defaultId = options.role === undefined ? standardIdentity.walletId : role;
     const friendlyWalletId =
       options.walletId ?? (interactive ? await prompt("Wallet id", defaultId) : defaultId);
     const walletId = friendlyWalletId.trim() || defaultId;
