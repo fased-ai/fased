@@ -23,6 +23,19 @@ func TestWENMarketOwnerBudgetInstallation(t *testing.T) {
 			wallet, control := "miner", true
 			native := wenMiningNativeScopeV1(wallet, a.Policy.Successor.Genesis)
 			cash := wenMarketCashScopeV1(a)
+			if e = s.store.db.View(func(tx *bolt.Tx) error {
+				var budget wenBudgetBalanceV1
+				if e := json.Unmarshal(tx.Bucket(wenBudgetBucketV1).Get([]byte("limit:"+cash)), &budget); e != nil {
+					return e
+				}
+				if budget.Limit != a.Limits.MaxCash {
+					t.Fatal("cash budget must use reviewed cap, not transient quote")
+				}
+				return nil
+			}); e != nil {
+				t.Fatal(e)
+			}
+
 			switch mode {
 			case "operator":
 				control = false

@@ -32,7 +32,7 @@ func marketBrowserSignerFixtureV1(t *testing.T, host, origin string) (*signerSer
 	if e != nil {
 		t.Fatal(e)
 	}
-	cash := strconv.FormatUint(a.Binding.Snapshot.Quote.InputCash, 10)
+	cash := strconv.FormatUint(a.Limits.MaxCash, 10)
 	_, e = store.putPolicy(signerPolicyV2{WalletID: "miner", Role: old.Role, Operations: []string{wenMarketOperationV1}, Programs: a.requiredPrograms(), Assets: []signerPolicyAssetV2{{Asset: "solana:native", Destinations: []string{p.Pool.String()}, MaxPerTx: "6000", MaxDaily: "6000"}, {Asset: a.cashAsset(), Destinations: []string{p.Pool.String()}, MaxPerTx: cash, MaxDaily: cash}}}, old.Version)
 	if e != nil {
 		t.Fatal(e)

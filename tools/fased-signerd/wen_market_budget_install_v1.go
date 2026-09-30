@@ -52,7 +52,7 @@ func (s *signerServiceV2) installWENMarketBudgetV1(cfg signerConfig, wallet, req
 		if e != nil || retired {
 			return bad
 		}
-		claims := map[string]uint64{"solana:native": a.Binding.MaxFee, a.cashAsset(): a.Binding.Snapshot.Quote.InputCash}
+		claims := map[string]uint64{"solana:native": a.Binding.MaxFee, a.cashAsset(): a.Limits.MaxCash}
 		for name, amount := range claims {
 			asset, e := policyAssetByNameV2(policy, name)
 			if e != nil {
@@ -69,7 +69,9 @@ func (s *signerServiceV2) installWENMarketBudgetV1(cfg signerConfig, wallet, req
 		if e != nil {
 			return e
 		}
-		for scope, limit := range wenMarketReservationScopesV1(a) {
+		limits := wenMarketReservationScopesV1(a)
+		limits[wenMarketCashScopeV1(a)] = a.Limits.MaxCash
+		for scope, limit := range limits {
 			key := []byte("limit:" + scope)
 			if raw := bucket.Get(key); raw != nil {
 				var old wenBudgetBalanceV1
