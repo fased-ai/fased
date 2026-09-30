@@ -22,7 +22,6 @@ it("creates a standard wallet without adding operations or changing existing wal
     name: "Wallet 2",
     rpcProfileId: "devnet-primary",
     providerId: "local-socket-signer",
-    role: "agent",
     chain: "solana",
   });
   expect(JSON.stringify(wallets)).toBe(before);
@@ -46,7 +45,6 @@ it("preserves a chosen purpose name and cannot accept a caller-selected legacy r
     name: "Trading",
     rpcUrl: "https://rpc.example",
     providerId: "local-socket-signer",
-    role: "agent",
     chain: "solana",
   });
 });

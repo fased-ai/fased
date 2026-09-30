@@ -45,6 +45,16 @@ export function createCampaignGatewayTransport(
     return value.payload;
   }
   return {
+    ...(domain === "market"
+      ? {
+          confirmOwner: async (request: { requestId: string; proofId: string }) => {
+            if (request.requestId !== requestId) {
+              throw Error("Market request changed");
+            }
+            return call("owner-confirm", { input: { review: saved, proofId: request.proofId } });
+          },
+        }
+      : {}),
     begin: async (request) => {
       if (request.requestId !== requestId) {
         throw Error("Campaign request changed");

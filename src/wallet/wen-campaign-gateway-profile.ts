@@ -17,6 +17,7 @@ import {
   recoverWenCampaignSocket,
   type CampaignSocketProfile,
 } from "./wen-campaign-socket-approval.js";
+import { bindOwnerMarketApproval } from "./wen-market-owner-approval-contract.js";
 import { bindWenMarketReview, type MarketReviewExpectation } from "./wen-market-review-contract.js";
 
 // Supplied by the protected host configuration, never by gateway parameters.
@@ -127,6 +128,52 @@ export function createWenCampaignGatewayProfile(
         throw Error("Campaign artifact mismatch");
       }
       return bound;
+    },
+    async confirmOwnerApproval(input: unknown) {
+      cancel();
+      if (domain !== "market" || !input || typeof input !== "object" || Array.isArray(input)) {
+        throw Error("Owner confirmation unavailable");
+      }
+      const value = input as Record<string, unknown>;
+      if (
+        Object.keys(value).toSorted().join(",") !== "proofId,review" ||
+        typeof value.proofId !== "string"
+      ) {
+        throw Error("Invalid owner confirmation");
+      }
+      const signal = controller.signal;
+      const s = await selection();
+      const review = await bindReview(value.review, s.expected);
+      if (review.artifactDigest !== "sha256:" + s.artifactDigest) {
+        throw Error("Market artifact changed");
+      }
+      await guard(s, signal);
+      const metadata = await callLocalSocketSigner<unknown>(s.socket.socketPath, {
+        op: "v2.wenMarket.ownerProof.inspect",
+        walletId: s.socket.walletId,
+        request: { requestId: review.requestId, proofId: value.proofId },
+      });
+      await guard(s, signal);
+      const approval = bindOwnerMarketApproval(metadata, review, value.proofId);
+      const transport = await createWenCampaignSocketTransport(
+        review,
+        s.expected,
+        async () => {
+          await guard(s, signal);
+          return s.socket;
+        },
+        signal,
+        domain,
+      );
+      await guard(s, signal);
+      active = {
+        selected: s,
+        transport,
+        attempted: false,
+        proof: { proofId: approval.proofId },
+        expiresAt: approval.expiresAt,
+      };
+      return approval;
     },
     async beginClaimApproval(input: unknown) {
       cancel();

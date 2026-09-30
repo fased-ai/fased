@@ -413,7 +413,7 @@ func (s *signerServiceV2) handleOperatorLifecycleV1(req request, cfg signerConfi
 			baseline, baselineErr := normalizeRoleBaselineRequestV1(body.Baseline)
 			if walletErr == nil && policyErr == nil && baselineErr == nil &&
 				existingPolicy.Role == baseline.Role &&
-				existingPolicy.BaselineVersion == signerRoleBaselineVersionV1 {
+				existingPolicy.BaselineVersion == signerRoleBaselineVersionV1 && existingPolicy.ApprovalMode == body.Baseline.ApprovalMode {
 				wallet, policy, err = existingWallet, existingPolicy, nil
 			}
 		}

@@ -21,7 +21,10 @@ import {
   bindWenMarketReview,
   type MarketReviewExpectation,
 } from "../../../../src/wallet/wen-market-review-contract.js";
-import { approveWenCampaign } from "../wen-campaign-approval.js";
+import {
+  approveWenCampaign,
+  approveWenMarketWithOwnerConfirmation,
+} from "../wen-campaign-approval.js";
 import { loadCampaignGatewayHost } from "../wen-campaign-gateway-transport.js";
 
 // Only the configured host may supply this capability. Browser storage contains
@@ -71,10 +74,18 @@ export class WenCampaignPanel extends LitElement {
       | BondClaimReviewExpectation;
   } | null = null;
   private controller?: AbortController;
+  private ownerConfirmation?: string;
   protected createRenderRoot() {
     return this;
   }
   protected willUpdate(changed: PropertyValues) {
+    if (this.domain === "market") {
+      const proof = new URLSearchParams(location.hash.slice(1)).get("wen-owner-confirmation");
+      if (proof !== null) {
+        history.replaceState(history.state, "", location.pathname + location.search);
+        this.ownerConfirmation = proof;
+      }
+    }
     if (
       changed.has("domain") ||
       changed.has("client") ||
@@ -93,6 +104,7 @@ export class WenCampaignPanel extends LitElement {
     }
   }
   disconnectedCallback() {
+    this.ownerConfirmation = undefined;
     this.hostController?.abort();
     this.host = null;
     this.controller?.abort();
@@ -228,6 +240,16 @@ export class WenCampaignPanel extends LitElement {
       }
     };
     const transport: CampaignSessionTransport = {
+      ...(pin.transport.confirmOwner
+        ? {
+            confirmOwner: async (request: { requestId: string; proofId: string }) => {
+              guard();
+              const result = await pin.transport.confirmOwner!(request);
+              guard();
+              return result;
+            },
+          }
+        : {}),
       begin: async (request) => {
         guard();
         const r = await pin.transport.begin(request);
@@ -248,18 +270,31 @@ export class WenCampaignPanel extends LitElement {
       },
     };
     try {
-      const result = await approveWenCampaign(
-        shown.review,
-        shown.expected,
-        transport,
-        controller.signal,
-        (identity) => {
-          guard();
-          sessionStorage.setItem(this.key(host), JSON.stringify(identity));
-          this.pending = { ...identity };
-        },
-        this.domain,
-      );
+      const retain = (identity: CampaignRecoveryIdentity) => {
+        guard();
+        sessionStorage.setItem(this.key(host), JSON.stringify(identity));
+        this.pending = { ...identity };
+      };
+      const proofId = this.domain === "market" ? this.ownerConfirmation : undefined;
+      this.ownerConfirmation = undefined;
+      const result =
+        proofId !== null && proofId !== undefined
+          ? await approveWenMarketWithOwnerConfirmation(
+              shown.review,
+              shown.expected as MarketReviewExpectation,
+              transport,
+              proofId,
+              controller.signal,
+              retain,
+            )
+          : await approveWenCampaign(
+              shown.review,
+              shown.expected,
+              transport,
+              controller.signal,
+              retain,
+              this.domain,
+            );
       guard();
       this.showResult(host, result);
     } catch {

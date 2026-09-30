@@ -487,11 +487,12 @@ func resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole string) (
 func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet create")
 	var walletID, policyFile, lockedRole, baselineRole string
-	var allowExisting bool
+	var allowExisting, readOnly bool
 	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
 	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
 	fs.StringVar(&baselineRole, "baseline-role", "", "agent, mining, or vault signer-owned role baseline")
+	fs.BoolVar(&readOnly, "read-only", false, "create without signing permissions")
 	fs.BoolVar(&allowExisting, "allow-existing", false, "resume only an existing wallet with the same signer-owned role baseline")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
@@ -504,6 +505,9 @@ func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if readOnly && strings.TrimSpace(baselineRole) == "" {
+		baselineRole = "agent"
+	}
 	useBaseline := strings.TrimSpace(baselineRole) != ""
 	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
 		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
@@ -515,6 +519,12 @@ func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 		baseline, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
 			Version: signerRoleBaselineVersionV1,
 			Role:    baselineRole,
+			ApprovalMode: func() string {
+				if readOnly {
+					return "read-only"
+				}
+				return ""
+			}(),
 		})
 		if baselineErr != nil {
 			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
@@ -587,6 +597,8 @@ func runSignerAdminWalletBalanceV1(args []string, stdout io.Writer) error {
 func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet import")
 	var walletID, policyFile, lockedRole, baselineRole string
+	var readOnly bool
+	fs.BoolVar(&readOnly, "read-only", false, "import without signing permissions")
 	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
 	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
@@ -605,6 +617,9 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 	if err != nil {
 		return err
 	}
+	if readOnly && strings.TrimSpace(baselineRole) == "" {
+		baselineRole = "agent"
+	}
 	useBaseline := strings.TrimSpace(baselineRole) != ""
 	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
 		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
@@ -617,6 +632,12 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 		baseline, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
 			Version: signerRoleBaselineVersionV1,
 			Role:    baselineRole,
+			ApprovalMode: func() string {
+				if readOnly {
+					return "read-only"
+				}
+				return ""
+			}(),
 		})
 		if baselineErr != nil {
 			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
@@ -644,6 +665,12 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 			Baseline: signerRoleBaselineRequestV1{
 				Version: signerRoleBaselineVersionV1,
 				Role:    baselineRole,
+				ApprovalMode: func() string {
+					if readOnly {
+						return "read-only"
+					}
+					return ""
+				}(),
 			},
 			KeypairBase64: base64.RawStdEncoding.EncodeToString(keypairBytes),
 		}
@@ -665,7 +692,12 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 	}
 	body := signerWalletImportRequestV2{ExpectedVersion: 0, Policy: policy, Path: importPath}
 	if useBaseline {
-		body.Baseline = &signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: baselineRole}
+		body.Baseline = &signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: baselineRole, ApprovalMode: func() string {
+			if readOnly {
+				return "read-only"
+			}
+			return ""
+		}()}
 	}
 	result, callErr := callSignerAdmin(common.controlSocket, "v2.wallet.import", walletID, body)
 	cleanupErr := cleanupSignerAdminImportFile(importPath)

@@ -133,13 +133,15 @@ type signerWebAuthnChallengeV2 struct {
 }
 
 type signerReviewProofRecordV2 struct {
-	ID           string                `json:"id"`
-	State        string                `json:"state"`
-	Binding      signerReviewBindingV2 `json:"binding"`
-	CredentialID string                `json:"credentialId"`
-	AuthorizedAt string                `json:"authorizedAt"`
-	ExpiresAt    string                `json:"expiresAt"`
-	ConsumedAt   string                `json:"consumedAt,omitempty"`
+	ApprovalMethod string                `json:"approvalMethod,omitempty"`
+	ExecutorUID    uint32                `json:"executorUid,omitempty"`
+	ID             string                `json:"id"`
+	State          string                `json:"state"`
+	Binding        signerReviewBindingV2 `json:"binding"`
+	CredentialID   string                `json:"credentialId"`
+	AuthorizedAt   string                `json:"authorizedAt"`
+	ExpiresAt      string                `json:"expiresAt"`
+	ConsumedAt     string                `json:"consumedAt,omitempty"`
 }
 
 // signerWebAuthnProofReferenceV2 is intentionally only a random opaque handle.

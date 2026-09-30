@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	signerpolicy "fased-signerd/internal/policy"
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	bolt "go.etcd.io/bbolt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,7 +101,7 @@ func (f *marketExecutionFakeV1) SendRawTransactionWithOpts(_ context.Context, wi
 	if f.outcome == "missing" {
 		f.result = nil
 	}
-	if f.outcome == "lost" || f.outcome == "missing" {
+	if f.outcome == "lost" || f.outcome == "owner-lost" || f.outcome == "delegated-lost" || f.outcome == "missing" {
 		return f.signature, errors.New("lost response")
 	}
 	return f.signature, nil
@@ -180,7 +182,7 @@ func marketReceiptFixtureV1(t *testing.T, a wenMarketReviewArtifactV1, wire []by
 	return &rpc.GetTransactionResult{Slot: 120, Meta: m, Transaction: envelope}
 }
 func TestWENMarketExecutionAndRestartRecovery(t *testing.T) {
-	for _, mode := range []string{"ok", "lost", "missing", "failed", "unauthorized", "changed-custody", "missing-admission", "resume-signing", "resume-signed", "bad-cash", "bad-owner", "bad-fee", "stale-receipt", "late-custody", "revoked-signing", "revoked-signed", "configured-route", "configured-cancel", "configured-expire", "draft-tamper", "network-change"} {
+	for _, mode := range []string{"delegated-ok", "delegated-lost", "delegated-expired", "delegated-wrong-peer", "delegated-revoked", "owner-confirmed", "owner-lost", "owner-expired", "owner-revoked", "owner-passkey-required", "manual-passkey", "ok", "lost", "missing", "failed", "unauthorized", "changed-custody", "missing-admission", "resume-signing", "resume-signed", "bad-cash", "bad-owner", "bad-fee", "stale-receipt", "late-custody", "revoked-signing", "revoked-signed", "configured-route", "configured-cancel", "configured-expire", "draft-tamper", "network-change"} {
 		t.Run(mode, func(t *testing.T) {
 			store, keys := openTestSignerV2(t)
 			f, p, policy, l := marketReadFixtureV1(t)
@@ -206,6 +208,24 @@ func TestWENMarketExecutionAndRestartRecovery(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
+			if mode == "owner-confirmed" || mode == "owner-lost" || mode == "owner-expired" || mode == "owner-revoked" || mode == "owner-passkey-required" || mode == "manual-passkey" {
+				updated.ApprovalMode = "manual"
+				updated.RequirePasskey = mode == "owner-passkey-required" || mode == "manual-passkey"
+				updated, e = store.putPolicy(updated, updated.Version)
+				if e != nil {
+					t.Fatal(e)
+				}
+			}
+			delegated := strings.HasPrefix(mode, "delegated-")
+			uid := uint32(966)
+			if delegated {
+				updated.ApprovalMode = "automatic"
+				updated.Delegation = &signerpolicy.Delegation{ExecutorUID: uid, NotBefore: timestampV2(store.now()), ExpiresAt: timestampV2(store.now().Add(time.Minute))}
+				updated, e = store.putPolicy(updated, updated.Version)
+				if e != nil {
+					t.Fatal(e)
+				}
+			}
 			a.PolicyHash = updated.Hash
 			cfg := signerConfig{stateDBPath: store.db.Path(), chains: []string{"solana"}}
 			routeClient := &marketExecutionFakeV1{wenMarketPrepareFakeV1: prepare, store: store, artifact: a, outcome: mode}
@@ -217,7 +237,7 @@ func TestWENMarketExecutionAndRestartRecovery(t *testing.T) {
 				return routeClient
 			}
 			configured := mode == "configured-route" || mode == "configured-cancel" || mode == "configured-expire"
-			routed := configured || mode == "draft-tamper" || mode == "network-change"
+			routed := delegated || configured || mode == "draft-tamper" || mode == "network-change"
 			if routed {
 				keys.genesisHash = func(string) (string, error) { return a.Policy.Successor.Genesis, nil }
 				if _, e = keys.PutNetworkV2(a.WalletID, signerNetworkPutRequestV2{ExpectedVersion: signerUint64PointerV2(0), PrimaryRPCURL: endpoint}); e != nil {
@@ -329,7 +349,7 @@ func TestWENMarketExecutionAndRestartRecovery(t *testing.T) {
 				}
 				for i := 0; i < 2; i++ {
 					body, _ := json.Marshal(wenMiningClaimJourneyRequestV1{RequestID: a.RequestID, Action: action})
-					wire, e := (&signerServiceV2{store: store, keys: keys}).marketApplicationWithFactoryV1(context.Background(), request{Op: "v2.wenMarket.journey", WalletID: a.WalletID, Request: body}, cfg, factory)
+					wire, e := (&signerServiceV2{store: store, keys: keys}).marketApplicationWithFactoryV1(context.Background(), request{Op: "v2.wenMarket.journey", WalletID: a.WalletID, Request: body, applicationPeerUID: &uid}, cfg, factory)
 					if e != nil {
 						t.Fatal("configured close/retry", e)
 					}
@@ -349,18 +369,113 @@ func TestWENMarketExecutionAndRestartRecovery(t *testing.T) {
 				}
 				return
 			}
-			auth, e := newSignerWebAuthnServiceV2(store, testWebAuthnRPID, testWebAuthnOrigin)
+			auth, e := newSignerWebAuthnServiceV2(store, "", "")
 			if e != nil {
 				t.Fatal(e)
 			}
-			fixture := &testSignerWebAuthnFixtureV2{store: store, service: auth, walletID: a.WalletID}
-			authenticator := newTestWebAuthnAuthenticatorV2(t)
-			fixture.enroll(t, authenticator)
-			finish, e := fixture.finishReview(t, fixture.beginReview(t), authenticator, 2)
-			if e != nil {
-				t.Fatal(e)
+			var proof *signerWebAuthnProofReferenceV2
+			if delegated {
+				service := &signerServiceV2{store: store, keys: keys, webauthn: auth}
+				req := request{WalletID: a.WalletID, applicationPeerUID: &uid}
+				if _, err := service.delegatedWENMarketProofV1(request{WalletID: a.WalletID}, a.RequestID); err == nil {
+					t.Fatal("unproven executor delegated")
+				}
+				if mode == "delegated-wrong-peer" {
+					wrong := uid + 1
+					req.applicationPeerUID = &wrong
+				}
+				if mode == "delegated-expired" {
+					now := store.now()
+					store.now = func() time.Time { return now.Add(time.Minute) }
+				}
+				approved, err := service.delegatedWENMarketProofV1(req, a.RequestID)
+				if mode == "delegated-expired" || mode == "delegated-wrong-peer" {
+					if err == nil || routeClient.sends != 0 {
+						t.Fatal("invalid delegate authorized")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof = &approved
+				if mode == "delegated-revoked" {
+					updated.ApprovalMode = "read-only"
+					updated.Delegation = nil
+					updated.Operations = nil
+					updated.Programs = nil
+					updated.Assets = nil
+					if _, err := store.putPolicy(updated, updated.Version); err != nil {
+						t.Fatal(err)
+					}
+				}
+			} else if mode == "owner-confirmed" || mode == "owner-lost" || mode == "owner-expired" || mode == "owner-revoked" || mode == "owner-passkey-required" {
+				service := &signerServiceV2{store: store, keys: keys, webauthn: auth}
+				approval := wenMarketAdmissionInstallRequestV1{RequestID: a.RequestID, ExpectedSHA256: digest}
+				raw, _ := json.Marshal(approval)
+				req := request{Op: "v2.wenMarket.ownerApprove", WalletID: a.WalletID, Request: raw}
+				if _, e := service.marketAdminWithFactoryV1(context.Background(), req, cfg, false, factory); e == nil {
+					t.Fatal("application minted owner proof")
+				}
+				wrong := approval
+				wrong.ExpectedSHA256 = wenHashV1([]byte("wrong"))
+				wrongRaw, _ := json.Marshal(wrong)
+				if _, e := service.marketAdminWithFactoryV1(context.Background(), request{Op: req.Op, WalletID: req.WalletID, Request: wrongRaw}, cfg, true, factory); e == nil {
+					t.Fatal("different artifact approved")
+				}
+				got, e := service.marketAdminWithFactoryV1(context.Background(), req, cfg, true, factory)
+				if mode == "owner-passkey-required" {
+					if e == nil {
+						t.Fatal("required passkey bypassed")
+					}
+					return
+				}
+				if e != nil {
+					t.Fatal(e)
+				}
+				var response struct {
+					Result struct {
+						ProofID string `json:"proofId"`
+					} `json:"result"`
+				}
+				if e := json.Unmarshal(got, &response); e != nil || response.Result.ProofID == "" {
+					t.Fatal("owner proof missing", e, string(got))
+				}
+				proof = &signerWebAuthnProofReferenceV2{ProofID: response.Result.ProofID}
+				metadata, err := service.inspectOwnerWENMarketProofV1(a.WalletID, a.RequestID, proof.ProofID)
+				if err != nil || metadata["artifactDigest"] != "sha256:"+digest {
+					t.Fatal("owner confirmation inspection failed", err)
+				}
+				if _, err := service.inspectOwnerWENMarketProofV1(a.WalletID, "different-request", proof.ProofID); err == nil {
+					t.Fatal("owner proof inspection accepted another review")
+				}
+				if _, err := service.inspectOwnerWENMarketProofV1(a.WalletID, a.RequestID, strings.Repeat("Q", 43)); err == nil {
+					t.Fatal("unknown proof accepted")
+				}
+				if mode == "owner-revoked" {
+					updated.RequirePasskey = true
+					if _, e := store.putPolicy(updated, updated.Version); e != nil {
+						t.Fatal(e)
+					}
+				}
+				if mode == "owner-expired" {
+					now := store.now()
+					store.now = func() time.Time { return now.Add(31 * time.Second) }
+				}
+			} else {
+				auth, e = newSignerWebAuthnServiceV2(store, testWebAuthnRPID, testWebAuthnOrigin)
+				if e != nil {
+					t.Fatal(e)
+				}
+				fixture := &testSignerWebAuthnFixtureV2{store: store, service: auth, walletID: a.WalletID}
+				authenticator := newTestWebAuthnAuthenticatorV2(t)
+				fixture.enroll(t, authenticator)
+				finish, e := fixture.finishReview(t, fixture.beginReview(t), authenticator, 2)
+				if e != nil {
+					t.Fatal(e)
+				}
+				proof = &finish.Authorization.Proof
 			}
-			proof := &finish.Authorization.Proof
 			if mode == "unauthorized" {
 				proof = nil
 			}
@@ -426,7 +541,7 @@ func TestWENMarketExecutionAndRestartRecovery(t *testing.T) {
 					return got
 				}
 				body, _ := json.Marshal(wenMiningClaimJourneyRequestV1{RequestID: a.RequestID, Action: "execute", Proof: proof})
-				wire, err := service.marketApplicationWithFactoryV1(context.Background(), request{Op: "v2.wenMarket.journey", WalletID: a.WalletID, Request: body}, cfg, guardedFactory)
+				wire, err := service.marketApplicationWithFactoryV1(context.Background(), request{Op: "v2.wenMarket.journey", WalletID: a.WalletID, Request: body, applicationPeerUID: &uid}, cfg, guardedFactory)
 				e = err
 				if e == nil {
 					var response struct {
@@ -440,7 +555,7 @@ func TestWENMarketExecutionAndRestartRecovery(t *testing.T) {
 			} else {
 				_, state, e = service.executeWENMarketV1(context.Background(), client, auth, a.WalletID, a.RequestID, proof)
 			}
-			if mode == "unauthorized" || mode == "changed-custody" || mode == "missing-admission" || mode == "late-custody" || mode == "revoked-signing" || mode == "revoked-signed" || mode == "network-change" {
+			if mode == "delegated-revoked" || mode == "owner-revoked" || mode == "owner-expired" || mode == "unauthorized" || mode == "changed-custody" || mode == "missing-admission" || mode == "late-custody" || mode == "revoked-signing" || mode == "revoked-signed" || mode == "network-change" {
 				if e == nil || client.sends != 0 {
 					t.Fatal("unadmitted send", state, e)
 				}

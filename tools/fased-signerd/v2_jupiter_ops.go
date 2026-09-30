@@ -43,7 +43,7 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 		if policyErr != nil {
 			return signerReviewV2{}, policyErr
 		}
-		if policy.Role != "agent" {
+		if policy.Role != "agent" || policy.ApprovalMode != "" {
 			return signerReviewV2{}, errors.New("Vault mining requires Agent executor role")
 		}
 		if err := validateReviewPolicyV2(policy, intent, req.Mode); err != nil {
@@ -383,7 +383,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	var reviewedBinding signerReviewBindingV2
 	controlUIAuthorization := false
 	if review.Mode == jupiterReviewModeAutonomousV2 {
-		if policy.Role != "agent" {
+		if policy.Role != "agent" || policy.ApprovalMode != "" {
 			return signerReviewExecutionResultV2{}, errors.New("autonomous signer execution is restricted to Agent-role wallets")
 		}
 		if req.Authorization != nil {

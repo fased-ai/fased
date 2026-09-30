@@ -73,6 +73,10 @@ func requirePolicyTighteningV2(current, candidate signerPolicyV2) error {
 }
 
 func requireAutonomousRoleV2(policy signerPolicyV2, intent normalizedIntentV2) error {
+	if policy.ApprovalMode != "" {
+		return errors.New("wallet policy requires explicit owner approval; no automatic delegation is installed")
+	}
+
 	switch policy.Role {
 	case "profile", "strategy":
 		return errors.New("Profile and Strategy wallets remain deny-all until a separately reviewed policy generation")

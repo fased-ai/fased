@@ -437,7 +437,7 @@ func (s *signerServiceV2) executeAutonomousJupiterTriggerV2(
 	if s.trigger == nil {
 		return signerOperationV2{}, errors.New("signer-owned Jupiter Trigger API key is not configured")
 	}
-	if policy.Role != "agent" || !containsStringV2(policy.Operations, intent.PolicyOperation) {
+	if (policy.Role != "agent" || policy.ApprovalMode != "") || !containsStringV2(policy.Operations, intent.PolicyOperation) {
 		return signerOperationV2{}, errors.New("autonomous Jupiter Trigger requires an Agent wallet and explicit operation policy")
 	}
 	privateKey, _, err := s.keys.privateKey(req.IntentWalletID())

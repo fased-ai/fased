@@ -21,7 +21,21 @@ func (s *signerServiceV2) marketAdminWithFactoryV1(ctx context.Context, req requ
 	if len(req.Request) == 0 || len(req.Request) > 16384 {
 		return nil, errors.New("invalid market admin request size")
 	}
+	if cfg.readOnly {
+		return nil, errors.New("read-only signer mode")
+	}
 	switch req.Op {
+	case "v2.wenMarket.ownerApprove":
+		var body wenMarketAdmissionInstallRequestV1
+		if e := decodeSignerAdminStrictJSON(req.Request, &body); e != nil {
+			return nil, e
+		}
+		proof, e := s.ownerApproveWENMarketV1(req.WalletID, body)
+		if e != nil {
+			return nil, e
+		}
+		return marshalSignerResultV2(proof)
+
 	case "v2.wenMarket.draft.install":
 		var body wenMarketDraftInstallRequestV1
 		if e := decodeSignerAdminStrictJSON(req.Request, &body); e != nil {

@@ -12,6 +12,23 @@ func (s *signerServiceV2) marketApplicationWithFactoryV1(ctx context.Context, re
 	ctx, cancel := context.WithTimeout(ctx, solanaWriteRPCRequestTimeout())
 	defer cancel()
 	switch req.Op {
+	case "v2.wenMarket.ownerProof.inspect":
+		var body struct {
+			RequestID string `json:"requestId"`
+			ProofID   string `json:"proofId"`
+		}
+		if len(req.Request) == 0 || len(req.Request) > 2048 {
+			return nil, errors.New("invalid owner approval request")
+		}
+		if err := decodeSignerAdminStrictJSON(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.inspectOwnerWENMarketProofV1(req.WalletID, body.RequestID, body.ProofID)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+
 	case "v2.wenMarket.journey":
 		return s.marketJourneyWithFactoryV1(ctx, req, cfg, factory)
 	case "v2.wenMarket.review.prepare":

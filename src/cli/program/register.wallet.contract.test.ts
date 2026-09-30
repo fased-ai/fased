@@ -30,4 +30,18 @@ describe("native wallet CLI contract", () => {
       "import",
     );
   });
+  it("presents standard wallets without requiring legacy role choices", () => {
+    const program = new Command();
+    registerWalletCommands(program);
+    const wallet = program.commands.find((command) => command.name() === "wallet")!;
+    for (const name of ["create", "import", "setup"]) {
+      const command = wallet.commands.find((item) => item.name() === name)!;
+      expect(command.helpInformation()).not.toContain("--role");
+      expect(command.helpInformation()).not.toContain("role-ready");
+      const legacy = command.options.find((option) => option.long === "--role");
+      expect(legacy?.mandatory).toBe(false);
+      expect(legacy?.hidden).toBe(true);
+    }
+    expect(wallet.helpInformation()).not.toContain("role set");
+  });
 });

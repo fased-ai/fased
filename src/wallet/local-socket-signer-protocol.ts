@@ -174,6 +174,21 @@ const SignerPolicyAssetV2Schema = Type.Object(
 
 const SignerPolicyInputV2Schema = Type.Object(
   {
+    approvalMode: Type.Optional(
+      Type.Union([Type.Literal("read-only"), Type.Literal("manual"), Type.Literal("automatic")]),
+    ),
+    requirePasskey: Type.Optional(Type.Boolean()),
+    delegation: Type.Optional(
+      Type.Object(
+        {
+          executorUid: Type.Integer({ minimum: 1 }),
+          notBefore: Type.String(),
+          expiresAt: Type.String(),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+
     walletId: Type.Optional(Type.String()),
     role: SignerWalletRoleSchema,
     version: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -189,6 +204,21 @@ const SignerPolicyInputV2Schema = Type.Object(
 
 export const LocalSocketSignerPolicyV2Schema = Type.Object(
   {
+    approvalMode: Type.Optional(
+      Type.Union([Type.Literal("read-only"), Type.Literal("manual"), Type.Literal("automatic")]),
+    ),
+    requirePasskey: Type.Optional(Type.Boolean()),
+    delegation: Type.Optional(
+      Type.Object(
+        {
+          executorUid: Type.Integer({ minimum: 1 }),
+          notBefore: Type.String(),
+          expiresAt: Type.String(),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+
     walletId: Type.String(),
     role: SignerWalletRoleSchema,
     version: Type.Integer({ minimum: 1 }),
@@ -660,7 +690,11 @@ export type LocalSocketSignerJupiterTriggerHistoryV2 = Static<
 >;
 
 const SignerRoleBaselineV1Schema = Type.Object(
-  { version: Type.Literal(1), role: SignerWalletRoleSchema },
+  {
+    approvalMode: Type.Optional(Type.Literal("read-only")),
+    version: Type.Literal(1),
+    role: SignerWalletRoleSchema,
+  },
   { additionalProperties: false },
 );
 

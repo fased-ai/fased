@@ -24,6 +24,7 @@ import { bindWenMarketReview, type MarketReviewExpectation } from "./wen-market-
 // Injected internal transport only. No public socket opcode or production binding
 // is registered here. The transport must retain its selected wallet/profile.
 export interface CampaignSessionTransport {
+  confirmOwner?(request: { requestId: string; proofId: string }): Promise<unknown>;
   begin(request: { requestId: string }): Promise<unknown>;
   finish(request: { challengeId: string; credential: unknown }): Promise<unknown>;
   journey(request: WenCampaignJourneyRequest): Promise<unknown>;

@@ -25,7 +25,7 @@ func (s *signerServiceV2) marketJourneyWithFactoryV1(ctx context.Context, req re
 	if body.Action != "execute" && body.Action != "recover" && body.Action != "cancel" && body.Action != "expire" {
 		return nil, bad
 	}
-	if (body.Action == "execute" && (body.Proof == nil || body.Proof.ProofID == "")) || (body.Action != "execute" && body.Proof != nil) {
+	if (body.Action == "execute" && body.Proof != nil && body.Proof.ProofID == "") || (body.Action != "execute" && body.Proof != nil) {
 		return nil, bad
 	}
 	if s == nil || s.store == nil || s.keys == nil || cfg.readOnly || cfg.stateDBPath != s.store.db.Path() || factory == nil {
@@ -75,6 +75,20 @@ func (s *signerServiceV2) marketJourneyWithFactoryV1(ctx context.Context, req re
 		return nil, e
 	}
 	guard := func() error {
+		if body.Action == "execute" {
+			policy, err := s.store.getPolicy(req.WalletID)
+			if err != nil {
+				return err
+			}
+			if policy.ApprovalMode == "automatic" {
+				if req.applicationPeerUID == nil || req.operatorSocket {
+					return bad
+				}
+				if err := validateWENMarketDelegationV1(policy, *req.applicationPeerUID, s.store.now()); err != nil {
+					return err
+				}
+			}
+		}
 		if e := ctx.Err(); e != nil {
 			return e
 		}
@@ -101,6 +115,13 @@ func (s *signerServiceV2) marketJourneyWithFactoryV1(ctx context.Context, req re
 	state := ""
 	switch body.Action {
 	case "execute":
+		if body.Proof == nil {
+			proof, err := s.delegatedWENMarketProofV1(req, body.RequestID)
+			if err != nil {
+				return nil, err
+			}
+			body.Proof = &proof
+		}
 		digest, state, e = s.executeGuardedWENMarketV1(ctx, client, s.webauthn, req.WalletID, body.RequestID, body.Proof, guard)
 	case "recover":
 		state, e = s.store.recoverWENMarketV1(ctx, client, body.RequestID, digest)

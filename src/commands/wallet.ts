@@ -51,6 +51,7 @@ import type { WalletRetireOptions } from "../wallet/wallet-mining-rotation-facad
 import { buildWalletProviderCapabilityMatrix } from "../wallet/wallet-provider-capabilities.js";
 import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import type { WalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
+import { nextStandardWalletIdentity } from "../wallet/wallet-purpose-labels.js";
 import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
 import type {
   WalletRawExportOptions,
@@ -786,8 +787,11 @@ async function createSignerOwnedWalletForSetup(params: {
   if (Boolean(params.rpcUrl?.trim()) === Boolean(params.rpcProfileId?.trim())) {
     throw new Error("wallet creation requires exactly one of rpcUrl or rpcProfileId");
   }
+  const readOnly = params.options.role === undefined;
   const registeredWallets = readWalletProviderRegistry(params.env).wallets;
-  const generatedIdentity = nextRoleWalletIdentity(params.role, registeredWallets);
+  const generatedIdentity = readOnly
+    ? nextStandardWalletIdentity(registeredWallets)
+    : nextRoleWalletIdentity(params.role, registeredWallets);
   const walletId = params.walletId?.trim() || generatedIdentity.walletId;
   const walletName =
     params.options.walletName?.trim() ||
@@ -842,6 +846,7 @@ async function createSignerOwnedWalletForSetup(params: {
           operatorSocketPath: operatorLifecycle.operatorSocketPath,
           walletId: expectedSignerWalletId,
           role: params.role,
+          readOnly,
           allowExisting: Boolean(params.options.force),
           env: mergedEnv,
         })
@@ -849,6 +854,7 @@ async function createSignerOwnedWalletForSetup(params: {
           socketPath,
           walletId,
           role: params.role,
+          readOnly,
           allowExisting: Boolean(params.options.force),
         });
   } catch (error) {
@@ -861,6 +867,15 @@ async function createSignerOwnedWalletForSetup(params: {
     throw error;
   }
 
+  if (
+    readOnly &&
+    (result.policy.approvalMode !== "read-only" ||
+      result.policy.operations.length !== 0 ||
+      result.policy.programs.length !== 0 ||
+      result.policy.assets.length !== 0)
+  ) {
+    throw Error("New wallet did not receive the requested read-only policy");
+  }
   const signerWalletId = String(result.wallet.walletId ?? "").trim();
   if (
     !signerWalletId ||
@@ -974,8 +989,7 @@ async function createSignerOwnedWalletForSetup(params: {
     providerId: "local-socket-signer",
     addresses: { solana: result.wallet.publicKey },
     metadata: {
-      role: params.role,
-      purpose: params.role,
+      ...(readOnly ? { purpose: "wallet" } : { role: params.role, purpose: params.role }),
       ...(params.role === "profile" || params.role === "strategy" ? { roleChain: "solana" } : {}),
       keyAuthority: "signer-owned-v2",
       signerWalletId,
@@ -1052,7 +1066,9 @@ async function createSignerOwnedWalletForSetup(params: {
     params.runtime.log(`${params.chain.toUpperCase()} address: ${result.wallet.publicKey}`);
     if (!params.options.noSignerHints) {
       params.runtime.log(
-        `Role baseline active: ${params.role} v${readiness.baselineVersion} (${readiness.operationLane}).`,
+        readOnly
+          ? "Read-only wallet ready. Enable permissions and budgets before financial actions."
+          : `Role baseline active: ${params.role} v${readiness.baselineVersion} (${readiness.operationLane}).`,
       );
     }
   }
@@ -1113,7 +1129,10 @@ function parseNativeSignerImportResult(params: {
     throw new Error("native signer import returned an invalid result");
   }
   const result = value as Partial<LocalSignerWalletPolicyRecord>;
-  const denyAllRole = params.role === "profile" || params.role === "strategy";
+  const denyAllRole =
+    result.policy?.approvalMode === "read-only" ||
+    params.role === "profile" ||
+    params.role === "strategy";
   const policyShapeReady = denyAllRole
     ? result.policy?.operations?.length === 0 &&
       result.policy?.programs?.length === 0 &&
@@ -1146,6 +1165,7 @@ function invokeNativeSignerWalletImport(params: {
   signerBinPath: string;
   controlSocketPath: string;
   walletId: string;
+  readOnly?: boolean;
   role: "agent" | "mining" | "vault" | "profile" | "strategy";
   importFile: string;
   env: NodeJS.ProcessEnv;
@@ -1160,6 +1180,7 @@ function invokeNativeSignerWalletImport(params: {
     params.controlSocketPath,
     "--wallet-id",
     params.walletId,
+    ...(params.readOnly ? ["--read-only"] : []),
     "--baseline-role",
     params.role,
   ];
@@ -1212,6 +1233,7 @@ function invokeNativeSignerWalletCreate(params: {
   walletId: string;
   role: "agent" | "mining" | "vault" | "profile" | "strategy";
   allowExisting?: boolean;
+  readOnly?: boolean;
   env: NodeJS.ProcessEnv;
 }): LocalSignerWalletPolicyRecord {
   const child = spawnSync(
@@ -1226,6 +1248,7 @@ function invokeNativeSignerWalletCreate(params: {
       params.walletId,
       "--baseline-role",
       params.role,
+      ...(params.readOnly ? ["--read-only"] : []),
       ...(params.allowExisting ? ["--allow-existing"] : []),
     ],
     {
@@ -1814,6 +1837,7 @@ async function importSignerOwnedWalletForSetup(params: {
           controlSocketPath,
           walletId: signerWalletId,
           role: params.role,
+          readOnly: params.options.role === undefined,
           importFile: params.importFile,
           env: mergedEnv,
         });
@@ -1827,6 +1851,17 @@ async function importSignerOwnedWalletForSetup(params: {
         : await listSignerOwnedRPCProfiles({ socketPath })
       ).find((entry) => entry.profileId === params.rpcProfileId)
     : undefined;
+  if (
+    params.options.role === undefined &&
+    params.options.mode !== "local-signer-recovery-import" &&
+    (result.policy.approvalMode !== "read-only" ||
+      result.policy.operations.length ||
+      result.policy.programs.length ||
+      result.policy.assets.length)
+  ) {
+    throw Error("Imported wallet did not receive the requested read-only policy");
+  }
+
   if (params.rpcProfileId && !selectedProfile) {
     throw new Error(`signer-owned RPC profile not found: ${params.rpcProfileId}`);
   }
@@ -1902,8 +1937,9 @@ async function importSignerOwnedWalletForSetup(params: {
     providerId: "local-socket-signer",
     addresses: { solana: result.wallet.publicKey },
     metadata: {
-      role: params.role,
-      purpose: params.role,
+      ...(params.options.role === undefined
+        ? { purpose: "wallet" }
+        : { role: params.role, purpose: params.role }),
       ...(params.role === "profile" || params.role === "strategy" ? { roleChain: "solana" } : {}),
       keyAuthority: "signer-owned-v2",
       signerWalletId,
@@ -2123,20 +2159,21 @@ export async function walletSetupCommand(
 
   if (mode === "local-signer-create") {
     const chain = options.chain ?? "solana";
-    const roleInput =
-      options.role ??
-      (interactive ? await prompt("Wallet role (agent|mining|vault|profile|strategy)", "") : "");
+    const roleInput = options.role ?? "agent";
     const role = normalizeWalletUserRole(roleInput);
     if (!role) {
       throw new Error(
         "--role is required for non-interactive wallet creation and must be agent, mining, vault, profile, or strategy",
       );
     }
-    const generatedIdentity = nextRoleWalletIdentity(
-      role,
-      readWalletProviderRegistry(env).wallets,
-      chain === "solana" ? "solana" : "evm",
-    );
+    const generatedIdentity =
+      options.role === undefined
+        ? nextStandardWalletIdentity(readWalletProviderRegistry(env).wallets)
+        : nextRoleWalletIdentity(
+            role,
+            readWalletProviderRegistry(env).wallets,
+            chain === "solana" ? "solana" : "evm",
+          );
     const walletId = options.walletId?.trim() || generatedIdentity.walletId;
     const rpcProfileId = (
       options.rpcProfileId ??
@@ -2177,18 +2214,16 @@ export async function walletSetupCommand(
   }
 
   if (mode === "local-signer-import" || mode === "local-signer-recovery-import") {
-    const roleInput =
-      options.role ??
-      (interactive ? await prompt("Wallet role (agent|mining|vault|profile|strategy)", "") : "");
+    const roleInput = options.role ?? "agent";
     const role = normalizeWalletUserRole(roleInput);
     if (!role) {
-      throw new Error(
-        "--role is required for non-interactive wallet import and must be agent, mining, vault, profile, or strategy",
-      );
+      throw new Error("Invalid compatibility role");
     }
+    const standardIdentity = nextStandardWalletIdentity(readWalletProviderRegistry(env).wallets);
+    const defaultId = options.role === undefined ? standardIdentity.id : role;
     const friendlyWalletId =
-      options.walletId ?? (interactive ? await prompt("Wallet id", role) : role);
-    const walletId = friendlyWalletId.trim() || role;
+      options.walletId ?? (interactive ? await prompt("Wallet id", defaultId) : defaultId);
+    const walletId = friendlyWalletId.trim() || defaultId;
     const recoveryImport = mode === "local-signer-recovery-import";
     const importFile = (
       (recoveryImport ? options.recoveryFile : options.importFile) ??

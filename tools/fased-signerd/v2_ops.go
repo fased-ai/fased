@@ -915,9 +915,9 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		return s.bondPurchaseApplicationServiceV2(req, cfg)
 	case "v2.wenBondPurchase.draft.install", "v2.wenBondPurchase.admission.install":
 		return s.bondPurchaseAdminServiceV2(req, cfg, control)
-	case "v2.wenMarket.review.prepare", "v2.wenMarket.journey":
+	case "v2.wenMarket.ownerProof.inspect", "v2.wenMarket.review.prepare", "v2.wenMarket.journey":
 		return s.marketApplicationServiceV1(req, cfg)
-	case "v2.wenMarket.draft.install", "v2.wenMarket.admission.install", "v2.wenMarket.budget.install":
+	case "v2.wenMarket.ownerApprove", "v2.wenMarket.draft.install", "v2.wenMarket.admission.install", "v2.wenMarket.budget.install":
 		return s.marketAdminServiceV1(req, cfg, control)
 	case "v2.wenCampaign.review.prepare", "v2.wenCampaign.journey":
 		return s.campaignApplicationServiceV1(req, cfg)
@@ -942,7 +942,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		if err != nil {
 			return nil, err
 		}
-		if policy.Role != "agent" {
+		if policy.Role != "agent" || policy.ApprovalMode != "" {
 			return nil, errors.New("Vault inspection requires Agent executor wallet")
 		}
 		wallet, err := s.keys.PublicRecord(req.WalletID)

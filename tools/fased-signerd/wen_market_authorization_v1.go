@@ -12,8 +12,8 @@ import (
 // Internal only. Consumption and the exact reserved market authorization commit
 // together. No signature is produced here; public execution is not enabled.
 func (s *signerWebAuthnServiceV2) authorizeWENMarketV1(walletID, requestID, reservationDigest string, authorization *signerWebAuthnProofReferenceV2) error {
-	if err := s.requireEnabled(); err != nil {
-		return err
+	if s == nil || s.store == nil || s.store.db == nil {
+		return errors.New("market authorization unavailable")
 	}
 	if authorization == nil || authorization.ProofID == "" || strings.TrimSpace(authorization.ProofID) != authorization.ProofID || len(authorization.ProofID) > 128 {
 		return errors.New("market authorization proof required")
@@ -21,7 +21,7 @@ func (s *signerWebAuthnServiceV2) authorizeWENMarketV1(walletID, requestID, rese
 	return s.store.db.Update(func(tx *bolt.Tx) error {
 		bad := errors.New("reserved market does not match authorization")
 		now := s.store.now().UTC()
-		review, _, expected, err := loadReviewAndPolicyForAuthorizationV2(tx, walletID, requestID, now)
+		review, policy, expected, err := loadReviewAndPolicyForAuthorizationV2(tx, walletID, requestID, now)
 		if err != nil {
 			return err
 		}
@@ -54,10 +54,36 @@ func (s *signerWebAuthnServiceV2) authorizeWENMarketV1(walletID, requestID, rese
 		if json.Unmarshal(proofs.Get([]byte(authorization.ProofID)), &proof) != nil || proof.ID != authorization.ProofID || !equalSignerReviewBindingV2(proof.Binding, expected) {
 			return bad
 		}
-		_, credentialID, err := normalizeSignerWebAuthnCredentialIDV2(proof.CredentialID)
-		if err != nil || tx.Bucket(bucketSignerWebAuthnCredentialsV2).Get(signerWebAuthnCredentialKeyV2(credentialID)) == nil {
-			return errors.New("market approval credential revoked")
+		if policy.ApprovalMode == "read-only" {
+			return errors.New("read-only wallet cannot execute")
 		}
+		if proof.ApprovalMethod == "owner-control" {
+			if policy.ApprovalMode != "manual" || policy.RequirePasskey || proof.CredentialID != "" {
+				return errors.New("owner confirmation not allowed by current policy")
+			}
+		} else if proof.ApprovalMethod == "owner-delegation" {
+			if proof.CredentialID != "" {
+				return bad
+			}
+			if err := validateWENMarketDelegationV1(policy, proof.ExecutorUID, now); err != nil {
+				return err
+			}
+		} else {
+			if policy.ApprovalMode == "automatic" {
+				return bad
+			}
+			if proof.ApprovalMethod != "" {
+				return bad
+			}
+			if err := s.requireEnabled(); err != nil {
+				return err
+			}
+			_, credentialID, err := normalizeSignerWebAuthnCredentialIDV2(proof.CredentialID)
+			if err != nil || tx.Bucket(bucketSignerWebAuthnCredentialsV2).Get(signerWebAuthnCredentialKeyV2(credentialID)) == nil {
+				return errors.New("market approval credential revoked")
+			}
+		}
+
 		if reservation.Authorization != nil {
 			saved := reservation.Authorization
 			if saved.ProofID != proof.ID || saved.ArtifactDigest != review.ArtifactDigest || saved.AuthorizedAt == "" || proof.State != signerReviewProofConsumed || proof.ConsumedAt != saved.AuthorizedAt {

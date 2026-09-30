@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 )
@@ -205,5 +206,92 @@ func TestRequireTightening(t *testing.T) {
 				t.Fatalf("RequireTightening() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestExplicitApprovalModeAndTightening(t *testing.T) {
+	legacy, err := Normalize(Policy{WalletID: "wallet", Role: "agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual := legacy
+	manual.ApprovalMode = "manual"
+	got, err := Normalize(manual)
+	if err != nil || got.Hash == legacy.Hash {
+		t.Fatal("approval mode is not policy-bound", err)
+	}
+	if RequireTightening(legacy, got) == nil {
+		t.Fatal("application relaxed legacy approval")
+	}
+	required := got
+	required.RequirePasskey = true
+	required, err = Normalize(required)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if RequireTightening(required, got) == nil {
+		t.Fatal("application removed passkey requirement")
+	}
+	readonly := got
+	readonly.ApprovalMode = "read-only"
+	readonly, err = Normalize(readonly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireTightening(got, readonly); err != nil {
+		t.Fatal("deny-all tightening failed", err)
+	}
+	if RequireTightening(readonly, got) == nil {
+		t.Fatal("read-only expanded")
+	}
+	readonly.Operations = []string{"wen.market.buy.v1"}
+	if _, err = Normalize(readonly); err == nil {
+		t.Fatal("read-only granted operations")
+	}
+	manual.ApprovalMode = "automatic"
+	if _, err = Normalize(manual); err == nil {
+		t.Fatal("automatic mode enabled without delegated authority")
+	}
+}
+
+func TestBoundedAutomaticDelegation(t *testing.T) {
+	start := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	base := Policy{WalletID: "wallet_1", Role: "agent", ApprovalMode: "automatic", Delegation: &Delegation{ExecutorUID: 966, NotBefore: start.Format(time.RFC3339), ExpiresAt: start.Add(time.Hour).Format(time.RFC3339)}, Operations: []string{"wen.market.buy.v1"}, Programs: []string{policyTestKey}, Assets: []Asset{{Asset: "solana:native", Destinations: []string{policyTestKey}, MaxPerTx: "1", MaxDaily: "2"}}}
+	current, err := Normalize(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"unbound", "root", "unbounded", "wrong-action", "require-passkey", "wrong-mode"} {
+		candidate := base
+		d := *base.Delegation
+		candidate.Delegation = &d
+		switch mode {
+		case "unbound":
+			candidate.Delegation = nil
+		case "root":
+			d.ExecutorUID = 0
+		case "unbounded":
+			d.ExpiresAt = start.Add(25 * time.Hour).Format(time.RFC3339)
+		case "wrong-action":
+			candidate.Operations = []string{"solana.nativeTransfer"}
+		case "require-passkey":
+			candidate.RequirePasskey = true
+		case "wrong-mode":
+			candidate.ApprovalMode = "manual"
+		}
+		if _, err := Normalize(candidate); err == nil {
+			t.Fatal("unsafe delegation accepted", mode)
+		}
+	}
+	candidate := base
+	d := *base.Delegation
+	d.ExecutorUID++
+	candidate.Delegation = &d
+	changed, err := Normalize(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if RequireTightening(current, changed) == nil {
+		t.Fatal("application changed delegated executor")
 	}
 }

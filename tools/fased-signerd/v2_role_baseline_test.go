@@ -334,3 +334,18 @@ func TestSignerRoleBaselineControlUIConfirmationBindsExactReviewedTransfer(t *te
 		t.Fatalf("mismatched Control UI nonce was accepted: %v", err)
 	}
 }
+
+func TestStandardReadOnlyWalletBaseline(t *testing.T) {
+	policy, err := compileSignerRoleBaselineV1("wallet_1", "11111111111111111111111111111111", signerRoleBaselineRequestV1{Version: 1, Role: "agent", ApprovalMode: "read-only"}, signerRoleBaselineRuntimeV1{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.ApprovalMode != "read-only" || policy.BaselineVersion != 1 || len(policy.Operations) != 0 || len(policy.Programs) != 0 || len(policy.Assets) != 0 {
+		t.Fatal("read-only creation granted authority")
+	}
+	for _, mode := range []string{"manual", "automatic"} {
+		if _, err := compileSignerRoleBaselineV1("wallet_1", "11111111111111111111111111111111", signerRoleBaselineRequestV1{Version: 1, Role: "agent", ApprovalMode: mode}, signerRoleBaselineRuntimeV1{}); err == nil {
+			t.Fatal("creation accepted granting approval mode")
+		}
+	}
+}

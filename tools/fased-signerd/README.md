@@ -48,3 +48,28 @@ Go JSON encoding of that draft). Admission envelopes contain `requestId` and
 operator confirmations, not owner transaction approvals. Neither command accepts
 an application RPC URL or signs a transaction. Application campaign preparation
 and execution remain unregistered; this is not an installed-readiness claim.
+
+### Explicit manual WEN Buy approval
+
+An owner-configured `approvalMode: "manual"` policy may use an exact one-time
+owner confirmation for WEN Buy. `requirePasskey: true` retains credential approval.
+Policies without these fields retain their existing semantics and canonical hashes.
+The control-only `v2.wenMarket.ownerApprove` operation confirms the stored request
+and artifact digest; it returns an opaque signer-owned proof expiring no later than
+30 seconds or the review deadline. Application and operator sockets cannot issue
+this proof. Policy changes, expiry, retirement or a different artifact reject it.
+Proof consumption, spending reservations and transaction recovery remain durable.
+
+`approvalMode: "read-only"` grants no operations, programs or asset spending.
+Explicit manual policies cannot use autonomous execution. A bounded automatic
+Buy mandate requires an authenticated application UID, a not-before time and an
+expiry no more than 24 hours later, plus the existing operation, program, asset,
+spending and fee constraints. Only protected, admitted WEN Buy reviews qualify;
+the mandate cannot install drafts, admission or budgets. Revocation, expiry and
+executor identity are checked again at execution transitions. Recovery uses the
+original journal without submitting another purchase.
+
+Standard wallet creation and import start read-only with no operation, program
+or asset grants. Internal role fields remain solely for existing-state compatibility;
+ordinary setup uses generic wallet names. These paths are source-tested; installed
+acceptance remains separate.
