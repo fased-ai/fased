@@ -26,6 +26,7 @@ import (
 	"fased-lifecycled/model"
 	"fased-lifecycled/participant"
 	"fased-lifecycled/platform"
+	"fased-lifecycled/protocol"
 	"fased-lifecycled/trust"
 )
 
@@ -40,6 +41,7 @@ var branchFixturePinnedRootSHA256 string
 const maxMetadataSize = 1 << 20
 
 type bootstrapRequest struct {
+	ConvergeCurrent                                                                                  func(context.Context, bootstrapVerifiedReleaseIndex) (protocol.Response, bool, error)
 	StateRoot, HostRoot, RootURL, RootRotationBaseURL, IndexURL, IndexAttestationURL, ReleaseBaseURL string
 	Channel, Version, OperatingSystem, Architecture, PinnedRootSHA256                                string
 	RootRotationURLs                                                                                 []string
@@ -53,6 +55,7 @@ type bootstrapRequest struct {
 }
 
 type bootstrapResult struct {
+	CurrentConvergence     *protocol.Response
 	Version                string
 	ReleaseSequence        uint64
 	SecurityEpoch          uint64
@@ -542,6 +545,23 @@ func execute(ctx context.Context, request bootstrapRequest) (bootstrapResult, er
 	asset, ok := selectPlatformAsset(index.LifecycleHost, request)
 	if !ok {
 		return bootstrapResult{}, errors.New("signed release index lacks the requested lifecycle-host architecture")
+	}
+	// Fresh root and attested index verification always precede reuse. The
+	// installed supervisor, rather than a version comparison, proves readiness.
+	if request.ConvergeCurrent != nil {
+		response, current, err := request.ConvergeCurrent(ctx, verifiedIndex)
+		if err != nil {
+			return bootstrapResult{}, err
+		}
+		if current {
+			if response.Outcome != "ALREADY_CURRENT" || !validCurrentDigest(response.ActiveGenerationID) || !validCurrentDigest(response.ConvergenceReceiptDigest) {
+				return bootstrapResult{}, errors.New("current release lacks live convergence proof")
+			}
+			performance.TotalMillis = durationMillis(executeStarted)
+			return bootstrapResult{Version: index.Version, ReleaseSequence: index.ReleaseSequence, SecurityEpoch: index.SecurityEpoch,
+				ReleaseIndexDigest: "sha256:" + verifiedIndex.Digest, ReleaseAuthorityDigest: "sha256:" + verifiedIndex.ReleaseAuthorityDigest,
+				PluginLockDigest: index.PluginLockDigest, CurrentConvergence: &response, Performance: performance}, nil
+		}
 	}
 	assetURL, err := assetURL(request.ReleaseBaseURL, asset.Name)
 	if err != nil {

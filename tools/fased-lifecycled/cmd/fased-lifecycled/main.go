@@ -183,12 +183,20 @@ func runHostingUpdateV1(parent context.Context, args []string, input io.Reader, 
 		return err
 	}
 	if state.Phase == hostsecurity.PhaseCommitted && state.Release == request.Version {
-		response := protocol.Response{SchemaVersion: protocol.CurrentSchemaVersion, Outcome: "ALREADY_CURRENT",
-			ActiveGenerationID: state.LifecycleGenerationID, ConvergenceReceiptDigest: state.ConvergenceReceiptDigest}
+		if state.LifecycleGenerationID != previous.ActiveGenerationID {
+			return errors.New("Hosting hardening generation differs from installed authority")
+		}
+		response, err := verifyInstalledHostingRelease(ctx, request, previous, lease)
+		if err != nil {
+			return err
+		}
 		if err := writePublicHostingReceipt(request, response); err != nil {
 			return err
 		}
 		return json.NewEncoder(output).Encode(response)
+	}
+	if request.Operation == "check" {
+		return errors.New("Hosting hardening is not committed for the checked release")
 	}
 	response, err := invokeSelfInitializeForHostingUpdate(ctx, request, lease)
 	if err != nil {

@@ -58,12 +58,12 @@ type Request struct {
 }
 
 func (request Request) Validate() error {
-	if request.SchemaVersion != SchemaVersion || (request.Operation != "update" && request.Operation != "repair") ||
+	if request.SchemaVersion != SchemaVersion || (request.Operation != "update" && request.Operation != "repair" && request.Operation != "check") ||
 		request.Profile != model.ProfileHosting || (request.Channel != "stable" && request.Channel != "beta") ||
 		model.ValidateVersion(request.Version) != nil || !accountPattern.MatchString(request.OperatorUser) || request.OperatorUser == "root" ||
 		request.GatewayPort == 0 || request.PlatformIdentity != "linux/x64" || request.TimeoutSeconds == 0 || request.TimeoutSeconds > 600 ||
 		!hexDigest.MatchString(request.TrustRootSHA256) || !hexDigest.MatchString(request.HostDigest) ||
-		!safeAbsolutePath(request.ApplicationPath) || (request.DependencyPath != "" && !safeAbsolutePath(request.DependencyPath)) ||
+		(request.Operation != "check" && !safeAbsolutePath(request.ApplicationPath)) || (request.DependencyPath != "" && !safeAbsolutePath(request.DependencyPath)) ||
 		request.ReleaseSequence == 0 || request.SecurityEpoch == 0 || request.ManifestProtocolMin == 0 ||
 		request.ManifestProtocolMax < request.ManifestProtocolMin || !digestID.MatchString(request.ReleaseIndexDigest) ||
 		!digestID.MatchString(request.ReleaseAuthorityDigest) || !digestID.MatchString(request.PluginLockDigest) ||
@@ -73,6 +73,9 @@ func (request Request) Validate() error {
 	}
 	if strings.Contains(request.Version, "-") != (request.Channel == "beta") {
 		return errors.New("public Hosting update version differs from its channel")
+	}
+	if request.Operation == "check" && (request.ApplicationPath != "" || request.DependencyPath != "" || request.ReleaseSequence != request.ExpectedPreviousSequence || request.SecurityEpoch != request.ExpectedPreviousEpoch) {
+		return errors.New("public Hosting check requires the unchanged release without payload paths")
 	}
 	if request.Operation == "repair" && request.ReleaseSequence != request.ExpectedPreviousSequence {
 		return errors.New("public Hosting repair cannot select a different release")

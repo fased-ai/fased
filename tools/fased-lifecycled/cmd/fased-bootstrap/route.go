@@ -872,6 +872,9 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) (err 
 		VerifyIndex: releaseRoute.VerifyIndex, ExpectedRootVersion: expectedRootVersion,
 		ExpectedRootSHA256: expectedRootSHA256,
 	}
+	if request.Operation == "update" && installedConfig != nil && request.Profile == model.ProfileProtectedLocal {
+		bootstrap.ConvergeCurrent = currentReleaseConverger(*installedConfig, lock, channelSelection)
+	}
 	phase = "acquiring the verified lifecycle release"
 	acquisitionProgress := beginLifecyclePhase(output, request.JSON, "acquiring the verified lifecycle release")
 	result, err := executePublicLifecycleBootstrap(ctx, bootstrap)
@@ -885,6 +888,11 @@ func runPublicLifecycle(operation string, args []string, output io.Writer) (err 
 		}
 	}
 	performance.Acquisition = result.Performance
+	if result.CurrentConvergence != nil {
+		performance.TotalMillis = durationMillis(lifecycleStarted)
+		performance.TransactionStatus = transactionPerformanceStatus("ALREADY_CURRENT", nil)
+		return writeCurrentReleaseOutcome(output, request, result, performance)
+	}
 	var hostingState hostsecurity.CommandState
 	preparedOperatorUser := ""
 	hostingTransactionID := ""
@@ -1115,14 +1123,18 @@ func runTargetOwnedHostingLifecycle(ctx context.Context, request publicLifecycle
 	}
 	phase = "acquiring the verified lifecycle release"
 	progress := beginLifecyclePhase(output, request.JSON, "acquiring the verified lifecycle release")
-	result, err := executePublicLifecycleBootstrap(ctx, bootstrapRequest{
+	bootstrap := bootstrapRequest{
 		StateRoot: platform.BootstrapCacheRootForOS(runtime.GOOS), HostRoot: platform.LifecycleHostRootForOS(runtime.GOOS),
 		RootURL: releaseRoute.RootURL, RootRotationBaseURL: releaseRoute.RootRotationBaseURL, IndexURL: releaseRoute.IndexURL,
 		IndexAttestationURL: releaseRoute.IndexAttestationURL, ReleaseBaseURL: releaseRoute.ReleaseBaseURL,
 		Channel: request.Channel, Version: request.Version, OperatingSystem: runtime.GOOS, Architecture: architecture(),
 		PinnedRootSHA256: releaseRoute.PinnedRootSHA256, OwnerUID: 0, Now: now, Inspect: inspectLifecycleHost,
 		VerifyIndex: releaseRoute.VerifyIndex, ExpectedRootVersion: expectedRootVersion, ExpectedRootSHA256: expectedRootSHA256,
-	})
+	}
+	if request.Operation == "update" {
+		bootstrap.ConvergeCurrent = hostingCurrentReleaseConverger(request, previous, lock, selection, releaseRoute.PinnedRootSHA256)
+	}
+	result, err := executePublicLifecycleBootstrap(ctx, bootstrap)
 	progress.Stop()
 	if err != nil {
 		return err
@@ -1134,6 +1146,9 @@ func runTargetOwnedHostingLifecycle(ctx context.Context, request publicLifecycle
 	}
 	if result.ReleaseSequence < previous.ReleaseSequence || result.SecurityEpoch < previous.SecurityEpoch {
 		return errors.New("acquired Hosting release would roll back installed authority")
+	}
+	if result.CurrentConvergence != nil {
+		return writeCurrentReleaseOutcome(output, request, result, publicLifecyclePerformance{TotalMillis: durationMillis(lifecycleStarted), Acquisition: result.Performance, TransactionStatus: transactionPerformanceStatus("ALREADY_CURRENT", nil)})
 	}
 	publicRequest := publicupdate.Request{
 		SchemaVersion: publicupdate.SchemaVersion, Operation: request.Operation, Profile: model.ProfileHosting,

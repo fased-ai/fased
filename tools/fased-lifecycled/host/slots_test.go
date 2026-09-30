@@ -132,3 +132,26 @@ func TestCompatibilityRejectsUnsupportedProtocol(t *testing.T) {
 		t.Fatal("incompatible lifecycle host was accepted")
 	}
 }
+
+func TestVerifiedCurrentRequiresExactImmutableSignedHost(t *testing.T) {
+	root := privateHostTestRoot(t)
+	data := []byte("installed-host")
+	stored, staged := stagedFixture(t, root, "fased-lifecycled-linux-x64", data)
+	if err := stored.Activate(staged, func(StagedHost) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	asset := hostAsset("fased-lifecycled-linux-x64", data, protocols())
+	if got, current, err := stored.VerifiedCurrent(asset); err != nil || !current || got.Path != staged.Path {
+		t.Fatalf("verified current host unavailable: %+v %v %v", got, current, err)
+	}
+	other := hostAsset("other", []byte("other-host"), protocols())
+	if _, current, err := stored.VerifiedCurrent(other); err != nil || current {
+		t.Fatalf("different signed host reused: %v %v", current, err)
+	}
+	if err := os.Chmod(staged.Path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, current, err := stored.VerifiedCurrent(asset); err == nil || current {
+		t.Fatal("writable host accepted")
+	}
+}
