@@ -179,7 +179,7 @@ func validateOnboardingConfig(config Config) error {
 		return err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Nlink != 1 || stat.Uid != config.Operator.UID ||
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Nlink != 1 || (stat.Uid != config.Operator.UID && stat.Uid != config.Gateway.UID) ||
 		info.Mode().Perm()&0o007 != 0 || info.Mode().Perm()&0o111 != 0 || info.Size() == 0 || info.Size() > 4<<20 {
 		return errors.New("lifecycle onboarding configuration is unsafe")
 	}
