@@ -30,7 +30,7 @@
       "thread-ownership"
     ],
     "sharedDirectories": ["shared"],
-    "loadedPluginIds": ["device-pair", "memory-core", "sat-mining"],
+    "loadedPluginIds": ["memory-core", "sat-mining"],
     "maximumApplicationFiles": 4000,
     "maximumApplicationBytes": 33554432,
     "maximumDependencyFiles": 28000,

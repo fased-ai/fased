@@ -12,6 +12,7 @@ export const TAB_GROUPS = [
       "wallet",
       "federation",
       "plugins",
+      "config",
       "mining",
     ],
   },

@@ -13,12 +13,13 @@ describe("workflow navigation groups", () => {
       "wallet",
       "federation",
       "plugins",
+      "config",
       "mining",
     ]);
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("instances");
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("sessions");
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("memory");
-    for (const tab of ["marketplace", "notifications", "usage", "config", "logs"]) {
+    for (const tab of ["marketplace", "notifications", "usage", "logs"]) {
       expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain(tab);
     }
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("channels");

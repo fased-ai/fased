@@ -188,7 +188,7 @@ describe("hosted component contract", () => {
     const contract = await readHostedComponentContract(
       path.join(process.cwd(), "config", "hosted-component-packs.json"),
     );
-    expect(contract.core.loadedPluginIds).toEqual(["device-pair", "memory-core", "sat-mining"]);
+    expect(contract.core.loadedPluginIds).toEqual(["memory-core", "sat-mining"]);
     await expect(
       assertCompleteExtensionOwnership({
         extensionsRoot: path.join(process.cwd(), "extensions"),

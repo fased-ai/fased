@@ -42,7 +42,6 @@ export type PluginRuntimeAccess = {
 
 export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([
   ...CORE_RUNTIME_CHANNEL_IDS,
-  "device-pair",
   "sat-mining",
 ]);
 

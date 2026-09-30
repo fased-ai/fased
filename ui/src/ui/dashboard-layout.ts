@@ -1,4 +1,4 @@
-export type DashboardWidgetId = "agents" | "usage" | "wallet" | "mining" | "network";
+export type DashboardWidgetId = "agents" | "usage" | "wallet" | "wen" | "mining" | "network";
 
 export type DashboardColumnWidth = "narrow" | "normal" | "wide";
 
@@ -24,14 +24,15 @@ export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayout = {
       id: DASHBOARD_COLUMN_ID,
       title: "Dashboard",
       width: "wide",
-      widgets: ["agents", "usage", "wallet", "mining", "network"],
+      widgets: ["wen", "agents", "wallet", "network"],
     },
   ],
 };
 
-const VALID_WIDGETS = new Set<DashboardWidgetId>(
-  DEFAULT_DASHBOARD_LAYOUT.columns.flatMap((column) => column.widgets),
-);
+const VALID_WIDGETS = new Set<DashboardWidgetId>([
+  ...DEFAULT_DASHBOARD_LAYOUT.columns.flatMap((column) => column.widgets),
+  "usage",
+]);
 
 function cloneLayout(layout: DashboardLayout): DashboardLayout {
   return {
@@ -59,7 +60,9 @@ export function normalizeDashboardLayout(value: unknown): DashboardLayout {
       const rawWidgets = Array.isArray(raw.widgets) ? (raw.widgets as unknown[]) : [];
       return rawWidgets.length
         ? rawWidgets
-            .map((widget) => (widget === "quick-actions" ? "agents" : widget))
+            .map((widget) =>
+              widget === "quick-actions" ? "agents" : widget === "mining" ? "wen" : widget,
+            )
             .filter((widget): widget is DashboardWidgetId => {
               if (typeof widget !== "string") {
                 return false;

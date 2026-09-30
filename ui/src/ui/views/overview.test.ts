@@ -387,12 +387,10 @@ describe("renderOverview dashboard", () => {
       ),
     );
 
-    expect(text).toContain("Agent");
-    expect(text).toContain("Legacy Mining");
-    expect(text).toContain("Vault");
-    expect(text).toContain("1.5 SOL");
-    expect(text).toContain("2 SOL");
-    expect(text).toContain("0.5 SOL");
+    expect(text).toContain("Wallets");
+    expect(text).not.toContain("Legacy Mining");
+    expect(text).not.toContain("Vault");
+    expect(text).toContain("4 SOL");
     expect(text).not.toContain("250 SAT");
     expect(text).not.toContain("SAT n/a");
     expect(text).not.toContain("Source: wallet.status");
@@ -440,18 +438,9 @@ describe("renderOverview dashboard", () => {
       ),
     );
 
-    expect(text).toContain("Legacy Mining");
-    expect(text).toContain("Started");
-    expect(text).toContain("SAT");
-    expect(text).not.toContain("Satcoin");
-    expect(text).toContain("1.23");
-    expect(text).toContain("Capital");
-    expect(text).toContain("0.25");
-    expect(text).toContain("0.25 locked");
-    expect(text).not.toContain("0.25 SOL");
-    expect(text).toContain("7d SAT");
-    expect(text).not.toContain("Source: sat.mining.status");
-    expect(text).not.toContain("Mining runtime");
+    expect(text).toContain("WEN");
+    expect(text).not.toContain("Legacy Mining");
+    expect(text).not.toContain("0.25 locked");
   });
 
   it("renders mining dashboard capital as funded capital, not only locked capital", async () => {
@@ -486,11 +475,9 @@ describe("renderOverview dashboard", () => {
       ),
     );
 
-    expect(text).toContain("SAT");
-    expect(text).toContain("286.18");
-    expect(text).toContain("Capital");
-    expect(text).toContain("9.998");
-    expect(text).toContain("7.95 locked");
+    expect(text).toContain("WEN");
+    expect(text).not.toContain("7.95 locked");
+    expect(text).not.toContain("Capital");
   });
 
   it("renders Fased Network as a compact card with URL path and bond counters", async () => {
@@ -545,10 +532,10 @@ describe("renderOverview dashboard", () => {
     );
 
     expect(text).toContain("@fase...6814");
-    expect(text).toContain("2.5K");
-    expect(text).toContain("Bond");
-    expect(text).toContain("158.93");
-    expect(text).toContain("Claim");
+    expect(text).not.toContain("2.5K");
+    expect(text).not.toContain("Bond");
+    expect(text).not.toContain("158.93");
+    expect(text).not.toContain("Claim");
     expect(text).not.toContain("Fased Network");
     expect(text).not.toContain("Copy Fased Network URL");
     expect(text).not.toContain("ff1.fased.app/@fased-agent-399384eb6814");

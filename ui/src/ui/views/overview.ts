@@ -3,6 +3,7 @@ import {
   addDashboardWidget,
   dashboardWidgetIds,
   moveDashboardWidget,
+  normalizeDashboardLayout,
   removeDashboardWidget,
   resetDashboardLayout,
   type DashboardLayout,
@@ -548,6 +549,13 @@ type DashboardWidgetDefinition = {
 
 const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   {
+    id: "wen",
+    title: "WEN",
+    source: "wen.economy.read",
+    icon: "globe",
+    summary: "Economy, acquisitions and approved operations.",
+  },
+  {
     id: "agents",
     title: "Agents",
     source: "agents.list",
@@ -569,13 +577,6 @@ const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     summary: "Configured wallets and settlement readiness.",
   },
   {
-    id: "mining",
-    title: "Legacy Mining",
-    source: "sat.mining.status",
-    icon: "zap",
-    summary: "Historical SAT cycle state and recovery actions.",
-  },
-  {
     id: "network",
     title: "Network",
     source: "federation.status",
@@ -587,6 +588,7 @@ const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
 const DASHBOARD_WIDGETS_BY_ID = new Map(DASHBOARD_WIDGETS.map((widget) => [widget.id, widget]));
 const DASHBOARD_DRAG_MIME = "application/x-fased-dashboard-widget";
 const SUMMARY_DASHBOARD_WIDGETS = new Set<DashboardWidgetId>([
+  "wen",
   "agents",
   "usage",
   "wallet",
@@ -686,10 +688,7 @@ function buildDashboardContext(props: OverviewProps) {
   };
 }
 
-function renderDashboardNetworkCard(
-  props: OverviewProps,
-  context: ReturnType<typeof buildDashboardContext>,
-) {
+function renderDashboardNetworkCard(props: OverviewProps) {
   const href = pathForTab("federation", props.basePath);
   return html`
     <a
@@ -711,15 +710,9 @@ function renderDashboardNetworkCard(
         props.onNavigate("federation");
       }}
     >
-      <div class="dashboard-network-card__metrics dashboard-summary-grid">
-        <span class="dashboard-network-card__metric dashboard-summary-card">
-          <span class=${statusClass("default")}>${context.federationBond}</span>
-          <span class="dashboard-summary-card__title">Bond</span>
-        </span>
-        <span class="dashboard-network-card__metric dashboard-summary-card">
-          <span class=${statusClass("default")}>${context.federationClaim}</span>
-          <span class="dashboard-summary-card__title">Claim</span>
-        </span>
+      <div class="dashboard-summary-card">
+        <span class="dashboard-summary-card__title">Agent network</span>
+        <p>Discovery and collaboration connections. Network access does not grant wallet permissions.</p>
       </div>
     </a>
   `;
@@ -768,20 +761,24 @@ function renderWidgetBody(
         })}
         ${renderUsageHistory(props.usageResult)}
       `;
+    case "wen":
+      return html`${renderLinkedSummaryCard(props, {
+        tab: "wen",
+        title: "Open strategy desk",
+        value: "WEN",
+        detail: "Economy · acquisitions · approved operations",
+        help: "Read the configured economy and manage wallet-authorized operations.",
+      })}`;
     case "wallet":
-      return html`
-        <div class="dashboard-summary-grid dashboard-summary-grid--wallets">
-          ${context.wallets.map((summary) =>
-            renderLinkedSummaryCard(props, {
-              tab: "wallet",
-              title: summary.title,
-              value: summary.count,
-              detail: `${formatDashboardBalance(summary.sol)} SOL`,
-              help: summary.help,
-            }),
-          )}
-        </div>
-      `;
+      return html`<div class="dashboard-summary-grid dashboard-summary-grid--wallets">
+        ${renderLinkedSummaryCard(props, {
+          tab: "wallet",
+          title: "Wallets",
+          value: context.wallets.reduce((total, wallet) => total + wallet.count, 0),
+          detail: `${formatDashboardBalance(context.wallets.reduce((total, wallet) => total + wallet.sol, 0))} SOL`,
+          help: "Manage wallets, permissions, budgets and approval modes.",
+        })}
+      </div>`;
     case "mining":
       return html`
         <div class="dashboard-summary-grid dashboard-summary-grid--mining">
@@ -802,7 +799,7 @@ function renderWidgetBody(
         ${renderMiningSatHistory(props.miningHistory)}
       `;
     case "network":
-      return renderDashboardNetworkCard(props, context);
+      return renderDashboardNetworkCard(props);
     default:
       return nothing;
   }
@@ -1000,7 +997,7 @@ function renderDashboardDrawer(props: OverviewProps) {
 
 export function renderOverview(props: OverviewProps) {
   const context = buildDashboardContext(props);
-  const dashboardLayout = props.dashboardLayout ?? resetDashboardLayout();
+  const dashboardLayout = normalizeDashboardLayout(props.dashboardLayout ?? resetDashboardLayout());
   const widgets = dashboardWidgetIds(dashboardLayout);
 
   return html`

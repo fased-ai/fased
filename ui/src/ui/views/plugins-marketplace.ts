@@ -1570,12 +1570,21 @@ function renderPluginExpanded(
   `;
 }
 
+const builtInIds = new Set(["memory-core", "sat-mining"]);
+export function optionalModuleEntries(entries: PluginMarketplaceEntry[]) {
+  return entries.filter(
+    (entry) =>
+      !builtInIds.has(entry.id) &&
+      (entry.id !== "fased-federation" || entry.enabled || entry.loaded),
+  );
+}
 export function renderPluginsMarketplace(props: PluginsMarketplaceProps) {
-  const plugins = sortExtensions(props.report?.plugins ?? []);
+  const visiblePlugins = optionalModuleEntries(props.report?.plugins ?? []);
+  const plugins = sortExtensions(visiblePlugins);
+  const builtIns = (props.report?.plugins ?? []).filter((entry) => builtInIds.has(entry.id));
   const diagnostics = props.detail?.diagnostics ?? props.report?.diagnostics ?? [];
   const reportDiagnostics = props.report?.diagnostics ?? [];
-  const activeCount =
-    props.report?.plugins.filter((entry) => entry.loaded || entry.enabled).length ?? 0;
+  const activeCount = visiblePlugins.filter((entry) => entry.loaded || entry.enabled).length;
 
   return html`
     <section class="surface-stack">
@@ -2045,10 +2054,19 @@ export function renderPluginsMarketplace(props: PluginsMarketplaceProps) {
 
         <section class="extensions-tab-panel extensions-tab-panel--runtime">
           ${
+            builtIns.length
+              ? html`<section class="card" aria-label="Built-in capabilities">
+            <h3>Built-in capabilities</h3>
+            <p>WEN desk and agent memory are included. Optional modules below run only when enabled.</p>
+            ${builtIns.map((entry) => html`<div>${entry.id === "sat-mining" ? "WEN Engine" : "Agent memory"} · ${entry.loaded ? "Ready" : "Unavailable"}</div>`)}
+          </section>`
+              : nothing
+          }
+          ${
             props.report
               ? html`
                   <div class="chip-row">
-                    <span class="chip">${props.report.plugins.length} plugins</span>
+                    <span class="chip">${plugins.length} optional modules</span>
                     ${activeCount > 0 ? html`<span class="chip chip-ok">${activeCount} active</span>` : nothing}
                     <span class="chip">${props.report.diagnostics.length} diagnostics</span>
                     <span class="chip">agent ${formatAgentDisplayName({ id: props.report.agentId })}</span>

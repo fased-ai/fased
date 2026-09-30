@@ -12,7 +12,9 @@ describe("dashboard layout", () => {
   it("keeps each default widget once", () => {
     const ids = dashboardWidgetIds(DEFAULT_DASHBOARD_LAYOUT);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toContain("usage");
+    expect(ids).not.toContain("usage");
+    expect(ids).toContain("wen");
+    expect(ids).not.toContain("mining");
     expect(ids).toContain("wallet");
     expect(ids).not.toContain("marketplace");
     expect(ids).not.toContain("gateway");
@@ -47,7 +49,7 @@ describe("dashboard layout", () => {
 
   it("moves widgets in the masonry order", () => {
     const moved = moveDashboardWidget(DEFAULT_DASHBOARD_LAYOUT, "usage", "dashboard", "wallet");
-    expect(dashboardWidgetIds(moved).slice(0, 3)).toEqual(["agents", "usage", "wallet"]);
+    expect(dashboardWidgetIds(moved).slice(0, 3)).toEqual(["wen", "agents", "wallet"]);
   });
 
   it("adds and removes widgets without duplicates", () => {
@@ -68,6 +70,6 @@ describe("dashboard layout", () => {
     });
     expect(layout.columns).toHaveLength(1);
     expect(layout.columns[0]?.id).toBe("dashboard");
-    expect(layout.columns[0]?.widgets).toEqual(["agents", "usage", "wallet", "mining"]);
+    expect(layout.columns[0]?.widgets).toEqual(["agents", "usage", "wallet", "wen"]);
   });
 });
