@@ -282,24 +282,22 @@ describe("npm-free managed lifecycle", () => {
       "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle-redesign.md",
     );
 
-    expect(skill).toContain("Treat “fix and release” as one conditional authorization:");
-    expect(skill).toContain("the fix, and its nearest focused regression in the same protected PR");
-    expect(skill).toContain("Do not add a full-package rerun after the focused predicate passes.");
-    expect(skill).toMatch(/under ten minutes when GitHub infrastructure is\s+responsive/u);
-    expect(skill).toContain("must not add a second environment-review pause");
-    expect(skill).toContain(
-      "Exercise adjacent durable transitions once; never publish first-error patches.",
+    expect(release).toContain("treat it as one conditional chain:");
+    expect(release).toContain("one protected PR containing the fix and next unused version");
+    expect(release).toContain("do not add a full-package rerun.");
+    expect(release).toContain("no second environment-review");
+    expect(release).toContain(
+      "The owner initiates fresh Local and Hosting checks after publication.",
     );
-    expect(skill).toMatch(/Fresh Local and Hosting checks are owner-initiated after publication/u);
+    expect(skill).toContain("Complete the connected journey and affected checks");
     expect(lifecycle).toContain("`hosting-container`");
     expect(lifecycle).toContain("`hosting-staging-vps`");
     expect(lifecycle).toContain("`hosting-public-vps`");
     expect(lifecycle).toMatch(
       /Do not synthesize an interrupted phase by editing\s+a successfully\s+committed receipt/u,
     );
-    expect(skill).toContain(
-      "Metadata-only promotion resumes an already published release without rebuilding.",
-    );
+    expect(release).toContain("It does not install dependencies, build,");
+    expect(release).toContain("reattest, create a candidate, or rerun acceptance.");
     expect(release).toMatch(/builds one Linux-x64 core\s+artifact/u);
     expect(release).toContain("one tag-bound release workflow");
     expect(release).toContain("Do not merge a release-authorized product fix");
@@ -312,13 +310,16 @@ describe("npm-free managed lifecycle", () => {
   it("continues the exact authorized chain without repeated approval", async () => {
     const skill = await source("docs/maintainers/codex-skills/fased-release-manager/SKILL.md");
 
-    expect(skill).toContain("The newest owner plan controls;");
-    expect(skill).toContain("superseded plans are evidence only.");
-    expect(skill).toContain(
-      "Continue through those steps without requesting the same authority again.",
+    const release = await source(
+      "docs/maintainers/codex-skills/fased-release-manager/references/release.md",
     );
-    expect(skill).toContain("A request for a fix without release");
-    expect(skill).toContain("authority ends after the protected merge.");
-    expect(skill).toContain("superseded plans are evidence only.");
+    expect(skill).toContain("start at the current checkpoint");
+    expect(skill).toContain("Continue authorized local work without repeated approvals.");
+    expect(skill).toContain("Ordinary fixes use focused checks and produce no release artifact.");
+    expect(skill).toContain("Load this file plus at most one reference");
+    expect(release).toContain("without current explicit authority.");
+    expect(release).toMatch(
+      /do not ask for the same approval again\s+while its exact identities and predicates remain unchanged/u,
+    );
   });
 });
