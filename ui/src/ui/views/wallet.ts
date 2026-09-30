@@ -332,7 +332,7 @@ export function describeVaultSignerApproval(
   return {
     summary: `Ready · ${approval.credentialCount} device${approval.credentialCount === 1 ? "" : "s"}`,
     detail:
-      "The native signer has an approval device. This Vault still needs an acknowledged manual policy for the exact operation before Send becomes available.",
+      "An approval device is ready. Sending still requires an acknowledged manual policy for this wallet and operation.",
     setupCommand: null,
   };
 }
@@ -718,8 +718,8 @@ function renderWalletRuntimeStatusIcons(params: {
       <span
         class="wallet-status-icon"
         data-state="vault-manual"
-        title="Vault wallet is manual signing only. No background wallet automation."
-        aria-label="Vault manual signing"
+        title="Manual approval is required. Background automation is not permitted."
+        aria-label="Manual approval"
       >
         ${icons.hand}
       </span>
@@ -730,14 +730,14 @@ function renderWalletRuntimeStatusIcons(params: {
   }
   const automationEnabled = params.automationEnabled;
   const detail = automationEnabled
-    ? "Agent auto policy is on. Background sends can run within approval policy, caps, allowlists, and skill grants."
-    : "Agent auto policy is off. Sends require manual approval.";
+    ? "Automation is enabled within this wallet’s approval policy, spending limits and permitted actions."
+    : "Automation is disabled. Sends require manual approval.";
   return html`
     <span
       class="wallet-status-icon"
       data-state=${automationEnabled ? "agent-auto-on" : "agent-auto-off"}
       title=${detail}
-      aria-label=${automationEnabled ? "Agent auto on" : "Agent auto off"}
+      aria-label=${automationEnabled ? "Automation enabled" : "Automation disabled"}
     >
       ${automationEnabled ? icons.zap : icons.hand}
     </span>
@@ -794,7 +794,7 @@ function renderWalletActivePolicyIcons(params: {
       : params.role === "vault"
         ? [
             params.props.policyCapsEnabled
-              ? { dataRole: "policy-on", title: "Vault caps active", icon: icons.shield }
+              ? { dataRole: "policy-on", title: "Spending limits active", icon: icons.shield }
               : null,
           ]
         : [];
