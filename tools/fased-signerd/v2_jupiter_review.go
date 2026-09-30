@@ -220,7 +220,7 @@ func (s *signerStoreV2) prepareArtifactReviewV2(
 		if strings.TrimSpace(req.PolicyHash) == "" || req.PolicyHash != policy.Hash {
 			return errors.New("signer policy hash mismatch")
 		}
-		if mode == jupiterReviewModeAutonomousV2 && policy.Role != "agent" {
+		if mode == jupiterReviewModeAutonomousV2 && (policy.Role != "agent" || policy.ApprovalMode != "") {
 			return errors.New("autonomous signer review is restricted to Agent-role wallets")
 		}
 		if err := validateReviewPolicyV2(policy, intent, mode); err != nil {

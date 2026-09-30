@@ -30,6 +30,7 @@ describe("Hosting signer-owner maintenance launcher", () => {
     expect(launcher).toContain("recovery-export|recovery-import|export-raw");
     expect(launcher).toContain("rotate-successor|rotation-status|rotation-commit");
     expect(launcher).toContain("get|put");
+    expect(launcher).toContain("install-draft|install-budget|install-admission|owner-approve) ;;");
     expect(launcher).toContain("put (requires --confirm-digest sha256:<exact-policy-file-digest>)");
     expect(launcher).toContain('actual_policy_digest="sha256:$actual_policy_digest"');
     expect(launcher).toContain('staged_policy="$work_dir/policy.json"');

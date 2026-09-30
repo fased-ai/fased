@@ -1308,7 +1308,7 @@ export async function createWalletNamedWallet(input: {
   });
 }
 
-// This retail path selects a compatibility baseline, not spending permission.
+// Standard creation requests no role or spending authority; the signer creates read-only.
 export async function createStandardWalletNamedWallet(
   input: { name?: string; rpcUrl?: string; rpcProfileId?: string },
   wallets: ReadonlyArray<{ name?: string }>,
@@ -1318,7 +1318,6 @@ export async function createStandardWalletNamedWallet(
     rpcUrl: input.rpcUrl,
     rpcProfileId: input.rpcProfileId,
     providerId: "local-socket-signer",
-    role: "agent",
     chain: "solana",
   });
 }

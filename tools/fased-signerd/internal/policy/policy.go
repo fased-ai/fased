@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 )
@@ -26,16 +28,25 @@ type Asset struct {
 	TypedSATDestinations bool     `json:"typedSatDestinations,omitempty"`
 }
 
+type Delegation struct {
+	ExecutorUID uint32 `json:"executorUid"`
+	ExpiresAt   string `json:"expiresAt"`
+	NotBefore   string `json:"notBefore"`
+}
+
 type Policy struct {
-	WalletID         string   `json:"walletId"`
-	Role             string   `json:"role"`
-	Version          uint64   `json:"version"`
-	BaselineVersion  uint64   `json:"baselineVersion,omitempty"`
-	Operations       []string `json:"operations"`
-	Programs         []string `json:"programs"`
-	TypedSATPrograms bool     `json:"typedSatPrograms,omitempty"`
-	Assets           []Asset  `json:"assets"`
-	Hash             string   `json:"hash"`
+	Delegation       *Delegation `json:"delegation,omitempty"`
+	ApprovalMode     string      `json:"approvalMode,omitempty"`
+	RequirePasskey   bool        `json:"requirePasskey,omitempty"`
+	WalletID         string      `json:"walletId"`
+	Role             string      `json:"role"`
+	Version          uint64      `json:"version"`
+	BaselineVersion  uint64      `json:"baselineVersion,omitempty"`
+	Operations       []string    `json:"operations"`
+	Programs         []string    `json:"programs"`
+	TypedSATPrograms bool        `json:"typedSatPrograms,omitempty"`
+	Assets           []Asset     `json:"assets"`
+	Hash             string      `json:"hash"`
 }
 
 func NormalizeWalletID(walletID string) string {
@@ -66,6 +77,9 @@ func NormalizeWalletID(walletID string) string {
 
 func Normalize(input Policy) (Policy, error) {
 	policy := Policy{
+		ApprovalMode:     input.ApprovalMode,
+		Delegation:       input.Delegation,
+		RequirePasskey:   input.RequirePasskey,
 		WalletID:         NormalizeWalletID(input.WalletID),
 		Version:          input.Version,
 		BaselineVersion:  input.BaselineVersion,
@@ -80,6 +94,32 @@ func Normalize(input Policy) (Policy, error) {
 	case "agent", "mining", "vault", "profile", "strategy", "keeper":
 	default:
 		return Policy{}, errors.New("policy role must be agent, mining, vault, profile, strategy, or keeper")
+	}
+	if policy.ApprovalMode != "automatic" && policy.Delegation != nil {
+		return Policy{}, errors.New("delegation requires automatic mode")
+	}
+	switch policy.ApprovalMode {
+	case "":
+		if policy.RequirePasskey {
+			return Policy{}, errors.New("explicit approval mode required")
+		}
+	case "automatic":
+		if policy.RequirePasskey || policy.Delegation == nil || policy.Delegation.ExecutorUID == 0 || len(input.Operations) != 1 || input.Operations[0] != "wen.market.buy.v1" || len(input.Programs) == 0 || len(input.Assets) == 0 {
+			return Policy{}, errors.New("automatic mode requires one bounded WEN Buy operation and an executor delegation")
+		}
+		expiry, err := time.Parse(time.RFC3339Nano, policy.Delegation.ExpiresAt)
+		start, startErr := time.Parse(time.RFC3339Nano, policy.Delegation.NotBefore)
+		if err != nil || startErr != nil || !expiry.After(start) || expiry.Sub(start) > 24*time.Hour {
+			return Policy{}, errors.New("delegation must have a finite window of at most 24 hours")
+		}
+		policy.Delegation = &Delegation{ExecutorUID: policy.Delegation.ExecutorUID, ExpiresAt: expiry.UTC().Format(time.RFC3339Nano), NotBefore: start.UTC().Format(time.RFC3339Nano)}
+	case "manual":
+	case "read-only":
+		if len(input.Operations) != 0 || len(input.Programs) != 0 || len(input.Assets) != 0 || policy.RequirePasskey {
+			return Policy{}, errors.New("read-only policy must grant no signing authority")
+		}
+	default:
+		return Policy{}, errors.New("unsupported approval mode; automatic requires a separately bound delegation")
 	}
 	var err error
 	policy.Operations, err = normalizeSortedStrings(input.Operations, func(raw string) (string, error) {
@@ -161,6 +201,12 @@ func Normalize(input Policy) (Policy, error) {
 }
 
 func RequireTightening(current, candidate Policy) error {
+	if candidate.ApprovalMode != current.ApprovalMode || candidate.RequirePasskey != current.RequirePasskey || !reflect.DeepEqual(candidate.Delegation, current.Delegation) {
+		if candidate.ApprovalMode != "read-only" {
+			return errors.New("application policy change cannot alter owner approval requirements")
+		}
+	}
+
 	if current.WalletID != candidate.WalletID || current.Role != candidate.Role {
 		return errors.New("application policy change cannot alter wallet identity or role")
 	}

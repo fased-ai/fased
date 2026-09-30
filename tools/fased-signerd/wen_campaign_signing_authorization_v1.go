@@ -13,7 +13,7 @@ func validateWENCampaignConsumedApprovalV1(tx *bolt.Tx, walletID, requestID, dig
 	if authorization == nil {
 		return bad
 	}
-	review, _, binding, e := loadReviewAndPolicyForAuthorizationV2(tx, walletID, requestID, now)
+	review, policy, binding, e := loadReviewAndPolicyForAuthorizationV2(tx, walletID, requestID, now)
 	if e != nil {
 		return e
 	}
@@ -34,6 +34,24 @@ func validateWENCampaignConsumedApprovalV1(tx *bolt.Tx, walletID, requestID, dig
 	var proof signerReviewProofRecordV2
 	auth := authorization
 	if json.Unmarshal(tx.Bucket(bucketSignerReviewProofsV2).Get([]byte(auth.ProofID)), &proof) != nil || proof.ID != auth.ProofID || proof.State != signerReviewProofConsumed || proof.ConsumedAt != auth.AuthorizedAt || auth.AuthorizedAt == "" || auth.ArtifactDigest != review.ArtifactDigest || !equalSignerReviewBindingV2(proof.Binding, binding) {
+		return bad
+	}
+	if proof.ApprovalMethod == "owner-control" {
+		if review.ArtifactKind != wenMarketArtifactKindV1 || policy.ApprovalMode != "manual" || policy.RequirePasskey || proof.CredentialID != "" {
+			return bad
+		}
+		return nil
+	}
+	if proof.ApprovalMethod == "owner-delegation" {
+		if review.ArtifactKind != wenMarketArtifactKindV1 || proof.CredentialID != "" {
+			return bad
+		}
+		return validateWENMarketDelegationV1(policy, proof.ExecutorUID, now)
+	}
+	if policy.ApprovalMode == "automatic" {
+		return bad
+	}
+	if proof.ApprovalMethod != "" {
 		return bad
 	}
 	_, id, e := normalizeSignerWebAuthnCredentialIDV2(proof.CredentialID)

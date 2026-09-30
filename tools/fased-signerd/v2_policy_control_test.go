@@ -190,3 +190,11 @@ func TestSignerApplicationSocketPolicyTightenAndRoleBoundaries(t *testing.T) {
 		t.Fatalf("Agent accepted typed SAT automation: %v", err)
 	}
 }
+
+func TestExplicitManualPolicyCannotUseAutonomousExecution(t *testing.T) {
+	for _, mode := range []string{"manual", "read-only"} {
+		if err := requireAutonomousRoleV2(signerPolicyV2{Role: "agent", ApprovalMode: mode}, normalizedIntentV2{Intent: signerIntentV2{Type: intentSolanaNativeTransfer}}); err == nil {
+			t.Fatalf("%s allowed autonomous signing", mode)
+		}
+	}
+}

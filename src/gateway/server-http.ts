@@ -153,6 +153,7 @@ import {
   upsertNamedWallet,
   normalizeWalletUserRole,
 } from "../wallet/wallet-provider-registry.js";
+import { nextStandardWalletIdentity } from "../wallet/wallet-purpose-labels.js";
 import { walletReadinessFacade } from "../wallet/wallet-readiness-facade.js";
 import { walletDiagnosticErrorMessage } from "../wallet/wallet-redaction.js";
 import {
@@ -5878,14 +5879,16 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
           const generatedLocalSignerIdentity =
-            providerId === "local-socket-signer" && requestedRole
-              ? nextRoleWalletIdentity(
-                  requestedRole,
-                  readWalletProviderRegistry(process.env).wallets,
-                )
+            providerId === "local-socket-signer"
+              ? requestedRole
+                ? nextRoleWalletIdentity(
+                    requestedRole,
+                    readWalletProviderRegistry(process.env).wallets,
+                  )
+                : nextStandardWalletIdentity(readWalletProviderRegistry(process.env).wallets)
               : undefined;
           const localSignerWalletId =
-            providerId === "local-socket-signer" && requestedRole
+            providerId === "local-socket-signer"
               ? requestedWalletId || generatedLocalSignerIdentity?.walletId || ""
               : requestedWalletId;
           const walletName = requestedWalletName || generatedLocalSignerIdentity?.walletName || "";
@@ -5971,17 +5974,6 @@ export function createGatewayHttpServer(opts: GatewayHttpServerOpts): HttpServer
             return;
           }
           if (providerId === "local-socket-signer") {
-            if (!requestedRole) {
-              sendLoginResponse(400, {
-                ok: false,
-                error: {
-                  code: "invalid_wallet_role",
-                  message:
-                    "choose agent, mining, vault, profile, or strategy; the native signer never infers a role",
-                },
-              });
-              return;
-            }
             const chain = inferLocalSignerCreateChain({
               payloadChain: payload.chain,
               walletId: localSignerWalletId,

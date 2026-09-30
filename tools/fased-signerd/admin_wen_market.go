@@ -50,7 +50,7 @@ func runSignerAdminMarketV1(action string, args []string, stdin io.Reader, stdou
 		op = "v2.wenMarket.draft.install"
 		expected["draftSha256"] = v.ExpectedSHA256
 		expected["status"] = "draft-installed"
-	case "install-admission", "install-budget":
+	case "owner-approve", "install-admission", "install-budget":
 		var v wenMarketAdmissionInstallRequestV1
 		if e = decodeSignerAdminStrictJSON(raw, &v); e != nil {
 			return e
@@ -73,9 +73,19 @@ func runSignerAdminMarketV1(action string, args []string, stdin io.Reader, stdou
 	default:
 		return errors.New("unsupported market admin command")
 	}
+	if action == "owner-approve" {
+		op = "v2.wenMarket.ownerApprove"
+	}
 	result, e := callSignerAdmin(common.controlSocket, op, id, body)
 	if e != nil {
 		return e
+	}
+	if action == "owner-approve" {
+		var proof signerWebAuthnProofReferenceV2
+		if e := decodeSignerAdminStrictJSON(result, &proof); e != nil || len(proof.ProofID) != 43 {
+			return errors.New("invalid owner confirmation receipt")
+		}
+		return writeSignerAdminResult(result, stdout)
 	}
 	var receipt map[string]string
 	if e = decodeSignerAdminStrictJSON(result, &receipt); e != nil || !reflect.DeepEqual(receipt, expected) {

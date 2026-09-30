@@ -21,6 +21,9 @@ export type LocalSignerWalletPublicRecord = {
 };
 
 export type LocalSignerPolicyRecord = {
+  approvalMode?: "read-only" | "manual" | "automatic";
+  requirePasskey?: boolean;
+  delegation?: { executorUid: number; notBefore: string; expiresAt: string };
   walletId: string;
   role: LocalSignerWalletRole;
   version: number;
@@ -95,7 +98,8 @@ function assertRoleBaselineRecord(
       `signer-owned wallet ${record.wallet.walletId} has role=${record.policy.role}, not ${role}`,
     );
   }
-  const denyAllRole = role === "profile" || role === "strategy";
+  const denyAllRole =
+    record.policy.approvalMode === "read-only" || role === "profile" || role === "strategy";
   const exactDenyAll =
     denyAllRole &&
     record.policy.operations.length === 0 &&
@@ -119,6 +123,7 @@ export async function createRoleReadySignerOwnedWallet(params: {
   walletId: string;
   role: LocalSignerWalletRole;
   allowExisting?: boolean;
+  readOnly?: boolean;
 }): Promise<LocalSignerWalletPolicyRecord> {
   const walletId = params.walletId.trim();
   if (!/^[a-zA-Z0-9_-]+$/.test(walletId)) {
@@ -129,6 +134,9 @@ export async function createRoleReadySignerOwnedWallet(params: {
     const existing = await readSignerOwnedWallet({ socketPath: params.socketPath, walletId });
     if (!params.allowExisting) {
       throw new Error(`signer-owned wallet already exists: ${walletId}`);
+    }
+    if (params.readOnly && existing.policy.approvalMode !== "read-only") {
+      throw Error("Existing wallet policy is not read-only; explicit owner migration required");
     }
     return assertRoleBaselineRecord(existing, params.role);
   } catch (error) {
@@ -144,7 +152,11 @@ export async function createRoleReadySignerOwnedWallet(params: {
       walletId,
       request: {
         expectedPolicyVersion: 0,
-        baseline: { version: 1, role: params.role },
+        baseline: {
+          version: 1,
+          role: params.role,
+          ...(params.readOnly ? { approvalMode: "read-only" } : {}),
+        },
       },
     });
     return assertRoleBaselineRecord(created, params.role);
@@ -153,6 +165,11 @@ export async function createRoleReadySignerOwnedWallet(params: {
       throw error;
     }
     const existing = await readSignerOwnedWallet({ socketPath: params.socketPath, walletId });
+    if (params.readOnly && existing.policy.approvalMode !== "read-only") {
+      throw Error("Existing wallet policy is not read-only; explicit owner migration required", {
+        cause: error,
+      });
+    }
     return assertRoleBaselineRecord(existing, params.role);
   }
 }

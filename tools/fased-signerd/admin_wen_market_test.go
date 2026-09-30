@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -98,5 +99,26 @@ func TestWENMarketAdminCLIRejectsBeforeContact(t *testing.T) {
 			default:
 			}
 		})
+	}
+}
+
+func TestWENMarketOwnerApprovalCLI(t *testing.T) {
+	hash := wenHashV1([]byte("fixture artifact"))
+	input, _ := json.Marshal(wenMarketAdmissionInstallRequestV1{RequestID: "review-request-001", ExpectedSHA256: hash})
+	for _, raw := range []string{`{"proofId":"` + strings.Repeat("Q", 43) + `"}`, `{"proofId":"wrong"}`, `{"proofId":"` + strings.Repeat("Q", 43) + `","grant":true}`} {
+		server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, raw))
+		var output bytes.Buffer
+		err := runSignerAdminCLI([]string{"wen-market", "owner-approve", "--control-socket", server.path, "--wallet-id", "miner"}, bytes.NewReader(input), &output, nil)
+		sent := waitSignerAdminTestServer(t, server)
+		if sent.Op != "v2.wenMarket.ownerApprove" || sent.WalletID != "miner" {
+			t.Fatal("wrong owner approval route")
+		}
+		if raw == `{"proofId":"`+strings.Repeat("Q", 43)+`"}` {
+			if err != nil || output.Len() == 0 {
+				t.Fatal(err)
+			}
+		} else if err == nil || output.Len() != 0 {
+			t.Fatal("invalid owner receipt accepted")
+		}
 	}
 }

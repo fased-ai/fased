@@ -1,6 +1,7 @@
 import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 
 export type WenApprovalProfile = {
+  confirmOwnerApproval?(input: unknown): Promise<unknown>;
   readCampaignSelection?(): Promise<unknown>;
   prepareClaimApproval(input: unknown): Promise<unknown>;
   beginClaimApproval(input: unknown): Promise<unknown>;
@@ -48,6 +49,7 @@ export function registerWenApprovalGateway(
   };
   for (const legacyMethod of [
     ...WEN_APPROVAL_METHODS,
+    ...(namespace === "wen.market.approval" ? ["wen.market.approval.owner-confirm"] : []),
     ...(namespace !== "wen.mining.approval" ? ["wen.campaign.approval.selection"] : []),
   ]) {
     const method = namespace + "." + legacyMethod.split(".").at(-1);
@@ -105,31 +107,35 @@ export function registerWenApprovalGateway(
         }
         busy = true;
         const version = generation;
-        if (suffix === "begin") {
+        if (suffix === "begin" || suffix === "owner-confirm") {
           const timer = setTimeout(cancel, 120000);
           timer.unref();
           pending = { connection, profile, timer };
         }
         try {
           const payload =
-            suffix === "selection"
-              ? await (profile.readCampaignSelection
-                  ? profile.readCampaignSelection()
-                  : Promise.reject(Error("Campaign selection unavailable")))
-              : suffix === "execute" || suffix === "recover"
-                ? await profile.runClaimJourney(params.requestId as string, suffix)
-                : suffix === "prepare"
-                  ? await profile.prepareClaimApproval(params.input)
-                  : suffix === "begin"
-                    ? await profile.beginClaimApproval(params.input)
-                    : await profile.finishClaimApproval(
-                        params.challengeId as string,
-                        params.credential,
-                      );
+            suffix === "owner-confirm"
+              ? await (profile.confirmOwnerApproval
+                  ? profile.confirmOwnerApproval(params.input)
+                  : Promise.reject(Error("Owner confirmation unavailable")))
+              : suffix === "selection"
+                ? await (profile.readCampaignSelection
+                    ? profile.readCampaignSelection()
+                    : Promise.reject(Error("Campaign selection unavailable")))
+                : suffix === "execute" || suffix === "recover"
+                  ? await profile.runClaimJourney(params.requestId as string, suffix)
+                  : suffix === "prepare"
+                    ? await profile.prepareClaimApproval(params.input)
+                    : suffix === "begin"
+                      ? await profile.beginClaimApproval(params.input)
+                      : await profile.finishClaimApproval(
+                          params.challengeId as string,
+                          params.credential,
+                        );
           if (version !== generation || read() !== profile) {
             throw Error("WEN approval lifecycle changed");
           }
-          if (suffix === "finish" && pending) {
+          if ((suffix === "finish" || suffix === "owner-confirm") && pending) {
             pending.approved = true;
           }
           respond(true, {

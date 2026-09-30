@@ -31,8 +31,9 @@ const (
 )
 
 type signerRoleBaselineRequestV1 struct {
-	Version uint64 `json:"version"`
-	Role    string `json:"role"`
+	ApprovalMode string `json:"approvalMode,omitempty"`
+	Version      uint64 `json:"version"`
+	Role         string `json:"role"`
 }
 
 type signerRoleBaselineActivationRequestV1 struct {
@@ -183,6 +184,9 @@ func signerRoleBaselineRuntimeFromEnvV1() signerRoleBaselineRuntimeV1 {
 
 func normalizeRoleBaselineRequestV1(input signerRoleBaselineRequestV1) (signerRoleBaselineRequestV1, error) {
 	input.Role = strings.ToLower(strings.TrimSpace(input.Role))
+	if input.ApprovalMode != "" && input.ApprovalMode != "read-only" {
+		return signerRoleBaselineRequestV1{}, errors.New("new wallet baseline permits only read-only approval mode")
+	}
 	if input.Version != signerRoleBaselineVersionV1 {
 		return signerRoleBaselineRequestV1{}, fmt.Errorf(
 			"unsupported signer role baseline version %d; supported version is %d",
@@ -221,6 +225,9 @@ func compileSignerRoleBaselineV1(
 	walletPublicKey, err = normalizePublicKeyV2(walletPublicKey, "signer wallet public key")
 	if err != nil {
 		return signerPolicyV2{}, err
+	}
+	if request.ApprovalMode == "read-only" {
+		return normalizeSignerPolicyV2(signerPolicyV2{WalletID: walletID, Role: request.Role, BaselineVersion: request.Version, ApprovalMode: "read-only"})
 	}
 	policy := signerPolicyV2{
 		WalletID:        walletID,
@@ -465,7 +472,7 @@ func (s *signerServiceV2) walletReadinessV2(walletID string) (signerWalletReadin
 	}
 	policyReady := policy.BaselineVersion == signerRoleBaselineVersionV1 &&
 		((len(policy.Operations) > 0 && len(policy.Programs) > 0 && len(policy.Assets) > 0) ||
-			((policy.Role == "profile" || policy.Role == "strategy") && len(policy.Operations) == 0 && len(policy.Programs) == 0 && len(policy.Assets) == 0))
+			((policy.ApprovalMode == "read-only" || policy.Role == "profile" || policy.Role == "strategy") && len(policy.Operations) == 0 && len(policy.Programs) == 0 && len(policy.Assets) == 0))
 	operationLane := "blocked"
 	if policyReady {
 		switch policy.Role {
@@ -482,6 +489,9 @@ func (s *signerServiceV2) walletReadinessV2(walletID string) (signerWalletReadin
 		case "keeper":
 			operationLane = "keeper-fee-payer-only"
 		}
+	}
+	if policy.ApprovalMode == "read-only" && policyReady {
+		operationLane = "read-only"
 	}
 	result := signerWalletReadinessV2{
 		WalletID:        wallet.WalletID,

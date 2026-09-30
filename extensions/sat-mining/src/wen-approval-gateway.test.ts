@@ -2,8 +2,9 @@ import type { FasedAgentPluginApi } from "fased/plugin-sdk";
 import { afterEach, expect, it, vi } from "vitest";
 import { registerWenApprovalGateway, WEN_APPROVAL_METHODS } from "./wen-approval-gateway.js";
 afterEach(() => vi.useRealTimers());
-function setup() {
+function setup(namespace: "wen.mining.approval" | "wen.market.approval" = "wen.mining.approval") {
   const profile = {
+    confirmOwnerApproval: vi.fn(async () => ({ proofId: "Q".repeat(43) })),
     prepareClaimApproval: vi.fn(async () => ({ prepared: true })),
     beginClaimApproval: vi.fn(async () => ({ challengeId: "challenge" })),
     finishClaimApproval: vi.fn(async () => ({ proof: "proof" })),
@@ -21,10 +22,11 @@ function setup() {
       },
     },
     () => selected,
+    namespace,
   );
   async function call(suffix: string, params: unknown, connection = "owner") {
     const respond = vi.fn();
-    await handlers.get("wen.mining.approval." + suffix)!({
+    await handlers.get(namespace + "." + suffix)!({
       params,
       client: { connId: connection },
       respond,
@@ -131,4 +133,26 @@ it("registers a separate fail-closed campaign namespace without a bound profile"
     expect(respond.mock.calls[0][0]).toBe(false);
   }
   stop();
+});
+
+it("joins owner confirmation to the same connection and consumes it exactly once", async () => {
+  const s = setup("wen.market.approval");
+  expect((await s.call("execute", { requestId: "request" }))[0]).toBe(false);
+  expect((await s.call("owner-confirm", { input: {} }))[0]).toBe(true);
+  expect((await s.call("execute", { requestId: "request" }, "other"))[0]).toBe(false);
+  expect((await s.call("finish", { challengeId: "other", credential: {} }))[0]).toBe(false);
+  expect((await s.call("execute", { requestId: "request" }))[0]).toBe(true);
+  expect((await s.call("execute", { requestId: "request" }))[0]).toBe(false);
+  expect(s.profile.runClaimJourney).toHaveBeenCalledTimes(1);
+  expect(s.profile.beginClaimApproval).not.toHaveBeenCalled();
+  expect(s.profile.finishClaimApproval).not.toHaveBeenCalled();
+});
+it("cancels owner confirmation on disconnect or timeout", async () => {
+  vi.useFakeTimers();
+  const s = setup("wen.market.approval");
+  await s.call("owner-confirm", { input: {} });
+  vi.advanceTimersByTime(120000);
+  expect((await s.call("execute", { requestId: "request" }))[0]).toBe(false);
+  expect(s.profile.runClaimJourney).not.toHaveBeenCalled();
+  s.cancel();
 });

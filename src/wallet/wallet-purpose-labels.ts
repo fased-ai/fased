@@ -25,3 +25,13 @@ export function nextWalletDisplayName(wallets: ReadonlyArray<{ name?: string }>)
     }
   }
 }
+
+export function nextStandardWalletIdentity(wallets: ReadonlyArray<{ id: string; name?: string }>) {
+  const ids = new Set(wallets.map((wallet) => wallet.id.toLowerCase().replace(/-/g, "_")));
+  for (let number = 1; ; number++) {
+    const walletId = `wallet-${number}`;
+    if (!ids.has(walletId.replace(/-/g, "_"))) {
+      return { walletId, walletName: nextWalletDisplayName(wallets) };
+    }
+  }
+}

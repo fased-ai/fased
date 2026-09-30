@@ -34,7 +34,7 @@ const signerMocks = vi.hoisted(() => ({
     networkReady: false,
     rotation: null as Record<string, unknown> | null,
   },
-  create: vi.fn(async (params: { walletId: string; role: string }) => {
+  create: vi.fn(async (params: { walletId: string; role: string; readOnly?: boolean }) => {
     const signerWalletId =
       params.walletId
         .trim()
@@ -53,19 +53,22 @@ const signerMocks = vi.hoisted(() => ({
       policy: {
         walletId: signerWalletId,
         role: params.role,
+        ...(params.readOnly ? { approvalMode: "read-only" } : {}),
         version: 1,
         baselineVersion: 1,
-        operations: ["solana.nativeTransfer"],
-        programs: ["11111111111111111111111111111111"],
-        assets: [
-          {
-            asset: "solana:native",
-            destinations: ["11111111111111111111111111111111"],
-            maxPerTx: "1000000000",
-            maxDaily: "5000000000",
-            reviewedDestinations: true,
-          },
-        ],
+        operations: params.readOnly ? [] : ["solana.nativeTransfer"],
+        programs: params.readOnly ? [] : ["11111111111111111111111111111111"],
+        assets: params.readOnly
+          ? []
+          : [
+              {
+                asset: "solana:native",
+                destinations: ["11111111111111111111111111111111"],
+                maxPerTx: "1000000000",
+                maxDaily: "5000000000",
+                reviewedDestinations: true,
+              },
+            ],
         hash: `sha256:${"a".repeat(64)}`,
       },
     };
@@ -637,6 +640,32 @@ describe("walletSetupCommand native signer boundary", () => {
       ]);
       expect(logs.join("\n")).toContain("Wallet handle: @wallet:agent");
       expect(logs.join("\n")).toContain("Wallet handle: @wallet:agent-2");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a standard read-only wallet when no compatibility role is selected", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-read-only-"));
+    const configPath = path.join(root, "fased.json");
+    await fs.writeFile(configPath, "{}\n");
+    vi.stubEnv("FASED_CONFIG_PATH", configPath);
+    vi.stubEnv("FASED_DISABLE_CONFIG_CACHE", "1");
+    vi.stubEnv("FASED_STATE_DIR", path.join(root, "state"));
+    clearConfigCache();
+    try {
+      await walletSetupCommand({ log: vi.fn() } as never, {
+        mode: "local-signer-create",
+        chain: "solana",
+        rpcUrl: "https://rpc.example/solana",
+        nonInteractive: true,
+        noDoctor: true,
+      });
+      expect(signerMocks.create).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true }));
+      expect(readWalletProviderRegistry(process.env).wallets[0]).toMatchObject({
+        name: "Wallet",
+        metadata: { purpose: "wallet" },
+      });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

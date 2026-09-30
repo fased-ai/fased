@@ -36,7 +36,7 @@ func TestWENMarketApplicationRejectsUncheckedInput(t *testing.T) {
 
 func TestWENMarketRuntimeAndControlBoundaries(t *testing.T) {
 	service := &signerServiceV2{}
-	for _, op := range []string{"v2.wenMarket.review.prepare", "v2.wenMarket.journey", "v2.wenMarket.draft.install", "v2.wenMarket.admission.install"} {
+	for _, op := range []string{"v2.wenMarket.review.prepare", "v2.wenMarket.journey", "v2.wenMarket.draft.install", "v2.wenMarket.admission.install", "v2.wenMarket.ownerApprove"} {
 		req := request{Op: op, WalletID: "miner", Request: []byte(`{}`)}
 		if e := mustValidate(req, signerConfig{}); e != nil {
 			t.Fatal("runtime envelope rejected", op, e)
@@ -49,7 +49,7 @@ func TestWENMarketRuntimeAndControlBoundaries(t *testing.T) {
 		if _, e := service.handle(req, signerConfig{}, false); e == nil || e.Error() == "unsupported signer-v2 op" {
 			t.Fatal("runtime did not reach guarded route", op, e)
 		}
-		if strings.HasSuffix(op, "install") {
+		if strings.HasSuffix(op, "install") || op == "v2.wenMarket.ownerApprove" {
 			calls := 0
 			if _, e := service.marketAdminWithFactoryV1(context.Background(), req, signerConfig{}, false, func(string) wenMarketExecutionRPCV1 { calls++; return nil }); e == nil || calls != 0 {
 				t.Fatal("application reached administrative RPC")

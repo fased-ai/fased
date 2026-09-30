@@ -1,4 +1,4 @@
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 import {
   walletCanaryCommand,
   walletInboundListCommand,
@@ -131,13 +131,13 @@ export function registerWalletCommands(program: Command) {
 
   wallet
     .command("create")
-    .description("Create a role-ready signer-owned Solana wallet")
+    .description("Create a signer-owned Solana wallet; configure permissions separately")
     .option("--wallet-id <id>", "Named wallet id")
     .option("--wallet-name <name>", "Wallet display name")
-    .option("--role <role>", "Permanent signer role: agent|mining|vault|profile|strategy")
+    .addOption(new Option("--role <role>", "Legacy compatibility role").hideHelp())
     .option("--rpc-url <url>", "One primary Solana RPC URL")
     .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
-    .option("--force", "Resume only the same existing signer wallet and role", false)
+    .option("--force", "Resume only the same existing signer wallet", false)
     .option("--non-interactive", "Do not prompt; require all inputs", false)
     .option("--json", "Print JSON output", false)
     .action(async (opts) => {
@@ -162,7 +162,7 @@ export function registerWalletCommands(program: Command) {
     .description("Import an owner-only Solana keypair through the native signer lifecycle")
     .option("--wallet-id <id>", "Named wallet id")
     .option("--wallet-name <name>", "Wallet display name")
-    .option("--role <role>", "Permanent signer role: agent|mining|vault|profile|strategy")
+    .addOption(new Option("--role <role>", "Legacy compatibility role").hideHelp())
     .option("--file <absolute-path>", "Owner-only Solana keypair JSON")
     .option("--rpc-url <url>", "One primary Solana RPC URL")
     .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
@@ -304,7 +304,7 @@ export function registerWalletCommands(program: Command) {
     .option("--chain <chain>", "solana", "solana")
     .option("--wallet-id <id>", "Named wallet id (examples: agent, mining, vault)")
     .option("--wallet-name <value>", "Friendly wallet display name (for UI/skills/plugins)")
-    .option("--role <role>", "Permanent signer role: agent|mining|vault|profile|strategy")
+    .addOption(new Option("--role <role>", "Legacy compatibility role").hideHelp())
     .option(
       "--import-file <absolute-path>",
       "Owner-only Solana keypair JSON for local-signer-import; secret is passed by file descriptor, never argv/env",
@@ -430,7 +430,7 @@ export function registerWalletCommands(program: Command) {
     });
 
   wallet
-    .command("role set <wallet-id> <role>")
+    .command("role set <wallet-id> <role>", { hidden: true })
     .description(
       "Set Default Agent wallet fallback or initialize a missing Agent/Vault purpose. Existing purpose stays permanent.",
     )
