@@ -337,3 +337,8 @@ func CanonicalConfigJSON(config Config) ([]byte, error) {
 	}
 	return json.Marshal(config)
 }
+
+// ownsGatewayConfiguration matches the declared writers accepted by typed state.
+func (config Config) ownsGatewayConfiguration(uid uint32) bool {
+	return uid == config.Operator.UID || uid == config.Gateway.UID
+}
