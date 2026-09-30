@@ -165,6 +165,41 @@ describe("strict owner policy input", () => {
     expect([...__testing.VAULT_BOND_ACTIONS].toSorted(compare)).toEqual(bond.toSorted(compare));
   });
 
+  it("accepts only explicit WEN Buy permissions with matching pool budgets", () => {
+    const buy = validPolicy({
+      operations: ["wen.market.buy.v1"],
+      programs: [__testing.TOKEN_PROGRAM, __testing.TOKEN_2022_PROGRAM, destination],
+      assets: [
+        {
+          asset: "solana:native",
+          destinations: [destination],
+          maxPerTx: "6500000",
+          maxDaily: "6500000",
+        },
+        {
+          asset: `solana:spl:${destination}`,
+          destinations: [destination],
+          maxPerTx: "100000",
+          maxDaily: "100000",
+        },
+      ],
+    });
+    expect(normalizeOwnerPolicy(buy).operations).toEqual(["wen.market.buy.v1"]);
+    expect(() => normalizeOwnerPolicy({ ...buy, operations: ["wen.market.sell.v1"] })).toThrow(
+      "supported typed signer operation",
+    );
+    expect(() => normalizeOwnerPolicy({ ...buy, programs: [destination] })).toThrow(
+      "explicit market programs",
+    );
+    expect(() => normalizeOwnerPolicy({ ...buy, assets: [buy.assets[0]] })).toThrow(
+      "matching native/cash",
+    );
+    const wrongPool = { ...buy.assets[1], destinations: [__testing.SYSTEM_PROGRAM] };
+    expect(() => normalizeOwnerPolicy({ ...buy, assets: [buy.assets[0], wrongPool] })).toThrow(
+      "matching native/cash",
+    );
+  });
+
   it("normalizes a typed policy deterministically and preserves the federation signer domain", () => {
     const federation = normalizeOwnerPolicy({
       walletId: "vault",

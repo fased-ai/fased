@@ -226,7 +226,7 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.wenBondClaim.draft.install", "v2.wenBondClaim.admission.install", "v2.wenBondPurchase.draft.install", "v2.wenBondPurchase.admission.install", "v2.wenMarket.draft.install", "v2.wenMarket.admission.install", "v2.wenCampaign.draft.install", "v2.wenCampaign.admission.install", "v2.wenMining.claimReview.install", "v2.wenMining.preimage.install", "v2.wenMining.bootstrap.install", "v2.wenMining.review.install", "v2.wenBtc.route.install", "v2.network.put", "v2.network.bootstrap", "v2.network.setPrimary", "v2.network.repairMigratedPrimary", "v2.rpcProfile.bind", "v2.policy.put", "v2.policy.tighten", "v2.policy.activateBaseline", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get", "v2.satCommitment.allocate", "v2.satCommitment.binding.get", "v2.keeperFeePayer.ensure":
+	case "v2.wenBondClaim.draft.install", "v2.wenBondClaim.admission.install", "v2.wenBondPurchase.draft.install", "v2.wenBondPurchase.admission.install", "v2.wenMarket.draft.install", "v2.wenMarket.admission.install", "v2.wenMarket.budget.install", "v2.wenCampaign.draft.install", "v2.wenCampaign.admission.install", "v2.wenMining.claimReview.install", "v2.wenMining.preimage.install", "v2.wenMining.bootstrap.install", "v2.wenMining.review.install", "v2.wenBtc.route.install", "v2.network.put", "v2.network.bootstrap", "v2.network.setPrimary", "v2.network.repairMigratedPrimary", "v2.rpcProfile.bind", "v2.policy.put", "v2.policy.tighten", "v2.policy.activateBaseline", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get", "v2.satCommitment.allocate", "v2.satCommitment.binding.get", "v2.keeperFeePayer.ensure":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -415,6 +415,7 @@ func parseArgs() signerConfig {
 		"v2.wenBondPurchase.journey":           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CLAIM_JOURNEY", 6),
 		"v2.wenMarket.draft.install":           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.wenMarket.admission.install":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
+		"v2.wenMarket.budget.install":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.wenMarket.review.prepare":          getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CLAIM_REVIEW_PREPARE", 6),
 		"v2.wenMarket.journey":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CLAIM_JOURNEY", 6),
 		"v2.wenCampaign.review.prepare":        getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_CLAIM_REVIEW_PREPARE", 6),

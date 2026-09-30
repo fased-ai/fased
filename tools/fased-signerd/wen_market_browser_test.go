@@ -32,7 +32,7 @@ func marketBrowserSignerFixtureV1(t *testing.T, host, origin string) (*signerSer
 	if e != nil {
 		t.Fatal(e)
 	}
-	cash := strconv.FormatUint(a.Binding.Snapshot.Quote.InputCash, 10)
+	cash := strconv.FormatUint(a.Limits.MaxCash, 10)
 	_, e = store.putPolicy(signerPolicyV2{WalletID: "miner", Role: old.Role, Operations: []string{wenMarketOperationV1}, Programs: a.requiredPrograms(), Assets: []signerPolicyAssetV2{{Asset: "solana:native", Destinations: []string{p.Pool.String()}, MaxPerTx: "6000", MaxDaily: "6000"}, {Asset: a.cashAsset(), Destinations: []string{p.Pool.String()}, MaxPerTx: cash, MaxDaily: cash}}}, old.Version)
 	if e != nil {
 		t.Fatal(e)
@@ -81,10 +81,8 @@ func marketBrowserSignerFixtureV1(t *testing.T, host, origin string) (*signerSer
 	if e != nil {
 		t.Fatal(e)
 	}
-	for scope, n := range wenMarketReservationScopesV1(a) {
-		if e = store.configureWENBudgetV1(scope, n); e != nil {
-			t.Fatal(e)
-		}
+	if e = service.installWENMarketBudgetV1(cfg, "miner", a.RequestID, digest, true); e != nil {
+		t.Fatal(e)
 	}
 	if e = service.installWENMarketAdmissionV1(context.Background(), cfg, "miner", a.RequestID, digest, true, factory); e != nil {
 		t.Fatal(e)

@@ -50,7 +50,7 @@ func runSignerAdminMarketV1(action string, args []string, stdin io.Reader, stdou
 		op = "v2.wenMarket.draft.install"
 		expected["draftSha256"] = v.ExpectedSHA256
 		expected["status"] = "draft-installed"
-	case "install-admission":
+	case "install-admission", "install-budget":
 		var v wenMarketAdmissionInstallRequestV1
 		if e = decodeSignerAdminStrictJSON(raw, &v); e != nil {
 			return e
@@ -66,6 +66,10 @@ func runSignerAdminMarketV1(action string, args []string, stdin io.Reader, stdou
 		expected["requestId"] = v.RequestID
 		expected["artifactDigest"] = v.ExpectedSHA256
 		expected["status"] = "admission-installed"
+		if action == "install-budget" {
+			op = "v2.wenMarket.budget.install"
+			expected["status"] = "budget-installed"
+		}
 	default:
 		return errors.New("unsupported market admin command")
 	}
