@@ -925,6 +925,16 @@ async function createSignerOwnedWalletForSetup(params: {
           profile: selectedProfile,
         })
     : undefined;
+  const currentNetworkVersion =
+    operatorLifecycle && params.options.force && !profileBinding
+      ? invokeNativeSignerWalletReadiness({
+          signerBinPath: operatorLifecycle.signerBinPath,
+          socketFlag: "--operator-socket",
+          socketPath: operatorLifecycle.operatorSocketPath,
+          walletId: signerWalletId,
+          env: mergedEnv,
+        }).networkVersion
+      : 0;
   const network = profileBinding
     ? {
         hash: profileBinding.networkHash,
@@ -938,7 +948,7 @@ async function createSignerOwnedWalletForSetup(params: {
           socketPath: operatorLifecycle.operatorSocketPath,
           walletId: signerWalletId,
           primaryRpcUrl: params.rpcUrl!,
-          expectedVersion: 0,
+          expectedVersion: currentNetworkVersion,
           env: mergedEnv,
         })
       : await configureSignerOwnedWalletNetwork({

@@ -957,6 +957,24 @@ describe("walletSetupCommand native signer boundary", () => {
       );
       expect(hostedWallet?.metadata?.networkReady).toBe(true);
       expect(hostedWallet?.metadata?.policyState).toBe("ready");
+      await walletSetupCommand({ log: () => {} } as never, {
+        mode: "local-signer-create",
+        chain: "solana",
+        walletId: "agent",
+        walletName: "Agent",
+        role: "agent",
+        rpcUrl: "https://hosted-rpc.example/solana?api-key=secret",
+        nonInteractive: true,
+        noDoctor: true,
+        noSignerHints: true,
+        force: true,
+      });
+      expect(signerMocks.importProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining(["set-primary", "--expected-version", "1"]),
+        expect.anything(),
+      );
+      expect(readWalletProviderRegistry(process.env).wallets).toHaveLength(1);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
