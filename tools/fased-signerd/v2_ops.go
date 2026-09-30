@@ -847,6 +847,134 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(commitment)
+	case "v2.wenBTCClaim.prepare":
+		intent, err := decodeWENBTCClaimIntentV1(req.Request)
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.prepareConfiguredWENBTCClaimV1(context.Background(), cfg, req.WalletID, intent)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.wenMiningFunding.prepare":
+		intent, err := decodeWENMiningFundingIntentV1(req.Request)
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.prepareConfiguredWENMiningFundingV1(context.Background(), cfg, req.WalletID, intent)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.wenNativeClaim.prepare":
+		intent, err := decodeWENNativeClaimIntentV1(req.Request)
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.prepareConfiguredWENNativeClaimV1(context.Background(), cfg, req.WalletID, intent)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.wenWithdrawal.prepare":
+		intent, err := decodeWENWithdrawalIntentV1(req.Request)
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.prepareConfiguredWENWithdrawalV1(context.Background(), cfg, req.WalletID, intent)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.wenMining.prepare":
+		intent, err := decodeWENMiningIntentV1(req.Request)
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.prepareConfiguredWENMiningV1(context.Background(), cfg, req.WalletID, intent)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.wenMining.preimage.install":
+		return s.installMiningPreimageServiceV1(req, cfg, control)
+	case "v2.wenMining.claim.recover":
+		return s.recoverWENMiningClaimsServiceV1(req, cfg)
+	case "v2.wenMining.claim.journey":
+		return s.miningClaimJourneyServiceV1(req, cfg)
+	case "v2.wenMining.claim.review.prepare":
+		return s.prepareWENMiningClaimReviewServiceV1(req, cfg)
+	case "v2.wenMining.claim.propose":
+		return s.proposeWENMiningClaimServiceV1(req, cfg)
+	case "v2.wenBondClaim.review.prepare", "v2.wenBondClaim.journey":
+		return s.bondClaimApplicationServiceV2(req, cfg)
+	case "v2.wenBondClaim.draft.install", "v2.wenBondClaim.admission.install":
+		return s.bondClaimAdminServiceV2(req, cfg, control)
+	case "v2.wenBondPurchase.review.prepare", "v2.wenBondPurchase.journey":
+		return s.bondPurchaseApplicationServiceV2(req, cfg)
+	case "v2.wenBondPurchase.draft.install", "v2.wenBondPurchase.admission.install":
+		return s.bondPurchaseAdminServiceV2(req, cfg, control)
+	case "v2.wenMarket.review.prepare", "v2.wenMarket.journey":
+		return s.marketApplicationServiceV1(req, cfg)
+	case "v2.wenMarket.draft.install", "v2.wenMarket.admission.install":
+		return s.marketAdminServiceV1(req, cfg, control)
+	case "v2.wenCampaign.review.prepare", "v2.wenCampaign.journey":
+		return s.campaignApplicationServiceV1(req, cfg)
+	case "v2.wenCampaign.draft.install", "v2.wenCampaign.admission.install":
+		return s.campaignAdminServiceV1(req, cfg, control)
+	case "v2.wenMining.claimReview.install":
+		return s.installMiningClaimBootstrapServiceV1(req, cfg, control)
+	case "v2.wenMining.bootstrap.install":
+		return s.installMiningBootstrapServiceV1(req, cfg, control)
+	case "v2.wenMining.review.install":
+		return s.installMiningRevealReviewServiceV1(req, cfg, control)
+	case "v2.wenBtc.route.install":
+		return s.installWENBTCRouteServiceV1(req, cfg, control)
+	case "v2.wenBtc.route.preview", "v2.wenBtc.inspect", "v2.wenBtc.prepare":
+		return s.inspectWENBTCV1(req, cfg)
+	case "v2.vaultMining.binding.inspect":
+		var body vaultMiningBindingRequestV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		policy, err := s.store.getPolicy(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		if policy.Role != "agent" {
+			return nil, errors.New("Vault inspection requires Agent executor wallet")
+		}
+		wallet, err := s.keys.PublicRecord(req.WalletID)
+		if err != nil {
+			return nil, err
+		}
+		address, err := solana.PublicKeyFromBase58(wallet.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+		urls, err := s.keys.SolanaRPCURLsV2(req.WalletID)
+		if err != nil {
+			return nil, errSignerNetworkPendingV2
+		}
+		result, err := inspectVaultMiningBindingV1(urls, address, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
+	case "v2.vaultMining.commitment.allocate":
+		if cfg.readOnly {
+			return nil, errors.New("read-only signer mode")
+		}
+		var body signerVaultMiningAllocateV1
+		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
+			return nil, err
+		}
+		result, err := s.allocateReviewedVaultCommitmentV1(req.WalletID, body)
+		if err != nil {
+			return nil, err
+		}
+		return marshalSignerResultV2(result)
 	case "v2.satCommitment.binding.get":
 		var body signerSATCommitmentBindingRequestV1
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
@@ -874,7 +1002,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 
 func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2, error) {
 	switch strings.TrimSpace(req.Intent.Type) {
-	case intentSolanaVaultBondAction, intentSolanaAgentCapitalAction, intentSolanaMoneyFoundation, intentFederationBondChallenge:
+	case intentSolanaVaultBondAction, intentSolanaAgentCapitalAction, intentSolanaVaultMining, intentSolanaMoneyFoundation, intentFederationBondChallenge:
 		return signerOperationV2{}, errors.New("Vault bond, Agent Capital, money-foundation, and federation intents require signer-owned reviewed authorization")
 	}
 	walletRecord, err := s.keys.PublicRecord(req.IntentWalletID())
@@ -987,6 +1115,9 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		return signerOperationV2{}, errSignerNetworkPendingV2
 	}
 	rpcURLs := signerExecutionRPCURLsV2(network)
+	if err := validateSATRewardEntryRPCV2(rpcURLs, intent); err != nil {
+		return signerOperationV2{}, err
+	}
 	var verificationRPCURLs []string
 	if intent.Intent.Type == intentSolanaSATLookupTable || len(intent.AddressLookupTables) > 0 {
 		verificationRPCURLs, err = resolveSATLookupVerificationRPCURLsV2(network)
@@ -1875,7 +2006,22 @@ func (s *signerServiceV2) reconcile(requestID, walletID string) (signerOperation
 	case "failed":
 		return s.store.markFailed(requestID, errors.New("Solana transaction failed on chain"))
 	}
-	raw, signedTx, artifactErr := decodeStoredSignedOperationV2(operation)
+	var raw []byte
+	var signedTx *solana.Transaction
+	var artifactErr error
+	if operation.IntentType == intentSolanaVaultMining {
+		if _, err := signerVaultReleaseContextV1("devnet", solanaDevnetGenesisHashV2); err != nil {
+			return operation, err
+		}
+		rpcURLs, err = solanaRPCURLsForClusterV2(rpcURLs, "devnet")
+		if err != nil {
+			return operation, err
+		}
+		raw, signedTx, artifactErr = s.keys.decodeVaultBroadcastV1(operation)
+	} else {
+		raw, signedTx, artifactErr = decodeStoredSignedOperationV2(operation)
+	}
+	defer zeroBytes(raw)
 	if artifactErr != nil {
 		return s.store.markUnknown(requestID, artifactErr)
 	}

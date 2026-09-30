@@ -860,7 +860,7 @@ describe("runOnboardingWizard", () => {
       }
       if (message === "Wallet role (required)") {
         rolePromptCount += 1;
-        return rolePromptCount === 1 ? "agent" : "mining";
+        return rolePromptCount === 1 ? "agent" : "vault";
       }
       if (message === "How do you want to hatch your bot?") {
         return "skip";
@@ -916,21 +916,21 @@ describe("runOnboardingWizard", () => {
       expect(walletSetupCommand).toHaveBeenNthCalledWith(
         2,
         expect.anything(),
-        expect.objectContaining({ role: "mining", rpcUrl: "https://rejected.example/solana" }),
+        expect.objectContaining({ role: "vault", rpcUrl: "https://rejected.example/solana" }),
       );
       expect(process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT).toBe(
         "https://accepted.example/solana",
       );
-      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__MINING).toBeUndefined();
+      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__VAULT).toBeUndefined();
       for (const [written] of writeConfigFile.mock.calls) {
         expect(
           (written as { env?: { vars?: Record<string, string> } }).env?.vars
-            ?.FASED_WALLET_SOLANA_RPC_URL__MINING,
+            ?.FASED_WALLET_SOLANA_RPC_URL__VAULT,
         ).toBeUndefined();
       }
     } finally {
       delete process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT;
-      delete process.env.FASED_WALLET_SOLANA_RPC_URL__MINING;
+      delete process.env.FASED_WALLET_SOLANA_RPC_URL__VAULT;
     }
   });
 
@@ -2663,6 +2663,15 @@ describe("runOnboardingWizard", () => {
       prompter,
     );
 
+    const walletRolePrompt = select.mock.calls.find(
+      ([options]) => (options as { message?: string }).message === "Wallet role (required)",
+    )?.[0] as { options?: Array<{ value: string }> } | undefined;
+    expect(walletRolePrompt?.options?.map((option) => option.value)).toEqual(["agent", "vault"]);
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("Fased needs no personal Mining wallet"),
+      "WEN",
+    );
+
     expect(prompter.note).toHaveBeenCalledWith(
       expect.stringContaining("READINESS"),
       "Operator readiness",
@@ -2675,8 +2684,8 @@ describe("runOnboardingWizard", () => {
       expect.stringContaining("AGENT WALLET: Agent Wallet"),
       "Operator readiness",
     );
-    expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("MINING WALLET:"),
+    expect(prompter.note).not.toHaveBeenCalledWith(
+      expect.stringContaining("LEGACY MINING WALLET:"),
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(

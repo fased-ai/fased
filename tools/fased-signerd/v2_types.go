@@ -28,6 +28,7 @@ const (
 	intentSolanaSATLookupTable     = "solana.satLookupTable"
 	intentSolanaVaultBondAction    = "solana.vaultBondAction"
 	intentSolanaAgentCapitalAction = "solana.agentCapitalAction"
+	intentSolanaVaultMining        = "solana.vaultMining"
 	intentSolanaMoneyFoundation    = "solana.moneyFoundationAction"
 	intentFederationBondChallenge  = "federation.bondChallenge"
 	intentSolanaJupiterSwap        = "solana.jupiter.swap"
@@ -59,6 +60,8 @@ type signerCapabilitiesV2 struct {
 }
 
 type signerIntentV2 struct {
+	WENBTC              *signerWENBTCIntentV1                  `json:"wenBtc,omitempty"`
+	VaultMining         *signerVaultMiningIntentV1             `json:"vaultMining,omitempty"`
 	Type                string                                 `json:"type"`
 	Destination         string                                 `json:"destination,omitempty"`
 	Lamports            string                                 `json:"lamports,omitempty"`
@@ -284,6 +287,18 @@ func normalizeSignerIntentV2(input signerIntentV2) (normalizedIntentV2, error) {
 }
 
 func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.PublicKey) (normalizedIntentV2, error) {
+	if input.Type == intentWENBTCSubscriptionV1 || input.WENBTC != nil {
+		// No advertised capability until independent hydration and budget/review
+		// execution exist. Metadata must never fall through to a legacy intent.
+		return normalizedIntentV2{}, errors.New("WEN BTC requires dedicated signer-owned descriptor and offer admission; signing disabled")
+	}
+
+	if input.Type == intentSolanaVaultMining {
+		return normalizeVaultMiningIntentV1(input, wallet)
+	}
+	if input.VaultMining != nil {
+		return normalizedIntentV2{}, errors.New("Vault mining metadata requires its dedicated intent")
+	}
 	if isJupiterIntentTypeV2(strings.TrimSpace(input.Type)) {
 		return normalizeJupiterIntentV2(input)
 	}

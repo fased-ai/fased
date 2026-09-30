@@ -31,3 +31,20 @@ See:
 
 - [Signer administration](./ADMIN.md)
 - [Signer-owned WebAuthn](./WEBAUTHN.md)
+
+### Candidate campaign operator setup
+
+The source candidate exposes two owner-control commands. Each reads a bounded,
+strict JSON envelope from stdin and verifies the exact installation receipt:
+
+```sh
+fased-signerd admin wen-campaign install-draft --control-socket /path/to/control.sock --wallet-id miner < reviewed-draft-request.json
+fased-signerd admin wen-campaign install-admission --control-socket /path/to/control.sock --wallet-id miner < reviewed-admission-request.json
+```
+
+Draft envelopes contain `draft` and `expectedSha256` (the digest of the canonical
+Go JSON encoding of that draft). Admission envelopes contain `requestId` and
+`expectedSha256` (the exact stored review artifact digest). These are separate
+operator confirmations, not owner transaction approvals. Neither command accepts
+an application RPC URL or signs a transaction. Application campaign preparation
+and execution remain unregistered; this is not an installed-readiness claim.

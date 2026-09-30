@@ -634,7 +634,8 @@ function shortcutsForConfigSection(section: string | null): FriendlyShortcut[] {
         {
           label: "Mining",
           tab: "mining",
-          detail: "Review the singleton SAT mining wallet and mining operations.",
+          detail:
+            "Review the retained historical SAT mining wallet and recovery operations. New WEN positions use owner-authorized wallets.",
         },
         {
           label: "Network",
@@ -785,7 +786,7 @@ function renderSectionAdminNotice(section: string | null) {
     return html`
       <div class="callout warn">
         Wallet config is advanced plumbing. Use Wallet for balances, approvals, signer policy, and
-        passkeys; use Mining for the singleton <span class="mono">@wallet:mining</span> lifecycle; use
+        passkeys; use Mining only for historical <span class="mono">@wallet:mining</span> recovery; use
         Network for bond wallet and Fased Network state. Private-key import/export, signer cleanup, and
         mining-wallet deletion stay in onboarding or CLI.
       </div>

@@ -1,0 +1,139 @@
+package main
+
+import (
+	"context"
+	"errors"
+	solana "github.com/gagliardetto/solana-go"
+	"path/filepath"
+	"reflect"
+)
+
+type wenBondClaimDraftV2 struct {
+	Version                   int
+	WalletID, WalletPublicKey string
+	Pins                      wenBondPinsV2
+	Policy                    wenBondReadPolicyV2
+	MaxFee, RetainedLamports  uint64
+}
+
+func (d wenBondClaimDraftV2) validate(wallet string) error {
+	if d.Version != 2 || d.WalletID != wallet || wallet == "" || normalizeWalletID(wallet) != wallet || d.WalletPublicKey != d.Pins.Owner.String() || d.Pins.Owner.IsZero() || d.MaxFee == 0 || d.RetainedLamports > ^uint64(0)-d.MaxFee || d.Policy.MinimumNet == 0 || d.Policy.Deployment.ProgramID != d.Pins.Program.String() || d.Policy.Deployment.Genesis == "" || d.Policy.ExpiresSlot <= d.Policy.MinimumSlot || d.Policy.ExpiresSlot-d.Policy.MinimumSlot > 32 {
+		return errors.New("invalid Bond draft")
+	}
+	return nil
+}
+func (d wenBondClaimDraftV2) identity() (string, string, string) {
+	return wenBondClaimOperationV2, d.Pins.Program.String(), d.Policy.Deployment.Genesis
+}
+func (d wenBondClaimDraftV2) prepare(ctx context.Context, c wenBondClaimExecutionRPCV2, owner solana.PublicKey) (*wenBondClaimPreparedV2, error) {
+	if d.validate(d.WalletID) != nil || owner != d.Pins.Owner {
+		return nil, errors.New("Bond draft owner mismatch")
+	}
+	return prepareWENBondClaimV2(ctx, c, d.Pins, d.Policy, d.MaxFee, d.RetainedLamports, nil)
+}
+
+type wenBondClaimReviewRequestV2 struct {
+	RequestID   string `json:"requestId"`
+	DraftSHA256 string `json:"draftSha256"`
+}
+
+func loadWENBondClaimDraftV2(db, wallet, hash string) (wenBondClaimDraftV2, error) {
+	var d wenBondClaimDraftV2
+	if !wenReservationHashV1(hash) {
+		return d, errors.New("invalid Bond draft digest")
+	}
+	root, e := wenCampaignProtectedRootV1(db, wallet)
+	if e != nil {
+		return d, e
+	}
+	raw, e := readSignerAdminJSONFile(filepath.Join(root, "bond-claim-draft-"+hash+".json"), 32768)
+	if e != nil {
+		return d, e
+	}
+	if wenHashV1(raw) != hash {
+		return d, errors.New("Bond draft changed")
+	}
+	if e = decodeStrictJSONV2(raw, &d); e != nil {
+		return d, e
+	}
+	if d.validate(wallet) != nil {
+		return d, errors.New("invalid Bond draft")
+	}
+	return d, nil
+}
+
+// Creates only an unsigned protected review. Operator artifact admission and
+// owner approval remain separate; draft creation is not an application privilege.
+func (s *signerServiceV2) prepareConfiguredWENBondClaimReviewV2(ctx context.Context, cfg signerConfig, wallet string, body wenBondClaimReviewRequestV2, factory func(string) wenBondClaimExecutionRPCV2) (signerReviewV2, error) {
+	var zero signerReviewV2
+	bad := errors.New("Bond review configuration changed")
+	if s == nil || s.store == nil || s.keys == nil || cfg.readOnly || cfg.stateDBPath != s.store.db.Path() || factory == nil {
+		return zero, bad
+	}
+	if _, e := validateRequestIDV2(body.RequestID); e != nil {
+		return zero, e
+	}
+	if e := cfg.ensureChainAllowed("solana"); e != nil {
+		return zero, e
+	}
+	d, e := loadWENBondClaimDraftV2(cfg.stateDBPath, wallet, body.DraftSHA256)
+	if e != nil {
+		return zero, e
+	}
+	record, e := s.keys.PublicRecord(wallet)
+	if e != nil || record.PublicKey != d.WalletPublicKey {
+		return zero, bad
+	}
+	owner, e := solana.PublicKeyFromBase58(record.PublicKey)
+	if e != nil {
+		return zero, e
+	}
+	operation, program, genesis := d.identity()
+	network, e := s.keys.SolanaNetworkV2(wallet)
+	if e != nil || network.GenesisHash != genesis {
+		return zero, bad
+	}
+	policy, e := s.store.getPolicy(wallet)
+	if e != nil {
+		return zero, e
+	}
+	if !containsStringV2(policy.Operations, operation) || !containsStringV2(policy.Programs, program) {
+		return zero, bad
+	}
+	endpoint, e := normalizeSignerRPCURLV2(network.PrimaryRPCURL, "Bond review RPC")
+	if e != nil {
+		return zero, e
+	}
+	client := factory(endpoint)
+	if client == nil {
+		return zero, bad
+	}
+	p, e := d.prepare(ctx, client, owner)
+	if e != nil {
+		return zero, e
+	}
+	latest, e := loadWENBondClaimDraftV2(cfg.stateDBPath, wallet, body.DraftSHA256)
+	if e != nil || !reflect.DeepEqual(latest, d) {
+		return zero, bad
+	}
+	current, e := s.keys.SolanaNetworkV2(wallet)
+	if e != nil || !reflect.DeepEqual(current, network) {
+		return zero, bad
+	}
+	who, e := s.keys.PublicRecord(wallet)
+	if e != nil || who.PublicKey != record.PublicKey {
+		return zero, bad
+	}
+	currentPolicy, e := s.store.getPolicy(wallet)
+	if e != nil || currentPolicy.Hash != policy.Hash {
+		return zero, bad
+	}
+	if e = ctx.Err(); e != nil {
+		return zero, e
+	}
+	a, e := newWENBondClaimReviewV2(body.RequestID, wallet, policy.Hash, p)
+	if e != nil {
+		return zero, e
+	}
+	return s.store.storeWENBondClaimReviewV2(a)
+}

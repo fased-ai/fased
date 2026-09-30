@@ -2,16 +2,11 @@ import { html, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { t } from "../../i18n/index.ts";
 import type {
-  ClawHubInstallTarget,
   ClawHubInstallTargetValue,
   ClawHubMarketplaceReview,
   ClawHubSearchResult,
   ClawHubSkillDetail,
   SkillCreateTemplate,
-  SkillMarketplaceArchiveFinding,
-  SkillMarketplaceArchiveScan,
-  SkillMarketplacePermissionSummary,
-  SkillMarketplaceSourceTrust,
   SkillEditorState,
   SkillMessageMap,
 } from "../controllers/skills.ts";
@@ -187,35 +182,6 @@ function skillMatchesStatus(skill: SkillStatusEntry, status: SkillsStatusFilter)
     case "disabled":
       return readiness.kind === "disabled";
   }
-}
-
-function valueForClawHubInstallTarget(target: ClawHubInstallTarget): ClawHubInstallTargetValue {
-  if (target.scope === "agent") {
-    return `agent:${target.agentId}`;
-  }
-  return target.scope;
-}
-
-function labelForClawHubInstallTarget(
-  props: SkillsProps,
-  target?: ClawHubInstallTarget | ClawHubInstallTargetValue,
-) {
-  const selected =
-    typeof target === "string"
-      ? target
-      : target
-        ? valueForClawHubInstallTarget(target)
-        : props.clawhubInstallTarget;
-  if (selected === "shared") {
-    return "Shared library";
-  }
-  if (selected === "default-agent") {
-    const defaultId = props.agentsList?.defaultId ?? props.agentsList?.mainKey ?? "main";
-    const agent = props.agentsList?.agents.find((entry) => entry.id === defaultId);
-    return agent?.name ?? agent?.identity?.name ?? agentLabel(props, defaultId);
-  }
-  const agentId = selected.slice("agent:".length);
-  return agentLabel(props, agentId);
 }
 
 function defaultSkillAttachAgentId(props: SkillsProps) {
@@ -593,10 +559,9 @@ export function renderSkillsSurface(
   } = {},
 ) {
   const skills = props.report?.skills ?? [];
-  const activePanel = props.libraryPanel ?? "skills";
+  const activePanel = "skills";
   const title = options.title ?? "Skills";
-  const subtitle =
-    options.subtitle ?? "Install, review, configure, and edit reusable skill instructions.";
+  const subtitle = options.subtitle ?? "Configure reviewed skills for WEN and your tasks.";
 
   const statusCounts: Record<SkillsStatusFilter, number> = {
     all: skills.length,
@@ -809,113 +774,17 @@ export function renderSkills(props: SkillsProps) {
   return renderSkillsSurface(props, { renderDialogs: true });
 }
 
+/** Legacy callers may retain panel state; public skill downloads are no longer available. */
 export function renderClawHubPanel(
-  props: SkillsProps,
-  options: {
+  _props: SkillsProps,
+  _options: {
     title?: string;
     subtitle?: string;
     showInstallTarget?: boolean;
     showHeader?: boolean;
   } = {},
 ) {
-  const title = options.title ?? "ClawHub";
-  const subtitle = options.subtitle ?? "Search, review, and install skills from the registry.";
-  const showInstallTarget = options.showInstallTarget ?? true;
-  const showHeader = options.showHeader ?? true;
-
-  return html`
-    <section class="skills-discovery-card" style="display: grid; gap: 12px;">
-      ${
-        showHeader
-          ? html`
-              <div>
-                <div class="card-title">${title}</div>
-                <div class="card-sub">${subtitle}</div>
-              </div>
-            `
-          : nothing
-      }
-      ${
-        showInstallTarget
-          ? html`
-              <label class="field" style="margin-top: 12px;">
-                <span>Install target</span>
-                <select
-                  data-testid="clawhub-install-target"
-                  @change=${(event: Event) =>
-                    props.onClawHubTargetChange((event.target as HTMLSelectElement).value)}
-                >
-                  <option
-                    value="default-agent"
-                    ?selected=${props.clawhubInstallTarget === "default-agent"}
-                  >
-                    ${labelForClawHubInstallTarget(props, "default-agent")}
-                  </option>
-                  <option value="shared" ?selected=${props.clawhubInstallTarget === "shared"}>
-                    Shared library - reusable
-                  </option>
-                  ${(props.agentsList?.agents ?? []).map(
-                    (agent) => html`
-                      <option
-                        value=${`agent:${agent.id}`}
-                        ?selected=${props.clawhubInstallTarget === `agent:${agent.id}`}
-                      >
-                        ${agentLabel(props, agent.id)}
-                      </option>
-                    `,
-                  )}
-                </select>
-              </label>
-            `
-          : nothing
-      }
-      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px;">
-        <label class="field" style="flex: 1; min-width: 180px;">
-          <input
-            .value=${props.clawhubQuery}
-            @input=${(e: Event) => props.onClawHubQueryChange((e.target as HTMLInputElement).value)}
-            placeholder="Search ClawHub skills…"
-            autocomplete="off"
-            name="clawhub-search"
-          />
-        </label>
-        ${
-          props.clawhubSearchLoading
-            ? html`
-                <span class="muted">Searching…</span>
-              `
-            : nothing
-        }
-      </div>
-      ${
-        props.clawhubSearchError
-          ? html`<div class="callout danger" style="margin-top: 10px;">
-              ${props.clawhubSearchError}
-            </div>`
-          : nothing
-      }
-      ${
-        props.clawhubReviewLoading
-          ? html`
-              <div class="callout" style="margin-top: 10px" aria-live="polite">Opening skill review...</div>
-            `
-          : nothing
-      }
-      ${
-        props.clawhubInstallMessage
-          ? html`<div
-              class="callout ${props.clawhubInstallMessage.kind === "error" ? "danger" : "success"}"
-              style="margin-top: 10px;"
-            >
-              ${props.clawhubInstallMessage.text}
-            </div>`
-          : nothing
-      }
-      <div class="skills-results-list" style="margin-top: 10px;">
-        ${renderClawHubResults(props)}
-      </div>
-    </section>
-  `;
+  return nothing;
 }
 
 export function renderSkillDialogs(props: SkillsProps) {
@@ -926,514 +795,6 @@ export function renderSkillDialogs(props: SkillsProps) {
   return html`
     ${detailSkill ? renderSkillDetail(detailSkill, props) : nothing}
     ${props.createOpen ? renderCreateSkillDialog(props) : nothing}
-    ${props.clawhubDetailSlug ? renderClawHubDetailDialog(props) : nothing}
-    ${
-      props.clawhubReview || props.clawhubReviewLoading || props.clawhubReviewError
-        ? renderClawHubReviewDialog(props)
-        : nothing
-    }
-  `;
-}
-
-function renderClawHubResults(props: SkillsProps) {
-  const results = props.clawhubResults;
-  if (!results) {
-    return nothing;
-  }
-  if (results.length === 0) {
-    return html`
-      <div class="muted" style="margin-top: 8px">No skills found on ClawHub.</div>
-    `;
-  }
-  return html`
-    <div class="list" style="margin-top: 8px;">
-      ${results.map(
-        (r) => html`
-          <div
-            class="list-item list-item-clickable"
-            @click=${() => props.onClawHubDetailOpen(r.slug)}
-          >
-            <div class="list-main">
-              <div class="list-title">${r.displayName}</div>
-              <div class="list-sub">${r.summary ? clampText(r.summary, 120) : r.slug}</div>
-              <div class="muted" style="margin-top: 6px; font-size: 12px;">
-                Click for details. Review install opens the safety preview.
-              </div>
-            </div>
-            <div class="list-meta" style="display: flex; align-items: center; gap: 8px;">
-              ${
-                r.version
-                  ? html`<span class="muted" style="font-size: 12px;">v${r.version}</span>`
-                  : nothing
-              }
-              <button
-                class="btn btn--sm"
-                type="button"
-                data-testid=${`clawhub-review-install-${r.slug}`}
-                ?disabled=${props.clawhubInstallSlug !== null || props.clawhubReviewLoading}
-                @click=${(e: Event) => {
-                  e.stopPropagation();
-                  props.onClawHubInstall(r.slug);
-                }}
-              >
-                ${
-                  props.clawhubReviewLoading
-                    ? "Reviewing..."
-                    : props.clawhubInstallSlug === r.slug
-                      ? "Installing..."
-                      : "Review install"
-                }
-              </button>
-            </div>
-          </div>
-        `,
-      )}
-    </div>
-  `;
-}
-
-function renderClawHubDetailDialog(props: SkillsProps) {
-  const detail = props.clawhubDetail;
-
-  return html`
-    <dialog
-      class="md-preview-dialog"
-      ${ref(openDialogSafely)}
-      @click=${closeDialogOnBackdropClick}
-      @close=${props.onClawHubDetailClose}
-    >
-      <div class="md-preview-dialog__panel">
-        <div class="md-preview-dialog__header">
-          <div class="md-preview-dialog__title">
-            ${detail?.skill?.displayName ?? props.clawhubDetailSlug}
-          </div>
-          <button
-            class="btn btn--sm"
-            @click=${(e: Event) => {
-              (e.currentTarget as HTMLElement).closest("dialog")?.close();
-            }}
-          >
-            Close
-          </button>
-        </div>
-        <div class="md-preview-dialog__body" style="display: grid; gap: 16px;">
-          ${
-            props.clawhubDetailLoading
-              ? html`<div class="muted">${t("common.loading")}</div>`
-              : props.clawhubDetailError
-                ? html`<div class="callout danger">${props.clawhubDetailError}</div>`
-                : detail?.skill
-                  ? html`
-                    <div style="font-size: 14px; line-height: 1.5;">
-                      ${detail.skill.summary ?? ""}
-                    </div>
-                    ${
-                      detail.owner?.displayName
-                        ? html`<div class="muted" style="font-size: 13px;">
-                          By
-                          ${detail.owner.displayName}${
-                            detail.owner.handle ? html` (@${detail.owner.handle})` : nothing
-                          }
-                        </div>`
-                        : nothing
-                    }
-                    ${
-                      detail.latestVersion
-                        ? html`<div class="muted" style="font-size: 13px;">
-                          Latest: v${detail.latestVersion.version}
-                        </div>`
-                        : nothing
-                    }
-                    ${
-                      detail.latestVersion?.changelog
-                        ? html`<div
-                          style="font-size: 13px; border-top: 1px solid var(--border); padding-top: 12px; white-space: pre-wrap;"
-                        >
-                          ${detail.latestVersion.changelog}
-                        </div>`
-                        : nothing
-                    }
-                    ${
-                      detail.metadata?.os
-                        ? html`<div class="muted" style="font-size: 12px;">
-                          Platforms: ${detail.metadata.os.join(", ")}
-                        </div>`
-                        : nothing
-                    }
-                    <button
-                      class="btn primary"
-                      type="button"
-                      data-testid="clawhub-detail-review-install"
-                      ?disabled=${props.clawhubInstallSlug !== null}
-                      @click=${() => {
-                        if (props.clawhubDetailSlug) {
-                          props.onClawHubInstall(props.clawhubDetailSlug);
-                        }
-                      }}
-                    >
-                      ${
-                        props.clawhubInstallSlug === props.clawhubDetailSlug
-                          ? "Installing\u2026"
-                          : `Review install for ${detail.skill.displayName}`
-                      }
-                    </button>
-                  `
-                  : html`
-                      <div class="muted">Skill not found.</div>
-                    `
-          }
-        </div>
-      </div>
-    </dialog>
-  `;
-}
-
-function summarizePermissionSummary(permissions: SkillMarketplacePermissionSummary): string[] {
-  const lines: string[] = [];
-  const wallet = permissions.walletActions;
-  if (wallet) {
-    const parts = [
-      wallet.actions?.length ? `actions ${wallet.actions.join(", ")}` : null,
-      wallet.roles?.length ? `roles ${wallet.roles.join(", ")}` : null,
-      wallet.chains?.length ? `chains ${wallet.chains.join(", ")}` : null,
-      wallet.inputMints?.length ? `input ${wallet.inputMints.join(", ")}` : null,
-      wallet.outputMints?.length ? `output ${wallet.outputMints.join(", ")}` : null,
-      wallet.maxAmount ? `max ${wallet.maxAmount}` : null,
-      typeof wallet.maxSlippageBps === "number" ? `slippage ${wallet.maxSlippageBps} bps` : null,
-      wallet.autonomous ? "autonomous" : null,
-      wallet.cron ? "cron" : null,
-    ].filter(Boolean);
-    lines.push(`wallet: ${parts.join("; ") || "requested"}`);
-  }
-  if (permissions.toolAccess?.length) {
-    lines.push(`tools: ${permissions.toolAccess.join(", ")}`);
-  }
-  if (permissions.install?.kinds?.length || permissions.install?.bins?.length) {
-    const parts = [
-      permissions.install.kinds?.length ? `install ${permissions.install.kinds.join(", ")}` : null,
-      permissions.install.bins?.length ? `bins ${permissions.install.bins.join(", ")}` : null,
-    ].filter(Boolean);
-    lines.push(parts.join("; "));
-  }
-  if (lines.length === 0) {
-    lines.push("none");
-  }
-  return lines;
-}
-
-function renderArchiveFindings(findings: SkillMarketplaceArchiveFinding[]) {
-  if (findings.length === 0) {
-    return html`
-      <div class="muted">No archive warnings.</div>
-    `;
-  }
-  return html`
-    <div style="display: grid; gap: 6px;">
-      ${findings.map(
-        (finding) => html`
-          <div class="callout ${finding.severity === "block" ? "danger" : ""}">
-            <div style="font-weight: 600;">
-              ${finding.severity === "block" ? "Blocked" : "Warning"}: ${finding.code}
-            </div>
-            <div>${finding.path}: ${finding.message}</div>
-          </div>
-        `,
-      )}
-    </div>
-  `;
-}
-
-function renderSourceTrust(sourceTrust?: SkillMarketplaceSourceTrust) {
-  if (!sourceTrust) {
-    return html`
-      <section style="display: grid; gap: 8px">
-        <div style="font-weight: 600">Source trust</div>
-        <div class="callout info">
-          Gateway preview accepted the source, but this response did not include registry detail.
-        </div>
-      </section>
-    `;
-  }
-  const modeLabel =
-    sourceTrust.mode === "tracked-legacy" ? "tracked legacy install" : "registry allowlist";
-  return html`
-    <section style="display: grid; gap: 8px;">
-      <div style="font-weight: 600;">Source trust</div>
-      <div class="callout success">
-        <div>Registry: ${sourceTrust.registry}</div>
-        <div>Trusted by: ${modeLabel}</div>
-        <div>Allowed registries: ${sourceTrust.allowlist.join(", ") || "default ClawHub"}</div>
-      </div>
-    </section>
-  `;
-}
-
-function countFindings(
-  scan: SkillMarketplaceArchiveScan,
-  codes: string[],
-  severity?: SkillMarketplaceArchiveFinding["severity"],
-) {
-  const codeSet = new Set(codes);
-  return scan.findings.filter(
-    (finding) => codeSet.has(finding.code) && (!severity || finding.severity === severity),
-  ).length;
-}
-
-function renderDependencyScriptPolicy(scan: SkillMarketplaceArchiveScan) {
-  const dependencyWarnings = countFindings(scan, ["dependency_manifest"], "warn");
-  const dependencyBlocks = countFindings(scan, ["package_dependencies"], "block");
-  const scriptWarnings = countFindings(scan, ["script_file"], "warn");
-  const scriptBlocks = countFindings(
-    scan,
-    ["install_script_file", "package_lifecycle_script"],
-    "block",
-  );
-  const hasPolicyFindings =
-    dependencyWarnings + dependencyBlocks + scriptWarnings + scriptBlocks > 0;
-
-  return html`
-    <section style="display: grid; gap: 8px;">
-      <div style="font-weight: 600;">Dependency/script policy</div>
-      <div class="chip-row">
-        <span class="chip ${dependencyBlocks > 0 ? "chip-warn" : ""}">
-          package dependencies ${dependencyBlocks > 0 ? "blocked" : "not present"}
-        </span>
-        <span class="chip ${scriptBlocks > 0 ? "chip-warn" : ""}">
-          installer scripts ${scriptBlocks > 0 ? "blocked" : "not present"}
-        </span>
-        <span class="chip ${dependencyWarnings > 0 ? "chip-warn" : ""}">
-          dependency manifests ${dependencyWarnings}
-        </span>
-        <span class="chip ${scriptWarnings > 0 ? "chip-warn" : ""}">
-          script files ${scriptWarnings}
-        </span>
-      </div>
-      <div class=${hasPolicyFindings ? "callout info" : "muted"}>
-        ${
-          hasPolicyFindings
-            ? "Marketplace installs do not run dependency installers or lifecycle scripts automatically. Blocked items must be removed before enable/update."
-            : "No dependency manifests, package dependency declarations, installer scripts, or standalone script files were reported."
-        }
-      </div>
-    </section>
-  `;
-}
-
-function marketplaceRequestsWalletOrMining(
-  permissions: SkillMarketplacePermissionSummary,
-): boolean {
-  if (permissions.walletActions) {
-    return true;
-  }
-  return (permissions.toolAccess ?? []).some((tool) => /wallet|mining|sat_/i.test(tool));
-}
-
-function renderReviewList(title: string, items: string[]) {
-  if (items.length === 0) {
-    return nothing;
-  }
-  return html`
-    <div style="display: grid; gap: 4px;">
-      <div style="font-weight: 600;">${title}</div>
-      <ul style="margin: 0; padding-left: 18px;">
-        ${items.map((item) => html`<li>${item}</li>`)}
-      </ul>
-    </div>
-  `;
-}
-
-function renderArchiveFilePreview(scan: SkillMarketplaceArchiveScan) {
-  const files = scan.files ?? [];
-  if (files.length === 0) {
-    return html`
-      <div class="muted">File list was not included in this scan response.</div>
-    `;
-  }
-  return html`
-    <div style="display: grid; gap: 6px;">
-      <div class="chip-row">
-        ${files.slice(0, 24).map((file) => html`<span class="chip mono">${file}</span>`)}
-      </div>
-      ${
-        scan.filesTruncated || files.length > 24
-          ? html`
-              <div class="muted">
-                Showing first ${Math.min(files.length, 24)} files from ${scan.fileCount}.
-              </div>
-            `
-          : nothing
-      }
-    </div>
-  `;
-}
-
-function shortDigest(value?: string): string {
-  return value ? value.slice(0, 12) : "none";
-}
-
-function renderClawHubReviewDialog(props: SkillsProps) {
-  const review = props.clawhubReview;
-  const close = (e: Event) => {
-    (e.currentTarget as HTMLElement).closest("dialog")?.close();
-  };
-
-  const blocked =
-    review?.ok === true &&
-    (review.installScan.blocked ||
-      review.installScan.findings.some((finding) => finding.severity === "block"));
-  const title =
-    review?.ok === true
-      ? `${review.mode === "install" ? "Install" : "Update"} ${review.slug}`
-      : "Review ClawHub skill";
-
-  return html`
-    <dialog
-      class="md-preview-dialog"
-      ${ref(openDialogSafely)}
-      @click=${closeDialogOnBackdropClick}
-      @close=${props.onClawHubReviewClose}
-    >
-      <div class="md-preview-dialog__panel">
-        <div class="md-preview-dialog__header">
-          <div class="md-preview-dialog__title">${title}</div>
-          <button class="btn btn--sm" @click=${close}>Close</button>
-        </div>
-        <div class="md-preview-dialog__body" style="display: grid; gap: 14px;">
-          ${
-            props.clawhubReviewLoading
-              ? html`<div class="muted">${t("common.loading")}</div>`
-              : props.clawhubReviewError
-                ? html`<div class="callout danger">${props.clawhubReviewError}</div>`
-                : review?.ok === false
-                  ? html`<div class="callout danger">${review.error}</div>`
-                  : review?.ok === true
-                    ? html`
-                      <div class="callout ${blocked ? "danger" : review.permissions.risky ? "" : "success"}">
-                        <div style="font-weight: 600; margin-bottom: 6px;">
-                          ${review.mode === "install" ? "Install preview" : "Update preview"}
-                        </div>
-                        <div>Slug: ${review.slug}</div>
-                        <div>
-                          Version:
-                          ${
-                            review.previousVersion
-                              ? `${review.previousVersion} -> ${review.version}`
-                              : review.version
-                          }
-                        </div>
-                        <div>Target: ${review.targetDir}</div>
-                        <div>Target scope: ${labelForClawHubInstallTarget(props, review.target)}</div>
-                        <div>
-                          Permission digest:
-                          ${shortDigest(review.updateReview.previousPermissionDigest)} ->
-                          ${shortDigest(review.updateReview.nextPermissionDigest)}
-                        </div>
-                      </div>
-
-                      ${renderSourceTrust(review.sourceTrust)}
-
-                      <section style="display: grid; gap: 8px;">
-                        <div style="font-weight: 600;">Requested permissions</div>
-                        <div class="muted" style="display: grid; gap: 4px;">
-                          ${summarizePermissionSummary(review.permissions).map(
-                            (line) => html`<div>${line}</div>`,
-                          )}
-                        </div>
-	                        ${
-                            marketplaceRequestsWalletOrMining(review.permissions)
-                              ? html`
-                                  <div class="callout">
-                                    Wallet and mining access are request metadata only. Install does not grant wallet signing, mining
-                                    wallets, vault wallets, autonomous spend, or cron execution. Use Wallet skill grants after install
-                                    if the skill is trusted.
-                                  </div>
-                                `
-                              : nothing
-                          }
-                      </section>
-
-                      <section style="display: grid; gap: 8px;">
-                        <div style="font-weight: 600;">Archive scan</div>
-	                        <div class="muted">
-	                          ${review.installScan.fileCount} files,
-	                          ${Math.round(review.installScan.totalBytes / 1024)} KB
-	                        </div>
-	                        ${renderArchiveFilePreview(review.installScan)}
-	                        ${renderArchiveFindings(review.installScan.findings)}
-	                      </section>
-
-                      ${renderDependencyScriptPolicy(review.installScan)}
-
-                      <section style="display: grid; gap: 8px;">
-                        <div style="font-weight: 600;">Update review</div>
-                        <div class="${review.updateReview.approvalRequired ? "callout" : "muted"}">
-                          ${
-                            review.updateReview.approvalRequired
-                              ? `Approval required: ${review.updateReview.reasons.join(", ")}`
-                              : "No new permission approval required."
-                          }
-                        </div>
-                        ${
-                          review.updateReview.permissionDigestChanged
-                            ? html`
-                              <div class="muted">
-                                Permission digest changed:
-                                ${shortDigest(review.updateReview.previousPermissionDigest)} ->
-                                ${shortDigest(review.updateReview.nextPermissionDigest)}
-                              </div>
-                              ${renderReviewList(
-                                "Added permissions",
-                                review.updateReview.permissionDiff?.added ?? [],
-                              )}
-                              ${renderReviewList(
-                                "Removed permissions",
-                                review.updateReview.permissionDiff?.removed ?? [],
-                              )}
-                            `
-                            : html`
-                                <div class="muted">Permissions unchanged.</div>
-                              `
-                        }
-                        ${
-                          review.updateReview.addedScanFindings.length > 0
-                            ? html`
-                              <div style="display: grid; gap: 6px;">
-                                <div style="font-weight: 600;">New archive warnings</div>
-                                ${renderArchiveFindings(review.updateReview.addedScanFindings)}
-                              </div>
-                            `
-                            : html`
-                                <div class="muted">No new archive warnings.</div>
-                              `
-                        }
-                      </section>
-
-                      <div style="display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap;">
-                        <button class="btn" @click=${close}>Cancel</button>
-                        <button
-                          class="btn primary"
-                          type="button"
-                          data-testid="clawhub-review-confirm"
-                          ?disabled=${blocked || props.clawhubInstallSlug !== null}
-                          @click=${props.onClawHubReviewConfirm}
-                        >
-                          ${
-                            blocked
-                              ? "Blocked by scan"
-                              : review.mode === "update" && review.updateReview.approvalRequired
-                                ? "Approve and update"
-                                : review.mode === "update"
-                                  ? "Update"
-                                  : "Install"
-                          }
-                        </button>
-                      </div>
-                    `
-                    : nothing
-          }
-        </div>
-      </div>
-    </dialog>
   `;
 }
 
@@ -2130,7 +1491,7 @@ function renderSkillConfigEditor(skill: SkillStatusEntry, props: SkillsProps) {
   `;
 }
 
-function renderSkillMarketplaceDetail(skill: SkillStatusEntry, props: SkillsProps) {
+function renderSkillMarketplaceDetail(skill: SkillStatusEntry, _props: SkillsProps) {
   const marketplace = skill.marketplace;
   if (!marketplace) {
     return nothing;
@@ -2171,15 +1532,7 @@ function renderSkillMarketplaceDetail(skill: SkillStatusEntry, props: SkillsProp
       <div>Requested permissions: ${requested.length > 0 ? requested.join("; ") : "none"}</div>
       <div>Archive scan: ${scanText}</div>
       <div>Last update review: ${reviewText}</div>
-      <div style="display: flex; justify-content: flex-end;">
-        <button
-          class="btn btn--sm"
-          ?disabled=${props.clawhubReviewLoading || props.clawhubInstallSlug !== null}
-          @click=${() => props.onClawHubUpdatePreview(marketplace.slug)}
-        >
-          Review update
-        </button>
-      </div>
+
     </div>
   `;
 }
@@ -2343,7 +1696,6 @@ function renderSkillDetail(skill: SkillStatusEntry, props: SkillsProps) {
             type="button"
             @click=${(e: Event) => {
               (e.currentTarget as HTMLElement).closest("dialog")?.close();
-              props.onDetailClose();
             }}
           >
             Close

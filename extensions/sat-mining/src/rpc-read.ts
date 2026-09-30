@@ -13,6 +13,7 @@ import {
 } from "fased/plugin-sdk/sat-runtime";
 import type { SatMiningConfig } from "./config.js";
 import { resolveSatGenesisProfileContract, SAT_PROTOCOL_CONSTANTS } from "./protocol-contract.js";
+import { assertSatRewardRecipient } from "./reward-admission.js";
 import {
   createMiningReadConnection,
   inspectMiningRpcDiagnostics,
@@ -2388,6 +2389,41 @@ export async function inspectSatCycleAccountExists(
   } catch {
     return false;
   }
+}
+
+/** Fresh finalized entry admission; never use the stable global-view cache. */
+export async function inspectSatVNextRewardAdmission(): Promise<void> {
+  const { solana, programId } = await resolveProgramContext(process.env);
+  const [global] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from("sat_global_state_v2")],
+    programId,
+  );
+  const [expected] = solana.PublicKey.findProgramAddressSync(
+    [Buffer.from("sat_bond_epoch_distributor_v3")],
+    new solana.PublicKey(SAT_BOND_PROGRAM_ID()),
+  );
+  const result = await miningRpcRequest<{
+    value?: { owner?: string; executable?: boolean; data?: [string, string] } | null;
+  }>(resolveEffectiveReadRpcConfig(), "getAccountInfo", [
+    global.toBase58(),
+    {
+      encoding: "base64",
+      commitment: "finalized",
+    },
+  ]);
+  const account = result.value;
+  if (
+    !account ||
+    account.owner !== programId.toBase58() ||
+    account.executable !== false ||
+    account.data?.[1] !== "base64"
+  ) {
+    throw new Error(
+      "SAT new mining entry blocked: unavailable or invalid global reward configuration",
+    );
+  }
+  const state = decodeSatGlobalState(Buffer.from(account.data[0], "base64"), global.toBase58());
+  assertSatRewardRecipient(state.distributorRecipient, expected.toBase58());
 }
 
 export async function inspectSatGlobalState(

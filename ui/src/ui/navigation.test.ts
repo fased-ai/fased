@@ -68,6 +68,7 @@ describe("titleForTab", () => {
     expect(titleForTab("services")).toBe("Services");
     expect(titleForTab("federation")).toBe("Fased Network");
     expect(titleForTab("wallet")).toBe("Wallets");
+    expect(titleForTab("wen")).toBe("WEN");
     expect(titleForTab("marketplace")).toBe("Marketplace");
     expect(titleForTab("plugins")).toBe("Extensions");
     expect(titleForTab("skills")).toBe("Skills");
@@ -172,6 +173,7 @@ describe("tabFromPath", () => {
     expect(tabFromPath("/sessions")).toBe("sessions");
     expect(tabFromPath("/memory")).toBe("memory");
     expect(tabFromPath("/wallet")).toBe("wallet");
+    expect(tabFromPath("/wen")).toBe("wen");
     expect(tabFromPath("/mining")).toBe("mining");
   });
 

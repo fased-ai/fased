@@ -6,13 +6,6 @@ import {
   resolveAgentWorkspaceDir,
   resolveDefaultAgentId,
 } from "../../agents/agent-scope.js";
-import {
-  installSkillFromClawHub,
-  previewSkillInstallFromClawHub,
-  previewSkillsUpdateFromClawHub,
-  searchSkillsFromClawHub,
-  updateSkillsFromClawHub,
-} from "../../agents/skills-clawhub.js";
 import { installSkill } from "../../agents/skills-install.js";
 import { buildWorkspaceSkillStatus } from "../../agents/skills-status.js";
 import { loadWorkspaceSkillEntries, type SkillEntry } from "../../agents/skills.js";
@@ -26,7 +19,6 @@ import {
 } from "../../cli/skills-wallet-grant.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { loadConfig, writeConfigFile } from "../../config/config.js";
-import { fetchClawHubSkillDetail } from "../../infra/clawhub.js";
 import { readFileWithinRoot, writeFileWithinRoot } from "../../infra/fs-safe.js";
 import { isPathInside } from "../../infra/path-guards.js";
 import { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
@@ -40,15 +32,9 @@ import {
   validateSkillsBinsParams,
   validateSkillsCopyParams,
   validateSkillsCreateParams,
-  validateSkillsDetailParams,
   validateSkillsFileGetParams,
   validateSkillsFileSetParams,
   validateSkillsInstallParams,
-  validateSkillsMarketplaceInstallPreviewParams,
-  validateSkillsMarketplaceInstallParams,
-  validateSkillsMarketplaceUpdateParams,
-  validateSkillsMarketplaceUpdatePreviewParams,
-  validateSkillsSearchParams,
   validateSkillsStatusParams,
   validateSkillsUpdateParams,
   validateSkillsWalletGrantClearParams,
@@ -86,35 +72,6 @@ function collectSkillBins(entries: SkillEntry[]): string[] {
     }
   }
   return [...bins].toSorted();
-}
-
-type SkillsMarketplaceTarget = {
-  scope?: "shared" | "agent" | "default-agent";
-  agentId?: string;
-};
-
-function resolveMarketplaceTargetWorkspace(
-  config: FasedAgentConfig,
-  target?: SkillsMarketplaceTarget,
-): string {
-  const scope = target?.scope ?? "default-agent";
-  if (scope === "shared") {
-    return CONFIG_DIR;
-  }
-  if (scope === "agent") {
-    const rawAgentId = target?.agentId?.trim() ?? "";
-    const agentId = rawAgentId ? normalizeAgentId(rawAgentId) : resolveDefaultAgentId(config);
-    const knownAgents = listAgentIds(config);
-    if (!knownAgents.includes(agentId)) {
-      throw new Error(`unknown agent id "${rawAgentId || agentId}"`);
-    }
-    return resolveAgentWorkspaceDir(config, agentId);
-  }
-  return resolveAgentWorkspaceDir(config, resolveDefaultAgentId(config));
-}
-
-function readMarketplaceAllowRegistries(config: FasedAgentConfig): string[] | undefined {
-  return config.skills?.marketplace?.allowRegistries;
 }
 
 function resolveStatusAgentWorkspace(config: FasedAgentConfig, agentIdRaw?: string): string {
@@ -764,62 +721,6 @@ export const skillsHandlers: GatewayRequestHandlers = {
     }
     respond(true, { bins: [...bins].toSorted() }, undefined);
   },
-  "skills.search": async ({ params, respond }) => {
-    if (!validateSkillsSearchParams(params)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid skills.search params: ${formatValidationErrors(validateSkillsSearchParams.errors)}`,
-        ),
-      );
-      return;
-    }
-    const p = params as {
-      query: string;
-      limit?: number;
-    };
-    try {
-      const results = await searchSkillsFromClawHub({
-        query: p.query,
-        limit: p.limit,
-      });
-      respond(true, { results }, undefined);
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, err instanceof Error ? err.message : String(err)),
-      );
-    }
-  },
-  "skills.detail": async ({ params, respond }) => {
-    if (!validateSkillsDetailParams(params)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid skills.detail params: ${formatValidationErrors(validateSkillsDetailParams.errors)}`,
-        ),
-      );
-      return;
-    }
-    const p = params as {
-      slug: string;
-    };
-    try {
-      const detail = await fetchClawHubSkillDetail({ slug: p.slug });
-      respond(true, detail, undefined);
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, err instanceof Error ? err.message : String(err)),
-      );
-    }
-  },
   "skills.file.get": async ({ params, respond }) => {
     if (!validateSkillsFileGetParams(params)) {
       respond(
@@ -951,193 +852,6 @@ export const skillsHandlers: GatewayRequestHandlers = {
       result,
       result.ok ? undefined : errorShape(ErrorCodes.UNAVAILABLE, result.message),
     );
-  },
-  "skills.marketplace.install": async ({ params, respond }) => {
-    if (!validateSkillsMarketplaceInstallParams(params)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid skills.marketplace.install params: ${formatValidationErrors(
-            validateSkillsMarketplaceInstallParams.errors,
-          )}`,
-        ),
-      );
-      return;
-    }
-    const p = params as {
-      slug: string;
-      version?: string;
-      target?: SkillsMarketplaceTarget;
-      allowPermissionChanges?: boolean;
-      force?: boolean;
-    };
-    const cfg = loadConfig();
-    let workspaceDir: string;
-    try {
-      workspaceDir = resolveMarketplaceTargetWorkspace(cfg, p.target);
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, err instanceof Error ? err.message : String(err)),
-      );
-      return;
-    }
-    const result = await installSkillFromClawHub({
-      workspaceDir,
-      slug: p.slug,
-      version: p.version,
-      allowRegistries: readMarketplaceAllowRegistries(cfg),
-      allowPermissionChanges: p.allowPermissionChanges === true,
-      force: p.force === true,
-    });
-    respond(
-      result.ok,
-      result,
-      result.ok ? undefined : errorShape(ErrorCodes.UNAVAILABLE, result.error),
-    );
-  },
-  "skills.marketplace.install.preview": async ({ params, respond }) => {
-    if (!validateSkillsMarketplaceInstallPreviewParams(params)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid skills.marketplace.install.preview params: ${formatValidationErrors(
-            validateSkillsMarketplaceInstallPreviewParams.errors,
-          )}`,
-        ),
-      );
-      return;
-    }
-    const p = params as {
-      slug: string;
-      version?: string;
-      target?: SkillsMarketplaceTarget;
-    };
-    const cfg = loadConfig();
-    let workspaceDir: string;
-    try {
-      workspaceDir = resolveMarketplaceTargetWorkspace(cfg, p.target);
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, err instanceof Error ? err.message : String(err)),
-      );
-      return;
-    }
-    const result = await previewSkillInstallFromClawHub({
-      workspaceDir,
-      slug: p.slug,
-      version: p.version,
-      allowRegistries: readMarketplaceAllowRegistries(cfg),
-    });
-    respond(
-      result.ok,
-      result,
-      result.ok ? undefined : errorShape(ErrorCodes.UNAVAILABLE, result.error),
-    );
-  },
-  "skills.marketplace.update.preview": async ({ params, respond }) => {
-    if (!validateSkillsMarketplaceUpdatePreviewParams(params)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid skills.marketplace.update.preview params: ${formatValidationErrors(
-            validateSkillsMarketplaceUpdatePreviewParams.errors,
-          )}`,
-        ),
-      );
-      return;
-    }
-    const p = params as {
-      slug?: string;
-      target?: SkillsMarketplaceTarget;
-    };
-    const cfg = loadConfig();
-    let workspaceDir: string;
-    try {
-      workspaceDir = resolveMarketplaceTargetWorkspace(cfg, p.target);
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, err instanceof Error ? err.message : String(err)),
-      );
-      return;
-    }
-    try {
-      const results = await previewSkillsUpdateFromClawHub({
-        workspaceDir,
-        slug: p.slug,
-        allowRegistries: readMarketplaceAllowRegistries(cfg),
-      });
-      respond(true, { results }, undefined);
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, err instanceof Error ? err.message : String(err)),
-      );
-    }
-  },
-  "skills.marketplace.update": async ({ params, respond }) => {
-    if (!validateSkillsMarketplaceUpdateParams(params)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid skills.marketplace.update params: ${formatValidationErrors(
-            validateSkillsMarketplaceUpdateParams.errors,
-          )}`,
-        ),
-      );
-      return;
-    }
-    const p = params as {
-      slug?: string;
-      target?: SkillsMarketplaceTarget;
-      allowPermissionChanges?: boolean;
-    };
-    const cfg = loadConfig();
-    let workspaceDir: string;
-    try {
-      workspaceDir = resolveMarketplaceTargetWorkspace(cfg, p.target);
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, err instanceof Error ? err.message : String(err)),
-      );
-      return;
-    }
-    try {
-      const results = await updateSkillsFromClawHub({
-        workspaceDir,
-        slug: p.slug,
-        allowRegistries: readMarketplaceAllowRegistries(cfg),
-        allowPermissionChanges: p.allowPermissionChanges === true,
-      });
-      const failed = results.find((result) => !result.ok);
-      respond(
-        !failed,
-        { results },
-        failed ? errorShape(ErrorCodes.UNAVAILABLE, failed.error) : undefined,
-      );
-    } catch (err) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, err instanceof Error ? err.message : String(err)),
-      );
-    }
   },
   "skills.wallet.grants": async ({ params, respond }) => {
     if (!validateSkillsWalletGrantsParams(params)) {

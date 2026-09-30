@@ -1,0 +1,205 @@
+{
+  "requestId": "review-request-001",
+  "walletId": "miner",
+  "walletPublicKey": "2zxDVjtoAYXKGmztrzKWBjGbZioAJeHEkm3aC4tVhw9h",
+  "intentType": "wen.campaign.claim-stake.v1",
+  "intentDigest": "sha256:0797d305993481ce34c6394a365d10c8bb0587a4a638b86aef6180f185599b46",
+  "policyHash": "sha256:7c715b566bee3f2437b2a48b0aedff4a8cc8bee2bec4ae7b02963ae52d5f7cdd",
+  "mode": "reviewed",
+  "nonce": "dc557deba048da122b588ea750a58f489e298cbf407fdd3b52ae02899208fe18",
+  "semanticIntent": {
+    "Version": 1,
+    "RequestID": "review-request-001",
+    "WalletID": "miner",
+    "WalletPublicKey": "2zxDVjtoAYXKGmztrzKWBjGbZioAJeHEkm3aC4tVhw9h",
+    "PolicyHash": "sha256:7c715b566bee3f2437b2a48b0aedff4a8cc8bee2bec4ae7b02963ae52d5f7cdd",
+    "Pins": {
+      "ProgramID": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+      "Genesis": "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC",
+      "DescriptorSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "CapabilitySHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "CodeSHA256": "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+      "DeploymentSlot": 50,
+      "UpgradeAuthority": null
+    },
+    "Intent": {
+      "operation": "deposit",
+      "descriptorSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "capabilitySha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "genesis": "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC",
+      "programId": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+      "sale": "57wkbh454SFcnDGtJomrszWpbZJTQNUafBoUPwaKZuun",
+      "mint": "GwyFZsXXYKXA11TjiGcCUGtEt1e6poWWVUXPBC7YcG9L",
+      "tokenAccount": "GQeDBuASj7DZwUeiekwoZyHLr2v3dThSsLuAeB8CAtKk",
+      "amount": "1000",
+      "day": "10",
+      "last": "9",
+      "aggregateFrom": "9",
+      "maxFeeLamports": "5000",
+      "minFinalizedSlot": "140",
+      "expiresSlot": "172"
+    },
+    "Claim": {
+      "Program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+      "Economy": "57wkbh454SFcnDGtJomrszWpbZJTQNUafBoUPwaKZuun",
+      "Destination": "4tBp8gU8vLyxVw2rxr1NyuxE85SMy7Uerbe7uprhknx1",
+      "PageIndex": 0,
+      "Mask": 1,
+      "Windows": [
+        {
+          "Window": "56aL7gWnLop3BjFVo6UejxCN8mcqajEepnT21JCGuFzQ",
+          "Vault": "GQeDBuASj7DZwUeiekwoZyHLr2v3dThSsLuAeB8CAtKk"
+        }
+      ]
+    },
+    "MinimumNet": 970,
+    "MaxTotal": 6000,
+    "Snapshot": {
+      "Claim": {
+        "Program": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        "Economy": "57wkbh454SFcnDGtJomrszWpbZJTQNUafBoUPwaKZuun",
+        "Owner": "2zxDVjtoAYXKGmztrzKWBjGbZioAJeHEkm3aC4tVhw9h",
+        "Slot": 166,
+        "ReferenceSlot": 167,
+        "Mask": 1,
+        "Position": {
+          "Address": "48dQEWk4DosTbv3o7F8U9yJkcpc4x8QG8GVDKuAnbJif",
+          "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "V0VOUlBPUzIBAAAAAAAAAB20Oa/pp/ilpKkpSkMioiMSpo5Ph8XyC7+uCxi6Um2w7Uvsgh2pFnLEqwNZCAtZGLcETnpySn0b8xfLLLqInNLs9EVd6hAwLWFTQIpkTrtDgfedZvfcbXde63C3nkY85wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        },
+        "Page": {
+          "Address": "6UHa8tjYWFRSaJeLwzAnpq9fWyPJLLd4185zGmc3qBew",
+          "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "V0VOUkNMTTIBAAAAAAAAAC6HSOHiaS71nzV9hxOAbz8tjm1cckcxVbg0fZ5eUFqUHbQ5r+mn+KWkqSlKQyKiIxKmjk+HxfILv64LGLpSbbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA83FZuJ+iPxJ2m4ld/4j13fLUGOFClUi+50sHiO9oyKegDAAAAAAAAUAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "Mint": {
+          "Address": "GwyFZsXXYKXA11TjiGcCUGtEt1e6poWWVUXPBC7YcG9L",
+          "Owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "AQAAAD02I/d5uPWdJqy9mqcTGMU8RQJiBOwSCBM9/7wsobiFAAAAAAAAAAALAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEAbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBOuImiMQ4HKt08XsKUVL026VPu1OGp3Fpn2PYjRqZNAAAAAAAAAAAAAAAAAAAAAP//////////LAEAAAAAAAAAAP//////////LAE="
+        },
+        "Destination": {
+          "Address": "4tBp8gU8vLyxVw2rxr1NyuxE85SMy7Uerbe7uprhknx1",
+          "Owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "7PRFXeoQMC1hU0CKZE67Q4H3nWb33G13Xutwt55GPOe5HNLl9K8Y9DUDU1BosOcurtk7N+RzMdTlagEN6dCT/WQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgIACAAAAAAAAAAAAA=="
+        },
+        "Windows": [
+          {
+            "Window": {
+              "Address": "56aL7gWnLop3BjFVo6UejxCN8mcqajEepnT21JCGuFzQ",
+              "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+              "Slot": 166,
+              "Executable": false,
+              "Data": "V0VOUkNNUDIBAAEAAAAAAO1L7IIdqRZyxKsDWQgLWRi3BE56ckp9G/MXyyy6iJzS7PRFXeoQMC1hU0CKZE67Q4H3nWb33G13Xutwt55GPOfk7bxzpB9ju7wWIxdaiA3/11DLt8e9kscpVuUh62L04wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+            },
+            "Vault": {
+              "Address": "GQeDBuASj7DZwUeiekwoZyHLr2v3dThSsLuAeB8CAtKk",
+              "Owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+              "Slot": 166,
+              "Executable": false,
+              "Data": "7PRFXeoQMC1hU0CKZE67Q4H3nWb33G13Xutwt55GPOc83FZuJ+iPxJ2m4ld/4j13fLUGOFClUi+50sHiO9oyKegDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgIACAAAAAAAAAAAAA=="
+            }
+          }
+        ]
+      },
+      "History": {
+        "Slot": 166,
+        "Now": 864001,
+        "Pool": {
+          "Address": "DTbv8VQZgFKXxzAmMPVm3RMWcjniEftdFXcpHbNcphdE",
+          "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "V0VOU1RLMDECAAD+AAAAAD02I/d5uPWdJqy9mqcTGMU8RQJiBOwSCBM9/7wsobiF7PRFXeoQMC1hU0CKZE67Q4H3nWb33G13Xutwt55GPOcKAAAAAAAAAGQAAAAAAAAAZAAAAAAAAABkAAAAAAAAAA=="
+        },
+        "Position": {
+          "Address": "DGKLYUHU4LKBDa5uJa7KPaFoL8YMPTBhVBW62PjieBsG",
+          "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "V0VOU1RQMDEBAAD/AAAAAD02I/d5uPWdJqy9mqcTGMU8RQJiBOwSCBM9/7wsobiFHbQ5r+mn+KWkqSlKQyKiIxKmjk+HxfILv64LGLpSbbBkAAAAAAAAAAAAAAAAAAAACQAAAAAAAAA="
+        },
+        "History": {
+          "Address": "2ah34Ny4SUgNznk9gNa5kF1Z4LbHa55u4fzeWepoQvRe",
+          "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "V0VOU1RIMDEBAAD/AAAAAD02I/d5uPWdJqy9mqcTGMU8RQJiBOwSCBM9/7wsobiFHbQ5r+mn+KWkqSlKQyKiIxKmjk+HxfILv64LGLpSbbAJAAAAAAAAAP//////////ZAAAAAAAAAA="
+        },
+        "NextHistory": null,
+        "Index": {
+          "Address": "CEALgwv64AuWwhxkiaJqcDgRg6cszGgnYgjd6AdYZjN3",
+          "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "V0VOU1RJWDEBAAD9AAAAAD02I/d5uPWdJqy9mqcTGMU8RQJiBOwSCBM9/7wsobiF7PRFXeoQMC1hU0CKZE67Q4H3nWb33G13Xutwt55GPOcJAAAAAAAAAAoAAAAAAAAA"
+        },
+        "Point": {
+          "Address": "B4TikTf9a4yodYRmxxwAM8UWSozdVVBPcL6RhUa9ndJq",
+          "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "Slot": 166,
+          "Executable": false,
+          "Data": "V0VOU1RPVDEBAAD8AAAAAD02I/d5uPWdJqy9mqcTGMU8RQJiBOwSCBM9/7wsobiFps+qt/9I7N1MDZHEFEMgdfpYbfobQKPfsSwgq4G4idwJAAAAAAAAAP//////////ZAAAAAAAAAAAAAAAAAAAAA=="
+        },
+        "NextPoint": null
+      },
+      "Sale": {
+        "Address": "57wkbh454SFcnDGtJomrszWpbZJTQNUafBoUPwaKZuun",
+        "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        "Slot": 166,
+        "Executable": false,
+        "Data": "V0VOR0VOMDEBAAP/AAAAAAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAOgkAAAAAAIE6CQAAAAAAAHQ7pAsAAAAAdDukCwAAAAAAAAAAAAAA"
+      },
+      "Activation": {
+        "Address": "HktKwUGRq32NN6QYYCemnbaHZjT9SHZJbXqZspFdp1Bg",
+        "Owner": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        "Slot": 166,
+        "Executable": false,
+        "Data": "V0VOQUNUUjEBAAH/AAAAAD02I/d5uPWdJqy9mqcTGMU8RQJiBOwSCBM9/7wsobiFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABA8Ju84QgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAArCr8CqI8AAANDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ=="
+      },
+      "Result": {
+        "Amounts": {
+          "Gross": 1000,
+          "Fee": 30,
+          "Net": 970,
+          "Purchase": 80
+        },
+        "NextPosition": 1070,
+        "NextTotal": 1070,
+        "NextCustodied": 1070,
+        "EffectiveDay": 11,
+        "RentBytes": [104, 112]
+      }
+    },
+    "Message": "gAEACRQdtDmv6af4paSpKUpDIqIjEqaOT4fF8gu/rgsYulJtsFFH2o1LAn64PgwofjODzjN9IH9wpm8mMxMOFP8rieAAOa/obWZCLSPoOchGU3zbJTDX3THjJF6IlSse1Lye3mLk7bxzpB9ju7wWIxdaiA3/11DLt8e9kscpVuUh62L047kc0uX0rxj0NQNTUGiw5y6u2Ts35HMx1OVqAQ3p0JP9tjiwW52QJf8BxcdoXvFhHq81NglTe0+zDEW1mMrHLWMXfR80ilsSK60cf+XWxvsqOlUYaOtMES7dRj4X7qV/oQWAegyr/M3Guoh1v7naYC/I6ZrbEy5vjwq+FJpgk36Lps+qt/9I7N1MDZHEFEMgdfpYbfobQKPfsSwgq4G4idyVd9Lp92nF4hd5fOMGY+pt8Wm4/rfOcJB/+sjO1ZOTAvDdOo5kbpMrGPfCMdym7s6vz793Wq3aVMNtzlhyO6oiLodI4eJpLvWfNX2HE4BvPy2ObVxyRzFVuDR9nl5QWpTs9EVd6hAwLWFTQIpkTrtDgfedZvfcbXde63C3nkY85wbd9uHudY/eGEJdvORszdq2GvxNg7kNJ/69+SjYoYv8PNxWbifoj8SdpuJXf+I9d3y1BjhQpVIvudLB4jvaMik9NiP3ebj1nSasvZqnExjFPEUCYgTsEggTPf+8LKG4hfj5AC6r2GoPwb+5puOdI/wTw+MDV2dIu0GtBMmStZ+DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADBkZv5SEXMv/srbpyw5vnvIzlu8X3EmssQ5s6QAAAAAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0CEgAFAoAaBgATEgALAQwCDQ4DDxAEBQYHEQgJCiKkAcoDAAAAAAAACgAAAAAAAAAJAAAAAAAAAAkAAAAAAAAAAA==",
+    "Blockhash": "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC",
+    "Fee": 5000,
+    "Rent": 200,
+    "Units": 10000,
+    "CurrentHeight": 100,
+    "LastValidHeight": 200,
+    "MaximumDebit": 5200
+  },
+  "artifactKind": "wen-campaign-claim-stake-v1",
+  "artifactDigest": "sha256:0797d305993481ce34c6394a365d10c8bb0587a4a638b86aef6180f185599b46",
+  "stateDigest": "78a195e278f43c67fd3b74919f22f47d1a8bb3623955ed4d2982f433edab8252",
+  "stateSlot": 166,
+  "asset": "solana:native",
+  "amount": "5200",
+  "destination": "57wkbh454SFcnDGtJomrszWpbZJTQNUafBoUPwaKZuun",
+  "policyOperation": "wen.campaign.claim-stake.v1",
+  "requiredPrograms": ["US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"],
+  "issuedAt": "2026-09-17T16:58:13.449027798Z",
+  "state": "prepared",
+  "preparedAt": "2026-09-17T16:58:13.449027798Z",
+  "expiresAt": "2026-09-17T17:00:13.449027798Z",
+  "updatedAt": "2026-09-17T16:58:13.449027798Z",
+  "transactionDigest": "sha256:ba2185d2b21d82ae4ea2aeefd7ca9b6abab6348ecb5a300da296a2fdacdc9739"
+}

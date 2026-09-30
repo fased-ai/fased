@@ -4,9 +4,9 @@ export const FASED_AGENT_CAPITAL_CONTRACT = {
   $schema: "fased.agent-capital-interface.v1",
   source: {
     repository: "https://github.com/fased-ai/agent-protocol",
-    commit: "d84f3a7eb11352de62f2eee6a40fde5b45893e18", // pragma: allowlist secret
-    tree: "9f42290410748b5993967dd3caf43f40a93fc952", // pragma: allowlist secret
-    idlSha256: "sha256:06b88678725f189e1b6dc220bc2564b8ce3b8305cc423f54ad3c515789d05272", // pragma: allowlist secret
+    commit: "60c5317e477254801fbb93becdd00a445d75fdda", // pragma: allowlist secret
+    tree: "215f6c5018b5fda157060ac80c26496366854563", // pragma: allowlist secret
+    idlSha256: "sha256:55aa4701dd320ecebeafd4fc8419827d71890dcd604ee53206aa38347382fcc4", // pragma: allowlist secret
   },
   programId: "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz", // pragma: allowlist secret
   generation: 1,
@@ -266,6 +266,204 @@ export const FASED_AGENT_CAPITAL_CONTRACT = {
         },
         {
           name: "associated_token_program",
+          signer: false,
+          writable: false,
+        },
+      ],
+    },
+    {
+      action: "commit_vault_cycle",
+      discriminator: [216, 19, 242, 151, 15, 128, 155, 141],
+      dataSize: 64,
+      args: [
+        {
+          name: "expected_authority_generation",
+          type: "u64",
+        },
+        {
+          name: "cycle_id",
+          type: "u64",
+        },
+        {
+          name: "commitment",
+          type: {
+            array: ["u8", 32],
+          },
+        },
+        {
+          name: "max_rent_lamports",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "executor",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "agent_capital_vault_binding",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "mining_vault",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "permanent_mining_id",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "sat_agent_record",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "vault_authority",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "vault_miner_capital",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "protocol_state",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "cycle",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "miner_cycle",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "operating_reserve",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "reward_remainder",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "satcoin_program",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111",
+        },
+      ],
+    },
+    {
+      action: "compact_vault_pending_cycle",
+      discriminator: [65, 180, 230, 100, 95, 43, 10, 166],
+      dataSize: 16,
+      args: [
+        {
+          name: "expected_cycle_id",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "cranker",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "agent_capital_vault_binding",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "vault_authority",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "vault_miner_capital",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "miner_cycle",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "satcoin_program",
+          signer: false,
+          writable: false,
+        },
+      ],
+    },
+    {
+      action: "configure_vault_mining",
+      discriminator: [205, 219, 135, 99, 185, 220, 187, 225],
+      dataSize: 24,
+      args: [
+        {
+          name: "expected_authority_generation",
+          type: "u64",
+        },
+        {
+          name: "lamports",
+          type: "u64",
+        },
+      ],
+      accounts: [
+        {
+          name: "profile_controller",
+          signer: true,
+          writable: false,
+        },
+        {
+          name: "fased_agent_record",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "agent_capital_vault_binding",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "mining_vault",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "sat_agent_record",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "vault_authority",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "vault_miner_capital",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "satcoin_program",
           signer: false,
           writable: false,
         },
@@ -673,6 +871,106 @@ export const FASED_AGENT_CAPITAL_CONTRACT = {
           name: "satcoin_program",
           signer: false,
           writable: false,
+        },
+      ],
+    },
+    {
+      action: "reveal_vault_cycle",
+      discriminator: [218, 144, 203, 233, 104, 165, 185, 62],
+      dataSize: 120,
+      args: [
+        {
+          name: "expected_authority_generation",
+          type: "u64",
+        },
+        {
+          name: "cycle_id",
+          type: "u64",
+        },
+        {
+          name: "nonce",
+          type: {
+            array: ["u8", 32],
+          },
+        },
+        {
+          name: "allocation_fp",
+          type: {
+            array: ["u32", 16],
+          },
+        },
+      ],
+      accounts: [
+        {
+          name: "executor",
+          signer: true,
+          writable: true,
+        },
+        {
+          name: "agent_capital_vault_binding",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "mining_vault",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "sat_agent_record",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "vault_authority",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "vault_miner_capital",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "cycle",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "registry",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "page",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "progress",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "miner_cycle",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "registry_reserve",
+          signer: false,
+          writable: true,
+        },
+        {
+          name: "satcoin_program",
+          signer: false,
+          writable: false,
+        },
+        {
+          name: "system_program",
+          signer: false,
+          writable: false,
+          address: "11111111111111111111111111111111",
         },
       ],
     },

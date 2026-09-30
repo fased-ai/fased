@@ -33,10 +33,36 @@ func TestControlUIReviewDevnetCapitalBoundary(t *testing.T) {
 	}
 }
 
+func TestAgentCapitalVaultMiningRequiresSignerOwnedCommitments(t *testing.T) {
+	for _, action := range []string{"commit_vault_cycle", "reveal_vault_cycle"} {
+		intent, wallet := agentCapitalDepositFixtureV2()
+		contract := agentCapitalInstructionContractsV1[action]
+		data := make([]byte, contract.DataSize)
+		copy(data, contract.Discriminator[:])
+		intent.Action = action
+		intent.DataBase64 = base64.StdEncoding.EncodeToString(data)
+		intent.Keys = nil
+		for _, account := range contract.Accounts {
+			key := solana.NewWallet().PublicKey()
+			if account.IsSigner {
+				key = wallet
+			}
+			if account.Address != "" {
+				key = solana.MustPublicKeyFromBase58(account.Address)
+			}
+			intent.Keys = append(intent.Keys, signerSATAccountV2{Pubkey: key.String(), IsSigner: account.IsSigner, IsWritable: account.IsWritable})
+		}
+		if _, err := normalizeAgentCapitalIntentV2(intent, wallet); err == nil || !strings.Contains(err.Error(), "signer-owned Vault commitment") {
+			t.Fatalf("generic mining secrets accepted for %s: %v", action, err)
+		}
+	}
+}
+
 func TestControlUIReviewDevnetLifecycleRoles(t *testing.T) {
 	for action, wantRole := range map[string]string{
 		"cancel_capital_offer": "profile", "succeed_empty_capital_offer": "profile", "deposit_capital_offer_generation": "vault",
 		"activate_capital_offer": "profile", "record_vault_result": "profile",
+		"configure_vault_mining": "profile", "compact_vault_pending_cycle": "profile",
 		"claim_vault_sat": "vault", "request_vault_exit": "vault",
 		"finalize_vault_exit": "vault", "refund_cancelled_position": "vault",
 	} {

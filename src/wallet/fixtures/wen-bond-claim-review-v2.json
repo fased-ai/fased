@@ -1,0 +1,137 @@
+{
+  "expected": {
+    "artifactDigest": "sha256:3777c5383c4965de185948319ceab9ab00edf6b6f86e153f76a215840949185b",
+    "maxFee": 10000,
+    "pins": {
+      "Profile": "devnet-synthetic-fixture",
+      "Program": "GC4KiyyAkr3Gwp5pQXQMqoDinrRYtQq9BwZU2cVHDMaQ",
+      "Sale": "HN1cPou8pyF4ewUELGrnUzQsmgMU22dfhBSqNo8vXYTU",
+      "Policy": "CiDwVBFgWV9E5MvXWoLgnEgn2hK7rJikbvfWavzAQz3",
+      "Owner": "9oUCsWd3qtH3kqD88Fd4kp2QrDjqiQ48ia8obBTGMjyo",
+      "Destination": "LX3EUdRUBUa3TbsYXLEUdj9J3prXkWXvLYSWyYyc2Jj"
+    },
+    "policy": {
+      "Deployment": {
+        "DescriptorSHA256": "",
+        "CapabilitySHA256": "",
+        "OfferSHA256": "",
+        "ProgramID": "GC4KiyyAkr3Gwp5pQXQMqoDinrRYtQq9BwZU2cVHDMaQ",
+        "Genesis": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+        "SourceAccount": "",
+        "AdmissionAccount": "",
+        "CodeSHA256": "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+        "DeploymentSlot": 90,
+        "UpgradeAuthority": null
+      },
+      "Nonce": 17,
+      "MinimumNet": 1,
+      "MinimumSlot": 1000,
+      "ExpiresSlot": 1032,
+      "MaxSlotLag": 32
+    },
+    "policyHash": "sha256:8089226420117874be36d51fc5fa223bf5ccdf7b4811983adbb09ed0235ab196",
+    "requestId": "review-request-001",
+    "retainedLamports": 1000,
+    "walletId": "miner",
+    "walletPublicKey": "9oUCsWd3qtH3kqD88Fd4kp2QrDjqiQ48ia8obBTGMjyo"
+  },
+  "review": {
+    "requestId": "review-request-001",
+    "walletId": "miner",
+    "walletPublicKey": "9oUCsWd3qtH3kqD88Fd4kp2QrDjqiQ48ia8obBTGMjyo",
+    "intentType": "wen.bond.claim.v2",
+    "intentDigest": "sha256:3777c5383c4965de185948319ceab9ab00edf6b6f86e153f76a215840949185b",
+    "policyHash": "sha256:8089226420117874be36d51fc5fa223bf5ccdf7b4811983adbb09ed0235ab196",
+    "mode": "reviewed",
+    "nonce": "c9645a5e388d8f01220dd4deccbe9aad79f9a4a2ff5bea797c825c0594935fa3",
+    "semanticIntent": {
+      "Version": 2,
+      "RequestID": "review-request-001",
+      "WalletID": "miner",
+      "WalletPublicKey": "9oUCsWd3qtH3kqD88Fd4kp2QrDjqiQ48ia8obBTGMjyo",
+      "PolicyHash": "sha256:8089226420117874be36d51fc5fa223bf5ccdf7b4811983adbb09ed0235ab196",
+      "Pins": {
+        "Profile": "devnet-synthetic-fixture",
+        "Program": "GC4KiyyAkr3Gwp5pQXQMqoDinrRYtQq9BwZU2cVHDMaQ",
+        "Sale": "HN1cPou8pyF4ewUELGrnUzQsmgMU22dfhBSqNo8vXYTU",
+        "Policy": "CiDwVBFgWV9E5MvXWoLgnEgn2hK7rJikbvfWavzAQz3",
+        "Owner": "9oUCsWd3qtH3kqD88Fd4kp2QrDjqiQ48ia8obBTGMjyo",
+        "Destination": "LX3EUdRUBUa3TbsYXLEUdj9J3prXkWXvLYSWyYyc2Jj"
+      },
+      "Policy": {
+        "Deployment": {
+          "DescriptorSHA256": "",
+          "CapabilitySHA256": "",
+          "OfferSHA256": "",
+          "ProgramID": "GC4KiyyAkr3Gwp5pQXQMqoDinrRYtQq9BwZU2cVHDMaQ",
+          "Genesis": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+          "SourceAccount": "",
+          "AdmissionAccount": "",
+          "CodeSHA256": "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+          "DeploymentSlot": 90,
+          "UpgradeAuthority": null
+        },
+        "Nonce": 17,
+        "MinimumNet": 1,
+        "MinimumSlot": 1000,
+        "ExpiresSlot": 1032,
+        "MaxSlotLag": 32
+      },
+      "MaxFee": 10000,
+      "RetainedLamports": 1000,
+      "Binding": {
+        "Message": "gAEABAyCxPkZm3mKj7Lgs3Fy9pp7DHBw4XKFouC2kqF1kYHZlnjvHwaGvd4qIyjY8o13jjkhEBl2JqJUHmdraTcVzAj8wE8Pzt34wlAF8QOHG/E/Yp7Qqi31l/jlMCh0QIWneMb5qDyHlKEr1HNA1PogIbkG5XiBUHvxaRX+iti7GUrAEl5bL7M/xGqRRdKr/N9bZF1uMuHrejN5nsw8FgGBxpkQBQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABKoszL/dWReLhxj/JOz1RsOJkKtvVEpNMERGxGnaXOAAXqGQ3kbdVP5mTV0mdpQRK+zRn1u7ccpx9VmxiZlbL28xzgt3wUZYtRLIleYOuFNQuY/dGCbArAxDH6k/Dtd7s8cR0BwUCl1NiDBbp2zM3VQjgmhI5rlsezAvqHAI07bQbd9uHudY/eGEJdvORszdq2GvxNg7kNJ/69+SjYoYv84bRzLkgYcdOfTaeNq8hHp2wl5KFXfPK1C480a1NQfwEHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAELCwAICQECAwQFCgYHCcARAAAAAAAAAAA=",
+        "Blockhash": "UKrXU5bFrTzrqqpZXs8GVDbp4xPweiM65ADXNAy3ddR",
+        "Snapshot": {
+          "Claim": {
+            "Quote": "7F7RHNeBiEoc6F4mWjZ7JDxnuKyQ3aPgq4nnUgqWTk3Z",
+            "Receipt": "995QR8yCGMiS1GkPGnY21Gr3j93VzE946NyAiLknq1j9",
+            "Nonce": 17,
+            "Start": 288001,
+            "End": 892801,
+            "Cash": 380000000,
+            "USDBacking": 200000000,
+            "BTCCapital": 180000000,
+            "Gross": 10000000000000,
+            "ClaimedGross": 0,
+            "ClaimedNet": 0,
+            "ClaimedFee": 0,
+            "AvailableGross": 5000000000000,
+            "AvailableNet": 4850000000000,
+            "TransferFee": 150000000000,
+            "QuoteSHA256": [
+              146, 234, 92, 121, 191, 96, 202, 195, 41, 6, 202, 114, 0, 87, 14, 30, 169, 88, 50,
+              187, 208, 111, 14, 225, 226, 32, 80, 53, 148, 12, 155, 95
+            ]
+          },
+          "Slot": 1001,
+          "ReferenceSlot": 1002,
+          "Now": 590401,
+          "StateSHA256": "5db13840f937487c4275fc6ca57ea5e6b201258f763532db24d1516923a52929"
+        },
+        "Fee": 5000,
+        "Units": 90000,
+        "CurrentHeight": 10,
+        "LastValidHeight": 20
+      }
+    },
+    "artifactKind": "wen-bond-claim-v2",
+    "artifactDigest": "sha256:3777c5383c4965de185948319ceab9ab00edf6b6f86e153f76a215840949185b",
+    "stateDigest": "5db13840f937487c4275fc6ca57ea5e6b201258f763532db24d1516923a52929",
+    "stateSlot": 1001,
+    "asset": "solana:native",
+    "amount": "10000",
+    "destination": "LX3EUdRUBUa3TbsYXLEUdj9J3prXkWXvLYSWyYyc2Jj",
+    "policyOperation": "wen.bond.claim.v2",
+    "requiredPrograms": [
+      "GC4KiyyAkr3Gwp5pQXQMqoDinrRYtQq9BwZU2cVHDMaQ",
+      "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+    ],
+    "issuedAt": "2026-09-26T15:32:41.743419624Z",
+    "state": "prepared",
+    "preparedAt": "2026-09-26T15:32:41.743419624Z",
+    "expiresAt": "2026-09-26T15:34:41.743419624Z",
+    "updatedAt": "2026-09-26T15:32:41.743419624Z",
+    "transactionDigest": "sha256:934b7c1fae80861d40d110e6bc497d194789b73e89cddcdc3e0e0b5afd70f19d"
+  }
+}

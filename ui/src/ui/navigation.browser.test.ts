@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import "../styles.css";
 import { mountApp as mountTestApp, registerAppMountHooks } from "./test-helpers/app-mount.ts";
 
@@ -19,6 +19,18 @@ describe("control UI workflow navigation", () => {
     expect(window.location.pathname).toBe("/dash");
   });
 
+  it("opens the WEN Desk on its own route", async () => {
+    const app = mountApp("/wen");
+    await vi.waitFor(() =>
+      expect(app.textContent).toContain("Connect a WEN-enabled Fased instance"),
+    );
+
+    expect(app.tab).toBe("wen");
+    expect(window.location.pathname).toBe("/wen");
+    expect(app.querySelector('section[aria-label="WEN desk"]')).not.toBeNull();
+    expect(app.querySelector("wen-review-panel")).toBeNull();
+  });
+
   it("renders the flat workflow sidebar and the compact topbar actions", async () => {
     const app = mountApp("/overview");
     await app.updateComplete;
@@ -27,15 +39,17 @@ describe("control UI workflow navigation", () => {
     const navLabels = Array.from(app.querySelectorAll<HTMLAnchorElement>(".nav-item")).map((el) =>
       el.getAttribute("data-label"),
     );
-    expect(navLabels.slice(0, 7)).toEqual([
+    expect(navLabels.slice(0, 8)).toEqual([
       "Dashboard",
       "Chat",
       "Agents",
       "Wallets",
-      "Mining",
+      "WEN",
       "Network",
       "Marketplace",
+      "Extensions",
     ]);
+    expect(navLabels).not.toContain("Mining");
     expect(navLabels).not.toContain("Providers");
     expect(navLabels).not.toContain("Channels");
     expect(navLabels).not.toContain("Services");
@@ -45,6 +59,37 @@ describe("control UI workflow navigation", () => {
     ).not.toBeNull();
     expect(app.querySelector(".topbar-menu__button")).not.toBeNull();
     expect(app.textContent).not.toContain("Resources");
+  });
+
+  it("shows the legacy Mining route for an attached wallet and keeps it directly routable", async () => {
+    const app = mountApp("/overview");
+    await app.updateComplete;
+    expect(app.querySelector('a.nav-item[href="/mining"]')).toBeNull();
+
+    app.miningAttachedWalletId = "mining";
+    await app.updateComplete;
+    expect(app.querySelector('a.nav-item[href="/mining"]')).not.toBeNull();
+
+    app.miningAttachedWalletId = null;
+    app.setTab("mining");
+    await app.updateComplete;
+    expect(app.querySelector('a.nav-item[href="/mining"]')).not.toBeNull();
+  });
+
+  it("keeps legacy Mining visible when its wallet role is registered", async () => {
+    const app = mountApp("/overview");
+    app.walletNamedWallets = [
+      {
+        id: "old-owner-wallet",
+        name: "Old mining wallet",
+        providerId: "local-socket-signer",
+        metadata: { purpose: "mining" },
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    ];
+    await app.updateComplete;
+    expect(app.querySelector('a.nav-item[href="/mining"]')).not.toBeNull();
   });
 
   it("keeps Providers routable without showing it in the sidebar", async () => {

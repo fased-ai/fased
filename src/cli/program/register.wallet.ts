@@ -30,6 +30,7 @@ import {
   callGatewayFromCli,
   type GatewayRpcOpts,
 } from "../gateway-rpc.js";
+import { registerWalletWenReview } from "./register.wallet-wen.js";
 
 function resolvePublicWalletSetupChain(raw: unknown): "solana" | undefined {
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
@@ -49,6 +50,8 @@ export function registerWalletCommands(program: Command) {
     .action(() => {
       wallet.help({ error: true });
     });
+
+  registerWalletWenReview(wallet, (text) => defaultRuntime.log(text));
 
   const recovery = wallet.command("recovery").description("Signer-owned encrypted recovery");
   recovery

@@ -217,6 +217,7 @@ export async function resolveModelForExecution(
       store,
       catalog,
       defaultProvider: provider,
+      discoveryRoutes: [provider],
       agentDir: resolvedAgentDir,
     });
     const normalizedProvider = normalizeProviderId(provider);

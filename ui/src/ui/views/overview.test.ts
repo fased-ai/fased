@@ -388,7 +388,7 @@ describe("renderOverview dashboard", () => {
     );
 
     expect(text).toContain("Agent");
-    expect(text).toContain("Mining");
+    expect(text).toContain("Legacy Mining");
     expect(text).toContain("Vault");
     expect(text).toContain("1.5 SOL");
     expect(text).toContain("2 SOL");
@@ -440,7 +440,7 @@ describe("renderOverview dashboard", () => {
       ),
     );
 
-    expect(text).toContain("Mining");
+    expect(text).toContain("Legacy Mining");
     expect(text).toContain("Started");
     expect(text).toContain("SAT");
     expect(text).not.toContain("Satcoin");

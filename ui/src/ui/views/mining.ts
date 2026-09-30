@@ -6356,6 +6356,10 @@ export function renderMining(props: MiningViewProps) {
     </style>
 
     <section id="mining-dashboard" class="mining-dashboard">
+      <div class="callout info" role="note">
+        This page retains legacy SAT cycle controls and recovery. New WEN mining uses funded
+        campaign positions in the WEN app; it does not require this Mining wallet or a personal miner.
+      </div>
       <div class="mining-control-card mining-overview-card">
         <div class="mining-header-actions mining-header-actions--primary">
           <button

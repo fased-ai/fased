@@ -45,6 +45,23 @@ describe("runtime provider model catalog", () => {
     fetchProviderRefreshSnapshotForRoutes.mockReset();
   });
 
+  it("scopes discovery cache to the requested execution route", async () => {
+    fetchProviderRefreshSnapshotForRoutes.mockImplementation(async ({ routes }) => ({
+      providers: Object.fromEntries(
+        routes.map((route: string) => [
+          route,
+          { routes: { [route]: [{ id: `${route}-current` }] } },
+        ]),
+      ),
+    }));
+    await applyRuntimeProviderModelDiscovery({ cfg, store, routes: ["openai"], catalog: [] });
+    await applyRuntimeProviderModelDiscovery({ cfg, store, routes: ["openai"], catalog: [] });
+    expect(fetchProviderRefreshSnapshotForRoutes).toHaveBeenCalledTimes(1);
+    await applyRuntimeProviderModelDiscovery({ cfg, store, routes: ["anthropic"], catalog: [] });
+    expect(fetchProviderRefreshSnapshotForRoutes).toHaveBeenCalledTimes(2);
+    expect(fetchProviderRefreshSnapshotForRoutes.mock.calls[1][0].routes).toEqual(["anthropic"]);
+  });
+
   it("keeps credentials attached to their exact route within a public provider brand", () => {
     const routeStore = {
       version: 1,

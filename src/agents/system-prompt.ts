@@ -189,7 +189,6 @@ function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readT
     "Mirror: https://docs.fased.ai",
     "Source: https://github.com/fased-ai/fased",
     "Support: https://docs.fased.ai/help",
-    "Find new skills: https://clawhub.com",
     "For FasedAgent behavior, commands, config, or architecture: consult local docs first.",
     "When diagnosing issues, run `fased status` yourself when possible; only ask the user if you lack access (e.g., sandboxed).",
     "",

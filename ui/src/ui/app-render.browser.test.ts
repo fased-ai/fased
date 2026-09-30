@@ -374,139 +374,30 @@ describe("app task model inheritance", () => {
     expect(chip?.getAttribute("title")).toContain("Narrow selected skills: Market smoke");
   });
 
-  it("opens the ClawHub review modal from details and confirms install", async () => {
+  it("keeps reviewed skills available without public catalog acquisition", async () => {
     const app = mountApp("/skills");
-    const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === "skills.marketplace.install.preview") {
-        expect(params).toMatchObject({
-          slug: "github",
-          target: { scope: "default-agent" },
-        });
-        return {
-          ok: true,
-          slug: "github",
-          version: "1.2.3",
-          targetDir: "/tmp/workspace/skills/github",
-          permissions: { version: 1, risky: false, digest: "next-digest" },
-          installScan: {
-            version: 1,
-            fileCount: 2,
-            totalBytes: 1024,
-            files: ["SKILL.md", "README.md"],
-            findings: [],
-            blocked: false,
-          },
-          updateReview: {
-            version: 1,
-            approvalRequired: false,
-            reasons: [],
-            permissionDigestChanged: true,
-            nextPermissionDigest: "next-digest",
-            addedScanFindings: [],
-          },
-        };
-      }
-      if (method === "skills.marketplace.install") {
-        expect(params).toMatchObject({
-          slug: "github",
-          version: "1.2.3",
-          target: { scope: "default-agent" },
-        });
-        return { ok: true };
-      }
-      if (method === "skills.status") {
-        return {
-          workspaceDir: "/tmp/workspace",
-          managedSkillsDir: "/tmp/workspace/skills",
-          skills: [],
-        };
-      }
-      throw new Error(`unexpected method ${method}`);
-    });
+    const request = vi.fn();
     app.client = { request, stop: vi.fn() } as unknown as typeof app.client;
-    app.applySettings({ ...app.settings, token: "owner-token-for-clawhub-review" });
-    app.agentsList = {
-      defaultId: "main",
-      mainKey: "main",
-      scope: "local",
-      agents: [{ id: "main", name: "Assistant" }],
-    };
-    app.clawhubDetailSlug = "github";
-    app.clawhubDetail = {
-      skill: {
-        slug: "github",
-        displayName: "GitHub",
-        summary: "GitHub skill",
-        createdAt: 1,
-        updatedAt: 2,
-      },
-      latestVersion: { version: "1.2.3", createdAt: 3 },
-    };
-
-    app.requestUpdate();
-    await app.updateComplete;
-
-    app.querySelector<HTMLButtonElement>('[data-testid="clawhub-detail-review-install"]')?.click();
-    await settleApp(app);
-
-    expect(app.clawhubDetailSlug).toBeNull();
-    expect(app.textContent).toContain("Install github");
-    expect(app.textContent).toContain("Install preview");
-    expect(app.textContent).toContain("SKILL.md");
-
-    app.querySelector<HTMLButtonElement>('[data-testid="clawhub-review-confirm"]')?.click();
-    await settleApp(app);
-
-    expect(request).toHaveBeenCalledWith("skills.marketplace.install", {
-      slug: "github",
-      version: "1.2.3",
-      target: { scope: "default-agent" },
-    });
-    expect(app.clawhubInstallMessage?.text).toBe("Installed github");
-  });
-
-  it("keeps ClawHub preview failures visible after the review dialog closes", async () => {
-    const app = mountApp("/skills");
-    const request = vi.fn(async (method: string) => {
-      if (method === "skills.marketplace.install.preview") {
-        return {
-          ok: false,
-          error: "downloaded archive is missing SKILL.md",
-        };
-      }
-      throw new Error(`unexpected method ${method}`);
-    });
-    app.client = { request, stop: vi.fn() } as unknown as typeof app.client;
-    app.applySettings({ ...app.settings, token: "owner-token-for-clawhub-error" });
     app.skillsLibraryPanel = "clawhub";
-    app.clawhubSearchResults = [
-      {
-        score: 1,
-        slug: "broken-skill",
-        displayName: "Broken Skill",
-        summary: "Broken archive",
-      },
-    ];
-
+    app.clawhubDetailSlug = "github";
+    app.skillsReport = {
+      workspaceDir: "/tmp/workspace",
+      managedSkillsDir: "/tmp/workspace/skills",
+      skills: [makeSkill({ name: "WEN strategy", skillKey: "wen-strategy" })],
+    };
     app.requestUpdate();
     await app.updateComplete;
-
-    app
-      .querySelector<HTMLButtonElement>('[data-testid="clawhub-review-install-broken-skill"]')
-      ?.click();
-    await settleApp(app);
-
-    expect(app.textContent).toContain("downloaded archive is missing SKILL.md");
-    Array.from(app.querySelectorAll<HTMLButtonElement>("dialog button"))
-      .find((button) => button.textContent?.includes("Close"))
-      ?.click();
-    await settleApp(app);
-
-    expect(app.clawhubInstallMessage).toEqual({
-      kind: "error",
-      text: "downloaded archive is missing SKILL.md",
-    });
-    expect(app.textContent).toContain("downloaded archive is missing SKILL.md");
+    expect(app.querySelector('input[name="clawhub-search"]')).toBeNull();
+    expect(app.querySelector('[data-testid="clawhub-detail-review-install"]')).toBeNull();
+    expect(app.textContent).toContain("WEN strategy");
+    expect(
+      request.mock.calls.some(
+        ([method]) =>
+          String(method).startsWith("skills.marketplace.") ||
+          method === "skills.search" ||
+          method === "skills.detail",
+      ),
+    ).toBe(false);
   });
 
   it("copies a read-only skill into a workspace, opens the editor, and saves it", async () => {

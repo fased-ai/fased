@@ -1,0 +1,109 @@
+{
+  "requestId": "review-request-001",
+  "walletId": "miner",
+  "walletPublicKey": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+  "intentType": "wen.market.buy.v1",
+  "intentDigest": "sha256:08e96d1a586d3d4850b54d749559e063f181e23f597303281c7230b5afc0a03a",
+  "policyHash": "sha256:abb0eef0ac34b5f8a52036413004e98a7c4c9ebfba3a286ff9b1af271cea98a6",
+  "mode": "reviewed",
+  "nonce": "258f9443f451cd273dd4898ce2a6e2925af47eda5622cbb49bb90c823aa10e89",
+  "semanticIntent": {
+    "Version": 1,
+    "RequestID": "review-request-001",
+    "WalletID": "miner",
+    "WalletPublicKey": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+    "PolicyHash": "sha256:abb0eef0ac34b5f8a52036413004e98a7c4c9ebfba3a286ff9b1af271cea98a6",
+    "Pins": {
+      "Profile": "devnet-synthetic-fixture",
+      "Program": "GC4KiyyAkr3Gwp5pQXQMqoDinrRYtQq9BwZU2cVHDMaQ",
+      "Economy": "5fNcJggJb3rSRpkXhiHmfh1sTr45QLmDfVniFzg6LykH",
+      "Owner": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+      "AssetAccount": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+      "CashAccount": "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
+      "Pool": "2XeUBSWC4JfiXqZcNvPgkLqAXqgaMhLCXAx88zvoGNVC",
+      "Config": "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF"
+    },
+    "Policy": {
+      "Successor": {
+        "DescriptorSHA256": "",
+        "CapabilitySHA256": "",
+        "OfferSHA256": "",
+        "ProgramID": "GC4KiyyAkr3Gwp5pQXQMqoDinrRYtQq9BwZU2cVHDMaQ",
+        "Genesis": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+        "SourceAccount": "",
+        "AdmissionAccount": "",
+        "CodeSHA256": "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+        "DeploymentSlot": 90,
+        "UpgradeAuthority": null
+      },
+      "Venue": {
+        "DescriptorSHA256": "",
+        "CapabilitySHA256": "",
+        "OfferSHA256": "",
+        "ProgramID": "DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb",
+        "Genesis": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+        "SourceAccount": "",
+        "AdmissionAccount": "",
+        "CodeSHA256": "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+        "DeploymentSlot": 90,
+        "UpgradeAuthority": null
+      },
+      "Creator": "AKwakCbhTKzihoJFAU6p6tQhzaLBfMRN6rBDV7ZuuSYb",
+      "PricePolicy": "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
+      "PoolOpen": 1,
+      "ReferenceEnd": 1800,
+      "MaxDeviationBPS": 500,
+      "SyntheticReference": false
+    },
+    "Limits": {
+      "RequestedNet": 1000000000,
+      "MaxCash": 100000,
+      "MinimumNet": 1000000000,
+      "MinimumSlot": 100,
+      "ExpiresSlot": 132,
+      "SlippageBPS": 0
+    },
+    "Binding": {
+      "Message": "gAEABw4DAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxa1eiNr1oBTC48Kuk3q49XxLKd6zY+fduiiI6CcvcRvBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBDzW6gHTTPewXsE5NInwwjHoXe0JJUhdCG42QmaLnhiK/wsFr4pPQsXSnSLi75RCxkufdVspk/VV6ZT2NpbKGAwMxY3c4kg4UA5YvgDajSC4XADMNN+AJ/tbVVbCt0AX66tTq3cnJMrwtqFQ1VziyM8wLlGhrq/KxUKMmnQz2fcqBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYG3fbh12Whk9nL4UbO63msHLSF7V9bN5E6jPWFfv8AqQbd9uHudY/eGEJdvORszdq2GvxNg7kNJ/69+SjYoYv8tajqzlhxEH09o/k+COJjIO4xFx/5W6pz5J7pb672mbnIim1ZJo+VBmZwy+IKmYoWcCd6BthImxj6UA0K0oGoeriYmXktylI0eW/ndGKwMd9GP1/+rjZ8XA/7JG4ct84MBwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQ0ABwgBAgMEBQkKCwwGGI++WtrEHjPeKH0AAAAAAAD04po7AAAAAAA=",
+      "Blockhash": "UKrXU5bFrTzrqqpZXs8GVDbp4xPweiM65ADXNAy3ddR",
+      "Snapshot": {
+        "Quote": {
+          "Pool": "2XeUBSWC4JfiXqZcNvPgkLqAXqgaMhLCXAx88zvoGNVC",
+          "RequestedNet": 1000000000,
+          "InputCash": 32040,
+          "QuotedNet": 1000006388,
+          "Slot": 101,
+          "ReferenceSlot": 101
+        },
+        "Now": 1801,
+        "StateSHA256": "6837b1ed357008796d7c427f5bf9a20d7198e1e2e4b2de4419e8d887fcb637fb",
+        "SyntheticReference": false
+      },
+      "Fee": 5000,
+      "MaxFee": 5000,
+      "RetainedLamports": 114762240,
+      "CurrentHeight": 150,
+      "LastValidHeight": 200
+    }
+  },
+  "artifactKind": "wen-market-buy-v1",
+  "artifactDigest": "sha256:08e96d1a586d3d4850b54d749559e063f181e23f597303281c7230b5afc0a03a",
+  "stateDigest": "6837b1ed357008796d7c427f5bf9a20d7198e1e2e4b2de4419e8d887fcb637fb",
+  "stateSlot": 101,
+  "asset": "solana:spl:DE8BhmX7qJGzjUSHnYYEXjAcnr86aVUCNquoyEqYsENc",
+  "amount": "32040",
+  "destination": "2XeUBSWC4JfiXqZcNvPgkLqAXqgaMhLCXAx88zvoGNVC",
+  "policyOperation": "wen.market.buy.v1",
+  "requiredPrograms": [
+    "GC4KiyyAkr3Gwp5pQXQMqoDinrRYtQq9BwZU2cVHDMaQ",
+    "DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb",
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+  ],
+  "issuedAt": "2026-09-26T12:00:00Z",
+  "state": "prepared",
+  "preparedAt": "2026-09-26T12:00:00Z",
+  "expiresAt": "2026-09-26T12:02:00Z",
+  "updatedAt": "2026-09-26T12:00:00Z",
+  "transactionDigest": "sha256:7d7ff7f0b983715a11534393e618841854aea366b73d137d1d63a6ffde6d1139"
+}

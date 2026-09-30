@@ -55,6 +55,32 @@ function instruction(action: AgentCapitalInstruction["action"], signer: string) 
 describe("Agent Capital reviewed runtime contract", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it("imports Vault instruction sizes without enabling client-supplied mining secrets", () => {
+    const signer = Keypair.generate().publicKey.toBase58();
+    const sizes = {
+      configure_vault_mining: 24,
+      compact_vault_pending_cycle: 16,
+      commit_vault_cycle: 64,
+      reveal_vault_cycle: 120,
+    } as const;
+    for (const [action, size] of Object.entries(sizes)) {
+      expect(
+        FASED_AGENT_CAPITAL_CONTRACT.instructions.find((entry) => entry.action === action)
+          ?.dataSize,
+      ).toBe(size);
+    }
+    for (const action of ["commit_vault_cycle", "reveal_vault_cycle"] as const) {
+      expect(() => validateAgentCapitalInstruction(instruction(action, signer), signer)).toThrow(
+        "signer-owned Vault commitment",
+      );
+    }
+    for (const action of ["configure_vault_mining", "compact_vault_pending_cycle"] as const) {
+      expect(validateAgentCapitalInstruction(instruction(action, signer), signer).action).toBe(
+        action,
+      );
+    }
+  });
+
   it("binds action, program, account order, signer and deterministic restart identity", () => {
     const signer = Keypair.generate().publicKey.toBase58();
     const deposit = validateAgentCapitalInstruction(

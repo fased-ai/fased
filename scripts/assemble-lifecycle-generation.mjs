@@ -103,6 +103,7 @@ export async function writeBundledPluginLock(runtimeRoot) {
       digest: await pluginTreeDigest(pluginRoot),
       apiCapability: "fased.plugin.v1",
       required: required.has(manifest.id),
+      ...(entry.name === manifest.id ? {} : { directory: entry.name }),
     });
     required.delete(manifest.id);
   }

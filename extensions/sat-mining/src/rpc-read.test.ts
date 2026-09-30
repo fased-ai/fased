@@ -23,6 +23,7 @@ import {
   decodeSatMinerCycle,
   decodeSatMinerCycleV2,
   inspectSatCycleAccountExists,
+  inspectSatVNextRewardAdmission,
   inspectSatChainUnixTime,
   inspectSatAddressLookupTable,
   inspectSatMinerCycleByAddress,
@@ -1267,5 +1268,53 @@ describe("secondary read rpc fallback", () => {
     });
     expect(calls.filter((method) => method === "getMultipleAccounts")).toHaveLength(1);
     expect(calls.filter((method) => method === "getAccountInfo")).toHaveLength(0);
+  });
+});
+
+describe("fresh reward admission", () => {
+  it("rejects mismatches, missing records and wrong owners; rereads a corrected recipient", async () => {
+    const program = new PublicKey("H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF");
+    const bond = new PublicKey("71Med1feR4RvP9crdNYtAdMB2YQmSmkbyZhKYRzcRJKL");
+    process.env.FASED_SAT_PROGRAM_ID = program.toBase58();
+    process.env.FASED_SAT_BOND_PROGRAM_ID = bond.toBase58();
+    process.env.FASED_SAT_MINT_PROGRAM_ID = bond.toBase58();
+    process.env.FASED_SAT_MINT_ADDRESS = "BbZ7cUmbD9s43jeqK65Jjg8QWo5VNMZovKURVEYx4DqU";
+    const [expected] = PublicKey.findProgramAddressSync(
+      [Buffer.from("sat_bond_epoch_distributor_v3")],
+      bond,
+    );
+    const [global] = PublicKey.findProgramAddressSync(
+      [Buffer.from("sat_global_state_v2")],
+      program,
+    );
+    const data = Buffer.alloc(472);
+    data[0] = 130;
+    data.writeBigUInt64LE(2n, 8);
+    let value: { owner: string; executable: boolean; data: [string, string] } | null = {
+      owner: program.toBase58(),
+      executable: false,
+      data: [data.toString("base64"), "base64"],
+    };
+    let calls = 0;
+    const rpc = await startRpcServer((payload) => {
+      expect(payload.method).toBe("getAccountInfo");
+      expect(payload.params).toEqual([
+        global.toBase58(),
+        { encoding: "base64", commitment: "finalized" },
+      ]);
+      calls++;
+      return { result: { context: { slot: 42 }, value } };
+    });
+    process.env.FASED_WALLET_SOLANA_READ_RPC_URL = rpc;
+    process.env.FASED_WALLET_SOLANA_READ_RPC_FALLBACK_URL = rpc;
+    await expect(inspectSatVNextRewardAdmission()).rejects.toThrow("incompatible");
+    expected.toBuffer().copy(data, 232);
+    value.data = [data.toString("base64"), "base64"];
+    await expect(inspectSatVNextRewardAdmission()).resolves.toBeUndefined();
+    value.owner = bond.toBase58();
+    await expect(inspectSatVNextRewardAdmission()).rejects.toThrow("invalid global");
+    value = null;
+    await expect(inspectSatVNextRewardAdmission()).rejects.toThrow("invalid global");
+    expect(calls).toBe(4);
   });
 });

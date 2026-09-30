@@ -411,7 +411,7 @@ export type WalletSettings = {
   signerPolicy?: {
     state: "locked" | "acknowledged" | "unavailable";
     walletId: string;
-    role?: WalletUserRole;
+    role?: WalletUserRole | "keeper";
     version?: number;
     hash?: string;
     operations?: string[];

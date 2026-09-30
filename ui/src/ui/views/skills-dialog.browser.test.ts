@@ -1,5 +1,3 @@
-/* @vitest-environment jsdom */
-
 import { render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SkillStatusEntry, SkillStatusReport } from "../types.ts";
@@ -171,12 +169,12 @@ describe("renderSkills", () => {
     expect(showModal).toHaveBeenCalledTimes(1);
     expect(container.querySelector("dialog")?.hasAttribute("open")).toBe(true);
     const text = normalizeText(container);
-    expect(text).toContain("Agent use");
+    expect(container.querySelector("[data-testid=skill-attach-agent]")).not.toBeNull();
     expect(text).toContain("Agent skills");
     expect(text).toContain("Tool grants");
   });
 
-  it("renders a ClawHub install target selector with Agent names", () => {
+  it("does not render public acquisition controls from a retained ClawHub target", () => {
     const container = document.createElement("div");
     const onTargetChange = vi.fn();
 
@@ -194,15 +192,9 @@ describe("renderSkills", () => {
     const select = container.querySelector<HTMLSelectElement>(
       '[data-testid="clawhub-install-target"]',
     );
-    expect(select?.value).toBe("agent:research");
-    expect(normalizeText(container)).toContain("Shared library - reusable");
-    expect(normalizeText(container)).toContain("Research");
-    expect(normalizeText(container)).not.toContain("Research workspace");
-
-    select!.value = "shared";
-    select!.dispatchEvent(new Event("change"));
-
-    expect(onTargetChange).toHaveBeenCalledWith("shared");
+    expect(select).toBeNull();
+    expect(container.querySelector("[data-testid=clawhub-results]")).toBeNull();
+    expect(onTargetChange).not.toHaveBeenCalled();
   });
 
   it("renders ClawHub marketplace safety status in skill details", async () => {
@@ -252,7 +244,7 @@ describe("renderSkills", () => {
     expect(text).toContain("tools: web.fetch");
     expect(text).toContain("Archive scan: 1 warning");
     expect(text).toContain("approval required: permission digest changed");
-    expect(text).toContain("Review update");
+    expect(text).not.toContain("Review update");
   });
 
   it("shows dependency install plan and runs the Test skill action from the detail modal", async () => {
@@ -392,8 +384,8 @@ describe("renderSkills", () => {
     await Promise.resolve();
 
     const text = normalizeText(container);
-    expect(text).toContain("Agent Skills");
-    expect(text).toContain("Allow Assistant to use this skill");
+    expect(text).toContain("Agent skills");
+    expect(text).toContain("Allow on Agent");
 
     container.querySelector<HTMLButtonElement>(".md-preview-dialog__body .btn.primary")?.click();
     expect(onAttach).toHaveBeenCalledWith("repo-skill", "main");
@@ -486,9 +478,7 @@ describe("renderSkills", () => {
     const text = normalizeText(container);
     expect(text).toContain("Skill config");
     expect(text).toContain("EXTRA_TOKEN");
-    expect(text).toContain("Typed config");
     expect(text).toContain("Advanced JSON");
-    expect(text).toContain("skills.entries.repo-skill.config.mode ok");
 
     const envInput = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
       (input) => input.placeholder === "Saved in config",
@@ -629,7 +619,7 @@ describe("renderSkills", () => {
 
     const installedText =
       container.querySelector(".skills-card")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-    expect(installedText).toContain("bundled");
+    expect(installedText).toContain("Built-in Skills");
     expect(installedText).toContain("Ready");
     expect(installedText).toContain("Needs API key");
     expect(installedText).toContain("Needs dependency");
@@ -685,338 +675,19 @@ describe("renderSkills", () => {
     expect(onDetailClose).toHaveBeenCalledTimes(1);
   });
 
-  it("renders ClawHub search results and routes detail/review actions", async () => {
+  it("never renders a public catalog or install dialog from retained marketplace state", () => {
     const container = document.createElement("div");
-    const onClawHubDetailOpen = vi.fn();
     const onClawHubInstall = vi.fn();
-
     render(
       renderSkills(
-        createProps({
-          libraryPanel: "clawhub",
-          clawhubQuery: "git",
-          clawhubResults: [
-            {
-              score: 0.95,
-              slug: "github",
-              displayName: "GitHub",
-              summary: "GitHub integration for FasedAgent",
-              version: "1.2.3",
-            },
-          ],
-          onClawHubDetailOpen,
-          onClawHubInstall,
-        }),
+        createProps({ libraryPanel: "clawhub", clawhubDetailSlug: "github", onClawHubInstall }),
       ),
       container,
     );
-    await Promise.resolve();
-
-    const text = normalizeText(container);
-    expect(text).toContain("GitHub");
-    expect(text).toContain("GitHub integration for FasedAgent");
-    expect(text).toContain("v1.2.3");
-    expect(text).toContain("Review");
-    expect(text).toContain("Click for details");
-
-    container.querySelector<HTMLElement>(".skills-results-list .list-item")?.click();
-    container
-      .querySelector<HTMLButtonElement>(".skills-results-list .list-item .btn.btn--sm")
-      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-    expect(onClawHubDetailOpen).toHaveBeenCalledTimes(1);
-    expect(onClawHubDetailOpen).toHaveBeenCalledWith("github");
-    expect(onClawHubInstall).toHaveBeenCalledTimes(1);
-    expect(onClawHubInstall).toHaveBeenCalledWith("github");
-  });
-
-  it("opens the ClawHub detail dialog and renders install feedback", async () => {
-    const container = document.createElement("div");
-    const showModal = vi.fn(function (this: HTMLDialogElement) {
-      this.setAttribute("open", "");
-    });
-    const onClawHubInstall = vi.fn();
-    installDialogMethod("showModal", showModal);
-
-    render(
-      renderSkills(
-        createProps({
-          clawhubSearchError: "rate limited",
-          clawhubInstallMessage: { kind: "success", text: "Installed github" },
-          clawhubDetailSlug: "github",
-          clawhubDetail: {
-            skill: {
-              slug: "github",
-              displayName: "GitHub",
-              summary: "GitHub integration for FasedAgent",
-              createdAt: 1_700_000_000,
-              updatedAt: 1_700_000_100,
-            },
-            latestVersion: {
-              version: "1.2.3",
-              createdAt: 1_700_000_200,
-              changelog: "Added search support",
-            },
-            metadata: {
-              os: ["macos", "linux"],
-            },
-            owner: {
-              displayName: "FasedAgent",
-              handle: "fased",
-            },
-          },
-          onClawHubInstall,
-        }),
-      ),
-      container,
-    );
-    await Promise.resolve();
-
-    expect(showModal).toHaveBeenCalledTimes(1);
-    const text = normalizeText(container);
-    expect(text).toContain("rate limited");
-    expect(text).toContain("Installed github");
-    expect(text).toContain("By FasedAgent (@fased)");
-    expect(text).toContain("Latest: v1.2.3");
-    expect(text).toContain("Platforms: macos, linux");
-    expect(text).toContain("Added search support");
-    expect(text).toContain("Review install for GitHub");
-
-    container
-      .querySelector<HTMLButtonElement>(".md-preview-dialog__body .btn.primary")
-      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-    expect(onClawHubInstall).toHaveBeenCalledTimes(1);
-    expect(onClawHubInstall).toHaveBeenCalledWith("github");
-  });
-
-  it("renders ClawHub permission review before install", async () => {
-    const container = document.createElement("div");
-    const showModal = vi.fn(function (this: HTMLDialogElement) {
-      this.setAttribute("open", "");
-    });
-    const onClawHubReviewConfirm = vi.fn();
-    installDialogMethod("showModal", showModal);
-
-    render(
-      renderSkills(
-        createProps({
-          clawhubReview: {
-            ok: true,
-            mode: "install",
-            slug: "github",
-            version: "1.2.3",
-            targetDir: "/tmp/workspace/skills/github",
-            sourceTrust: {
-              registry: "https://clawhub.com",
-              trusted: true,
-              mode: "allowlist",
-              allowlist: ["https://clawhub.com"],
-            },
-            permissions: {
-              version: 1,
-              risky: true,
-              digest: "abcdef1234567890",
-              walletActions: {
-                actions: ["quote", "swap"],
-                roles: ["agent"],
-                chains: ["solana"],
-                maxSlippageBps: 50,
-              },
-              toolAccess: ["web.fetch"],
-            },
-            installScan: {
-              version: 1,
-              fileCount: 3,
-              totalBytes: 2048,
-              files: ["SKILL.md", "package.json", "src/index.ts"],
-              blocked: false,
-              findings: [
-                {
-                  severity: "warn",
-                  code: "dependency_manifest",
-                  path: "package.json",
-                  message: "dependency manifest present",
-                },
-              ],
-            },
-            updateReview: {
-              version: 1,
-              approvalRequired: false,
-              reasons: [],
-              permissionDigestChanged: true,
-              nextPermissionDigest: "abcdef1234567890",
-              addedScanFindings: [],
-            },
-          },
-          onClawHubReviewConfirm,
-        }),
-      ),
-      container,
-    );
-    await Promise.resolve();
-
-    const text = normalizeText(container);
-    expect(text).toContain("Install github");
-    expect(text).toContain("Source trust");
-    expect(text).toContain("https://clawhub.com");
-    expect(text).toContain("registry allowlist");
-    expect(text).toContain("wallet: actions quote, swap");
-    expect(text).toContain("tools: web.fetch");
-    expect(text).toContain("SKILL.md");
-    expect(text).toContain("src/index.ts");
-    expect(text).toContain("Warning: dependency_manifest");
-    expect(text).toContain("Dependency/script policy");
-    expect(text).toContain("dependency manifests 1");
-    expect(text).toContain("script files 0");
-
-    container
-      .querySelector<HTMLButtonElement>(".md-preview-dialog__body .btn.primary")
-      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-    expect(onClawHubReviewConfirm).toHaveBeenCalledTimes(1);
-  });
-
-  it("disables review confirmation when archive scan blocks install", async () => {
-    const container = document.createElement("div");
-    installDialogMethod("showModal", function (this: HTMLDialogElement) {
-      this.setAttribute("open", "");
-    });
-
-    render(
-      renderSkills(
-        createProps({
-          clawhubReview: {
-            ok: true,
-            mode: "install",
-            slug: "blocked",
-            version: "1.0.0",
-            targetDir: "/tmp/workspace/skills/blocked",
-            permissions: { version: 1, risky: false, digest: "digest" },
-            installScan: {
-              version: 1,
-              fileCount: 1,
-              totalBytes: 64,
-              blocked: true,
-              findings: [
-                {
-                  severity: "block",
-                  code: "sensitive_file",
-                  path: ".env",
-                  message: "contains sensitive file",
-                },
-              ],
-            },
-            updateReview: {
-              version: 1,
-              approvalRequired: false,
-              reasons: [],
-              permissionDigestChanged: true,
-              nextPermissionDigest: "digest",
-              addedScanFindings: [],
-            },
-          },
-        }),
-      ),
-      container,
-    );
-    await Promise.resolve();
-
-    const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (candidate) => candidate.textContent?.includes("Blocked by scan"),
-    );
-    expect(button?.disabled).toBe(true);
-  });
-
-  it("renders update permission and scan diffs before approval", async () => {
-    const container = document.createElement("div");
-    installDialogMethod("showModal", function (this: HTMLDialogElement) {
-      this.setAttribute("open", "");
-    });
-
-    render(
-      renderSkills(
-        createProps({
-          clawhubReview: {
-            ok: true,
-            mode: "update",
-            slug: "trader",
-            previousVersion: "1.0.0",
-            version: "1.1.0",
-            changed: true,
-            targetDir: "/tmp/workspace/skills/trader",
-            sourceTrust: {
-              registry: "https://clawhub.com",
-              trusted: true,
-              mode: "allowlist",
-              allowlist: ["https://clawhub.com"],
-            },
-            permissions: {
-              version: 1,
-              risky: true,
-              digest: "next-digest",
-              walletActions: {
-                actions: ["swap"],
-                roles: ["agent"],
-                chains: ["solana"],
-              },
-              toolAccess: ["web.fetch"],
-            },
-            installScan: {
-              version: 1,
-              fileCount: 4,
-              totalBytes: 4096,
-              blocked: false,
-              findings: [
-                {
-                  severity: "warn",
-                  code: "script_file",
-                  path: "bin/trade.sh",
-                  message: "script file present",
-                },
-              ],
-            },
-            updateReview: {
-              version: 1,
-              approvalRequired: true,
-              reasons: ["requested permissions changed", "archive scan added reviewable findings"],
-              permissionDigestChanged: true,
-              previousPermissionDigest: "prev-digest",
-              nextPermissionDigest: "next-digest",
-              permissionDiff: {
-                added: ["wallet action: swap", "tool access: web.fetch"],
-                removed: ["tool access: old.tool"],
-              },
-              addedScanFindings: [
-                {
-                  severity: "warn",
-                  code: "script_file",
-                  path: "bin/trade.sh",
-                  message: "script file present",
-                },
-              ],
-            },
-          },
-        }),
-      ),
-      container,
-    );
-    await Promise.resolve();
-
-    const text = normalizeText(container);
-    expect(text).toContain("Update trader");
-    expect(text).toContain("1.0.0 -> 1.1.0");
-    expect(text).toContain("Source trust");
-    expect(text).toContain("registry allowlist");
-    expect(text).toContain("Dependency/script policy");
-    expect(text).toContain("script files 1");
-    expect(text).toContain("Approval required: requested permissions changed");
-    expect(text).toContain("Added permissions");
-    expect(text).toContain("wallet action: swap");
-    expect(text).toContain("Removed permissions");
-    expect(text).toContain("tool access: old.tool");
-    expect(text).toContain("New archive warnings");
-    expect(text).toContain("Warning: script_file");
+    expect(container.querySelector('input[name="clawhub-search"]')).toBeNull();
+    expect(container.querySelector('[data-testid="clawhub-detail-review-install"]')).toBeNull();
+    expect(normalizeText(container)).toContain("Skills");
+    expect(onClawHubInstall).not.toHaveBeenCalled();
   });
 });
 

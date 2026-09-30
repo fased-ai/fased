@@ -133,6 +133,7 @@ describe("provider registry", () => {
     expect(groups.slice(0, PROVIDER_BRAND_ORDER.length).map((group) => group.label)).toEqual([
       "OpenAI",
       "Anthropic",
+      "xAI (Grok)",
       "Chutes",
       "Ollama",
       "LM Studio",
@@ -140,7 +141,6 @@ describe("provider registry", () => {
       "MiniMax",
       "Moonshot AI",
       "Google",
-      "xAI (Grok)",
       "Mistral AI",
       "Volcano Engine",
       "BytePlus",
@@ -186,9 +186,9 @@ describe("provider registry", () => {
   });
 
   it("ranks recommendations within each authentication route", () => {
-    expect(providerModelRecommendationRank("openai", "gpt-5.6")).toBe(1);
-    expect(providerModelRecommendationRank("openai-codex", "gpt-5.6-sol")).toBe(1);
-    expect(providerModelRecommendationRank("openai-codex", "gpt-5.5")).toBe(4);
+    expect(providerModelRecommendationRank("openai", "gpt-6.1-sol")).toBe(1);
+    expect(providerModelRecommendationRank("openai-codex", "gpt-6.1-sol")).toBe(1);
+    expect(providerModelRecommendationRank("openai-codex", "gpt-5.5")).toBeUndefined();
   });
 
   it("exposes curated per-model thinking metadata from provider manifests", () => {
@@ -404,7 +404,7 @@ describe("provider registry", () => {
   });
 
   it("filters old OpenAI runtime models from normal pickers", () => {
-    expect(isStandardProviderModelRef("openai/gpt-5.5")).toBe(true);
+    expect(isStandardProviderModelRef("openai/gpt-5.5")).toBe(false);
     expect(isStandardProviderModelRef("openai/gpt-5.4-nano")).toBe(false);
     expect(isStandardProviderModelRef("openai/gpt-5-codex")).toBe(false);
     expect(isStandardProviderModelRef("openai/gpt-5.1")).toBe(false);
@@ -421,9 +421,9 @@ describe("provider registry", () => {
 
   it("keeps Anthropic and Google route-compatible model refs explicit", () => {
     expect(ANTHROPIC_PROVIDER_MANIFEST.models.recommended).toEqual([
-      "anthropic/claude-fable-5",
-      "anthropic/claude-opus-4-8",
-      "anthropic/claude-sonnet-5",
+      "anthropic/claude-fable-5-1",
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-sonnet-5-5",
       "anthropic/claude-haiku-4-5",
     ]);
     expect(GOOGLE_PROVIDER_MANIFEST.methods.map((method) => method.id)).toEqual([
@@ -545,14 +545,11 @@ describe("provider registry", () => {
       "xai-device-code",
       "xai-api-key",
     ]);
-    expect(XAI_PROVIDER_MANIFEST.models.recommended).toEqual([
-      "xai/grok-4.5",
-      "xai/grok-4.3",
-      "xai/grok-build-0.1",
-    ]);
-    expect(isStandardProviderModelRef("xai/grok-4.5")).toBe(true);
-    expect(isStandardProviderModelRef("xai/grok-4.3")).toBe(true);
-    expect(isStandardProviderModelRef("xai/grok-build-0.1")).toBe(true);
+    expect(isStandardProviderModelRef("xai/grok-4.7")).toBe(true);
+    expect(XAI_PROVIDER_MANIFEST.models.recommended).toEqual(["xai/grok-4.7"]);
+    expect(isStandardProviderModelRef("xai/grok-4.5")).toBe(false);
+    expect(isStandardProviderModelRef("xai/grok-4.3")).toBe(false);
+    expect(isStandardProviderModelRef("xai/grok-build-0.1")).toBe(false);
     expect(isStandardProviderModelRef("xai/grok-4")).toBe(false);
     expect(isStandardProviderModelRef("xai/grok-4-1-fast")).toBe(false);
     expect(isStandardProviderModelRef("xai/grok-code-fast-1")).toBe(false);

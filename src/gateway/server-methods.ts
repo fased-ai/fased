@@ -52,12 +52,6 @@ import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
 
 const REMOVED_SKILL_AUTHORITY_METHODS = new Set([
-  "skills.search",
-  "skills.detail",
-  "skills.marketplace.install.preview",
-  "skills.marketplace.install",
-  "skills.marketplace.update.preview",
-  "skills.marketplace.update",
   "skills.wallet.grants",
   "skills.wallet.grant.set",
   "skills.wallet.grant.clear",

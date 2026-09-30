@@ -254,7 +254,10 @@ function signerAssertionOptions(
 }
 
 export async function authorizeSignerReviewWithPasskey(
-  begin: WalletSignerReviewAuthorizationBegin,
+  begin: Pick<WalletSignerReviewAuthorizationBegin, "challengeId" | "expiresAt" | "options"> & {
+    binding: { expiresAt: string };
+  },
+  signal?: AbortSignal,
 ): Promise<{ challengeId: string; credential: Record<string, unknown> }> {
   ensureWebAuthnAvailable();
   if (!begin.challengeId?.trim()) {
@@ -268,9 +271,10 @@ export async function authorizeSignerReviewWithPasskey(
   }
   let credential: PublicKeyCredential | null;
   try {
-    credential = (await navigator.credentials.get(
-      signerAssertionOptions(begin.options),
-    )) as PublicKeyCredential | null;
+    credential = (await navigator.credentials.get({
+      ...signerAssertionOptions(begin.options),
+      signal,
+    })) as PublicKeyCredential | null;
   } catch (error) {
     throw explainPasskeyFailure(error, "approval");
   }

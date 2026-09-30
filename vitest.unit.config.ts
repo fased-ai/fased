@@ -66,6 +66,8 @@ const fastGateSuites = [
   "src/wallet/wallet-agent-selection.test.ts",
   "src/wallet/wallet-provider-resolver.test.ts",
   "src/wallet/wallet-status.test.ts",
+  "src/wallet/wen-economy-read.test.ts",
+  "src/wallet/wen-acquisition-handoff.test.ts",
 ];
 
 const include = fastGateSuites;

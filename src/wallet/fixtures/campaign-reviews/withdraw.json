@@ -1,0 +1,71 @@
+{
+  "requestId": "review-request-001",
+  "walletId": "miner",
+  "walletPublicKey": "3Bd4gZ6FRQ2v1zq4a73LhQieK9V7J3rdoa4Vt8F4ffCZ",
+  "intentType": "wen.campaign.withdraw.v1",
+  "intentDigest": "sha256:b635f7ffb28383f03768d47b69896278ba7283e5e5aa9c04b6ee6042cdd407bc",
+  "policyHash": "sha256:fd086ac97e8541f1060589f5834ebf8990d38af9f882391b74b3b9d63a4ed097",
+  "mode": "reviewed",
+  "nonce": "1f1782eeff5aaa6aee995696cee0eb053c950619691d16f0ed8b566b7cb5d004",
+  "semanticIntent": {
+    "Version": 1,
+    "RequestID": "review-request-001",
+    "WalletID": "miner",
+    "WalletPublicKey": "3Bd4gZ6FRQ2v1zq4a73LhQieK9V7J3rdoa4Vt8F4ffCZ",
+    "PolicyHash": "sha256:fd086ac97e8541f1060589f5834ebf8990d38af9f882391b74b3b9d63a4ed097",
+    "Pins": {
+      "DescriptorSHA256": "",
+      "CapabilitySHA256": "",
+      "OfferSHA256": "",
+      "ProgramID": "3G2sSdn44MLD95SpB21k3819YGVERiAGziFvTJcp3sdr",
+      "Genesis": "G3HSPeU14z7djDwyRVTuvyJqz3Y1J3veFiBJpoEgWv2W",
+      "SourceAccount": "",
+      "AdmissionAccount": "",
+      "CodeSHA256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+      "DeploymentSlot": 50,
+      "UpgradeAuthority": null
+    },
+    "Action": {
+      "Operation": "withdraw",
+      "Program": "3G2sSdn44MLD95SpB21k3819YGVERiAGziFvTJcp3sdr",
+      "Economy": "F3NGqWGvQZm4cesHgSg7Q4mbp6djbRfLbxHibhnCcANy",
+      "Position": "42EzrHJYvQDqoTWATJgTojPWz7a8Soj9u3MUvaXDif24",
+      "Amount": 1000
+    },
+    "Binding": {
+      "Message": "gAEABAggb/WEduZBWtVmIhLQo0qiyHy3HSQFo0hkeJBp4tJPFizkd/AkAVaqyaXwosBH/iUiLVCxCfnPc2pd0Zf0xk89IJMhDVXkjbOD9ooOaB/MlHalQfwONdlZIwVS/mW0CfUBLPzZkpJG5tbCaw0Kg3NtRUX/glASBvVHHqfGcCqnb9Ce1QPQ9CSeV+gNspp1JNeiHfRo09is7ouJXpqfPQ+GAukeMLqccDbl/07/PkVSTZVTFJNATcFuR86mKFfJChIWOrew+x3Oe/ELL5m1NgCGO0IStJURo7ECB4ynD2wy+iGRMzastHt1wQ4J6kamMBxHGqeDXwFoOTjpZTJIG4DB33UNP9JFWnzirkLxGoFldP2h40Db53iGLQ23bssCq+MBBwcAAQQFBgIDCYroAwAAAAAAAAA=",
+      "Blockhash": "G3HSPeU14z7djDwyRVTuvyJqz3Y1J3veFiBJpoEgWv2W",
+      "Position": {
+        "Slot": 110,
+        "ReferenceSlot": 111,
+        "Address": "42EzrHJYvQDqoTWATJgTojPWz7a8Soj9u3MUvaXDif24",
+        "Owner": "3G2sSdn44MLD95SpB21k3819YGVERiAGziFvTJcp3sdr",
+        "Executable": false,
+        "Data": "V0VOUlBPUzIBAAAAAAAAACBv9YR25kFa1WYiEtCjSqLIfLcdJAWjSGR4kGni0k8WCFc7aLPPIuaqDOTu5e6pW6hWfq+6wpxNvkvgLQy3X+g5SM/NVel+KLCDhP8s0gxyYUOZ64gSIG4+dpSSbj+IgQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAukeMLqccDbl/07/PkVSTZVTFJNATcFuR86mKFfJChIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "Lamports": 1100,
+        "Rent": 100,
+        "AccountingSHA256": "337c723accf7f031fe844102e2f867bf63f4cec80b94f85a3ed116c275e6329c"
+      },
+      "Fee": 4500,
+      "MaxFee": 5000,
+      "CurrentHeight": 100,
+      "LastValidHeight": 200,
+      "ExpiresSlot": 132
+    }
+  },
+  "artifactKind": "wen-campaign-owner-v1",
+  "artifactDigest": "sha256:b635f7ffb28383f03768d47b69896278ba7283e5e5aa9c04b6ee6042cdd407bc",
+  "stateDigest": "14dcefdd7953fbdddb8111ddaae40291658a963ba750cfd1563210887db159e8",
+  "stateSlot": 110,
+  "asset": "solana:native",
+  "amount": "5000",
+  "destination": "F3NGqWGvQZm4cesHgSg7Q4mbp6djbRfLbxHibhnCcANy",
+  "policyOperation": "wen.campaign.withdraw.v1",
+  "requiredPrograms": ["3G2sSdn44MLD95SpB21k3819YGVERiAGziFvTJcp3sdr"],
+  "issuedAt": "2026-09-25T13:48:03.293300415Z",
+  "state": "prepared",
+  "preparedAt": "2026-09-25T13:48:03.293300415Z",
+  "expiresAt": "2026-09-25T13:50:03.293300415Z",
+  "updatedAt": "2026-09-25T13:48:03.293300415Z",
+  "transactionDigest": "sha256:8d82844ecea442dc08ce7926dff8eb20cae99a1b4147a295987a8541541be480"
+}

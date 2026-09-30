@@ -1,0 +1,51 @@
+{
+  "source": "wen-genesis/examples/export_portfolio_vault_candidate.rs",
+  "exportSha256": "6e381f6cb230a6a279800bf9c438c7b2dc8ad802804fea64c332603f2d0846e3",
+  "nonce": "42",
+  "vaultIdBytes": [
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3
+  ],
+  "instruction": {
+    "accounts": [
+      {
+        "address": "AQ8aFWewNKJWhbbewcjC6gpJjMCzoTqdkSXDgSWZVZmn",
+        "role": "vault",
+        "signer": false,
+        "writable": true
+      },
+      {
+        "address": "E7fZBpWFRnyaXZ9vJindPXkKbPaJBn6Sgzhg2vWhnmPY",
+        "role": "action",
+        "signer": false,
+        "writable": true
+      },
+      {
+        "address": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+        "role": "owner",
+        "signer": false,
+        "writable": false
+      },
+      {
+        "address": "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
+        "role": "sale",
+        "signer": false,
+        "writable": false
+      },
+      {
+        "address": "3vcHADpkVd2WmjN52cLsDMzUmiJt8htmYgmueE7XtN5D",
+        "role": "miningBudget",
+        "signer": false,
+        "writable": false
+      },
+      {
+        "address": "FvnJu8XUy7xLhfSL2kwWSnsvwGhfuaYUr8zquhJDTZDo",
+        "role": "miningCapital",
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "data": [120],
+    "name": "fundMining",
+    "program": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
+  }
+}

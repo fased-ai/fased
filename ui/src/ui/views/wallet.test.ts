@@ -249,7 +249,7 @@ describe("wallet creation", () => {
     expect(text).toContain("Create wallet");
     expect(text).toContain("Name (optional)");
     expect(text).toContain(
-      "Select a role Agent Mining Vault Profile Strategy (deny-all) Reusable RPC profile",
+      "Select a role Agent Mining (legacy recovery) Vault Profile Strategy (deny-all) Reusable RPC profile",
     );
     expect(text).toContain("Use a signer-owned verified profile, or enter a direct RPC below");
     expect(text).not.toContain("capped automation");
@@ -408,7 +408,7 @@ describe("resolveOperatorWalletRoles", () => {
     );
     expect(roles.agent.walletId).toBe("wallet-agent");
     expect(roles.mining.summary).toBe("Mining Wallet");
-    expect(roles.mining.detail).toContain("singleton @wallet:mining wallet");
+    expect(roles.mining.detail).toContain("historical SAT cycle recovery");
     expect(roles.mining.detail).not.toContain("attached wallet");
     expect(roles.mining.walletId).toBe("wallet-mining");
     expect(roles.bond.summary).toBe("Vault Wallet");
@@ -457,7 +457,7 @@ describe("resolveOperatorWalletRoles", () => {
     expect(roles.agent.summary).toBe("1 set · no fallback");
     expect(roles.agent.tone).toBe("warn");
     expect(roles.mining.summary).toBe("Not configured");
-    expect(roles.mining.detail).toContain("Create or import @wallet:mining");
+    expect(roles.mining.detail).toContain("WEN does not require a Mining wallet");
     expect(roles.mining.detail).not.toContain("Attach");
   });
 });

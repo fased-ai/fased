@@ -144,6 +144,51 @@ describe("wallet provider resolver", () => {
     ).toBe("wallet-standard");
   });
 
+  it("selects the default WEN wallet provider ahead of a retained legacy mining wallet", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wen-default-provider-"));
+    tempRoots.push(root);
+    const since = "2026-07-17T00:00:00.000Z";
+    await writeRegistry(root, {
+      version: 1,
+      providers: {
+        turnkey: { enabled: true, updatedAt: since },
+        "local-socket-signer": { enabled: true, updatedAt: since },
+      },
+      wallets: [
+        {
+          id: "owner",
+          name: "Owner",
+          providerId: "turnkey",
+          addresses: { solana: "11111111111111111111111111111111" },
+          createdAt: since,
+          updatedAt: since,
+        },
+        {
+          id: "old-miner",
+          name: "Old miner",
+          providerId: "local-socket-signer",
+          addresses: { solana: "So11111111111111111111111111111111111111112" },
+          createdAt: since,
+          updatedAt: since,
+        },
+      ],
+      assignments: {},
+      defaultWalletId: "owner",
+      updatedAt: since,
+    });
+    const cfg = {
+      plugins: { entries: { "sat-mining": { config: { walletId: "old-miner" } } } },
+    } as FasedAgentConfig;
+    const env = { FASED_STATE_DIR: root } as NodeJS.ProcessEnv;
+    expect(resolveWalletProviderId(cfg, env)).toBe("turnkey");
+    const stored = JSON.parse(
+      await fs.readFile(path.join(root, "wallet", "provider-registry.v1.json"), "utf8"),
+    );
+    delete stored.defaultWalletId;
+    await writeRegistry(root, stored);
+    expect(resolveWalletProviderId(cfg, env)).toBe("local-socket-signer");
+  });
+
   it("never signs with a global Turnkey identity that differs from the selected registry wallet", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-wallet-turnkey-binding-"));
     tempRoots.push(root);

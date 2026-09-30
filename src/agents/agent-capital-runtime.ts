@@ -87,6 +87,11 @@ export function validateAgentCapitalInstruction(
   if (instruction.programId !== FASED_AGENT_CAPITAL_PROGRAM_ID) {
     throw new Error("Agent Capital instruction does not use the pinned canonical program");
   }
+  if (instruction.action === "commit_vault_cycle" || instruction.action === "reveal_vault_cycle") {
+    throw new Error(
+      "Vault mining requires the signer-owned Vault commitment path; generic instruction data is disabled",
+    );
+  }
   const contract = instructionByAction.get(instruction.action);
   if (!contract) {
     throw new Error(`unsupported Agent Capital action ${instruction.action}`);

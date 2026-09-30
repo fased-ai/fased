@@ -19,6 +19,7 @@ type signerReviewArtifactInputV2 struct {
 	WalletPublicKey string
 	Kind            string
 	Digest          string
+	VaultReference  *vaultReviewReferenceV1
 	Transaction     *signerSolanaTransactionEnvelopeV2
 	MessageBase64   string
 	StateDigest     string
@@ -81,7 +82,20 @@ func normalizeReviewArtifactInputV2(input signerReviewArtifactInputV2) (signerRe
 	if err != nil {
 		return input, err
 	}
+	if input.Kind != signerReviewArtifactVaultReferenceV1 && input.VaultReference != nil {
+		return input, errors.New("Vault reference cannot accompany another artifact kind")
+	}
 	switch input.Kind {
+	case signerReviewArtifactVaultReferenceV1:
+		if input.VaultReference == nil || input.Transaction != nil || input.MessageBase64 != "" || input.StateDigest == "" || input.StateSlot == 0 {
+			return input, errors.New("Vault review requires only reference metadata and state binding")
+		}
+		digest, err := vaultReviewReferenceDigestV1(*input.VaultReference, input.WalletPublicKey)
+		if err != nil || digest != input.Digest {
+			return input, errors.New("Vault review reference digest mismatch")
+		}
+		copyReference := *input.VaultReference
+		input.VaultReference = &copyReference
 	case signerReviewArtifactSolanaTransactionV2:
 		if input.Transaction == nil || input.MessageBase64 != "" {
 			return input, errors.New("Solana transaction review requires exactly one transaction artifact")
@@ -143,6 +157,9 @@ func (s *signerStoreV2) prepareArtifactReviewV2(
 	if err != nil {
 		return signerReviewV2{}, err
 	}
+	if (intent.Intent.Type == intentSolanaVaultMining) != (artifact.Kind == signerReviewArtifactVaultReferenceV1) {
+		return signerReviewV2{}, errors.New("Vault review requires its dedicated semantic intent and reference artifact")
+	}
 	if intent.PolicyOperation == "" {
 		intent.PolicyOperation = intent.Intent.Type
 	}
@@ -173,6 +190,7 @@ func (s *signerStoreV2) prepareArtifactReviewV2(
 				review.Mode != mode ||
 				review.ArtifactKind != artifact.Kind ||
 				review.ArtifactDigest != artifact.Digest ||
+				!equalVaultReviewReferenceV1(review.VaultReference, artifact.VaultReference) ||
 				review.MessageBase64 != artifact.MessageBase64 ||
 				review.StateDigest != artifact.StateDigest || review.StateSlot != artifact.StateSlot ||
 				review.Asset != intent.Asset || review.Amount != intent.Amount.String() ||
@@ -222,6 +240,7 @@ func (s *signerStoreV2) prepareArtifactReviewV2(
 			SemanticIntent:   semanticIntent,
 			ArtifactKind:     artifact.Kind,
 			ArtifactDigest:   artifact.Digest,
+			VaultReference:   artifact.VaultReference,
 			Transaction:      artifact.Transaction,
 			MessageBase64:    artifact.MessageBase64,
 			StateDigest:      artifact.StateDigest,
@@ -463,6 +482,9 @@ func (s *signerStoreV2) requireReviewForExecutionV2(walletID, requestID string, 
 }
 
 func normalizeStoredReviewArtifactV2(review signerReviewV2) (signerReviewArtifactInputV2, error) {
+	if (review.IntentType == intentSolanaVaultMining) != (review.ArtifactKind == signerReviewArtifactVaultReferenceV1) {
+		return signerReviewArtifactInputV2{}, errors.New("stored Vault review intent/artifact mismatch")
+	}
 	kind := review.ArtifactKind
 	digest := review.ArtifactDigest
 	if kind == "" && review.Transaction != nil {
@@ -471,7 +493,8 @@ func normalizeStoredReviewArtifactV2(review signerReviewV2) (signerReviewArtifac
 	artifact, err := normalizeReviewArtifactInputV2(signerReviewArtifactInputV2{
 		WalletPublicKey: review.WalletPublicKey,
 		Kind:            kind, Digest: digest, Transaction: review.Transaction,
-		MessageBase64: review.MessageBase64, StateDigest: review.StateDigest, StateSlot: review.StateSlot,
+		VaultReference: review.VaultReference,
+		MessageBase64:  review.MessageBase64, StateDigest: review.StateDigest, StateSlot: review.StateSlot,
 	})
 	if err != nil {
 		return artifact, errors.New("stored signer review artifact is invalid")

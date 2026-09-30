@@ -11,6 +11,21 @@ import (
 
 const policyTestKey = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" // pragma: allowlist secret
 
+func TestVaultMiningActionRequiresExactExplicitBudget(t *testing.T) {
+	input := Policy{WalletID: "executor", Role: "agent", Assets: []Asset{{Asset: "vault-mining:action", Destinations: []string{policyTestKey}, MaxPerTx: "1", MaxDaily: "2"}}}
+	got, err := Normalize(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Assets[0].Asset != "vault-mining:action" || len(got.Operations) != 0 || len(got.Programs) != 0 {
+		t.Fatal("asset normalization granted execution authority")
+	}
+	input.Assets[0].Asset = "vault-mining:any"
+	if _, err := Normalize(input); err == nil {
+		t.Fatal("accepted unrecognized Vault budget")
+	}
+}
+
 func TestPolicyTypeJSONShapeAndCanonicalEmptyArrays(t *testing.T) {
 	policy, err := Normalize(Policy{WalletID: " Agent Primary ", Role: " AGENT "})
 	if err != nil {
