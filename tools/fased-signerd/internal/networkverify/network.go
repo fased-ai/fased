@@ -25,15 +25,16 @@ import (
 )
 
 const (
-	MaxRPCURLBytes       = 2048
-	MaxRPCResponseBytes  = 4 * 1024 * 1024
-	MaxRPCResponseHeader = 64 * 1024
-	MaxRPCJSONDepth      = 64
-	maxRPCResponseBytes  = MaxRPCResponseBytes
-	maxRPCResponseHeader = MaxRPCResponseHeader
-	maxRPCJSONDepth      = MaxRPCJSONDepth
-	MainnetGenesisHash   = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" // pragma: allowlist secret
-	DevnetGenesisHash    = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" // pragma: allowlist secret
+	MaxRPCURLBytes                 = 2048
+	MaxRPCResponseBytes            = 4 * 1024 * 1024
+	MaxProgramAccountResponseBytes = 8 * 1024 * 1024
+	MaxRPCResponseHeader           = 64 * 1024
+	MaxRPCJSONDepth                = 64
+	maxRPCResponseBytes            = MaxRPCResponseBytes
+	maxRPCResponseHeader           = MaxRPCResponseHeader
+	maxRPCJSONDepth                = MaxRPCJSONDepth
+	MainnetGenesisHash             = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" // pragma: allowlist secret
+	DevnetGenesisHash              = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" // pragma: allowlist secret
 )
 
 // NormalizeRPCURL validates and canonicalizes a signer-owned RPC URL.
@@ -187,10 +188,47 @@ func NewHTTPClient(timeout time.Duration) *http.Client {
 
 type responseBudgetRoundTripper struct{ base http.RoundTripper }
 
+// Paired deployment proofs include two base64 ProgramData accounts. Allow
+// their bounded aggregate without enlarging balance, history or parsed reads.
+// GetBody inspects a copy; the upstream request remains untouched.
+func rpcResponseBudget(req *http.Request) int64 {
+	if req == nil || req.Method != http.MethodPost || req.GetBody == nil || req.ContentLength > 16384 {
+		return MaxRPCResponseBytes
+	}
+	body, e := req.GetBody()
+	if e != nil {
+		return MaxRPCResponseBytes
+	}
+	defer body.Close()
+	raw, e := io.ReadAll(io.LimitReader(body, 16385))
+	if e != nil || len(raw) > 16384 {
+		return MaxRPCResponseBytes
+	}
+	var request struct {
+		Method string
+		Params []json.RawMessage
+	}
+	if json.Unmarshal(raw, &request) != nil || request.Method != "getMultipleAccounts" || len(request.Params) != 2 {
+		return MaxRPCResponseBytes
+	}
+	var accounts []string
+	var options struct{ Encoding string }
+	if json.Unmarshal(request.Params[0], &accounts) != nil || len(accounts) == 0 || len(accounts) > 16 || json.Unmarshal(request.Params[1], &options) != nil || options.Encoding != "base64" {
+		return MaxRPCResponseBytes
+	}
+	for _, address := range accounts {
+		if _, e := solana.PublicKeyFromBase58(address); e != nil {
+			return MaxRPCResponseBytes
+		}
+	}
+	return MaxProgramAccountResponseBytes
+}
+
 func (t responseBudgetRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.base == nil {
 		return nil, errors.New("signer-owned Solana RPC transport is unavailable")
 	}
+	limit := rpcResponseBudget(req)
 	response, err := t.base.RoundTrip(req)
 	if err != nil {
 		return nil, err
@@ -198,16 +236,16 @@ func (t responseBudgetRoundTripper) RoundTrip(req *http.Request) (*http.Response
 	if response == nil || response.Body == nil {
 		return nil, errors.New("signer-owned Solana RPC returned an empty response")
 	}
-	if response.ContentLength > maxRPCResponseBytes {
+	if response.ContentLength > limit {
 		_ = response.Body.Close()
 		return nil, errors.New("signer-owned Solana RPC response exceeds the allowed size")
 	}
-	payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxRPCResponseBytes+1))
+	payload, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	closeErr := response.Body.Close()
 	if readErr != nil {
 		return nil, errors.New("read signer-owned Solana RPC response")
 	}
-	if len(payload) > maxRPCResponseBytes {
+	if int64(len(payload)) > limit {
 		return nil, errors.New("signer-owned Solana RPC response exceeds the allowed size")
 	}
 	if closeErr != nil {
