@@ -2,6 +2,7 @@ import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import type { PluginMarketplaceEntry } from "../types.ts";
 import {
+  optionalModuleEntries,
   buildPluginConfigurationNotes,
   buildPluginManagementShortcuts,
   buildPluginRemediationNotes,
@@ -25,6 +26,18 @@ function normalizeText(node: Element | DocumentFragment): string {
 }
 
 describe("plugins marketplace view helpers", () => {
+  it("separates built-ins and hides inactive legacy federation without hiding enabled installations", () => {
+    const entries = [
+      { id: "memory-core", loaded: true },
+      { id: "sat-mining", loaded: true },
+      { id: "fased-federation", enabled: false, loaded: false },
+      { id: "device-pair", enabled: false },
+    ] as PluginMarketplaceEntry[];
+    expect(optionalModuleEntries(entries).map((entry) => entry.id)).toEqual(["device-pair"]);
+    expect(
+      optionalModuleEntries([{ id: "fased-federation", enabled: true } as PluginMarketplaceEntry]),
+    ).toHaveLength(1);
+  });
   it("renders extensions as an expandable list instead of a split detail pane", () => {
     const container = document.createElement("div");
     render(

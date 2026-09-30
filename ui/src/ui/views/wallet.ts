@@ -261,7 +261,7 @@ export function describeAdminControlShortcut(
     return {
       summary: "Optional",
       detail:
-        "Optional extra approval for Control UI account actions. It is not part of Agent or Mining wallet readiness.",
+        "Optional extra approval for Control UI account actions. Wallet permissions are configured separately.",
       enableVisible: true,
       enableLabel: props.settingsBusy ? "Enabling..." : "Add account passkey",
       enableDisabled: props.settingsBusy || props.passkeyBusy,
@@ -377,7 +377,7 @@ export function describeWalletAutomationPolicySummary(
       detail:
         "This selected wallet can execute approved typed background actions when signer policy and caps allow it.",
       operatorDetail:
-        "These caps belong to the selected wallet. They are not SAT mining cycle limits, and they do not override signer or role restrictions.",
+        "These caps belong to the selected wallet. The signer independently enforces permitted actions and approval policy.",
     };
   }
   return {
@@ -385,7 +385,7 @@ export function describeWalletAutomationPolicySummary(
     detail:
       "This selected wallet is manual-first. Reviewed Wallet UI sends can still be approved, but background actions cannot execute.",
     operatorDetail:
-      "These caps belong to the selected wallet. They are not SAT mining cycle limits, and they do not override signer or role restrictions.",
+      "These caps belong to the selected wallet. The signer independently enforces permitted actions and approval policy.",
   };
 }
 
@@ -519,14 +519,14 @@ export function resolveOperatorWalletRoles(
       ? {
           title: "Control UI account passkey",
           summary: "Optional · enabled",
-          detail: "Adds account-level approval without changing Agent or Mining readiness.",
+          detail: "Adds account-level approval without changing wallet permissions.",
           tone: "success",
         }
       : approvalMode === "webauthn"
         ? {
             title: "Control UI account passkey",
             summary: "Optional · setup incomplete",
-            detail: "Finish or disable account passkey mode. Wallet role readiness is separate.",
+            detail: "Finish or disable account passkey mode. Wallet permissions are separate.",
             tone: "warn",
           }
         : {
@@ -672,37 +672,6 @@ export function describeWalletRoleBadges(
   void walletId;
   void props;
   return [];
-}
-
-function renderWalletBondIcon(
-  walletId: string,
-  federationBond: FederationBondStatus | null | undefined,
-  onNavigate?: (tab: "federation") => void,
-) {
-  if (walletId !== String(federationBond?.walletId ?? "").trim()) {
-    return nothing;
-  }
-  const status = federationBond?.status ?? "none";
-  const dataRole =
-    status === "active" ? "bond-active" : status === "unlocking" ? "bond-unlocking" : "bond";
-  const title =
-    status === "active"
-      ? "Fased Network bond active"
-      : status === "unlocking"
-        ? "Fased Network bond unlocking"
-        : "Fased Network bond wallet";
-  return html`
-    <button
-      type="button"
-      class="wallet-status-icon wallet-status-icon--button"
-      data-role=${dataRole}
-      title=${`${title}. Open Fased Network.`}
-      aria-label=${`${title}. Open Fased Network.`}
-      @click=${() => onNavigate?.("federation")}
-    >
-      ${icons.shield}
-    </button>
-  `;
 }
 
 function renderWalletRuntimeStatusIcons(params: {
@@ -4198,7 +4167,7 @@ export function renderWallet(props: WalletViewProps) {
 	                      <div class="wallet-card__title-row">
 	                        <div class="wallet-card__title">${wallet.name}</div>
                         ${walletPurposeLabels(wallet.metadata).map((label) => html`<span class="badge">${label}</span>`)}
-	                        ${renderWalletBondIcon(wallet.id, props.federationBond, props.onNavigate)}
+
 	                        ${cardRole === "mining" ? renderWalletSweepChip(props.miningProfile) : nothing}
 		                        ${renderWalletActivePolicyIcons({
                               walletId: wallet.id,

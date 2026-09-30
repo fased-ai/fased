@@ -549,7 +549,7 @@ describe("describeAdminControlShortcut", () => {
       }),
     ).toMatchObject({
       summary: "Optional",
-      detail: expect.stringContaining("Agent or Mining wallet readiness"),
+      detail: expect.stringContaining("Wallet permissions are configured separately"),
       enableVisible: true,
       enableLabel: "Add account passkey",
       enrollVisible: false,
@@ -681,7 +681,7 @@ describe("describeWalletAutomationPolicySummary", () => {
       describeWalletAutomationPolicySummary({
         policy: { directSigning: false },
       } as never).operatorDetail,
-    ).toContain("not SAT mining cycle limits");
+    ).toContain("signer independently enforces");
   });
 
   it("explains when task/payment automation is enabled", () => {

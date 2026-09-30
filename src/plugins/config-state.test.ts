@@ -202,7 +202,7 @@ describe("resolveEffectiveEnableState", () => {
 
   it("keeps phone and voice extras opt-in", () => {
     const normalized = normalizePluginsConfig({ enabled: true });
-    for (const id of ["phone-control", "talk-voice"]) {
+    for (const id of ["phone-control", "talk-voice", "device-pair", "fased-federation"]) {
       expect(
         resolveEffectiveEnableState({ id, origin: "bundled", config: normalized, rootConfig: {} }),
       ).toEqual({ enabled: false, reason: "bundled (disabled by default)" });

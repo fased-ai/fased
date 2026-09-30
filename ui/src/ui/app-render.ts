@@ -225,11 +225,20 @@ const CONTENT_HEADERLESS_TABS = new Set<Tab>([
   "wen",
 ]);
 const AVATAR_HTTP_RE = /^https?:\/\//i;
-type LazyTabViewKey = "config" | "providers" | "federation" | "wallet" | "wen" | "mining" | "usage";
+type LazyTabViewKey =
+  | "config"
+  | "providers"
+  | "federation"
+  | "legacyFederation"
+  | "wallet"
+  | "wen"
+  | "mining"
+  | "usage";
 type LazyTabViewModules = {
   config: typeof import("./views/config.ts");
   providers: typeof import("./views/providers.ts");
-  federation: typeof import("./views/federation.ts");
+  federation: typeof import("./views/network.ts");
+  legacyFederation: typeof import("./views/federation.ts");
   wallet: typeof import("./views/wallet.ts");
   wen: typeof import("./views/wen.ts");
   mining: typeof import("./views/mining.ts");
@@ -239,7 +248,8 @@ type LazyTabViewModules = {
 const lazyTabViewLoaders: { [K in LazyTabViewKey]: () => Promise<LazyTabViewModules[K]> } = {
   config: () => import("./views/config.ts"),
   providers: () => import("./views/providers.ts"),
-  federation: () => import("./views/federation.ts"),
+  federation: () => import("./views/network.ts"),
+  legacyFederation: () => import("./views/federation.ts"),
   wallet: () => import("./views/wallet.ts"),
   wen: () => import("./views/wen.ts"),
   mining: () => import("./views/mining.ts"),
@@ -2898,7 +2908,7 @@ export function renderApp(state: AppViewState) {
       : null;
   const federationView =
     state.tab === "federation" || state.tab === "marketplace"
-      ? getLazyTabView(state, "federation")
+      ? getLazyTabView(state, state.tab === "marketplace" ? "legacyFederation" : "federation")
       : null;
   const walletView = state.tab === "wallet" ? getLazyTabView(state, "wallet") : null;
   const wenView = state.tab === "wen" ? getLazyTabView(state, "wen") : null;

@@ -1,7 +1,7 @@
 {
   "id": "sat-mining",
-  "name": "SAT Mining",
-  "description": "SAT mining scaffold for round orchestration, wallet mining, and federation coordination.",
+  "name": "WEN Engine",
+  "description": "WEN economy reads and policy-controlled operations, with isolated historical recovery.",
   "skills": ["./skills"],
   "configSchema": {
     "type": "object",

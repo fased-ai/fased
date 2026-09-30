@@ -60,8 +60,9 @@ export async function shouldActivateMining(
 
 const satMiningPlugin = {
   id: "sat-mining",
-  name: "SAT Mining",
-  description: "Lazy SAT mining facade for explicitly configured or historical recovery runtimes.",
+  name: "WEN Engine",
+  description:
+    "WEN economy reads and policy-controlled operations, with isolated historical recovery.",
   configSchema: createSatMiningPluginConfigSchema(),
   register(api: FasedAgentPluginApi) {
     let wenRecovery:
