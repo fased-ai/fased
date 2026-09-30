@@ -105,13 +105,19 @@ if (failures.length > 0) {
   fail(failures);
 }
 
+const allDependencies = new Set(config.groups.flatMap((group) => group.dependencies));
+const optionalOnlyDependencies = [...allDependencies]
+  .filter((dependency) => !productionDependencies.has(dependency))
+  .toSorted();
 const report = {
-  totalDependencies:
+  totalDependencies: allDependencies.size,
+  dependencyDeclarations:
     productionDependencies.size +
     config.groups
       .filter((group) => Boolean(group.packagePath))
       .reduce((total, group) => total + group.dependencies.length, 0),
   coreDependencies: productionDependencies.size,
+  optionalOnlyDependencies,
   groups: config.groups.map((group) => ({
     ...group,
     dependencies: group.dependencies.toSorted(),

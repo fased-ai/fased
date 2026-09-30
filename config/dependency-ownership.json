@@ -7,7 +7,6 @@
       "delivery": "core",
       "target": "keep",
       "dependencies": [
-        "@agentclientprotocol/sdk",
         "@clack/prompts",
         "@homebridge/ciao",
         "@lydell/node-pty",
@@ -48,7 +47,7 @@
       "label": "Wallet And Mining Core",
       "delivery": "core",
       "target": "keep",
-      "dependencies": ["@solana/web3.js", "@turnkey/sdk-server", "viem"]
+      "dependencies": ["@noble/hashes", "@solana/web3.js", "@turnkey/sdk-server", "viem"]
     },
     {
       "id": "fased-network",
@@ -82,7 +81,8 @@
         "@discordjs/voice",
         "@snazzah/davey",
         "discord-api-types",
-        "opusscript"
+        "opusscript",
+        "qrcode-terminal"
       ]
     },
     {
@@ -115,7 +115,7 @@
       "delivery": "channel-addon",
       "target": "extract",
       "packagePath": "extensions/whatsapp/package.json",
-      "dependencies": ["@whiskeysockets/baileys"]
+      "dependencies": ["@whiskeysockets/baileys", "qrcode-terminal"]
     },
     {
       "id": "channel-feishu",
@@ -139,7 +139,7 @@
       "delivery": "runtime-addon",
       "target": "extract",
       "packagePath": "extensions/runtime-browser/package.json",
-      "dependencies": ["@mozilla/readability", "linkedom", "playwright-core"]
+      "dependencies": ["@mozilla/readability", "linkedom", "playwright-core", "ws"]
     },
     {
       "id": "media-runtime",

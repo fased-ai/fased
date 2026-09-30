@@ -10,6 +10,11 @@ assert(process.getuid?.() !== 0, "do not execute project code as root");
 const argIndex = process.argv.indexOf("--root");
 assert(argIndex >= 0 && process.argv[argIndex + 1], "--root requires a staged package directory");
 const root = path.resolve(process.argv[argIndex + 1]);
+const serviceVersion = JSON.parse(await fs.readFile(root + "/package.json", "utf8")).version;
+assert(
+  typeof serviceVersion === "string" && serviceVersion.trim() && serviceVersion !== "dev",
+  "staged package requires a release version",
+);
 assert.equal(
   await fs.access(root + "/plugin.lock.json").then(
     () => true,
@@ -93,6 +98,7 @@ try {
           FASED_STATE_DIR: state,
           FASED_CONFIG_PATH: state + "/fased.json",
           FASED_MANAGED_INTERNAL: "1",
+          FASED_SERVICE_VERSION: serviceVersion,
           FASED_GENERATION_ID: fixtureContentHash,
           FASED_PLUGIN_READINESS_PATH: state + "/plugin-readiness.json",
           FASED_PLUGIN_CODE_ROOT: state + "/plugin-code",
