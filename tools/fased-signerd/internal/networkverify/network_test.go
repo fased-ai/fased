@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -147,4 +148,46 @@ func startGenesisRPC(t *testing.T, genesis string) *httptest.Server {
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+func TestProgramAccountReadResponseBudget(t *testing.T) {
+	requestFor := func(method, encoding string, count int) *http.Request {
+		keys := make([]string, count)
+		for i := range keys {
+			keys[i] = DevnetGenesisHash
+		}
+		raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": []any{keys, map[string]any{"encoding": encoding}}})
+		req, e := http.NewRequest(http.MethodPost, "https://rpc.example.com", bytes.NewReader(raw))
+		if e != nil {
+			t.Fatal(e)
+		}
+		return req
+	}
+	payload := []byte(`{"result":"` + strings.Repeat("a", MaxRPCResponseBytes) + `"}`)
+	transport := responseBudgetRoundTripper{base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(payload)), ContentLength: int64(len(payload))}, nil
+	})}
+	req := requestFor("getMultipleAccounts", "base64", 14)
+	res, e := transport.RoundTrip(req)
+	if e != nil {
+		t.Fatalf("pinned program-account batch rejected: %v", e)
+	}
+	defer res.Body.Close()
+	for _, invalid := range []*http.Request{requestFor("getBalance", "base64", 14), requestFor("getMultipleAccounts", "jsonParsed", 14), requestFor("getMultipleAccounts", "base64", 17)} {
+		if _, e := transport.RoundTrip(invalid); e == nil {
+			t.Fatal("larger budget granted outside bounded base64 account batch")
+		}
+	}
+	for _, length := range []int64{-1, 8*1024*1024 + 1} {
+		tooLarge := responseBudgetRoundTripper{base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", 8*1024*1024+1))), ContentLength: length}, nil
+		})}
+		if _, e := tooLarge.RoundTrip(req); e == nil {
+			t.Fatal("oversize program batch accepted")
+		}
+	}
+	raw, e := io.ReadAll(req.Body)
+	if e != nil || !bytes.Contains(raw, []byte("getMultipleAccounts")) {
+		t.Fatal("request body consumed")
+	}
 }
