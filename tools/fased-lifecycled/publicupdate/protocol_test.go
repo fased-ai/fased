@@ -82,3 +82,36 @@ func TestPublicHostingTransitionRequiresExactPreviousAuthority(t *testing.T) {
 		t.Fatalf("mismatched predecessor accepted: %v", err)
 	}
 }
+
+func TestMetadataOnlyHostingCheckCannotInstallOrChangeRelease(t *testing.T) {
+	receipt := testReceipt()
+	request := Request{SchemaVersion: SchemaVersion, Operation: "check", Profile: model.ProfileHosting, Channel: receipt.Channel, Version: receipt.Version,
+		OperatorUser: receipt.OperatorUser, GatewayPort: receipt.GatewayPort, PlatformIdentity: receipt.PlatformIdentity, TimeoutSeconds: 300,
+		TrustRootSHA256: strings.Repeat("b", 64), HostDigest: strings.Repeat("c", 64), ReleaseSequence: 1, SecurityEpoch: 1, ManifestProtocolMin: 1, ManifestProtocolMax: 2,
+		ReleaseIndexDigest: "sha256:" + strings.Repeat("d", 64), ReleaseAuthorityDigest: "sha256:" + strings.Repeat("e", 64), PluginLockDigest: "sha256:" + strings.Repeat("f", 64), ExpectedPreviousSequence: 1, ExpectedPreviousEpoch: 1}
+	if err := request.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"application", "dependency", "sequence", "epoch"} {
+		t.Run(field, func(t *testing.T) {
+			changed := request
+			switch field {
+			case "application":
+				changed.ApplicationPath = "/tmp/application"
+			case "dependency":
+				changed.DependencyPath = "/tmp/dependency"
+			case "sequence":
+				changed.ReleaseSequence++
+			case "epoch":
+				changed.SecurityEpoch++
+			}
+			if err := changed.Validate(); err == nil {
+				t.Fatal("metadata check changed installed target")
+			}
+		})
+	}
+	request.Operation = "update"
+	if err := request.Validate(); err == nil {
+		t.Fatal("update accepted absent application payload")
+	}
+}

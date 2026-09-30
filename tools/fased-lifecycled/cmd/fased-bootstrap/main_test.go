@@ -28,6 +28,7 @@ import (
 	"fased-lifecycled/model"
 	"fased-lifecycled/platform"
 	"fased-lifecycled/protocol"
+	"fased-lifecycled/store"
 	"fased-lifecycled/trust"
 )
 
@@ -167,6 +168,50 @@ func TestOfflineRootBootstrapStagesAndExecutesVerifiedHost(t *testing.T) {
 		warmResult.Performance.MetadataTransferredBytes != wantMetadataTransferred || warmResult.Performance.CacheHits != 4 || warmResult.Performance.CacheMisses != 0 {
 		t.Fatalf("warm bootstrap did not reuse the verified inbox: %+v", warmResult.Performance)
 	}
+	// An installed generation must prove convergence after fresh metadata,
+	// without requesting any host, application, dependency or signer payload.
+	request.ConvergeCurrent = func(_ context.Context, verified bootstrapVerifiedReleaseIndex) (protocol.Response, bool, error) {
+		if verified.Index.Version != index.Version || verified.Digest == "" || verified.ReleaseAuthorityDigest == "" {
+			t.Fatal("current-release check ran before verified metadata")
+		}
+		return protocol.Response{Outcome: "ALREADY_CURRENT", ActiveGenerationID: "sha256:" + strings.Repeat("c", 64), ConvergenceReceiptDigest: "sha256:" + strings.Repeat("d", 64)}, true, nil
+	}
+	before := len(requestedPaths)
+	current, err := execute(context.Background(), request)
+	if err != nil || current.CurrentConvergence == nil || current.Performance.ArtifactTransferredBytes != 0 || current.Performance.CacheHits != 0 || current.Performance.CacheMisses != 0 {
+		t.Fatalf("metadata-only convergence failed: %+v %v", current, err)
+	}
+	for _, path := range requestedPaths[before:] {
+		if strings.HasPrefix(path, "/release/") {
+			t.Fatalf("current release fetched a payload: %s", path)
+		}
+	}
+	request.ConvergeCurrent = func(context.Context, bootstrapVerifiedReleaseIndex) (protocol.Response, bool, error) {
+		return protocol.Response{Outcome: "ALREADY_CURRENT"}, true, nil
+	}
+	if _, err := execute(context.Background(), request); err == nil {
+		t.Fatal("missing generation and readiness proof was accepted")
+	}
+	request.ConvergeCurrent = func(context.Context, bootstrapVerifiedReleaseIndex) (protocol.Response, bool, error) {
+		return protocol.Response{}, false, nil
+	}
+	fallback, err := execute(context.Background(), request)
+	if err != nil || fallback.CurrentConvergence != nil || fallback.Performance.CacheHits != 4 {
+		t.Fatalf("different release did not retain full verified acquisition: %+v %v", fallback, err)
+	}
+	request.ConvergeCurrent = func(context.Context, bootstrapVerifiedReleaseIndex) (protocol.Response, bool, error) {
+		return protocol.Response{}, false, errors.New("live convergence unavailable")
+	}
+	before = len(requestedPaths)
+	if _, err := execute(context.Background(), request); err == nil {
+		t.Fatal("failed live convergence was accepted")
+	}
+	for _, path := range requestedPaths[before:] {
+		if strings.HasPrefix(path, "/release/") {
+			t.Fatal("failed live convergence retried payload acquisition")
+		}
+	}
+
 }
 
 func TestPlatformAssetSelectionPreventsDarwinLinuxAlias(t *testing.T) {
@@ -1455,5 +1500,56 @@ func TestPublicTrustRouteRequiresExactVersionAndHasNoDelegationOrUpdatesDomain(t
 	encoded := fmt.Sprintf("%+v", route)
 	if strings.Contains(encoded, "updates.fased.ai") || strings.Contains(strings.ToLower(encoded), "delegation") {
 		t.Fatalf("production trust route retained obsolete metadata authority: %s", encoded)
+	}
+}
+
+func TestCurrentReleaseRequiresExactInstalledAuthority(t *testing.T) {
+	generation := model.Generation{ID: "sha256:" + strings.Repeat("a", 64), Version: "0.1.76-rc.159", Commit: strings.Repeat("b", 40), Tree: strings.Repeat("c", 40), ArtifactSetDigest: "sha256:" + strings.Repeat("a", 64)}
+	manifest := model.Manifest{ActiveGeneration: &generation, ReleaseSequence: 53, SecurityEpoch: 1}
+	verified := bootstrapVerifiedReleaseIndex{Index: trust.ReleaseIndex{Version: generation.Version, Commit: generation.Commit, Tree: generation.Tree, ArtifactSetDigest: generation.ArtifactSetDigest, ReleaseSequence: 53, SecurityEpoch: 1, PluginLockDigest: "sha256:" + strings.Repeat("e", 64)}, Digest: strings.Repeat("f", 64), ReleaseAuthorityDigest: strings.Repeat("a", 64)}
+	authority := store.CandidateAuthority{GenerationID: generation.ID, ReleaseSequence: 53, SecurityEpoch: 1, ReleaseIndex: "sha256:" + verified.Digest, ReleaseAuthority: "sha256:" + verified.ReleaseAuthorityDigest, PluginLockDigest: verified.Index.PluginLockDigest}
+	if !matchesCurrentRelease(manifest, authority, verified) {
+		t.Fatal("exact installed authority rejected")
+	}
+	for _, field := range []string{"version", "commit", "tree", "artifact", "sequence", "epoch", "index", "authority", "plugins", "generation"} {
+		t.Run(field, func(t *testing.T) {
+			m, a, v := manifest, authority, verified
+			g := generation
+			m.ActiveGeneration = &g
+			switch field {
+			case "version":
+				g.Version = "other"
+			case "commit":
+				g.Commit = "other"
+			case "tree":
+				g.Tree = "other"
+			case "artifact":
+				g.ArtifactSetDigest = "other"
+			case "sequence":
+				m.ReleaseSequence++
+			case "epoch":
+				m.SecurityEpoch++
+			case "index":
+				a.ReleaseIndex = "other"
+			case "authority":
+				a.ReleaseAuthority = "other"
+			case "plugins":
+				a.PluginLockDigest = "other"
+			case "generation":
+				a.GenerationID = "other"
+			}
+			if matchesCurrentRelease(m, a, v) {
+				t.Fatal("mismatched release accepted")
+			}
+		})
+	}
+}
+
+func TestCurrentReleaseRejectsChannelMismatchBeforeInstalledState(t *testing.T) {
+	selection := signedChannelSelection{Version: "0.1.76-rc.159", ReleaseSequence: 53, SecurityEpoch: 1, IndexDigest: strings.Repeat("a", 64), ReleaseAuthorityDigest: strings.Repeat("b", 64)}
+	check := currentReleaseConverger(platform.Config{}, nil, &selection)
+	_, current, err := check(context.Background(), bootstrapVerifiedReleaseIndex{Index: trust.ReleaseIndex{Version: selection.Version, ReleaseSequence: 53, SecurityEpoch: 1}, Digest: strings.Repeat("c", 64), ReleaseAuthorityDigest: selection.ReleaseAuthorityDigest})
+	if err == nil || current || !strings.Contains(err.Error(), "signed channel") {
+		t.Fatalf("witness mismatch reached installed state: %v %v", current, err)
 	}
 }

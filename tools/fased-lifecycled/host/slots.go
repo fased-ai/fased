@@ -336,3 +336,34 @@ func syncRoot(root *os.Root) error {
 	return directory.Sync()
 }
 func (host StagedHost) String() string { return fmt.Sprintf("%s:%s", host.Digest, host.Path) }
+
+// VerifiedCurrent reuses only the installed immutable host that matches a
+// freshly verified signed asset. It never selects an arbitrary executable.
+func (store *Store) VerifiedCurrent(asset trust.Asset) (StagedHost, bool, error) {
+	if asset.PrivilegedComponent != "lifecycle-host" || asset.Protocols == nil {
+		return StagedHost{}, false, errors.New("current lifecycle host asset is invalid")
+	}
+	digest, err := store.Current()
+	if errors.Is(err, os.ErrNotExist) {
+		return StagedHost{}, false, nil
+	}
+	if err != nil {
+		return StagedHost{}, false, err
+	}
+	if "sha256:"+digest != asset.SHA256 {
+		return StagedHost{}, false, nil
+	}
+	candidate := store.staged(asset, digest)
+	if err := store.verifyStaged(candidate); err != nil {
+		return StagedHost{}, false, err
+	}
+	info, err := os.Lstat(candidate.Path)
+	if err != nil {
+		return StagedHost{}, false, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != store.ownerUID || stat.Nlink != 1 || uint64(info.Size()) != asset.Size {
+		return StagedHost{}, false, errors.New("installed lifecycle host metadata changed")
+	}
+	return candidate, true, nil
+}

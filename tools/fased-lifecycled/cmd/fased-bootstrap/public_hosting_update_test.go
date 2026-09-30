@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"fased-lifecycled/host"
 	"fased-lifecycled/hostsecurity"
 	"fased-lifecycled/model"
 	"fased-lifecycled/protocol"
 	"fased-lifecycled/publicupdate"
+	"fased-lifecycled/trust"
 )
 
 func TestHostingUpdateHandsStableReceiptDirectlyToAcquiredTargetHost(t *testing.T) {
@@ -93,5 +95,45 @@ func TestHostingStatusUsesAuthorityReceiptWithoutPlatformState(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Installed: 0.1.0-rc.2 profile=hosting channel=beta sequence=11 epoch=2") {
 		t.Fatalf("unexpected status %q", output.String())
+	}
+}
+
+func TestHostingCurrentReleaseKeepsStateTargetOwnedAndRequiresFreshReceipt(t *testing.T) {
+	originalFind, originalInvoke, originalRead := findCurrentHostingHost, invokeTargetOwnedHostingUpdate, readPublicHostingReceipt
+	t.Cleanup(func() {
+		findCurrentHostingHost = originalFind
+		invokeTargetOwnedHostingUpdate = originalInvoke
+		readPublicHostingReceipt = originalRead
+	})
+	digest := "sha256:" + strings.Repeat("a", 64)
+	previous := publicupdate.Receipt{SchemaVersion: 1, Profile: model.ProfileHosting, Channel: "beta", Version: "0.1.0-rc.2", OperatorUser: "app", GatewayPort: 18789, PlatformIdentity: "linux/x64", ReleaseSequence: 11, SecurityEpoch: 2, ActiveGenerationID: digest, ConvergenceReceiptDigest: digest}
+	asset := trust.Asset{Name: "fased-lifecycled-linux-x64", Size: 1, SHA256: digest, PrivilegedComponent: "lifecycle-host", Protocols: &trust.HostProtocols{Manifest: trust.ProtocolRange{Min: 2, Max: 2}}}
+	verified := bootstrapVerifiedReleaseIndex{Index: trust.ReleaseIndex{Channel: previous.Channel, Version: previous.Version, ReleaseSequence: 11, SecurityEpoch: 2, PluginLockDigest: digest, LifecycleHost: map[string]trust.Asset{"linux-x64": asset}}, Digest: strings.Repeat("b", 64), ReleaseAuthorityDigest: strings.Repeat("c", 64)}
+	findCurrentHostingHost = func(trust.Asset) (host.StagedHost, bool, error) {
+		return host.StagedHost{Digest: strings.Repeat("a", 64), Path: "/verified/installed-host"}, true, nil
+	}
+	fresh := previous
+	fresh.ConvergenceReceiptDigest = "sha256:" + strings.Repeat("d", 64)
+	invoked := 0
+	invokeTargetOwnedHostingUpdate = func(_ context.Context, path string, request publicupdate.Request, _ *hostsecurity.MutationLock) (protocol.Response, error) {
+		invoked++
+		if path != "/verified/installed-host" || request.Operation != "check" || request.ApplicationPath != "" || request.DependencyPath != "" {
+			t.Fatalf("metadata check crossed target boundary: %+v", request)
+		}
+		return protocol.Response{Outcome: "ALREADY_CURRENT", ActiveGenerationID: digest, ConvergenceReceiptDigest: fresh.ConvergenceReceiptDigest}, nil
+	}
+	readPublicHostingReceipt = func() (publicupdate.Receipt, error) { return fresh, nil }
+	check := hostingCurrentReleaseConverger(publicLifecycleRequest{Operation: "update", Timeout: 5 * time.Minute}, previous, nil, nil, strings.Repeat("e", 64))
+	if _, current, err := check(context.Background(), verified); err != nil || !current {
+		t.Fatalf("metadata Hosting check failed: %v %v", current, err)
+	}
+	readPublicHostingReceipt = func() (publicupdate.Receipt, error) { return previous, nil }
+	if _, current, err := check(context.Background(), verified); err == nil || current {
+		t.Fatal("stale receipt substituted for fresh readiness")
+	}
+	verified.Index.ReleaseSequence++
+	before := invoked
+	if _, current, err := check(context.Background(), verified); err != nil || current || invoked != before {
+		t.Fatal("different release used metadata-only check")
 	}
 }
