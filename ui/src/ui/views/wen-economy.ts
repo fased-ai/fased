@@ -142,27 +142,27 @@ export class WenEconomyPanel extends LitElement {
     }
   }
   render() {
-    return html`<section aria-label="WEN economy read">
-      <h3>Economy</h3>
-      <p>Verified local Devnet facts. Incomplete totals remain unavailable; this view cannot sign or spend.</p>
+    return html`<section class="wen-desk__card" aria-label="WEN economy read">
+      <span class="wen-desk__eyebrow">01 · Understand</span><h3>Economy</h3>
+      <p>Current facts for your decisions. This view cannot sign or spend.</p>
       <button type="button" ?disabled=${!this.connected || this.busy} @click=${() => void this.refresh()}>
         ${this.busy ? "Reading…" : "Refresh facts"}
       </button>
       ${this.error ? html`<p role="status">${this.error}</p>` : nothing}
       ${
         this.snapshot
-          ? html`<p>Economy ${this.snapshot.identity.economy} · finalized slot ${this.snapshot.slot}</p>
-        <dl>${this.snapshot.rows.map(
+          ? html`<p class="wen-desk__meta">${this.snapshot.identity.economy} · updated ${new Date(this.snapshot.observedAtMs).toLocaleTimeString()}</p>
+        <dl class="wen-desk__facts">${this.snapshot.rows.map(
           (row) => html`<div>
-          <dt>${row.id}</dt>
+          <dt>${row.id.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase())}</dt>
           <dd>${
             row.status === "reported"
-              ? html`${row.value} ${row.unit}<small>${row.evidence} · ${row.source} · ${row.scope} · ${new Date(row.observedAtMs).toISOString()}</small>`
+              ? html`${row.value} ${row.unit}<details><summary>Source details</summary><small>${row.evidence} · ${row.source} · ${row.scope} · ${new Date(row.observedAtMs).toISOString()} · finalized slot ${this.snapshot?.slot}</small></details>`
               : `Unavailable: ${row.reason}`
           }</dd>
         </div>`,
         )}</dl>`
-          : nothing
+          : html`<p class="wen-desk__empty">${this.connected ? "Refresh to see the latest economy facts." : "Connect your instance to read the economy."}</p>`
       }
     </section>`;
   }

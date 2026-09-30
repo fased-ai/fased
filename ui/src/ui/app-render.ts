@@ -6,7 +6,6 @@ import { materializeAgentConfigList } from "./agent-config-entry.ts";
 import { formatAgentDisplayLabel } from "./agent-display.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
 import { DEFAULT_CRON_FORM } from "./app-defaults.ts";
-import { renderUsageTab } from "./app-render-usage-tab.ts";
 import {
   renderChatComposerControls,
   renderChatControls,
@@ -222,7 +221,7 @@ const CONTENT_HEADERLESS_TABS = new Set<Tab>([
   "wen",
 ]);
 const AVATAR_HTTP_RE = /^https?:\/\//i;
-type LazyTabViewKey = "config" | "providers" | "federation" | "wallet" | "wen" | "mining";
+type LazyTabViewKey = "config" | "providers" | "federation" | "wallet" | "wen" | "mining" | "usage";
 type LazyTabViewModules = {
   config: typeof import("./views/config.ts");
   providers: typeof import("./views/providers.ts");
@@ -230,6 +229,7 @@ type LazyTabViewModules = {
   wallet: typeof import("./views/wallet.ts");
   wen: typeof import("./views/wen.ts");
   mining: typeof import("./views/mining.ts");
+  usage: typeof import("./app-render-usage-tab.ts");
 };
 
 const lazyTabViewLoaders: { [K in LazyTabViewKey]: () => Promise<LazyTabViewModules[K]> } = {
@@ -239,6 +239,7 @@ const lazyTabViewLoaders: { [K in LazyTabViewKey]: () => Promise<LazyTabViewModu
   wallet: () => import("./views/wallet.ts"),
   wen: () => import("./views/wen.ts"),
   mining: () => import("./views/mining.ts"),
+  usage: () => import("./app-render-usage-tab.ts"),
 };
 const lazyTabViewCache: Partial<LazyTabViewModules> = {};
 const lazyTabViewInflight = new Map<LazyTabViewKey, Promise<void>>();
@@ -2898,6 +2899,7 @@ export function renderApp(state: AppViewState) {
   const walletView = state.tab === "wallet" ? getLazyTabView(state, "wallet") : null;
   const wenView = state.tab === "wen" ? getLazyTabView(state, "wen") : null;
   const miningView = state.tab === "mining" ? getLazyTabView(state, "mining") : null;
+  const usageView = state.tab === "usage" ? getLazyTabView(state, "usage") : null;
   const savedToken = state.settings.token.trim();
   const hasValidSessionToken = savedToken.length > 20 && !savedToken.startsWith("tok_");
   const showContentHeaderBreadcrumb =
@@ -3521,7 +3523,13 @@ export function renderApp(state: AppViewState) {
             : nothing
         }
 
-        ${renderUsageTab(state)}
+        ${
+          state.tab === "usage"
+            ? usageView
+              ? usageView.renderUsageTab(state)
+              : renderLazyTabPlaceholder("Usage", lazyTabViewErrors.usage)
+            : nothing
+        }
 
         ${
           state.tab === "cron"

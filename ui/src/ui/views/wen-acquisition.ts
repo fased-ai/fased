@@ -95,15 +95,15 @@ export class WenAcquisitionPanel extends LitElement {
   render() {
     const handoff =
       this.handoff && Date.now() < this.handoff.request.expiresAtMs ? this.handoff : null;
-    return html`<section aria-label="WEN acquisition handoff"><h3>Buy / Bonds</h3>
-      <p>Suggest an acquisition in the local WEN terminal. WEN checks the connected owner and fresh terms. This request cannot sign, spend or reserve a price.</p>
+    return html`<section class="wen-desk__card" aria-label="WEN acquisition handoff"><span class="wen-desk__eyebrow">02 · Plan</span><h3>Acquire a position</h3>
+      <p>Plan a Buy or Bond purchase, then review the current terms and approve with your wallet in WEN.</p>
       <label>Owner public address <input .value=${this.owner} @input=${(e: Event) => {
         this.owner = (e.target as HTMLInputElement).value;
       }} /></label>
       <label>Product <select .value=${this.action} @change=${(e: Event) => {
         this.action = (e.target as HTMLSelectElement).value;
       }}><option value="buy">Buy</option><option value="bond">Bonds</option></select></label>
-      <label>Net quantity in smallest asset units <input .value=${this.netAtoms} inputmode="numeric" @input=${(
+      <label>Quantity (base units) <input .value=${this.netAtoms} inputmode="numeric" @input=${(
         e: Event,
       ) => {
         this.netAtoms = (e.target as HTMLInputElement).value;
@@ -117,7 +117,8 @@ export class WenAcquisitionPanel extends LitElement {
             }} /></label>`
           : nothing
       }
-      <button ?disabled=${!this.connected || this.busy} @click=${() => void this.prepare()}>${this.busy ? "Checking…" : "Prepare WEN request"}</button>
+      <button ?disabled=${!this.connected || this.busy} @click=${() => void this.prepare()}>${this.busy ? "Checking…" : "Prepare request"}</button>
+      <details class="wen-desk__details"><summary>How approval works</summary><p>This request cannot sign, spend or reserve a price. Quantity uses the asset’s smallest units; WEN verifies the connected wallet and shows the final terms before approval.</p></details>
       ${this.error ? html`<p role="status">${this.error}</p>` : nothing}
       ${
         handoff

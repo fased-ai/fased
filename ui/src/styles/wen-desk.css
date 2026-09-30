@@ -1,0 +1,134 @@
+.wen-desk {
+  max-width: 1280px;
+  margin: 0 auto;
+  color: var(--text);
+}
+.wen-desk__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 0 32px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+.wen-desk__header h2 {
+  font-size: clamp(28px, 4vw, 44px);
+  letter-spacing: -0.04em;
+  margin: 10px 0;
+}
+.wen-desk p {
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 65ch;
+}
+.wen-desk__eyebrow {
+  color: #dd8955;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.wen-desk__status {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.wen-desk__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.wen-desk__card {
+  background: var(--card, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  min-width: 0;
+}
+.wen-desk__card h3 {
+  font-size: 22px;
+  letter-spacing: -0.025em;
+  margin: 10px 0;
+}
+.wen-desk__card label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 16px 0;
+}
+.wen-desk__card input,
+.wen-desk__card select {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 10px 12px;
+}
+.wen-desk button,
+.wen-desk__card a {
+  min-height: 40px;
+  border-radius: 8px;
+}
+.wen-desk__facts {
+  display: grid;
+  gap: 0;
+  margin: 20px 0 0;
+}
+.wen-desk__facts > div {
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+.wen-desk__facts dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.wen-desk__facts dd {
+  margin: 6px 0 0;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wen-desk details {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.wen-desk summary {
+  cursor: pointer;
+}
+.wen-desk small {
+  display: block;
+  margin-top: 8px;
+  line-height: 1.6;
+}
+.wen-desk__meta,
+.wen-desk__empty {
+  font-size: 12px;
+}
+.wen-desk__operations {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+@media (max-width: 760px) {
+  .wen-desk__grid {
+    grid-template-columns: 1fr;
+  }
+  .wen-desk__header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .wen-desk__card,
+  .wen-desk__operations {
+    padding: 18px;
+  }
+}

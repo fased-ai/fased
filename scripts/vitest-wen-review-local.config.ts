@@ -9,6 +9,7 @@ export default defineConfig({
     pool: "forks",
     include: [
       "src/gateway/server.wen-review.e2e.test.ts",
+      "src/gateway/server.wen-live-local.e2e.test.ts",
       "src/gateway/server.wen-campaign.e2e.test.ts",
       "src/gateway/server.wen-funded.e2e.test.ts",
     ],

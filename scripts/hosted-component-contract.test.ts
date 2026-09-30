@@ -64,6 +64,28 @@ async function fixture() {
 }
 
 describe("hosted component contract", () => {
+  it("keeps only selected skills in the disposable package and preserves source skills", async () => {
+    const value = await fixture();
+    const packageRoot = path.join(value.root, "application");
+    await fs.mkdir(path.join(packageRoot, "assets", "chrome-extension"), { recursive: true });
+    await fs.mkdir(path.join(packageRoot, "extensions"));
+    value.contract.core.allowedApplicationTopLevelEntries.push("skills");
+    value.contract.core.allowedSkillDirectories = ["wallet-actions"];
+    for (const name of ["wallet-actions", "clawhub", "voice-call"]) {
+      await fs.mkdir(path.join(packageRoot, "skills", name), { recursive: true });
+    }
+    const sourceSkill = path.join(value.root, "source", "clawhub");
+    await fs.mkdir(sourceSkill, { recursive: true });
+    const removed = await enforceHostedApplicationAllowlist({
+      packageRoot,
+      contract: value.contract,
+    });
+    expect(removed).toContain("skills/clawhub");
+    expect(removed).toContain("skills/voice-call");
+    expect(await fs.readdir(path.join(packageRoot, "skills"))).toEqual(["wallet-actions"]);
+    expect((await fs.stat(sourceSkill)).isDirectory()).toBe(true);
+  });
+
   it("enforces exact application entries and removes only declared optional assets", async () => {
     const value = await fixture();
     const packageRoot = path.join(value.root, "application");

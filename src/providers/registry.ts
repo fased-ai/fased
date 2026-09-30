@@ -127,6 +127,7 @@ export type ProviderBrandManifest = {
 export const PROVIDER_BRAND_ORDER = [
   "openai",
   "anthropic",
+  "xai",
   "chutes",
   "ollama",
   "lmstudio",
@@ -134,7 +135,6 @@ export const PROVIDER_BRAND_ORDER = [
   "minimax",
   "moonshot",
   "google",
-  "xai",
   "mistral",
   "volcengine",
   "byteplus",
@@ -226,6 +226,9 @@ export const CUSTOM_PROVIDER_BRAND_ID = "custom";
 export const CUSTOM_PROVIDER_ROUTE_ID = "custom";
 
 export const OPENAI_API_MODEL_IDS = [
+  "gpt-6.1-sol",
+  "gpt-6-luna",
+  "gpt-6-astra",
   "gpt-5.6",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
@@ -233,6 +236,9 @@ export const OPENAI_API_MODEL_IDS = [
 ] as const;
 
 export const OPENAI_SIGN_IN_MODEL_IDS = [
+  "gpt-6.1-sol",
+  "gpt-6-luna",
+  "gpt-6-astra",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
@@ -255,6 +261,9 @@ export const OPENAI_SIGN_IN_MODEL_REFS = OPENAI_SIGN_IN_MODEL_IDS.map(
 );
 
 export const ANTHROPIC_MODEL_IDS = [
+  "claude-fable-5-1",
+  "claude-opus-5-5",
+  "claude-sonnet-5-5",
   "claude-fable-5",
   "claude-opus-4-8",
   "claude-sonnet-5",
@@ -314,7 +323,7 @@ export const GOOGLE_GEMINI_CLI_MODEL_REFS = GOOGLE_GEMINI_MODEL_IDS.map(
   (id) => `${GOOGLE_GEMINI_CLI_ROUTE_ID}/${id}`,
 );
 
-export const XAI_MODEL_IDS = ["grok-4.5", "grok-4.3", "grok-build-0.1"] as const;
+export const XAI_MODEL_IDS = ["grok-4.7", "grok-4.5", "grok-4.3", "grok-build-0.1"] as const;
 export const XAI_MODEL_REFS = XAI_MODEL_IDS.map((id) => `${XAI_ROUTE_ID}/${id}`);
 
 export const MISTRAL_MODEL_IDS = [
@@ -1082,7 +1091,8 @@ export const OPENAI_PROVIDER_MANIFEST: ProviderBrandManifest = {
     },
   ],
   models: {
-    recommended: [...OPENAI_API_MODEL_REFS, ...OPENAI_SIGN_IN_MODEL_REFS],
+    // Suggestions do not establish account availability or change configured models.
+    recommended: [...OPENAI_API_MODEL_REFS.slice(0, 3), ...OPENAI_SIGN_IN_MODEL_REFS.slice(0, 3)],
     routeRules: {
       [OPENAI_API_ROUTE_ID]: [`${OPENAI_API_ROUTE_ID}/*`],
       [OPENAI_CODEX_ROUTE_ID]: [`${OPENAI_CODEX_ROUTE_ID}/*`],
@@ -1124,7 +1134,7 @@ export const ANTHROPIC_PROVIDER_MANIFEST: ProviderBrandManifest = {
     },
   ],
   models: {
-    recommended: [...ANTHROPIC_MODEL_REFS],
+    recommended: [...ANTHROPIC_MODEL_REFS.slice(0, 3), "anthropic/claude-haiku-4-5"],
     routeRules: {
       [ANTHROPIC_ROUTE_ID]: [`${ANTHROPIC_ROUTE_ID}/*`],
     },
@@ -1391,7 +1401,7 @@ export const GOOGLE_PROVIDER_MANIFEST: ProviderBrandManifest = {
 export const XAI_PROVIDER_MANIFEST: ProviderBrandManifest = {
   id: XAI_PROVIDER_BRAND_ID,
   label: "xAI (Grok)",
-  priority: 8,
+  priority: 3,
   hint: "Grok API key or xAI account sign-in",
   methods: [
     {
@@ -1418,7 +1428,7 @@ export const XAI_PROVIDER_MANIFEST: ProviderBrandManifest = {
     },
   ],
   models: {
-    recommended: [...XAI_MODEL_REFS],
+    recommended: ["xai/grok-4.7"],
     routeRules: {
       [XAI_ROUTE_ID]: [`${XAI_ROUTE_ID}/*`],
     },

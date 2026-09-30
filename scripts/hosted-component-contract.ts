@@ -4,6 +4,7 @@ import path from "node:path";
 type CoreContract = {
   allowedApplicationTopLevelEntries: string[];
   excludedApplicationPaths: string[];
+  allowedSkillDirectories?: string[];
   extensionDirectories: string[];
   sharedDirectories: string[];
   loadedPluginIds: string[];
@@ -62,6 +63,9 @@ export async function readHostedComponentContract(
     throw new Error("hosted component contract must use schemaVersion 1");
   }
   assertDirectoryNames(value.core.extensionDirectories, "core.extensionDirectories");
+  if (value.core.allowedSkillDirectories !== undefined) {
+    assertDirectoryNames(value.core.allowedSkillDirectories, "core.allowedSkillDirectories");
+  }
   assertDirectoryNames(value.core.sharedDirectories, "core.sharedDirectories");
   assertDirectoryNames(value.core.loadedPluginIds, "core.loadedPluginIds");
   if (
@@ -173,6 +177,30 @@ export async function enforceHostedApplicationAllowlist(params: {
     }
     await fs.rm(target, { recursive: true, force: true });
     removed.push(relative);
+  }
+  if (params.contract.core.allowedSkillDirectories) {
+    const skillsRoot = path.join(params.packageRoot, "skills");
+    const rootStat = await fs.lstat(skillsRoot);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+      throw new Error("packaged skills root must be a real directory");
+    }
+    const allowedSkills = new Set(params.contract.core.allowedSkillDirectories);
+    const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (allowedSkills.has(entry.name)) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) {
+          throw new Error(`packaged skill must be a real directory: ${entry.name}`);
+        }
+      } else {
+        await fs.rm(path.join(skillsRoot, entry.name), { recursive: true, force: true });
+        removed.push(`skills/${entry.name}`);
+      }
+    }
+    for (const name of allowedSkills) {
+      if (!entries.some((entry) => entry.name === name)) {
+        throw new Error(`required packaged skill is missing: ${name}`);
+      }
+    }
   }
   return removed;
 }

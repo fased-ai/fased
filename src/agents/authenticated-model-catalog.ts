@@ -6,6 +6,7 @@ import {
 import type { AuthProfileStore } from "./auth-profiles.js";
 import { buildCredentialScopedAllowedModelSet } from "./model-catalog-access.js";
 import type { ModelCatalogEntry } from "./model-catalog.js";
+import { normalizeProviderId } from "./provider-id.js";
 
 export async function resolveAuthenticatedModelCatalog(params: {
   cfg: FasedAgentConfig;
@@ -13,6 +14,8 @@ export async function resolveAuthenticatedModelCatalog(params: {
   catalog: ModelCatalogEntry[];
   defaultProvider: string;
   agentDir?: string;
+  /** Execution scopes discovery to its chosen route; interactive refresh omits this. */
+  discoveryRoutes?: Iterable<string>;
 }) {
   const initialScope = buildCredentialScopedAllowedModelSet({
     cfg: params.cfg,
@@ -20,11 +23,18 @@ export async function resolveAuthenticatedModelCatalog(params: {
     defaultProvider: params.defaultProvider,
     store: params.store,
   });
+  const discoveryRoutes = params.discoveryRoutes
+    ? new Set(
+        [...params.discoveryRoutes]
+          .map(normalizeProviderId)
+          .filter((route) => initialScope.usableProviders.has(route)),
+      )
+    : initialScope.usableProviders;
   const discoveredCatalog = filterCatalogToAuthoritativeAvailability(
     await applyRuntimeProviderModelDiscovery({
       cfg: params.cfg,
       store: params.store,
-      routes: initialScope.usableProviders,
+      routes: discoveryRoutes,
       catalog: initialScope.usableCatalog,
       agentDir: params.agentDir,
     }),

@@ -22,7 +22,7 @@ import {
 import type { SkillGroup } from "./skills-grouping.ts";
 import { groupSkills } from "./skills-grouping.ts";
 import { computeSkillMissing, computeSkillReasons, getSkillReadiness } from "./skills-shared.ts";
-import { renderClawHubPanel, type SkillsProps } from "./skills.ts";
+import type { SkillsProps } from "./skills.ts";
 
 const AGENT_SKILL_STATUS_TABS = [
   { id: "all", label: "All" },
@@ -540,34 +540,7 @@ export function renderAgentSkills(params: {
     ? rawSkills.filter((skill) => allowSet.has(skill.name)).length
     : rawSkills.length;
   const totalCount = rawSkills.length;
-  const activePanel = params.skillsLibrary?.libraryPanel ?? "skills";
-  const agentSkillsLibrary = params.skillsLibrary
-    ? {
-        ...params.skillsLibrary,
-        attachAgentId: params.agentId,
-        createAgentId: params.agentId,
-        clawhubInstallTarget: `agent:${params.agentId}` as const,
-        onCreateOpen: () => {
-          if (params.onCreateSkill) {
-            params.onCreateSkill();
-            return;
-          }
-          params.skillsLibrary?.onCreateOpen();
-        },
-        onDetailOpen: (skillKey: string) => {
-          if (params.onOpenSkillDetail) {
-            params.onOpenSkillDetail(skillKey);
-            return;
-          }
-          params.skillsLibrary?.onAttachAgentChange(params.agentId);
-          params.skillsLibrary?.onDetailOpen(skillKey);
-        },
-        onClawHubInstall: (slug: string) => {
-          params.skillsLibrary?.onClawHubTargetChange(`agent:${params.agentId}`);
-          params.skillsLibrary?.onClawHubInstall(slug);
-        },
-      }
-    : null;
+  const activePanel = "skills";
 
   return html`
     <section class="card">
@@ -613,23 +586,7 @@ export function renderAgentSkills(params: {
         </button>
       </div>
 
-      ${
-        activePanel === "clawhub"
-          ? agentSkillsLibrary
-            ? html`
-                <div style="margin-top: 14px;">
-                  ${renderClawHubPanel(agentSkillsLibrary, {
-                    showInstallTarget: false,
-                    showHeader: false,
-                    title: "ClawHub",
-                    subtitle: "Search, review, and install skills for this Agent.",
-                  })}
-                </div>
-              `
-            : html`
-                <div class="muted" style="margin-top: 16px">Skill registry state is not loaded.</div>
-              `
-          : html`
+      ${html`
       ${
         !params.configForm
           ? html`
@@ -720,8 +677,7 @@ export function renderAgentSkills(params: {
             </div>
           `
       }
-          `
-      }
+          `}
     </section>
   `;
 }
