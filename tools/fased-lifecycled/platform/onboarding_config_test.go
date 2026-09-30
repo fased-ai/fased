@@ -33,6 +33,15 @@ func TestOnboardingConfigDeclaredOwner(t *testing.T) {
 			if (err != nil) != tc.denied {
 				t.Fatalf("denied=%v, err=%v", tc.denied, err)
 			}
+			store := DiskLifecycleFileStore{Config: config}
+			accepted := store.safeExisting(CanonicalGatewayConfigPath(config), tc.mode, uid)
+			if accepted == tc.denied {
+				t.Fatalf("projection validation disagrees with onboarding: accepted=%v", accepted)
+			}
+			if store.safeExisting(CanonicalPluginLockPath(config), 0640, config.Gateway.UID) && config.Gateway.UID != config.Operator.UID {
+				t.Fatal("gateway acquired unrelated projection ownership")
+			}
+
 		})
 	}
 }

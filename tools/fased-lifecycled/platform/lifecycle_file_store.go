@@ -83,7 +83,7 @@ func (store *DiskLifecycleFileStore) Prepare(transactionID string, files map[str
 			if inspectErr == nil {
 				stat, ok := info.Sys().(*syscall.Stat_t)
 				if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Nlink != 1 || info.Size() > 1<<20 || !store.safeExisting(target, info.Mode().Perm(), stat.Uid) {
-					return errors.New("existing lifecycle projection file is unsafe")
+					return fmt.Errorf("existing lifecycle projection file %q is unsafe", target)
 				}
 				metadata = lifecycleFileMetadata{Present: true, Mode: uint32(info.Mode().Perm()), UID: stat.Uid, GID: stat.Gid}
 			} else if !errors.Is(inspectErr, os.ErrNotExist) {
@@ -245,7 +245,7 @@ func (store *DiskLifecycleFileStore) recordName(target string) string {
 
 func (store *DiskLifecycleFileStore) safeExisting(target string, mode os.FileMode, uid uint32) bool {
 	if target == CanonicalGatewayConfigPath(store.Config) {
-		return mode&0o007 == 0 && mode&0o111 == 0 && uid == store.Config.Operator.UID
+		return mode&0o007 == 0 && mode&0o111 == 0 && store.Config.ownsGatewayConfiguration(uid)
 	}
 	if target == CanonicalInstallProjectionPath(store.Config) || target == CanonicalCLIProjectionPath(store.Config) || target == CanonicalPluginLockPath(store.Config) {
 		return mode&0o002 == 0 && (uid == store.Config.Operator.UID || uid == store.expectedUID)
