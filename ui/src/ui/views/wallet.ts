@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { walletPurposeLabels } from "../../../../src/wallet/wallet-purpose-labels.js";
 import type {
   WalletSkillGrantDraft,
   WalletSkillGrantRow,
@@ -67,7 +68,6 @@ export type WalletViewProps = {
   assignWalletId?: string;
   providers?: WalletProviderInfo[];
   createName?: string;
-  createRole?: "" | WalletUserRole;
   createRpcUrl?: string;
   createRpcProfileId?: string;
   createBusy?: boolean;
@@ -142,7 +142,6 @@ export type WalletViewProps = {
   onApprovalsFilterChange: (filter: WalletApprovalFilter) => void;
   onAttachWalletStandardVault?: () => void;
   onCreateNameChange?: (next: string) => void;
-  onCreateRoleChange?: (next: "" | WalletUserRole) => void;
   onCreateRpcUrlChange?: (next: string) => void;
   onCreateRpcProfileIdChange?: (next: string) => void;
   rpcUrl?: string;
@@ -2544,9 +2543,9 @@ function renderWalletAccessPanel(props: WalletViewProps) {
       <div id="wallet-agent-routing" class="card wallet-top-card">
         <div class="wallet-top-card__head">
           <div>
-            <div class="card-title">Agent wallet routing</div>
+            <div class="card-title">Agent assignments</div>
             <div class="card-sub">
-              Select an Agent and its Agent wallet. Explicit handles and one-wallet skill grants take
+              Select an agent and wallet. Explicit handles and scoped wallet grants take
               precedence over this assignment.
             </div>
           </div>
@@ -2567,7 +2566,7 @@ function renderWalletAccessPanel(props: WalletViewProps) {
             </select>
           </label>
           <label class="field">
-            <span>Assigned Agent wallet</span>
+            <span>Assigned wallet</span>
             <select
               .value=${props.assignWalletId ?? ""}
               @change=${(event: Event) =>
@@ -2679,15 +2678,9 @@ export function renderWallet(props: WalletViewProps) {
   const createProvider = (props.providers ?? []).find(
     (provider) => provider.id === "local-socket-signer",
   );
-  const existingMiningWallet = props.namedWallets.find(
-    (wallet) => resolveDisplayedWalletRole(wallet.id, props) === "mining" || wallet.id === "mining",
-  );
-  const miningCreationBlocked = props.createRole === "mining" && Boolean(existingMiningWallet);
   const rpcSelectionCount =
     Number(Boolean(props.createRpcUrl?.trim())) + Number(Boolean(props.createRpcProfileId?.trim()));
-  const createInputReady = Boolean(
-    props.createRole && rpcSelectionCount === 1 && !miningCreationBlocked,
-  );
+  const createInputReady = rpcSelectionCount === 1;
   const setMainPanel = (panel: "wallets" | "access") => {
     props.onMainPanelChange?.(panel);
     if (typeof window === "undefined") {
@@ -4006,9 +3999,9 @@ export function renderWallet(props: WalletViewProps) {
                     class="btn small"
                     ?disabled=${props.settingsBusy || !props.onAttachWalletStandardVault}
                     @click=${props.onAttachWalletStandardVault}
-                    title="Connect a compatible Solana browser wallet and register its selected account as a manual Vault."
+                    title="Connect a compatible Solana wallet. Each transaction requires approval in that wallet."
                   >
-                    Connect browser wallet as Vault
+                    Connect wallet
                   </button>
                   <button
                     class="btn small"
@@ -4032,34 +4025,11 @@ export function renderWallet(props: WalletViewProps) {
                 <span>Name (optional)</span>
                 <input
                   .value=${props.createName ?? ""}
-                  placeholder="Uses Agent, Agent 2, or Vault"
+                  placeholder="WEN, Trading, Savings"
                   autocomplete="off"
                   @input=${(event: Event) =>
                     props.onCreateNameChange?.((event.target as HTMLInputElement).value)}
                 />
-              </label>
-              <label class="field">
-                <span>Wallet role</span>
-                <select
-                  .value=${props.createRole ?? ""}
-                  @change=${(event: Event) =>
-                    props.onCreateRoleChange?.(
-                      (event.target as HTMLSelectElement).value as
-                        | ""
-                        | "agent"
-                        | "mining"
-                        | "vault"
-                        | "profile"
-                        | "strategy",
-                    )}
-                >
-                  <option value="" disabled>Select a role</option>
-                  <option value="agent">Agent</option>
-                  <option value="mining">Mining (legacy recovery)</option>
-                  <option value="vault">Vault</option>
-                  <option value="profile">Profile</option>
-                  <option value="strategy">Strategy (deny-all)</option>
-                </select>
               </label>
               <label class="field">
                 <span>Reusable RPC profile (optional)</span>
@@ -4102,21 +4072,10 @@ export function renderWallet(props: WalletViewProps) {
                   ${props.createBusy ? "Creating..." : "Create wallet"}
                 </button>
                 ${
-                  props.createBusy ||
-                  miningCreationBlocked ||
-                  !props.createRole ||
-                  rpcSelectionCount !== 1
+                  props.createBusy || rpcSelectionCount !== 1
                     ? html`<span class="muted">
-                  ${
-                    props.createBusy
-                      ? "Creating wallet..."
-                      : miningCreationBlocked
-                        ? `Mining already uses ${existingMiningWallet?.name ?? existingMiningWallet?.id}. Only one Mining wallet is allowed.`
-                        : !props.createRole
-                          ? "Select a wallet role."
-                          : "Choose one RPC profile or one direct RPC."
-                  }
-                    </span>`
+                        ${props.createBusy ? "Creating wallet..." : "Choose one RPC profile or one direct RPC."}
+                      </span>`
                     : !createProvider?.enabled || !createProvider.health.ok
                       ? html`
                           <span class="muted">Signer unavailable. Create wallet will show the exact error.</span>
@@ -4238,6 +4197,7 @@ export function renderWallet(props: WalletViewProps) {
                     <div class="wallet-card__identity">
 	                      <div class="wallet-card__title-row">
 	                        <div class="wallet-card__title">${wallet.name}</div>
+                        ${walletPurposeLabels(wallet.metadata).map((label) => html`<span class="badge">${label}</span>`)}
 	                        ${renderWalletBondIcon(wallet.id, props.federationBond, props.onNavigate)}
 	                        ${cardRole === "mining" ? renderWalletSweepChip(props.miningProfile) : nothing}
 		                        ${renderWalletActivePolicyIcons({

@@ -35,6 +35,8 @@ usage() {
   cat >&2 <<'EOF'
 usage: fased-signer-owner wallet <command> [typed fased-signerd admin flags]
        fased-signer-owner policy <get|put> [typed fased-signerd admin flags]
+       fased-signer-owner wen-market <install-draft|install-admission> --wallet-id <id>
+         --request-file <absolute-json-path> --confirm-digest sha256:<file-digest>
        fased-signer-owner webauthn-enroll [authenticator label]
 
 Allowed commands:
@@ -71,6 +73,15 @@ if [[ "${1:-}" == "webauthn-enroll" ]]; then
     exit 64
   }
   shift "$#"
+elif [[ "${1:-}" == "wen-market" ]]; then
+  [[ $# -ge 2 ]] || { usage; exit 64; }
+  ADMIN_DOMAIN="wen-market"
+  command_name="$2"
+  shift 2
+  case "$command_name" in
+    install-draft|install-admission) ;;
+    *) usage; exit 64 ;;
+  esac
 elif [[ "${1:-}" == "policy" ]]; then
   [[ $# -ge 2 ]] || {
     usage
@@ -342,6 +353,7 @@ args=("$@")
 output_path=""
 input_path=""
 policy_path=""
+request_path=""
 confirm_digest=""
 forward_args=()
 for ((index = 0; index < ${#args[@]}; index++)); do
@@ -372,6 +384,12 @@ for ((index = 0; index < ${#args[@]}; index++)); do
       forward_args+=("${args[$index]}" "${args[$((index + 1))]}")
       index=$((index + 1))
       ;;
+    --request-file)
+      ((index + 1 < ${#args[@]})) || { echo "--request-file requires a path." >&2; exit 64; }
+      [[ -z "$request_path" ]] || { echo "Repeated request file." >&2; exit 64; }
+      request_path="${args[$((index + 1))]}"
+      index=$((index + 1))
+      ;;
     --policy-file)
       ((index + 1 < ${#args[@]})) || {
         echo "--policy-file requires a path." >&2
@@ -388,7 +406,21 @@ for ((index = 0; index < ${#args[@]}; index++)); do
 done
 args=("${forward_args[@]}")
 
-if [[ "$ADMIN_DOMAIN" == "policy" && "$command_name" == "put" ]]; then
+if [[ "$ADMIN_DOMAIN" == "wen-market" ]]; then
+  [[ -n "$request_path" && "$confirm_digest" =~ ^sha256:[0-9a-f]{64}$ &&
+     -z "$input_path" && -z "$output_path" && -z "$policy_path" ]] || {
+    echo "Market handoff requires only a request file and its exact confirmation digest." >&2
+    exit 64
+  }
+  [[ ${#args[@]} -eq 2 && "${args[0]}" == "--wallet-id" && -n "${args[1]}" ]] || {
+    echo "Market handoff accepts only --wallet-id after file confirmation." >&2
+    exit 64
+  }
+elif [[ -n "$request_path" ]]; then
+  echo "Request files are accepted only for market handoff." >&2
+  exit 64
+elif [[ "$ADMIN_DOMAIN" == "policy" && "$command_name" == "put" ]]; then
+
   [[ -n "$policy_path" ]] || {
     echo "Policy put requires --policy-file." >&2
     exit 64
@@ -464,6 +496,28 @@ if [[ -n "$policy_path" ]]; then
   done
 fi
 
+staged_request=""
+if [[ -n "$request_path" ]]; then
+  [[ "$request_path" == /* && -f "$request_path" && ! -L "$request_path" ]] || {
+    echo "Market request must be an absolute non-symlink regular file." >&2
+    exit 1
+  }
+  read -r request_owner request_mode request_links request_size <<<"$($STAT_BIN -c '%u %a %h %s' "$request_path")"
+  [[ ( "$request_owner" == "$OUTPUT_UID" || "$request_owner" == "0" ) &&
+     "$request_mode" == "600" && "$request_links" == "1" &&
+     "$request_size" -gt 0 && "$request_size" -le 16384 ]] || {
+    echo "Market request must be owner-controlled mode 0600, one link and at most 16 KiB." >&2
+    exit 1
+  }
+  staged_request="$work_dir/market-request.json"
+  install -m 0600 -o "$SIGNER_USER" -g "$SIGNER_USER" "$request_path" "$staged_request"
+  read -r actual_request_digest _ < <("$SHA256SUM_BIN" "$staged_request")
+  [[ "sha256:$actual_request_digest" == "$confirm_digest" ]] || {
+    echo "Market request digest does not match --confirm-digest." >&2
+    exit 1
+  }
+fi
+
 staged_output=""
 if [[ -n "$output_path" ]]; then
   [[ "$output_path" == /* && ! -e "$output_path" && ! -L "$output_path" ]] || {
@@ -489,14 +543,21 @@ if [[ -n "$output_path" ]]; then
   done
 fi
 
-"$RUNUSER_BIN" -u "$SIGNER_USER" -- \
-  "$ENV_BIN" -i \
-  HOME="$SIGNER_HOME" \
-  LANG="C.UTF-8" \
-  PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-  "$SIGNER_BIN" admin "$ADMIN_DOMAIN" "$command_name" \
-  --control-socket "$CONTROL_SOCKET" \
-  "${args[@]}"
+run_admin_command() {
+  "$RUNUSER_BIN" -u "$SIGNER_USER" -- \
+    "$ENV_BIN" -i \
+    HOME="$SIGNER_HOME" \
+    LANG="C.UTF-8" \
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    "$SIGNER_BIN" admin "$ADMIN_DOMAIN" "$command_name" \
+    --control-socket "$CONTROL_SOCKET" \
+    "${args[@]}"
+}
+if [[ -n "$staged_request" ]]; then
+  run_admin_command <"$staged_request"
+else
+  run_admin_command
+fi
 
 if [[ -n "$staged_output" ]]; then
   [[ -f "$staged_output" && ! -L "$staged_output" ]] || {

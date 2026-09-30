@@ -149,7 +149,6 @@ import type {
   WalletSolanaTokenSearchResult,
   WalletSettingsValidateResponse,
   WalletStatus,
-  WalletUserRole,
 } from "./wallet-api.ts";
 
 export type AppViewState = {
@@ -660,7 +659,6 @@ export type AppViewState = {
   walletCreateName: string;
   walletCreateId: string;
   walletCreateProvider: WalletProviderInfo["id"];
-  walletCreateRole: "" | WalletUserRole;
   walletCreateRpcUrl: string;
   walletCreateRpcProfileId: string;
   walletCreateBusy: boolean;

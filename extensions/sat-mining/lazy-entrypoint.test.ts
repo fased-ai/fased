@@ -83,6 +83,13 @@ describe("SAT Mining lazy registration facade", () => {
       "wen.campaign.approval.execute",
       "wen.campaign.approval.recover",
       "wen.campaign.approval.selection",
+      "wen.market.approval.prepare",
+      "wen.market.approval.begin",
+      "wen.market.approval.finish",
+      "wen.market.approval.cancel",
+      "wen.market.approval.execute",
+      "wen.market.approval.recover",
+      "wen.market.approval.selection",
     ]);
     expect(services.map((service) => service.id)).toEqual(["sat-mining"]);
     expect(tools.map((tool) => tool.name)).toEqual([

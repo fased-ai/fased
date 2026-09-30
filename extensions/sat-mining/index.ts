@@ -77,6 +77,7 @@ const satMiningPlugin = {
           runClaimJourney(requestId: string, action: "execute" | "recover"): Promise<unknown>;
         }
       | undefined;
+    let wenMarket: (WenApprovalProfile & { stop(): void }) | undefined;
     let wenCampaign: (WenApprovalProfile & { stop(): void }) | undefined;
     let wenEconomyRead: { url: string; pin: WenEconomyReadPin } | undefined;
     let refreshingWenReview = false;
@@ -316,11 +317,19 @@ const satMiningPlugin = {
       () => (wenReviewReady ? wenCampaign : undefined),
       "wen.campaign.approval",
     );
+    const cancelMarketApproval = registerWenApprovalGateway(
+      api,
+      () => (wenReviewReady ? wenMarket : undefined),
+      "wen.market.approval",
+    );
     api.registerService({
       id: "sat-mining",
       async start(context) {
         cancelWenApproval();
         cancelCampaignApproval();
+        cancelMarketApproval();
+        wenMarket?.stop();
+        wenMarket = undefined;
         wenCampaign?.stop();
         wenCampaign = undefined;
         wenEconomyRead = undefined;
@@ -356,11 +365,25 @@ const satMiningPlugin = {
             throw error;
           }
         }
+        const marketPath = process.env.FASED_WEN_LOCAL_MARKET_PROFILE;
+        if (marketPath) {
+          try {
+            const { createLocalWenMarketProfile } = await import("fased/plugin-sdk/sat-runtime");
+            wenMarket = await createLocalWenMarketProfile(marketPath);
+          } catch (error) {
+            wenCampaign?.stop();
+            wenCampaign = undefined;
+            await wenRecovery?.stop();
+            throw error;
+          }
+        }
         if (await shouldActivateMining(api, context)) {
           try {
             await activate();
             wenReviewReady = true;
           } catch (error) {
+            wenMarket?.stop();
+            wenMarket = undefined;
             wenCampaign?.stop();
             wenCampaign = undefined;
             await wenRecovery?.stop();
@@ -374,6 +397,9 @@ const satMiningPlugin = {
       async stop(context) {
         cancelWenApproval();
         cancelCampaignApproval();
+        cancelMarketApproval();
+        wenMarket?.stop();
+        wenMarket = undefined;
         wenCampaign?.stop();
         wenCampaign = undefined;
         wenEconomyRead = undefined;
@@ -391,6 +417,9 @@ const satMiningPlugin = {
       async checkpointForLifecycle(context) {
         cancelWenApproval();
         cancelCampaignApproval();
+        cancelMarketApproval();
+        wenMarket?.stop();
+        wenMarket = undefined;
         wenCampaign?.stop();
         wenCampaign = undefined;
         wenEconomyRead = undefined;

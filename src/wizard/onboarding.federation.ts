@@ -29,6 +29,12 @@ export async function configureFederationForOnboarding(params: {
     return { enabled: false };
   }
 
+  // Fresh WEN users can explore without public enrollment. Retain an existing
+  // identity or explicit opt-in; never clear an owner's token during onboarding.
+  if (!["1", "true", "on"].includes(autoConnectRaw) && !explicitHandle && !persistedToken) {
+    return { enabled: false };
+  }
+
   const defaultBaseUrl = currentBaseUrl || DEFAULT_FEDERATION_BASE_URL;
   const defaultHandle =
     currentHandle ||

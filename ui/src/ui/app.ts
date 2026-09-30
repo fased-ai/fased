@@ -285,6 +285,7 @@ import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.
 import {
   approveWalletSend,
   createWalletNamedWallet,
+  createStandardWalletNamedWallet,
   updateWalletNamedWallet,
   createWalletSendRequest,
   deleteWalletAssignment,
@@ -316,7 +317,6 @@ import {
   type WalletSolanaTokenSearchResult,
   type WalletSettingsValidateResponse,
   type WalletStatus,
-  type WalletUserRole,
 } from "./wallet-api.ts";
 import {
   authorizeSignerReviewWithPasskey,
@@ -1692,7 +1692,6 @@ export class FasedAgentApp extends LitElement {
   @state() walletCreateName = "";
   @state() walletCreateId = "";
   @state() walletCreateProvider: WalletProviderInfo["id"] = "local-socket-signer";
-  @state() walletCreateRole: "" | WalletUserRole = "";
   @state() walletCreateRpcUrl = "";
   @state() walletCreateRpcProfileId = "";
   @state() walletCreateBusy = false;
@@ -5492,11 +5491,6 @@ export class FasedAgentApp extends LitElement {
       return;
     }
     const name = this.walletCreateName.trim();
-    if (!this.walletCreateRole) {
-      this.walletSettingsError =
-        "Choose Agent, Mining, Vault, Profile, or Strategy. No wallet role is selected automatically.";
-      return;
-    }
     const rpcUrl = this.walletCreateRpcUrl.trim();
     const rpcProfileId = this.walletCreateRpcProfileId.trim();
     if (Boolean(rpcUrl) === Boolean(rpcProfileId)) {
@@ -5508,16 +5502,12 @@ export class FasedAgentApp extends LitElement {
     this.walletSettingsMessage = null;
     try {
       const providerId = "local-socket-signer" as const;
-      const created = await createWalletNamedWallet({
-        ...(name ? { name } : {}),
-        providerId,
-        role: this.walletCreateRole,
-        chain: "solana",
-        ...(rpcUrl ? { rpcUrl } : { rpcProfileId }),
-      });
+      const created = await createStandardWalletNamedWallet(
+        { name, ...(rpcUrl ? { rpcUrl } : { rpcProfileId }) },
+        this.walletNamedWallets,
+      );
       this.walletProviderTab = providerId;
       this.walletCreateName = "";
-      this.walletCreateRole = "";
       this.walletCreateRpcUrl = "";
       this.walletCreateRpcProfileId = "";
       this.walletSendCreateForm = {
@@ -5547,8 +5537,8 @@ export class FasedAgentApp extends LitElement {
       const selection = await connectWalletStandardAccount({
         chooser: chooseWalletStandardOption,
       });
-      const suggestedName = `${selection.wallet.name} Vault`;
-      const name = window.prompt("Name this browser-wallet Vault", suggestedName)?.trim();
+      const suggestedName = selection.wallet.name;
+      const name = window.prompt("Name this wallet", suggestedName)?.trim();
       if (!name) {
         throw new Error("Browser-wallet connection was cancelled");
       }

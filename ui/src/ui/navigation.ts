@@ -5,18 +5,14 @@ export const TAB_GROUPS = [
     label: "Navigation",
     tabs: [
       "overview",
-      "chat",
-      "agents",
-      "wallet",
       "wen",
-      "mining",
+      "agents",
+      "chat",
+      "cron",
+      "wallet",
       "federation",
-      "marketplace",
       "plugins",
-      "notifications",
-      "usage",
-      "config",
-      "logs",
+      "mining",
     ],
   },
 ] as const;
@@ -245,7 +241,7 @@ export function titleForTab(tab: Tab) {
     case "skills":
       return "Skills";
     case "plugins":
-      return "Extensions";
+      return "Modules";
     case "nodes":
       return "Nodes";
     case "chat":
@@ -271,7 +267,7 @@ export function navTitleForTab(tab: Tab) {
     return "Channels";
   }
   if (tab === "plugins") {
-    return "Extensions";
+    return "Modules";
   }
   if (tab === "config") {
     return "Advanced";
@@ -282,9 +278,9 @@ export function navTitleForTab(tab: Tab) {
 export function subtitleForTab(tab: Tab) {
   switch (tab) {
     case "agents":
-      return "Manage agent workspaces, tools, and identities.";
+      return "Set goals, permissions and budgets; follow your agents’ work.";
     case "overview":
-      return "Customizable control dashboard for gateway, agents, and runtime data.";
+      return "Your positions, active strategies, decisions and tasks.";
     case "providers":
       return "Add model providers, paste API keys, sign in, and choose models for Chat and Agents.";
     case "federation":
@@ -314,7 +310,7 @@ export function subtitleForTab(tab: Tab) {
     case "skills":
       return "Skill Library for install, review, configuration, and creation.";
     case "plugins":
-      return "Runtime extensions, source-trust, dependency, and scanner diagnostics.";
+      return "Choose optional capabilities for your agents.";
     case "nodes":
       return "Paired devices, capabilities, and command exposure.";
     case "chat":

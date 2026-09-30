@@ -1,3 +1,5 @@
+import { nextWalletDisplayName } from "../../../src/wallet/wallet-purpose-labels.js";
+
 export type WalletProviderId =
   | "embedded-keystore"
   | "local-socket-signer"
@@ -1303,6 +1305,21 @@ export async function createWalletNamedWallet(input: {
     credentials: "include",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
+  });
+}
+
+// This retail path selects a compatibility baseline, not spending permission.
+export async function createStandardWalletNamedWallet(
+  input: { name?: string; rpcUrl?: string; rpcProfileId?: string },
+  wallets: ReadonlyArray<{ name?: string }>,
+): Promise<{ ok: true; wallet: WalletNamedWallet }> {
+  return createWalletNamedWallet({
+    name: input.name?.trim() || nextWalletDisplayName(wallets),
+    rpcUrl: input.rpcUrl,
+    rpcProfileId: input.rpcProfileId,
+    providerId: "local-socket-signer",
+    role: "agent",
+    chain: "solana",
   });
 }
 

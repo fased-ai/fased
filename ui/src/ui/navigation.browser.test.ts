@@ -39,21 +39,22 @@ describe("control UI workflow navigation", () => {
     const navLabels = Array.from(app.querySelectorAll<HTMLAnchorElement>(".nav-item")).map((el) =>
       el.getAttribute("data-label"),
     );
-    expect(navLabels.slice(0, 8)).toEqual([
+    expect(navLabels).toEqual([
       "Dashboard",
-      "Chat",
-      "Agents",
-      "Wallets",
       "WEN",
+      "Agents",
+      "Chat",
+      "Tasks",
+      "Wallets",
       "Network",
-      "Marketplace",
-      "Extensions",
+      "Modules",
     ]);
     expect(navLabels).not.toContain("Mining");
     expect(navLabels).not.toContain("Providers");
     expect(navLabels).not.toContain("Channels");
     expect(navLabels).not.toContain("Services");
-    expect(navLabels).not.toContain("Tasks");
+    expect(navLabels).not.toContain("Marketplace");
+    expect(navLabels).not.toContain("Logs");
     expect(
       app.querySelector<HTMLAnchorElement>('.topbar-icon-link[href="https://docs.fased.ai"]'),
     ).not.toBeNull();
@@ -109,7 +110,8 @@ describe("control UI workflow navigation", () => {
     const app = mountApp("/overview");
     await app.updateComplete;
 
-    for (const href of ["/channels", "/services", "/cron"]) {
+    expect(app.querySelector('a.nav-item[href="/cron"]')).not.toBeNull();
+    for (const href of ["/channels", "/services"]) {
       expect(app.querySelector<HTMLAnchorElement>(`a.nav-item[href="${href}"]`)).toBeNull();
     }
 

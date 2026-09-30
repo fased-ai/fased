@@ -241,16 +241,14 @@ describe("wallet creation", () => {
           },
         } as never,
       ],
-      createRole: "vault",
       createName: "Reserve",
       createRpcUrl: "https://rpc.example/solana",
     });
     const text = flattenTemplateText(rendered);
     expect(text).toContain("Create wallet");
     expect(text).toContain("Name (optional)");
-    expect(text).toContain(
-      "Select a role Agent Mining (legacy recovery) Vault Profile Strategy (deny-all) Reusable RPC profile",
-    );
+    expect(text).not.toContain("Wallet role");
+    expect(text).not.toContain("Select a role");
     expect(text).toContain("Use a signer-owned verified profile, or enter a direct RPC below");
     expect(text).not.toContain("capped automation");
     expect(text).not.toContain("singleton SAT operations");
@@ -258,7 +256,7 @@ describe("wallet creation", () => {
     expect(text).not.toContain("Custody provider");
     expect(text).not.toContain("Permanent wallet ID");
     expect(text).not.toContain("Choose a wallet role; Agent is never selected silently.");
-    expect(text).toContain("Connect browser wallet as Vault");
+    expect(text).toContain("Connect wallet");
     expect(text).not.toContain("Connect hardware Vault");
     expect(text).toContain("Any Solana RPC provider works");
     expect(text).not.toContain("Embedded keystore");
@@ -717,6 +715,19 @@ describe("orderWalletsForDisplay", () => {
 });
 
 describe("renderWallet", () => {
+  it("shows purpose labels without changing wallet identity or authority metadata", () => {
+    const wallet = {
+      ...namedWallets[0],
+      name: "Wallet",
+      metadata: { role: "agent", walletModel: 1, purposeLabels: ["WEN", "News"] },
+    };
+    const before = JSON.stringify(wallet);
+    const text = flattenTemplateText(renderWalletForTest({ namedWallets: [wallet] }));
+    expect(text).toContain("WEN");
+    expect(text).toContain("News");
+    expect(JSON.stringify(wallet)).toBe(before);
+  });
+
   it("shows an unavailable balance instead of a false zero after an RPC read failure", () => {
     const text = flattenTemplateText(
       renderWalletForTest({
@@ -741,8 +752,8 @@ describe("renderWallet", () => {
       }),
     );
 
-    expect(text).toContain("Agent wallet routing");
-    expect(text).toContain("Explicit handles and one-wallet skill grants take precedence");
+    expect(text).toContain("Agent assignments");
+    expect(text).toContain("Explicit handles and scoped wallet grants take precedence");
     expect(text).toContain("Owner");
     expect(text).toContain("Research");
     expect(text).toContain("Current: wallet-agent");

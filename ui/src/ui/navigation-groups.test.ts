@@ -6,23 +6,21 @@ describe("workflow navigation groups", () => {
     expect(TAB_GROUPS).toHaveLength(1);
     expect(TAB_GROUPS[0]?.tabs).toEqual([
       "overview",
-      "chat",
-      "agents",
-      "wallet",
       "wen",
-      "mining",
+      "agents",
+      "chat",
+      "cron",
+      "wallet",
       "federation",
-      "marketplace",
       "plugins",
-      "notifications",
-      "usage",
-      "config",
-      "logs",
+      "mining",
     ]);
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("instances");
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("sessions");
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("memory");
-    expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("cron");
+    for (const tab of ["marketplace", "notifications", "usage", "config", "logs"]) {
+      expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain(tab);
+    }
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("channels");
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("services");
     expect(TAB_GROUPS.flatMap((group) => group.tabs)).not.toContain("nodes");

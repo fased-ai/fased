@@ -3,8 +3,16 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { createWenCampaignGatewayProfile } from "./wen-campaign-gateway-profile.js";
+import {
+  createWenMarketGatewayProfile,
+  createWenCampaignGatewayProfile,
+} from "./wen-campaign-gateway-profile.js";
+import type { CampaignReviewExpectation } from "./wen-campaign-review-contract.js";
 import { campaignSelectionSchema } from "./wen-campaign-selection-contract.js";
+import {
+  parseWenMarketSelection,
+  type MarketReviewExpectation,
+} from "./wen-market-review-contract.js";
 const schema = campaignSelectionSchema
   .extend({
     version: z.literal(1),
@@ -12,9 +20,49 @@ const schema = campaignSelectionSchema
     socketPath: z.string().min(1).max(256),
   })
   .strict();
+const marketSchema = z
+  .object({
+    version: z.literal(1),
+    mode: z.literal("local-candidate-only"),
+    socketPath: z.string().min(1).max(256),
+    expected: z.unknown(),
+    draftSha256: z.unknown(),
+    artifactDigest: z.unknown(),
+  })
+  .strict()
+  .transform(({ version, mode, socketPath, ...selection }) => ({
+    version,
+    mode,
+    socketPath,
+    ...parseWenMarketSelection(selection),
+  }));
+export function createLocalWenMarketProfile(profilePath: string) {
+  return createProtectedProfile(profilePath, marketSchema, createWenMarketGatewayProfile);
+}
 // Host-owned expectations are not signer admission. The signer independently
 // verifies its protected admission and the deployed program before execution.
-export async function createLocalWenCampaignProfile(profilePath: string) {
+export function createLocalWenCampaignProfile(profilePath: string) {
+  return createProtectedProfile(profilePath, schema, createWenCampaignGatewayProfile);
+}
+async function createProtectedProfile<
+  T extends {
+    expected: CampaignReviewExpectation | MarketReviewExpectation;
+    socketPath: string;
+    draftSha256: string;
+    artifactDigest: string;
+  },
+>(
+  profilePath: string,
+  selectionSchema: z.ZodType<T>,
+  createProfile: (
+    read: () => Promise<{
+      socket: { walletId: string; socketPath: string; revision: string };
+      expected: T["expected"];
+      draftSha256: string;
+      artifactDigest: string;
+    }>,
+  ) => ReturnType<typeof createWenCampaignGatewayProfile>,
+) {
   if (!path.isAbsolute(profilePath) || path.normalize(profilePath) !== profilePath) {
     throw Error("Invalid campaign profile path");
   }
@@ -53,7 +101,7 @@ export async function createLocalWenCampaignProfile(profilePath: string) {
     } finally {
       await handle.close();
     }
-    const v = schema.parse(JSON.parse(raw));
+    const v = selectionSchema.parse(JSON.parse(raw));
     if (
       !path.isAbsolute(v.socketPath) ||
       path.normalize(v.socketPath) !== v.socketPath ||
@@ -73,7 +121,7 @@ export async function createLocalWenCampaignProfile(profilePath: string) {
     };
   }
   await read();
-  const profile = createWenCampaignGatewayProfile(read);
+  const profile = createProfile(read);
   return {
     ...profile,
     stop() {
