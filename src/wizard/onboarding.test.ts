@@ -353,7 +353,10 @@ vi.mock("./onboarding.host-security.js", () => ({
   applyHostingSecurity,
 }));
 
-function createWizardPrompter(overrides?: Partial<WizardPrompter>): WizardPrompter {
+function createWizardPrompter(
+  overrides?: Partial<WizardPrompter>,
+  enableFinancial = true,
+): WizardPrompter {
   return {
     intro: vi.fn(async () => {}),
     outro: vi.fn(async () => {}),
@@ -368,9 +371,13 @@ function createWizardPrompter(overrides?: Partial<WizardPrompter>): WizardPrompt
     }) as unknown as WizardPrompter["select"],
     multiselect: vi.fn(async () => []),
     text: vi.fn(async () => ""),
-    confirm: vi.fn(async () => false),
     progress: vi.fn(() => ({ update: vi.fn(), stop: vi.fn() })),
     ...overrides,
+    confirm: vi.fn(async (opts) =>
+      opts.message === "Enable financial actions now?"
+        ? enableFinancial
+        : await (overrides?.confirm?.(opts) ?? false),
+    ),
   };
 }
 
@@ -463,6 +470,28 @@ describe("runOnboardingWizard", () => {
     delete process.env.FASED_WALLET_SOLANA_KEYSTORE_PATH__WALLET_1;
     delete process.env.FASED_WALLET_WEBAUTHN_RP_ID;
     delete process.env.FASED_WALLET_WEBAUTHN_ORIGINS;
+  });
+
+  it("lets QuickStart explore WEN without wallet setup or optional-module prompts", async () => {
+    const prompter = createWizardPrompter({ confirm: vi.fn(async () => false) }, false);
+    await runOnboardingWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        installDaemon: false,
+        skipProviders: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      createRuntime({ throwsOnExit: true }),
+      prompter,
+    );
+    expect(configureWalletForOnboarding).not.toHaveBeenCalled();
+    expect(setupChannels).not.toHaveBeenCalled();
+    expect(setupSkills).not.toHaveBeenCalled();
+    const messages = vi.mocked(prompter.confirm).mock.calls.map(([v]) => v.message);
+    expect(messages).not.toContain("Set up skills?");
+    expect(messages).not.toContain("Set up chat channels?");
   });
 
   it("does not open model selection when interactive model/auth setup is skipped", async () => {
@@ -755,7 +784,7 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
-      if (message === "Wallet role (required)") {
+      if (message === "Approval preset") {
         return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
@@ -812,14 +841,21 @@ describe("runOnboardingWizard", () => {
       expect.anything(),
       expect.objectContaining({
         mode: "local-signer-create",
-        walletName: "Agent",
+        walletName: "Wallet",
         walletId: "agent",
         force: true,
       }),
     );
-    expect(upsertNamedWallet).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Agent", walletId: "agent" }),
-    );
+    const created = vi.mocked(upsertNamedWallet).mock.calls[0]?.[0];
+    expect({
+      name: created?.name,
+      walletId: created?.walletId,
+      metadata: created?.metadata,
+    }).toMatchObject({
+      name: "Wallet",
+      walletId: "agent",
+      metadata: { walletModel: 1, purposeLabels: [] },
+    });
     expect(writeConfigFile).toHaveBeenLastCalledWith(
       expect.objectContaining({
         wallet: expect.objectContaining({
@@ -858,7 +894,7 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
-      if (message === "Wallet role (required)") {
+      if (message === "Approval preset") {
         rolePromptCount += 1;
         return rolePromptCount === 1 ? "agent" : "vault";
       }
@@ -907,7 +943,7 @@ describe("runOnboardingWizard", () => {
         prompter,
       );
 
-      expect(rolePromptCount).toBe(2);
+      expect(rolePromptCount).toBe(0);
       expect(walletSetupCommand).toHaveBeenNthCalledWith(
         1,
         expect.anything(),
@@ -916,7 +952,7 @@ describe("runOnboardingWizard", () => {
       expect(walletSetupCommand).toHaveBeenNthCalledWith(
         2,
         expect.anything(),
-        expect.objectContaining({ role: "vault", rpcUrl: "https://rejected.example/solana" }),
+        expect.objectContaining({ role: "agent", rpcUrl: "https://rejected.example/solana" }),
       );
       expect(process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT).toBe(
         "https://accepted.example/solana",
@@ -963,7 +999,7 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
-      if (message === "Wallet role (required)") {
+      if (message === "Approval preset") {
         return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
@@ -1062,7 +1098,7 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
-      if (message === "Wallet role (required)") {
+      if (message === "Approval preset") {
         return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
@@ -2409,7 +2445,7 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
-      if (message === "Wallet role (required)") {
+      if (message === "Approval preset") {
         return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
@@ -2489,7 +2525,7 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "import";
       }
-      if (message === "Wallet role (required)") {
+      if (message === "Approval preset") {
         return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
@@ -2614,7 +2650,7 @@ describe("runOnboardingWizard", () => {
       if (message === "Wallet action") {
         return "create";
       }
-      if (message === "Wallet role (required)") {
+      if (message === "Approval preset") {
         return "agent";
       }
       if (message === "How do you want to hatch your bot?") {
@@ -2664,9 +2700,13 @@ describe("runOnboardingWizard", () => {
     );
 
     const walletRolePrompt = select.mock.calls.find(
-      ([options]) => (options as { message?: string }).message === "Wallet role (required)",
+      ([options]) => (options as { message?: string }).message === "Approval preset",
     )?.[0] as { options?: Array<{ value: string }> } | undefined;
-    expect(walletRolePrompt?.options?.map((option) => option.value)).toEqual(["agent", "vault"]);
+    expect(walletRolePrompt).toBeUndefined();
+    expect(walletSetupCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ role: "agent" }),
+    );
     expect(prompter.note).toHaveBeenCalledWith(
       expect.stringContaining("Fased needs no personal Mining wallet"),
       "WEN",

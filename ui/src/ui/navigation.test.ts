@@ -70,7 +70,7 @@ describe("titleForTab", () => {
     expect(titleForTab("wallet")).toBe("Wallets");
     expect(titleForTab("wen")).toBe("WEN");
     expect(titleForTab("marketplace")).toBe("Marketplace");
-    expect(titleForTab("plugins")).toBe("Extensions");
+    expect(titleForTab("plugins")).toBe("Modules");
     expect(titleForTab("skills")).toBe("Skills");
     expect(titleForTab("memory")).toBe("Memory");
     expect(titleForTab("cron")).toBe("Tasks");
@@ -82,7 +82,7 @@ describe("navTitleForTab", () => {
   it("uses the compact navigation label for the Fased Network tab", () => {
     expect(navTitleForTab("federation")).toBe("Network");
     expect(navTitleForTab("channels")).toBe("Channels");
-    expect(navTitleForTab("plugins")).toBe("Extensions");
+    expect(navTitleForTab("plugins")).toBe("Modules");
     expect(navTitleForTab("marketplace")).toBe("Marketplace");
     expect(navTitleForTab("config")).toBe("Advanced");
   });
@@ -100,7 +100,7 @@ describe("subtitleForTab", () => {
     expect(subtitleForTab("chat")).toContain("Working terminal");
     expect(subtitleForTab("providers")).toContain("paste API keys");
     expect(subtitleForTab("services")).toContain("Gmail");
-    expect(subtitleForTab("plugins")).toContain("Runtime extensions");
+    expect(subtitleForTab("plugins")).toContain("optional capabilities");
     expect(subtitleForTab("memory")).toContain("Session archives");
     expect(subtitleForTab("config")).toContain("Advanced");
   });

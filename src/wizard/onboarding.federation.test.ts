@@ -49,7 +49,7 @@ async function writeFederationToken(stateDir: string): Promise<void> {
 }
 
 describe("configureFederationForOnboarding", () => {
-  it("silently enables auto-connect when no federation state exists", async () => {
+  it("keeps a fresh WEN installation off the Network until opted in", async () => {
     const stateDir = await makeTempStateDir();
     const confirm = vi.fn(async () => true);
     const text = vi.fn(async (opts) => opts.initialValue ?? "");
@@ -72,9 +72,7 @@ describe("configureFederationForOnboarding", () => {
       expect(confirm).not.toHaveBeenCalled();
       expect(prompter.note).not.toHaveBeenCalled();
       expect(text).not.toHaveBeenCalled();
-      expect(result.enabled).toBe(true);
-      expect(result.baseUrl).toBe("https://ff1.fased.app");
-      expect(result.handle).toMatch(/^@fased-agent-[a-f0-9]{12}@ff1\.fased\.app$/);
+      expect(result).toEqual({ enabled: false });
     } finally {
       await fs.rm(stateDir, { force: true, recursive: true });
     }

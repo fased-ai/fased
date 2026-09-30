@@ -77,6 +77,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 	}
 
 	switch args[0] {
+	case "wen-market":
+		return runSignerAdminMarketV1(args[1], args[2:], stdin, stdout)
 	case "wen-campaign":
 		return runSignerAdminCampaignV1(args[1], args[2:], stdin, stdout)
 	case "wen-mining":
@@ -264,7 +266,7 @@ func runSignerAdminOwnerCeremonyV1(args []string, stdin io.Reader, stdout io.Wri
 }
 
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {service|wallet|owner-ceremony|keeper|policy|network|rpc-profile|jupiter|webauthn|migration|wen-campaign} <command> [flags]")
+	return errors.New("usage: fased-signerd admin {service|wallet|owner-ceremony|keeper|policy|network|rpc-profile|jupiter|webauthn|migration|wen-campaign|wen-market} <command> [flags]")
 }
 
 func runSignerAdminKeeperFeePayerV2(args []string, ensure bool, stdout io.Writer) error {

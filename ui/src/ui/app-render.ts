@@ -200,7 +200,11 @@ import { renderSkillDialogs, renderSkills, type SkillsProps } from "./views/skil
 
 const AVATAR_DATA_RE = /^data:/i;
 const ADVANCED_TABS: Array<{ tab: Tab; label: string; icon: unknown }> = [
-  { tab: "config", label: "Config", icon: icons.settings },
+  { tab: "config", label: "Settings", icon: icons.settings },
+  { tab: "notifications", label: "Notifications", icon: icons.bell },
+  { tab: "usage", label: "Usage", icon: icons.barChart },
+  { tab: "logs", label: "Logs", icon: icons.scrollText },
+  { tab: "marketplace", label: "Legacy marketplace", icon: icons.store },
   { tab: "debug", label: "Debug", icon: icons.bug },
   { tab: "nodes", label: "Nodes", icon: icons.monitor },
 ];
@@ -5676,7 +5680,6 @@ export function renderApp(state: AppViewState) {
                   assignments: state.walletAssignments,
                   agents: state.agentsList?.agents,
                   createName: state.walletCreateName,
-                  createRole: state.walletCreateRole,
                   createRpcUrl: state.walletCreateRpcUrl,
                   createRpcProfileId: state.walletCreateRpcProfileId,
                   createBusy: state.walletCreateBusy,
@@ -5753,7 +5756,6 @@ export function renderApp(state: AppViewState) {
                   onApprovalsFilterChange: (filter) => state.handleWalletSetApprovalsFilter(filter),
                   onAttachWalletStandardVault: () => state.handleWalletAttachStandardVault(),
                   onCreateNameChange: (next) => (state.walletCreateName = next),
-                  onCreateRoleChange: (next) => (state.walletCreateRole = next),
                   onCreateRpcUrlChange: (next) => (state.walletCreateRpcUrl = next),
                   onCreateRpcProfileIdChange: (next) => (state.walletCreateRpcProfileId = next),
                   rpcUrl: state.walletRpcUrl,

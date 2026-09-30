@@ -172,3 +172,8 @@ export async function createLocalWenCampaignProfile(profilePath: string) {
 export { buildWenAcquisitionHandoff } from "../wallet/wen-acquisition-handoff.js";
 export { readWenEconomyLocal } from "../wallet/wen-economy-read.js";
 export type { WenEconomyReadPin } from "../wallet/wen-economy-read.js";
+
+export async function createLocalWenMarketProfile(profilePath: string) {
+  const module = await import("../wallet/wen-campaign-local-profile.js");
+  return module.createLocalWenMarketProfile(profilePath);
+}

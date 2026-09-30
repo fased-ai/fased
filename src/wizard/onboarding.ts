@@ -58,6 +58,7 @@ import {
   setNamedWalletRole,
   upsertNamedWallet,
 } from "../wallet/wallet-provider-registry.js";
+import { nextWalletDisplayName } from "../wallet/wallet-purpose-labels.js";
 import { walletRecoveryFacade } from "../wallet/wallet-recovery-facade.js";
 import {
   ensureWalletStateDir,
@@ -505,6 +506,10 @@ export async function runOnboardingWizard(
     purpose: WalletOnboardingPurpose;
   }): Promise<{ walletName: string; walletId: string }> => {
     const generatedIdentity = nextWalletIdentity(params.purpose);
+    // Stable legacy IDs remain signer/journal identities; the retail name is not a key type.
+    generatedIdentity.walletName = nextWalletDisplayName(
+      readWalletProviderRegistry(process.env).wallets,
+    );
     if (params.flow === "quickstart") {
       return generatedIdentity;
     }
@@ -978,12 +983,12 @@ export async function runOnboardingWizard(
     await prompter.note(
       [
         noteStep(1, "Secure access"),
-        noteStep(2, "Choose wallet roles"),
-        noteStep(3, "Open Web UI"),
+        noteStep(2, "Choose a model provider"),
+        noteStep(3, "Explore WEN; enable financial actions when ready"),
         "",
         noteHeading("Optional later"),
         noteBullet("Fased Network: enable only when you want network tasks."),
-        noteBullet("SAT mining: enable only when you want mining on this host."),
+        noteBullet("Legacy mining recovery stays available for existing operations."),
       ].join("\n"),
       "Operator path",
     );
@@ -1094,6 +1099,18 @@ export async function runOnboardingWizard(
     process.env.FASED_WALLET_WEBAUTHN_RP_ID = "localhost";
     process.env.FASED_WALLET_WEBAUTHN_ORIGINS = `http://localhost:${settings.port}`;
   }
+  const configureFinancialActions =
+    flow !== "quickstart" ||
+    (await prompter.confirm({
+      message: "Enable financial actions now?",
+      initialValue: false,
+    }));
+  if (!configureFinancialActions) {
+    await prompter.note(
+      "Explore WEN first. Add a wallet and permissions from Wallets when you are ready.",
+      "WEN",
+    );
+  }
   const buildNativeSignerFromSource =
     String(process.env.FASED_BUILD_NATIVE_SIGNER_FROM_SOURCE ?? "").trim() === "1";
   const skipNativeSignerBuild =
@@ -1103,7 +1120,7 @@ export async function runOnboardingWizard(
       "A managed installation cannot replace its attested signer with a source build; run `fased repair` to restore the generation-bound signer.",
     );
   }
-  if (buildNativeSignerFromSource) {
+  if (configureFinancialActions && buildNativeSignerFromSource) {
     if (skipNativeSignerBuild) {
       if (flow !== "quickstart") {
         await prompter.note(
@@ -1136,12 +1153,9 @@ export async function runOnboardingWizard(
     }
   }
 
-  nextConfig = await configureWalletForOnboarding({
-    flow,
-    hostProfile,
-    nextConfig,
-    prompter,
-  });
+  if (configureFinancialActions) {
+    nextConfig = await configureWalletForOnboarding({ flow, hostProfile, nextConfig, prompter });
+  }
   if (!hostingMode) {
     nextConfig = syncLocalSignerRuntimeEnvIntoConfig(nextConfig);
   }
@@ -1153,7 +1167,10 @@ export async function runOnboardingWizard(
 
   const offerHostedWalletSetup =
     hostingMode && flow === "quickstart" && nextConfig.wallet?.runtime?.enabled !== true;
-  if (nextConfig.wallet?.runtime?.enabled || offerHostedWalletSetup) {
+  if (
+    configureFinancialActions &&
+    (nextConfig.wallet?.runtime?.enabled || offerHostedWalletSetup)
+  ) {
     let attemptedSelfHostedSetupThisRun = false;
     let createdOrImportedSelfHostedWalletThisRun = false;
     const previousSuppressOverwrite = process.env.FASED_SUPPRESS_CONFIG_OVERWRITE_LOG;
@@ -1616,18 +1633,9 @@ export async function runOnboardingWizard(
 
         attemptedSelfHostedSetupThisRun = true;
         const chain = "solana" as const;
-        const walletPurpose = await prompter.select<WalletOnboardingPurpose>({
-          message: "Wallet role (required)",
-          options: [
-            { value: "agent", label: "Agent" },
-            { value: "vault", label: "Vault" },
-          ],
-        });
-        if (walletPurpose !== "agent" && walletPurpose !== "vault") {
-          throw new Error(
-            "Select an Agent or Vault wallet; legacy Mining wallets use recovery controls.",
-          );
-        }
+        // New WEN setup uses one wallet model. The native agent baseline remains
+        // a compatibility binding; purpose labels never select signing authority.
+        const walletPurpose: WalletOnboardingPurpose = "agent";
         const selfHostedAction = await prompter.select<"create" | "import">({
           message: "Wallet action",
           options: [
@@ -1793,6 +1801,8 @@ export async function runOnboardingWizard(
             metadata: {
               ...existingWallet?.metadata,
               selfHosted: true,
+              walletModel: 1,
+              purposeLabels: existingWallet?.metadata?.purposeLabels ?? [],
             },
             env: process.env,
           });
@@ -1801,7 +1811,7 @@ export async function runOnboardingWizard(
           if (walletPurpose === "agent") {
             await prompter.note(
               [
-                `Agent wallet created as ${walletName} · @wallet:${walletId ?? "default"}.`,
+                `Wallet created as ${walletName} · @wallet:${walletId ?? "default"}.`,
                 `Default Agent wallet fallback remains ${describeWalletRef(agentDefaultBefore)}.`,
                 `Use @wallet:${walletId ?? "default"} explicitly, assign it to an Agent or skill, or set it as the optional fallback in Wallet.`,
               ].join("\n"),
@@ -2000,7 +2010,7 @@ export async function runOnboardingWizard(
     }
   }
 
-  const shouldOfferAdvancedUiOwnedSetup = !opts.nonInteractive;
+  const shouldOfferAdvancedUiOwnedSetup = !opts.nonInteractive && flow !== "quickstart";
   if (shouldOfferAdvancedUiOwnedSetup) {
     if (!authChoice) {
       const setupProvidersInOnboarding = await prompter.confirm({
