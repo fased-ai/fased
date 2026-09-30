@@ -636,7 +636,7 @@ describe("describeVaultSignerApproval", () => {
     ).toEqual({
       summary: "Ready · 2 devices",
       detail:
-        "The native signer has an approval device. This Vault still needs an acknowledged manual policy for the exact operation before Send becomes available.",
+        "An approval device is ready. Sending still requires an acknowledged manual policy for this wallet and operation.",
       setupCommand: null,
     });
   });
