@@ -22,6 +22,7 @@ enum WideAreaGatewayDiscovery {
     struct DiscoveryContext: Sendable {
         var tailscaleStatus: @Sendable () -> String?
         var dig: @Sendable (_ args: [String], _ timeout: TimeInterval) -> String?
+        var wideAreaDomain: @Sendable () -> String? = { FasedAgentBonjour.wideAreaGatewayServiceDomain }
 
         static let live = DiscoveryContext(
             tailscaleStatus: { readTailscaleStatus() },
@@ -39,18 +40,19 @@ enum WideAreaGatewayDiscovery {
             timeoutSeconds - Date().timeIntervalSince(startedAt)
         }
 
+        guard let domain = context.wideAreaDomain() else { return [] }
         guard let ips = collectTailnetIPv4s(
             statusJson: context.tailscaleStatus()).nonEmpty else { return [] }
         var candidates = Array(ips.prefix(self.maxCandidates))
         guard let nameserver = findNameserver(
             candidates: &candidates,
+            domain: domain,
             remaining: remaining,
             dig: context.dig)
         else {
             return []
         }
 
-        guard let domain = FasedAgentBonjour.wideAreaGatewayServiceDomain else { return [] }
         let domainTrimmed = domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))
         let probeName = "_fased-gw._tcp.\(domainTrimmed)"
         guard let ptrLines = context.dig(
@@ -154,10 +156,10 @@ enum WideAreaGatewayDiscovery {
 
     private static func findNameserver(
         candidates: inout [String],
+        domain: String,
         remaining: () -> TimeInterval,
         dig: @escaping @Sendable (_ args: [String], _ timeout: TimeInterval) -> String?) -> String?
     {
-        guard let domain = FasedAgentBonjour.wideAreaGatewayServiceDomain else { return nil }
         let domainTrimmed = domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))
         let probeName = "_fased-gw._tcp.\(domainTrimmed)"
 

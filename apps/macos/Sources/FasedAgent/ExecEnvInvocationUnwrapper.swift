@@ -87,6 +87,20 @@ enum ExecEnvInvocationUnwrapper {
         return Array(command[idx...])
     }
 
+    private static func usesModifiers(_ command: [String]) -> Bool {
+        for argument in command.dropFirst() {
+            let token = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            if token.isEmpty {
+                continue
+            }
+            if token == "--" || token == "-" {
+                return false
+            }
+            return self.isEnvAssignment(token) || token.hasPrefix("-")
+        }
+        return false
+    }
+
     static func unwrapDispatchWrappersForResolution(_ command: [String]) -> [String] {
         var current = command
         var depth = 0
@@ -97,6 +111,9 @@ enum ExecEnvInvocationUnwrapper {
             guard ExecCommandToken.basenameLower(token) == "env" else {
                 break
             }
+            // Environment changes are not transparent: resolve the wrapper itself
+            // rather than approving the inner executable under a different environment.
+            guard !self.usesModifiers(current) else { break }
             guard let unwrapped = self.unwrap(current), !unwrapped.isEmpty else {
                 break
             }
