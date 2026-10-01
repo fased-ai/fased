@@ -518,10 +518,9 @@ describe("applyXaiProviderConfig", () => {
     expect(cfg.models?.providers?.xai?.apiKey).toBe("old-key");
     expect(cfg.models?.providers?.xai?.models.map((m) => m.id)).toEqual([
       "custom-model",
+      "grok-4.7",
       "grok-4.3",
-      "grok-4.20-multi-agent-0309",
-      "grok-4.20-0309-reasoning",
-      "grok-4.20-0309-non-reasoning",
+      "grok-build-0.1",
     ]);
   });
 });

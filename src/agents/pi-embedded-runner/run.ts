@@ -551,8 +551,13 @@ export async function runEmbeddedPiAgent(
       };
 
       try {
+        const cooldownReason = resolveProfilesUnavailableReason({
+          store: authStore,
+          profileIds: profileCandidates.filter((id): id is string => Boolean(id)),
+        });
         const shouldProbeCooldownedProfile =
           params.allowTransientCooldownProbe === true &&
+          (cooldownReason === "rate_limit" || cooldownReason === "overloaded") &&
           !lockedProfileId &&
           profileCandidates.some((candidate): candidate is string => Boolean(candidate)) &&
           profileCandidates.every(

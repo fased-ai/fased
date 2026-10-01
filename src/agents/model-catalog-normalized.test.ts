@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ModelProviderConfig } from "../config/types.models.js";
 import { OPENAI_API_MODEL_IDS, OPENAI_SIGN_IN_MODEL_IDS } from "../providers/registry.js";
+import { resolveModelThinkingCapability } from "../shared/model-thinking.js";
 import {
   cloneCurrentModelProvider,
   listCurrentModelCatalogProviderIds,
@@ -12,6 +13,22 @@ import {
   normalizeModelCatalogProviderId,
   normalizeProviderCatalogRows,
 } from "./model-catalog-normalized.js";
+
+describe("current OpenAI reasoning controls", () => {
+  it("does not offer unsupported off or minimal controls for Sol and Astra", () => {
+    for (const provider of ["openai", "openai-codex"]) {
+      for (const model of ["gpt-6.1-sol", "gpt-6-astra"]) {
+        expect(
+          resolveModelThinkingCapability({ provider, model, reasoning: true })?.thinkingLevels,
+        ).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      }
+    }
+    expect(
+      resolveModelThinkingCapability({ provider: "openai", model: "gpt-6-luna", reasoning: true })
+        ?.thinkingLevels,
+    ).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+  });
+});
 
 describe("normalized model catalog rows", () => {
   it("normalizes provider ids and merge keys", () => {
@@ -145,6 +162,28 @@ describe("normalized model catalog rows", () => {
       cacheRead: 0.2,
       cacheWrite: 2.5,
     });
+  });
+
+  it("includes the reviewed October core model generation on the correct routes", () => {
+    expect(cloneCurrentModelProvider("openai")?.models.map((m) => m.id)).toEqual(
+      expect.arrayContaining(["gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra"]),
+    );
+    expect(cloneCurrentModelProvider("openai-codex")?.models.map((m) => m.id)).toEqual(
+      expect.arrayContaining(["gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra"]),
+    );
+    expect(cloneCurrentModelProvider("anthropic")?.models.map((m) => m.id)).toEqual(
+      expect.arrayContaining(["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]),
+    );
+    expect(cloneCurrentModelProvider("xai")?.models.find((m) => m.id === "grok-4.7")).toMatchObject(
+      {
+        api: "openai-responses",
+        contextWindow: 500000,
+        capabilities: {
+          defaultThinkingLevel: "high",
+          thinkingLevels: ["low", "medium", "high", "xhigh"],
+        },
+      },
+    );
   });
 
   it("covers provider choices surfaced by onboarding auth flows", () => {

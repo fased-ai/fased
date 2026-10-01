@@ -65,7 +65,7 @@ describe("Providers setup flow", () => {
       Array.from(container.querySelectorAll<HTMLElement>("[data-provider-card]")).map(
         (node) => node.getAttribute("data-provider-card") ?? "",
       ),
-    ).toEqual(manifests.map((manifest) => manifest.id));
+    ).toEqual(expect.arrayContaining(manifests.map((manifest) => manifest.id)));
 
     for (const manifest of manifests) {
       const card = container.querySelector<HTMLElement>(`[data-provider-card="${manifest.id}"]`);
@@ -136,10 +136,9 @@ describe("Providers setup flow", () => {
             ],
           },
           modelCatalog: [
-            { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai-codex" },
-            { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", provider: "openai-codex" },
-            { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai-codex" },
-            { id: "gpt-5.5", name: "GPT-5.5", provider: "openai-codex" },
+            { id: "gpt-6.1-sol", name: "GPT-5.6 Sol", provider: "openai-codex" },
+            { id: "gpt-6-astra", name: "GPT-5.6 Terra", provider: "openai-codex" },
+            { id: "gpt-6-luna", name: "GPT-5.6 Luna", provider: "openai-codex" },
           ],
         }),
       ),
@@ -149,7 +148,7 @@ describe("Providers setup flow", () => {
     const openaiRow = container.querySelector<HTMLElement>(
       '[data-provider-card="openai"] .providers-provider__name-row',
     );
-    expect(openaiRow?.textContent?.replace(/\s+/g, " ").trim()).toBe("OpenAI 4 models");
+    expect(openaiRow?.textContent?.replace(/\s+/g, " ").trim()).toBe("OpenAI 3 models");
   });
 
   it("hides local quick explainer cards when embedded in Agent Models", () => {
@@ -252,8 +251,8 @@ describe("Providers setup flow", () => {
 
     const anthropicCard = container.querySelector<HTMLElement>('[data-provider-card="anthropic"]');
     expect(anthropicCard).toBeInstanceOf(HTMLElement);
-    expectMethodHelp(anthropicCard!, "anthropic-oauth", "Sign in (Claude Code)");
-    expectMethodHelp(anthropicCard!, "token", "Token (setup-token)");
+    expect(anthropicCard!.querySelector('[data-provider-method-id="anthropic-oauth"]')).toBeNull();
+    expect(anthropicCard!.querySelector('[data-provider-method-id="token"]')).toBeNull();
 
     const openaiCard = container.querySelector<HTMLElement>('[data-provider-card="openai"]');
     expect(openaiCard).toBeInstanceOf(HTMLElement);
@@ -266,26 +265,6 @@ describe("Providers setup flow", () => {
     expect(props.onStoreProviderApiKey).toHaveBeenCalledWith({
       provider: "openai",
       secret: "sk-test",
-    });
-
-    container
-      .querySelector<HTMLButtonElement>('[data-provider-sign-in-button="anthropic"]')
-      ?.click();
-    expect(props.onRunProviderSignIn).toHaveBeenCalledWith({
-      provider: "anthropic",
-      profileId: "anthropic:default",
-      methodId: "anthropic-oauth",
-    });
-
-    container
-      .querySelector<HTMLButtonElement>(
-        '[data-provider-sign-in-button="anthropic"][data-provider-method-id="token"]',
-      )
-      ?.click();
-    expect(props.onRunProviderSignIn).toHaveBeenCalledWith({
-      provider: "anthropic",
-      profileId: "anthropic:default",
-      methodId: "token",
     });
 
     const chutesCard = container.querySelector<HTMLElement>('[data-provider-card="chutes"]');
@@ -516,23 +495,9 @@ describe("Providers setup flow", () => {
 
     const xaiCard = container.querySelector<HTMLElement>('[data-provider-card="xai"]');
     expect(xaiCard).toBeInstanceOf(HTMLElement);
-    expectMethodHelp(xaiCard!, "xai-oauth", "xAI sign-in");
-    expectMethodHelp(xaiCard!, "xai-device-code", "xAI device code");
+    expect(xaiCard!.querySelector('[data-provider-method-id="xai-oauth"]')).toBeNull();
+    expect(xaiCard!.querySelector('[data-provider-method-id="xai-device-code"]')).toBeNull();
     expectMethodHelp(xaiCard!, "xai-api-key", "xAI API key");
-    xaiCard!.querySelector<HTMLButtonElement>('[data-provider-method-id="xai-oauth"]')?.click();
-    expect(props.onRunProviderSignIn).toHaveBeenCalledWith({
-      provider: "xai",
-      profileId: "xai:default",
-      methodId: "xai-oauth",
-    });
-    xaiCard!
-      .querySelector<HTMLButtonElement>('[data-provider-method-id="xai-device-code"]')
-      ?.click();
-    expect(props.onRunProviderSignIn).toHaveBeenCalledWith({
-      provider: "xai",
-      profileId: "xai:default",
-      methodId: "xai-device-code",
-    });
     const xaiApiForm = xaiCard!.querySelector<HTMLFormElement>(
       'form[data-provider-method-id="xai-api-key"]',
     );
@@ -840,8 +805,8 @@ describe("Providers setup flow", () => {
     const container = document.createElement("div");
     render(renderProviders(props), container);
 
-    expect(container.textContent).toContain("auth.openai.com/oauth/authorize");
-    expect(container.textContent).toContain("full URL hidden");
+    expect(container.textContent).toContain("Open browser to sign in");
+    expect(container.textContent).toContain("Finish in your browser");
     expect(container.textContent).not.toContain("response_type=code");
     expect(container.textContent).not.toContain("client_id=app_EMoamEE773fCkXaXp7hran");
     expect(
@@ -854,4 +819,53 @@ describe("Providers setup flow", () => {
     container.querySelector<HTMLButtonElement>(".providers-auth-dialog__head button")?.click();
     expect(props.onAuthActionDismiss).toHaveBeenCalledTimes(1);
   });
+});
+
+it("keeps five primary connections visible and optional providers in a closed section", () => {
+  const container = document.createElement("div");
+  render(html`${renderProviders(createProps())}`, container);
+  const more = container.querySelector<HTMLDetailsElement>("[data-more-providers]");
+  expect(more?.open).toBe(false);
+  const prominent = Array.from(container.querySelectorAll("[data-provider-card]"))
+    .filter((card) => !more?.contains(card))
+    .map((card) => card.getAttribute("data-provider-card"));
+  expect(prominent).toEqual(["openai", "anthropic", "google", "xai", "openrouter"]);
+  expect(more?.querySelector('[data-provider-card="chutes"]')).not.toBeNull();
+  more!.open = true;
+  expect(more!.open).toBe(true);
+});
+
+it("keeps a connected optional provider visible outside More providers", () => {
+  const container = document.createElement("div");
+  render(
+    renderProviders(
+      createProps({
+        authStatus: {
+          storePath: "/tmp/auth-test.json",
+          warnAfterMs: 3600000,
+          providers: [
+            {
+              provider: "chutes",
+              status: "ok",
+              effective: { kind: "profiles", detail: "chutes:default" },
+              profiles: [
+                {
+                  profileId: "chutes:default",
+                  provider: "chutes",
+                  type: "api_key",
+                  status: "ok",
+                  label: "chutes:default",
+                  source: "store",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ),
+    container,
+  );
+  const card = container.querySelector('[data-provider-card="chutes"]');
+  expect(card).not.toBeNull();
+  expect(container.querySelector("[data-more-providers]")?.contains(card)).toBe(false);
 });

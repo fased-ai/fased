@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  writeOAuthCredentials,
   setByteplusApiKey,
   setCloudflareAiGatewayConfig,
   setMoonshotApiKey,
@@ -165,4 +166,42 @@ describe("onboard auth credentials secret refs", () => {
     });
     expect(parsed.profiles?.["byteplus:default"]?.key).toBeUndefined();
   });
+});
+
+it("keeps same-email ChatGPT registrations separate and restores all plan metadata", async () => {
+  const lifecycle = createAuthTestLifecycle([
+    "FASED_STATE_DIR",
+    "FASED_AGENT_DIR",
+    "PI_CODING_AGENT_DIR",
+  ]);
+  const env = await setupAuthTestEnv("fased-plan-registration-test-");
+  lifecycle.setStateDir(env.stateDir);
+  try {
+    const credential = {
+      chatgptPlan: true as const,
+      clientId: "oaiapp_first",
+      subject: "owner",
+      hostId: "test-host",
+      idToken: "test-id-token",
+      scopes: ["chatgpt.tokens.use.direct"],
+      email: "same@example.com",
+      access: "test-access",
+      refresh: "test-refresh",
+      expires: Date.now() + 3600000,
+    };
+    const first = await writeOAuthCredentials("openai-codex", credential, env.agentDir);
+    const second = await writeOAuthCredentials(
+      "openai-codex",
+      { ...credential, clientId: "oaiapp_second" },
+      env.agentDir,
+    );
+    expect(first).not.toBe(second);
+    const saved = await readAuthProfilesForAgent<{ profiles: Record<string, unknown> }>(
+      env.agentDir,
+    );
+    expect(saved.profiles[first]).toMatchObject(credential);
+    expect(saved.profiles[second]).toMatchObject({ ...credential, clientId: "oaiapp_second" });
+  } finally {
+    await lifecycle.cleanup();
+  }
 });

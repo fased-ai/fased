@@ -99,7 +99,7 @@ export async function runMemoryFlushIfNeeded(params: {
   try {
     await runWithModelFallback({
       ...resolveModelFallbackOptions(params.followupRun.run),
-      run: (provider, model) => {
+      run: (provider, model, fallbackOptions) => {
         const { authProfile, embeddedContext, senderContext } = buildEmbeddedRunContexts({
           run: params.followupRun.run,
           sessionCtx: params.sessionCtx,
@@ -114,6 +114,7 @@ export async function runMemoryFlushIfNeeded(params: {
           authProfile,
         });
         return runEmbeddedPiAgent({
+          ...fallbackOptions,
           ...embeddedContext,
           ...senderContext,
           ...runBaseParams,

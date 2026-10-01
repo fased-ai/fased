@@ -95,6 +95,36 @@ function model(params: {
 
 const OPENAI_MODELS: ModelDefinitionConfig[] = [
   model({
+    id: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1050000,
+    maxTokens: 128000,
+    api: "openai-responses",
+    cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 },
+  }),
+  model({
+    id: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1050000,
+    maxTokens: 128000,
+    api: "openai-responses",
+    cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0 },
+  }),
+  model({
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1050000,
+    maxTokens: 128000,
+    api: "openai-responses",
+    cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 0 },
+  }),
+  model({
     id: "gpt-5.6",
     name: "GPT-5.6 Sol",
     reasoning: true,
@@ -168,6 +198,33 @@ const OPENAI_MODELS: ModelDefinitionConfig[] = [
 
 const OPENAI_CODEX_MODELS: ModelDefinitionConfig[] = [
   model({
+    id: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1050000,
+    maxTokens: 128000,
+    api: "openai-codex-responses",
+  }),
+  model({
+    id: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1050000,
+    maxTokens: 128000,
+    api: "openai-codex-responses",
+  }),
+  model({
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1050000,
+    maxTokens: 128000,
+    api: "openai-codex-responses",
+  }),
+  model({
     id: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
     reasoning: true,
@@ -238,6 +295,33 @@ const OPENAI_CODEX_MODELS: ModelDefinitionConfig[] = [
 
 const ANTHROPIC_MODELS: ModelDefinitionConfig[] = [
   model({
+    id: "claude-fable-5-1",
+    name: "Claude Fable 5.1",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+  }),
+  model({
+    id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    cost: { input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 },
+  }),
+  model({
+    id: "claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  }),
+  model({
     id: "claude-fable-5",
     name: "Claude Fable 5",
     reasoning: true,
@@ -277,6 +361,14 @@ const ANTHROPIC_MODELS: ModelDefinitionConfig[] = [
 
 const GOOGLE_MODELS: ModelDefinitionConfig[] = [
   model({
+    id: "gemini-3.8-flash",
+    name: "Gemini 3.8 Flash",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1_048_576,
+    maxTokens: 65_536,
+  }),
+  model({
     id: "gemini-3.5-flash",
     name: "Gemini 3.5 Flash",
     reasoning: true,
@@ -311,6 +403,24 @@ const GOOGLE_MODELS: ModelDefinitionConfig[] = [
 ];
 
 const XAI_MODELS: ModelDefinitionConfig[] = [
+  model({
+    id: "grok-4.7",
+    name: "Grok 4.7",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 500000,
+    maxTokens: 64000,
+    api: "openai-responses",
+    cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+    capabilities: {
+      tools: true,
+      json: true,
+      thinkingLevels: ["low", "medium", "high", "xhigh"],
+      defaultThinkingLevel: "high",
+      thinkingMode: "xai-reasoning-effort",
+      reasoningBudgetSupported: false,
+    },
+  }),
   model({
     id: "grok-4.3",
     name: "Grok 4.3",

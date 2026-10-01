@@ -5,7 +5,7 @@ import { loadModelCatalog } from "../agents/model-catalog.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { AgentModelListConfig } from "../config/types.js";
 
-export const OPENAI_CODEX_DEFAULT_MODEL = "openai-codex/gpt-5.5";
+export const OPENAI_CODEX_DEFAULT_MODEL = "openai-codex/gpt-6.1-sol";
 
 export async function discoverOpenAICodexDefaultModel(params: {
   config: FasedAgentConfig;

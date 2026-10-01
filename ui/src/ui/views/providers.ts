@@ -664,20 +664,6 @@ function formatAuthLinkHost(url: string | null | undefined) {
   }
 }
 
-function formatAuthLinkPreview(url: string | null | undefined) {
-  const value = url?.trim();
-  if (!value) {
-    return "Open sign-in link";
-  }
-  try {
-    const parsed = new URL(value);
-    const pathname = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "";
-    return `${parsed.host}${pathname}`;
-  } catch {
-    return "Open sign-in link";
-  }
-}
-
 function addModelOption(
   options: Map<string, { value: string; label: string }>,
   value: string,
@@ -964,7 +950,7 @@ function displayAuthActionTitle(action: ConfigAuthActionState | null): string {
   if (action.tone === "warn") {
     return "Sign in cancelled";
   }
-  return action.prompt ? "Continue sign in" : "Sign in in progress";
+  return action.prompt ? "Continue sign in" : "Finish in your browser";
 }
 
 function displayAuthActionMessage(action: ConfigAuthActionState | null): string {
@@ -983,7 +969,7 @@ function displayAuthActionMessage(action: ConfigAuthActionState | null): string 
   if (action.tone === "warn") {
     return "Sign in was cancelled.";
   }
-  return "Sign in is in progress.";
+  return "Complete sign-in in the browser. This window will update when you finish.";
 }
 
 function displayAuthActionDetail(action: ConfigAuthActionState | null): string {
@@ -1176,8 +1162,587 @@ export function renderProviders(props: ProvidersProps) {
     return providers.indexOf(left) - providers.indexOf(right);
   });
 
+  const primaryIds = new Set(["openai", "anthropic", "google", "xai", "openrouter"]);
+  const prominentProviders = orderedProviders.filter(
+    (provider) => primaryIds.has(provider.id) || isProviderCardReady(provider),
+  );
+  const moreProviders = orderedProviders.filter(
+    (provider) => !prominentProviders.includes(provider),
+  );
+  const renderProviderCard = (providerCard: ProviderCardDefinition) => {
+    const routeIds = providerCard.routeIds;
+    const runtimeProviders = routeIds
+      .map((routeId) => resolveRuntimeProvider(props.authStatus, routeId))
+      .filter((provider): provider is ModelsAuthStatusResult["providers"][number] =>
+        Boolean(provider),
+      );
+    const ready = runtimeProviders.some((provider) => hasReadyProviderAuth(provider));
+    const runtimeStatus =
+      runtimeProviders.find((provider) => hasReadyProviderAuth(provider))?.status ??
+      runtimeProviders[0]?.status ??
+      null;
+    const modelOptionsForProvider = providerModelOptionsForCard({
+      options: modelOptions,
+      providerCard,
+      current: null,
+      authoritative: ready,
+    });
+    const catalogProviders = resolveProviderCardCatalogProviders(
+      props.modelCatalogStatus,
+      providerCard,
+    );
+    const modelCount = ready
+      ? modelOptionsForProvider.length
+      : providerCard.modelRefs.length || modelOptionsForProvider.length;
+    const clearProfileId =
+      runtimeProviders
+        .map((runtimeProvider) => clearableProviderProfileId({ runtimeProvider }))
+        .find((profileId): profileId is string => Boolean(profileId)) ?? null;
+    const modelCountLabel = `${modelCount} ${modelCount === 1 ? "model" : "models"}`;
+    const providerSetupExtra =
+      props.providerSetupExtra?.({
+        id: providerCard.id,
+        label: providerCard.label,
+        routeIds: [...providerCard.routeIds],
+        modelProviderIds: [...(providerCard.modelProviderIds ?? providerCard.routeIds)],
+        modelCount,
+        ready,
+      }) ?? nothing;
+    const catalogGap = SHOW_PROVIDER_CATALOG_SETUP_HINTS
+      ? resolveProviderCatalogGap({
+          providerCard,
+          summary,
+          authStatus: props.authStatus,
+          modelCatalogStatus: props.modelCatalogStatus,
+        })
+      : null;
+    return html`
+                  <details
+                    class="providers-provider"
+                    data-provider-card=${providerCard.id}
+                    data-provider-card-order=${`provider-card:${providerCard.id}`}
+                  >
+                    <summary class="providers-provider__summary">
+                      <div class="providers-provider__main">
+                        <span
+                          class="providers-provider__dot ${ready ? "ok" : runtimeStatus ? "warn" : ""}"
+                          aria-hidden="true"
+                        ></span>
+                        <div>
+                          <div class="providers-provider__name-row">
+                            <span class="providers-provider__name">${providerCard.label}</span>
+                            <span class="providers-provider__model-count">${modelCountLabel}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="providers-provider__status">
+                        <div class="providers-provider__chips">
+                          ${
+                            ready
+                              ? nothing
+                              : html`<span class=${runtimeStatusClass(runtimeStatus)}>
+                                  ${
+                                    runtimeStatus === "refresh-required"
+                                      ? "Refresh sign-in"
+                                      : "Sign in"
+                                  }
+                                </span>`
+                          }
+                          ${
+                            catalogGap
+                              ? html`
+                                  <span class=${catalogGap.tone === "warn" ? "chip warn" : "chip"}>
+                                    ${catalogGap.chip}
+                                  </span>
+                                `
+                              : nothing
+                          }
+                          ${
+                            catalogProviders.some((provider) => provider.health)
+                              ? html`<span class=${catalogProviders.some((provider) => provider.probeStatus === "ok") ? "chip ok" : "chip warn"}>health</span>`
+                              : nothing
+                          }
+                        </div>
+                        ${
+                          clearProfileId
+                            ? html`
+                                <button
+                                  type="button"
+                                  class="btn btn--sm"
+                                  ?disabled=${props.authActionBusyProfileId === clearProfileId}
+                                  @click=${(event: Event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    clearStoredCredential(clearProfileId);
+                                  }}
+                                >
+                                  × Clear
+                                </button>
+                              `
+                            : nothing
+                        }
+                      </div>
+                    </summary>
+                    <div class="providers-provider__body">
+                      ${renderProviderHealth(catalogProviders)}
+                      ${renderProviderCapabilitySummary({
+                        providerIds: providerCard.modelProviderIds ?? providerCard.routeIds,
+                        modelCatalog: props.modelCatalog,
+                      })}
+                      ${
+                        catalogGap
+                          ? html`
+                              <div
+                                class="providers-catalog-gap ${
+                                  catalogGap.tone === "warn" ? "is-warn" : "is-info"
+                                }"
+                                role="note"
+                              >
+                                <div class="providers-catalog-gap__title">${catalogGap.title}</div>
+                                ${catalogGap.details.map(
+                                  (detail) => html`
+                                    <div class="providers-catalog-gap__detail">${detail}</div>
+                                  `,
+                                )}
+                              </div>
+                            `
+                          : nothing
+                      }
+                      <div class="providers-provider__setup">
+                        ${providerCard.authMethods.map((method) => {
+                          const methodProviderId = method.providerId;
+                          const methodStatusProviderId =
+                            method.statusProviderId ?? methodProviderId;
+                          const providerSummary = summary.providers.find(
+                            (provider) => provider.id === methodStatusProviderId,
+                          );
+                          const catalogProvider = resolveCatalogProvider(
+                            props.modelCatalogStatus,
+                            methodStatusProviderId,
+                          );
+                          const runtimeProvider = resolveRuntimeProvider(
+                            props.authStatus,
+                            methodStatusProviderId,
+                          );
+                          const orderedProfiles = providerSummary
+                            ? buildOrderedProviderProfiles(providerSummary)
+                            : [];
+                          if (method.kind === "manual") {
+                            if (
+                              method.methodId === "vllm" ||
+                              method.methodId === "ollama" ||
+                              method.methodId === "lmstudio"
+                            ) {
+                              const isOllama = method.methodId === "ollama";
+                              const isLmStudio = method.methodId === "lmstudio";
+                              const providerValue = isOllama
+                                ? "ollama"
+                                : isLmStudio
+                                  ? "lmstudio"
+                                  : "vllm";
+                              const defaultBaseUrl = isOllama
+                                ? "http://127.0.0.1:11434"
+                                : isLmStudio
+                                  ? "http://127.0.0.1:1234/v1"
+                                  : "http://127.0.0.1:8000/v1";
+                              const modelPlaceholder = isOllama
+                                ? "llama3.3:latest"
+                                : isLmStudio
+                                  ? "qwen/qwen3.5-9b"
+                                  : "meta-llama/Meta-Llama-3-8B-Instruct or sglang-served-model";
+                              const secretPlaceholder = isOllama
+                                ? "Optional API key; blank uses local marker"
+                                : isLmStudio
+                                  ? "Optional LM Studio API token"
+                                  : "API key, local placeholder, or vllm-local";
+                              return html`
+                                <form
+                                  class="providers-setup-card"
+                                  data-provider-method-id=${method.methodId ?? ""}
+                                  @submit=${handleManualProviderSubmit}
+                                >
+                                  <div>
+                                    <div class="providers-setup-card__title">
+                                      ${method.label ?? providerDisplayName(providerValue)}
+                                    </div>
+                                    <div class="providers-setup-card__sub">
+                                      ${
+                                        isOllama
+                                          ? "Built-in Ollama transport; no Fased plugin is required. Do not add /v1."
+                                          : isLmStudio
+                                            ? "LM Studio local server. Discovery reads /api/v1/models."
+                                            : "OpenAI-compatible local servers: vLLM, SGLang, TGI, LocalAI, FastChat."
+                                      }
+                                    </div>
+                                  </div>
+                                  <input type="hidden" name="provider" value=${providerValue} />
+                                  <label class="providers-field">
+                                    Base URL
+                                    <input
+                                      name="baseUrl"
+                                      type="url"
+                                      required
+                                      placeholder=${defaultBaseUrl}
+                                      value=${defaultBaseUrl}
+                                    />
+                                  </label>
+                                  <label class="providers-field">
+                                    ${
+                                      isOllama
+                                        ? "Model ID (for example qwen3:4b; ollama/ is optional)"
+                                        : isLmStudio
+                                          ? "Model ID (lmstudio/ prefix is optional)"
+                                          : "Model ID (vllm/ prefix is optional)"
+                                    }
+                                    <input
+                                      name="modelId"
+                                      type="text"
+                                      required
+                                      placeholder=${modelPlaceholder}
+                                    />
+                                  </label>
+                                  <label class="providers-field providers-field--bare">
+                                    <input
+                                      name="secret"
+                                      type="password"
+                                      ?required=${!isOllama && !isLmStudio}
+                                      placeholder=${secretPlaceholder}
+                                      autocomplete="off"
+                                    />
+                                  </label>
+                                  <button
+                                    type="submit"
+                                    class="btn primary"
+                                    ?disabled=${props.loading || !props.connected}
+                                  >
+                                    Configure
+                                  </button>
+                                </form>
+                              `;
+                            }
+                            if (method.methodId === "cloudflare-ai-gateway-api-key") {
+                              return html`
+                                <form
+                                  class="providers-setup-card"
+                                  data-provider-method-id=${method.methodId ?? ""}
+                                  @submit=${handleManualProviderSubmit}
+                                >
+                                  <div>
+                                    <div class="providers-setup-card__title">
+                                      Cloudflare AI
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="hidden"
+                                    name="provider"
+                                    value="cloudflare-ai-gateway"
+                                  />
+                                  <label class="providers-field">
+                                    Account ID
+                                    <input name="accountId" type="text" required autocomplete="off" />
+                                  </label>
+                                  <label class="providers-field">
+                                    Gateway ID
+                                    <input name="gatewayId" type="text" required autocomplete="off" />
+                                  </label>
+                                  <label class="providers-field providers-field--bare">
+                                    <input
+                                      name="secret"
+                                      type="password"
+                                      required
+                                      placeholder="Anthropic API key"
+                                      autocomplete="off"
+                                    />
+                                  </label>
+                                  <button
+                                    type="submit"
+                                    class="btn primary"
+                                    ?disabled=${props.loading || !props.connected}
+                                  >
+                                    Configure
+                                  </button>
+                                </form>
+                              `;
+                            }
+                            return html`
+                              <form
+                                class="providers-setup-card"
+                                data-provider-method-id=${method.methodId ?? ""}
+                                @submit=${handleManualProviderSubmit}
+                              >
+                                <div>
+                                  <div class="providers-setup-card__title">
+                                    ${method.label ?? providerDisplayName(methodProviderId)}
+                                  </div>
+                                </div>
+                                <input type="hidden" name="provider" value="custom" />
+                                <label class="providers-field">
+                                  Base URL
+                                  <input
+                                    name="baseUrl"
+                                    type="url"
+                                    required
+                                    placeholder="https://models.example.com/v1"
+                                  />
+                                </label>
+                                <label class="providers-field">
+                                  API format
+                                  <select name="compatibility" required>
+                                    <option value="openai">OpenAI-compatible</option>
+                                    <option value="anthropic">Anthropic-compatible</option>
+                                    <option value="unknown">Detect automatically</option>
+                                  </select>
+                                </label>
+                                <label class="providers-field">
+                                  Model ID
+                                  <input
+                                    name="modelId"
+                                    type="text"
+                                    required
+                                    placeholder="provider/model-or-deployment"
+                                  />
+                                </label>
+                                <label class="providers-field">
+                                  Endpoint ID
+                                  <input
+                                    name="customProviderId"
+                                    type="text"
+                                    placeholder="optional stable id"
+                                    autocomplete="off"
+                                  />
+                                </label>
+                                <label class="providers-field">
+                                  Alias
+                                  <input
+                                    name="alias"
+                                    type="text"
+                                    placeholder="optional model shortcut"
+                                    autocomplete="off"
+                                  />
+                                </label>
+                                <label class="providers-field providers-field--bare">
+                                  <input
+                                    name="secret"
+                                    type="password"
+                                    placeholder="API key if required"
+                                    autocomplete="off"
+                                  />
+                                </label>
+                                <label class="providers-checkbox">
+                                  <input name="allowPrivateNetwork" type="checkbox" />
+                                  Allow local/private endpoint
+                                </label>
+                                <button
+                                  type="submit"
+                                  class="btn primary"
+                                  ?disabled=${props.loading || !props.connected}
+                                >
+                                  Save provider
+                                </button>
+                              </form>
+                            `;
+                          }
+                          const baseAvailability =
+                            method.kind === "api"
+                              ? resolveProviderApiKeyAvailability(methodProviderId, catalogProvider)
+                              : resolveProviderInteractiveAvailability(
+                                  methodProviderId,
+                                  catalogProvider,
+                                  orderedProfiles,
+                                );
+                          const availability = method.label
+                            ? {
+                                ...baseAvailability,
+                                label: method.label,
+                                ...(method.buttonLabel ? { buttonLabel: method.buttonLabel } : {}),
+                              }
+                            : baseAvailability;
+                          const displayTitle = providerMethodDisplayTitle(method);
+                          const methodHelpText = providerMethodHelpText(method, availability);
+                          const interactiveUsesToken =
+                            method.kind === "token" ||
+                            method.methodId === "token" ||
+                            method.methodId === "setup-token";
+                          const expectedCredentialType =
+                            method.kind === "api"
+                              ? "api_key"
+                              : interactiveUsesToken
+                                ? "token"
+                                : "oauth";
+                          const readyProfile = readyProviderProfileByType(
+                            runtimeProvider,
+                            expectedCredentialType,
+                          );
+                          const credentialReady = availability.supported && Boolean(readyProfile);
+
+                          if (!availability.supported) {
+                            return html`
+                              <div class="providers-setup-card is-disabled">
+                                <div>
+                                  <div class="providers-setup-card__title-row">
+                                    <span
+                                      class="providers-method-status ${credentialReady ? "ok" : ""}"
+                                      title=${
+                                        credentialReady
+                                          ? "Credential ready"
+                                          : "Credential not saved"
+                                      }
+                                      aria-label=${
+                                        credentialReady
+                                          ? "Credential ready"
+                                          : "Credential not saved"
+                                      }
+                                    ></span>
+                                    <div class="providers-setup-card__title">${displayTitle}</div>
+                                    ${renderProviderMethodHelp(method, methodProviderId, methodHelpText)}
+                                  </div>
+                                  ${
+                                    method.setupRequirement
+                                      ? html`
+                                          <div class="providers-setup-card__sub">
+                                            ${method.setupRequirement}
+                                          </div>
+                                        `
+                                      : nothing
+                                  }
+                                  ${
+                                    availability.reason
+                                      ? html`<div class="providers-setup-card__sub">${availability.reason}</div>`
+                                      : nothing
+                                  }
+                                </div>
+                              </div>
+                            `;
+                          }
+
+                          if (method.kind === "api") {
+                            return html`
+                              <form
+                                class="providers-setup-card"
+                                data-provider-api-key-form="true"
+                                data-provider-method-id=${method.methodId ?? ""}
+                                @submit=${handleApiKeySubmit}
+                              >
+                                <div>
+                                  <div class="providers-setup-card__title-row">
+                                    <span
+                                      class="providers-method-status ${credentialReady ? "ok" : ""}"
+                                      title=${
+                                        credentialReady
+                                          ? "Credential ready"
+                                          : "Credential not saved"
+                                      }
+                                      aria-label=${
+                                        credentialReady
+                                          ? "Credential ready"
+                                          : "Credential not saved"
+                                      }
+                                    ></span>
+                                    <div class="providers-setup-card__title">${displayTitle}</div>
+                                    ${renderProviderMethodHelp(method, methodProviderId, methodHelpText)}
+                                  </div>
+                                  ${
+                                    method.setupRequirement
+                                      ? html`
+                                          <div class="providers-setup-card__sub">
+                                            ${method.setupRequirement}
+                                          </div>
+                                        `
+                                      : nothing
+                                  }
+                                </div>
+                                <input type="hidden" name="provider" .value=${methodProviderId} />
+                                <label class="providers-field providers-field--bare">
+                                  <input
+                                    name="secret"
+                                    type="password"
+                                    required
+                                    placeholder="Paste API key"
+                                    aria-label=${availability.label}
+                                    autocomplete="off"
+                                  />
+                                </label>
+                                <button
+                                  type="submit"
+                                  class="btn primary"
+                                  ?disabled=${props.loading || !props.connected}
+                                >
+                                  ${credentialReady ? "Update API" : availability.buttonLabel}
+                                </button>
+                              </form>
+                            `;
+                          }
+
+                          const signInProfileId = preferredProviderProfileId({
+                            providerId: methodProviderId,
+                            runtimeProvider,
+                            orderedProfiles,
+                            preferOauth: !interactiveUsesToken,
+                          });
+                          return html`
+                            <div class="providers-setup-card">
+                              <div>
+                                <div class="providers-setup-card__title-row">
+                                  <span
+                                    class="providers-method-status ${credentialReady ? "ok" : ""}"
+                                    title=${
+                                      credentialReady ? "Credential ready" : "Credential not saved"
+                                    }
+                                    aria-label=${
+                                      credentialReady ? "Credential ready" : "Credential not saved"
+                                    }
+                                  ></span>
+                                  <div class="providers-setup-card__title">${displayTitle}</div>
+                                  ${renderProviderMethodHelp(method, methodProviderId, methodHelpText)}
+                                </div>
+                                ${
+                                  method.setupRequirement
+                                    ? html`
+                                        <div class="providers-setup-card__sub">
+                                          ${method.setupRequirement}
+                                        </div>
+                                      `
+                                    : nothing
+                                }
+                              </div>
+                              <button
+                                type="button"
+                                class="btn"
+                                data-provider-sign-in-button=${methodProviderId}
+                                data-provider-method-id=${method.methodId ?? ""}
+                                ?disabled=${props.loading || !props.connected}
+                                @click=${() =>
+                                  props.onRunProviderSignIn({
+                                    provider: methodProviderId,
+                                    profileId: signInProfileId,
+                                    ...(method.methodId ? { methodId: method.methodId } : {}),
+                                  })}
+                              >
+                                ${
+                                  credentialReady
+                                    ? interactiveUsesToken
+                                      ? "Update token"
+                                      : "Sign in again"
+                                    : availability.buttonLabel
+                                }
+                              </button>
+                            </div>
+                          `;
+                        })}
+                        ${providerSetupExtra}
+
+                      </div>
+                    </div>
+                  </details>
+                `;
+  };
+
   return html`
     <style>
+      .providers-more { grid-column: 1 / -1; }
+      .providers-more > summary { cursor: pointer; padding: 14px; font-weight: 600; }
+      .providers-more .providers-stack { display: grid; gap: 12px; }
+
       .providers-shell {
         display: grid;
         gap: 16px;
@@ -1797,7 +2362,7 @@ export function renderProviders(props: ProvidersProps) {
                         class="btn btn--sm btn--ghost"
                         @click=${() => props.onAuthActionDismiss()}
                       >
-                        Close
+                        ${props.authAction.actionKind === "interactive" && props.authAction.tone === "info" ? "Cancel sign-in" : "Close"}
                       </button>
                     </div>
                     ${
@@ -1830,10 +2395,10 @@ export function renderProviders(props: ProvidersProps) {
                                 rel="noreferrer"
                                 aria-label="Open sign-in link"
                               >
-                                ${formatAuthLinkPreview(props.authAction.url)}
+                                Open browser to sign in
                               </a>
                               <div class="providers-auth-link__host">
-                                ${formatAuthLinkHost(props.authAction.url)} · full URL hidden
+                                ${formatAuthLinkHost(props.authAction.url)}
                               </div>
                             </div>
                             <div class="providers-auth-link__actions">
@@ -2032,573 +2597,19 @@ export function renderProviders(props: ProvidersProps) {
                   </div>
                 </section>
               `
-            : orderedProviders.map((providerCard) => {
-                const routeIds = providerCard.routeIds;
-                const runtimeProviders = routeIds
-                  .map((routeId) => resolveRuntimeProvider(props.authStatus, routeId))
-                  .filter((provider): provider is ModelsAuthStatusResult["providers"][number] =>
-                    Boolean(provider),
-                  );
-                const ready = runtimeProviders.some((provider) => hasReadyProviderAuth(provider));
-                const runtimeStatus =
-                  runtimeProviders.find((provider) => hasReadyProviderAuth(provider))?.status ??
-                  runtimeProviders[0]?.status ??
-                  null;
-                const modelOptionsForProvider = providerModelOptionsForCard({
-                  options: modelOptions,
-                  providerCard,
-                  current: null,
-                  authoritative: ready,
-                });
-                const catalogProviders = resolveProviderCardCatalogProviders(
-                  props.modelCatalogStatus,
-                  providerCard,
-                );
-                const modelCount = ready
-                  ? modelOptionsForProvider.length
-                  : providerCard.modelRefs.length || modelOptionsForProvider.length;
-                const clearProfileId =
-                  runtimeProviders
-                    .map((runtimeProvider) => clearableProviderProfileId({ runtimeProvider }))
-                    .find((profileId): profileId is string => Boolean(profileId)) ?? null;
-                const modelCountLabel = `${modelCount} ${modelCount === 1 ? "model" : "models"}`;
-                const providerSetupExtra =
-                  props.providerSetupExtra?.({
-                    id: providerCard.id,
-                    label: providerCard.label,
-                    routeIds: [...providerCard.routeIds],
-                    modelProviderIds: [...(providerCard.modelProviderIds ?? providerCard.routeIds)],
-                    modelCount,
-                    ready,
-                  }) ?? nothing;
-                const catalogGap = SHOW_PROVIDER_CATALOG_SETUP_HINTS
-                  ? resolveProviderCatalogGap({
-                      providerCard,
-                      summary,
-                      authStatus: props.authStatus,
-                      modelCatalogStatus: props.modelCatalogStatus,
-                    })
-                  : null;
-                return html`
-                  <details
-                    class="providers-provider"
-                    data-provider-card=${providerCard.id}
-                    data-provider-card-order=${`provider-card:${providerCard.id}`}
-                  >
-                    <summary class="providers-provider__summary">
-                      <div class="providers-provider__main">
-                        <span
-                          class="providers-provider__dot ${ready ? "ok" : runtimeStatus ? "warn" : ""}"
-                          aria-hidden="true"
-                        ></span>
-                        <div>
-                          <div class="providers-provider__name-row">
-                            <span class="providers-provider__name">${providerCard.label}</span>
-                            <span class="providers-provider__model-count">${modelCountLabel}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="providers-provider__status">
-                        <div class="providers-provider__chips">
-                          ${
-                            ready
-                              ? nothing
-                              : html`<span class=${runtimeStatusClass(runtimeStatus)}>
-                                  ${
-                                    runtimeStatus === "refresh-required"
-                                      ? "Refresh sign-in"
-                                      : "Sign in"
-                                  }
-                                </span>`
-                          }
-                          ${
-                            catalogGap
-                              ? html`
-                                  <span class=${catalogGap.tone === "warn" ? "chip warn" : "chip"}>
-                                    ${catalogGap.chip}
-                                  </span>
-                                `
-                              : nothing
-                          }
-                          ${
-                            catalogProviders.some((provider) => provider.health)
-                              ? html`<span class=${catalogProviders.some((provider) => provider.probeStatus === "ok") ? "chip ok" : "chip warn"}>health</span>`
-                              : nothing
-                          }
-                        </div>
-                        ${
-                          clearProfileId
-                            ? html`
-                                <button
-                                  type="button"
-                                  class="btn btn--sm"
-                                  ?disabled=${props.authActionBusyProfileId === clearProfileId}
-                                  @click=${(event: Event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    clearStoredCredential(clearProfileId);
-                                  }}
-                                >
-                                  × Clear
-                                </button>
-                              `
-                            : nothing
-                        }
-                      </div>
-                    </summary>
-                    <div class="providers-provider__body">
-                      ${renderProviderHealth(catalogProviders)}
-                      ${renderProviderCapabilitySummary({
-                        providerIds: providerCard.modelProviderIds ?? providerCard.routeIds,
-                        modelCatalog: props.modelCatalog,
-                      })}
-                      ${
-                        catalogGap
-                          ? html`
-                              <div
-                                class="providers-catalog-gap ${
-                                  catalogGap.tone === "warn" ? "is-warn" : "is-info"
-                                }"
-                                role="note"
-                              >
-                                <div class="providers-catalog-gap__title">${catalogGap.title}</div>
-                                ${catalogGap.details.map(
-                                  (detail) => html`
-                                    <div class="providers-catalog-gap__detail">${detail}</div>
-                                  `,
-                                )}
-                              </div>
-                            `
-                          : nothing
-                      }
-                      <div class="providers-provider__setup">
-                        ${providerCard.authMethods.map((method) => {
-                          const methodProviderId = method.providerId;
-                          const methodStatusProviderId =
-                            method.statusProviderId ?? methodProviderId;
-                          const providerSummary = summary.providers.find(
-                            (provider) => provider.id === methodStatusProviderId,
-                          );
-                          const catalogProvider = resolveCatalogProvider(
-                            props.modelCatalogStatus,
-                            methodStatusProviderId,
-                          );
-                          const runtimeProvider = resolveRuntimeProvider(
-                            props.authStatus,
-                            methodStatusProviderId,
-                          );
-                          const orderedProfiles = providerSummary
-                            ? buildOrderedProviderProfiles(providerSummary)
-                            : [];
-                          if (method.kind === "manual") {
-                            if (
-                              method.methodId === "vllm" ||
-                              method.methodId === "ollama" ||
-                              method.methodId === "lmstudio"
-                            ) {
-                              const isOllama = method.methodId === "ollama";
-                              const isLmStudio = method.methodId === "lmstudio";
-                              const providerValue = isOllama
-                                ? "ollama"
-                                : isLmStudio
-                                  ? "lmstudio"
-                                  : "vllm";
-                              const defaultBaseUrl = isOllama
-                                ? "http://127.0.0.1:11434"
-                                : isLmStudio
-                                  ? "http://127.0.0.1:1234/v1"
-                                  : "http://127.0.0.1:8000/v1";
-                              const modelPlaceholder = isOllama
-                                ? "llama3.3:latest"
-                                : isLmStudio
-                                  ? "qwen/qwen3.5-9b"
-                                  : "meta-llama/Meta-Llama-3-8B-Instruct or sglang-served-model";
-                              const secretPlaceholder = isOllama
-                                ? "Optional API key; blank uses local marker"
-                                : isLmStudio
-                                  ? "Optional LM Studio API token"
-                                  : "API key, local placeholder, or vllm-local";
-                              return html`
-                                <form
-                                  class="providers-setup-card"
-                                  data-provider-method-id=${method.methodId ?? ""}
-                                  @submit=${handleManualProviderSubmit}
-                                >
-                                  <div>
-                                    <div class="providers-setup-card__title">
-                                      ${method.label ?? providerDisplayName(providerValue)}
-                                    </div>
-                                    <div class="providers-setup-card__sub">
-                                      ${
-                                        isOllama
-                                          ? "Built-in Ollama transport; no Fased plugin is required. Do not add /v1."
-                                          : isLmStudio
-                                            ? "LM Studio local server. Discovery reads /api/v1/models."
-                                            : "OpenAI-compatible local servers: vLLM, SGLang, TGI, LocalAI, FastChat."
-                                      }
-                                    </div>
-                                  </div>
-                                  <input type="hidden" name="provider" value=${providerValue} />
-                                  <label class="providers-field">
-                                    Base URL
-                                    <input
-                                      name="baseUrl"
-                                      type="url"
-                                      required
-                                      placeholder=${defaultBaseUrl}
-                                      value=${defaultBaseUrl}
-                                    />
-                                  </label>
-                                  <label class="providers-field">
-                                    ${
-                                      isOllama
-                                        ? "Model ID (for example qwen3:4b; ollama/ is optional)"
-                                        : isLmStudio
-                                          ? "Model ID (lmstudio/ prefix is optional)"
-                                          : "Model ID (vllm/ prefix is optional)"
-                                    }
-                                    <input
-                                      name="modelId"
-                                      type="text"
-                                      required
-                                      placeholder=${modelPlaceholder}
-                                    />
-                                  </label>
-                                  <label class="providers-field providers-field--bare">
-                                    <input
-                                      name="secret"
-                                      type="password"
-                                      ?required=${!isOllama && !isLmStudio}
-                                      placeholder=${secretPlaceholder}
-                                      autocomplete="off"
-                                    />
-                                  </label>
-                                  <button
-                                    type="submit"
-                                    class="btn primary"
-                                    ?disabled=${props.loading || !props.connected}
-                                  >
-                                    Configure
-                                  </button>
-                                </form>
-                              `;
-                            }
-                            if (method.methodId === "cloudflare-ai-gateway-api-key") {
-                              return html`
-                                <form
-                                  class="providers-setup-card"
-                                  data-provider-method-id=${method.methodId ?? ""}
-                                  @submit=${handleManualProviderSubmit}
-                                >
-                                  <div>
-                                    <div class="providers-setup-card__title">
-                                      Cloudflare AI
-                                    </div>
-                                  </div>
-                                  <input
-                                    type="hidden"
-                                    name="provider"
-                                    value="cloudflare-ai-gateway"
-                                  />
-                                  <label class="providers-field">
-                                    Account ID
-                                    <input name="accountId" type="text" required autocomplete="off" />
-                                  </label>
-                                  <label class="providers-field">
-                                    Gateway ID
-                                    <input name="gatewayId" type="text" required autocomplete="off" />
-                                  </label>
-                                  <label class="providers-field providers-field--bare">
-                                    <input
-                                      name="secret"
-                                      type="password"
-                                      required
-                                      placeholder="Anthropic API key"
-                                      autocomplete="off"
-                                    />
-                                  </label>
-                                  <button
-                                    type="submit"
-                                    class="btn primary"
-                                    ?disabled=${props.loading || !props.connected}
-                                  >
-                                    Configure
-                                  </button>
-                                </form>
-                              `;
-                            }
-                            return html`
-                              <form
-                                class="providers-setup-card"
-                                data-provider-method-id=${method.methodId ?? ""}
-                                @submit=${handleManualProviderSubmit}
-                              >
-                                <div>
-                                  <div class="providers-setup-card__title">
-                                    ${method.label ?? providerDisplayName(methodProviderId)}
-                                  </div>
-                                </div>
-                                <input type="hidden" name="provider" value="custom" />
-                                <label class="providers-field">
-                                  Base URL
-                                  <input
-                                    name="baseUrl"
-                                    type="url"
-                                    required
-                                    placeholder="https://models.example.com/v1"
-                                  />
-                                </label>
-                                <label class="providers-field">
-                                  API format
-                                  <select name="compatibility" required>
-                                    <option value="openai">OpenAI-compatible</option>
-                                    <option value="anthropic">Anthropic-compatible</option>
-                                    <option value="unknown">Detect automatically</option>
-                                  </select>
-                                </label>
-                                <label class="providers-field">
-                                  Model ID
-                                  <input
-                                    name="modelId"
-                                    type="text"
-                                    required
-                                    placeholder="provider/model-or-deployment"
-                                  />
-                                </label>
-                                <label class="providers-field">
-                                  Endpoint ID
-                                  <input
-                                    name="customProviderId"
-                                    type="text"
-                                    placeholder="optional stable id"
-                                    autocomplete="off"
-                                  />
-                                </label>
-                                <label class="providers-field">
-                                  Alias
-                                  <input
-                                    name="alias"
-                                    type="text"
-                                    placeholder="optional model shortcut"
-                                    autocomplete="off"
-                                  />
-                                </label>
-                                <label class="providers-field providers-field--bare">
-                                  <input
-                                    name="secret"
-                                    type="password"
-                                    placeholder="API key if required"
-                                    autocomplete="off"
-                                  />
-                                </label>
-                                <label class="providers-checkbox">
-                                  <input name="allowPrivateNetwork" type="checkbox" />
-                                  Allow local/private endpoint
-                                </label>
-                                <button
-                                  type="submit"
-                                  class="btn primary"
-                                  ?disabled=${props.loading || !props.connected}
-                                >
-                                  Save provider
-                                </button>
-                              </form>
-                            `;
-                          }
-                          const baseAvailability =
-                            method.kind === "api"
-                              ? resolveProviderApiKeyAvailability(methodProviderId, catalogProvider)
-                              : resolveProviderInteractiveAvailability(
-                                  methodProviderId,
-                                  catalogProvider,
-                                  orderedProfiles,
-                                );
-                          const availability = method.label
-                            ? {
-                                ...baseAvailability,
-                                label: method.label,
-                                ...(method.buttonLabel ? { buttonLabel: method.buttonLabel } : {}),
-                              }
-                            : baseAvailability;
-                          const displayTitle = providerMethodDisplayTitle(method);
-                          const methodHelpText = providerMethodHelpText(method, availability);
-                          const interactiveUsesToken =
-                            method.kind === "token" ||
-                            method.methodId === "token" ||
-                            method.methodId === "setup-token";
-                          const expectedCredentialType =
-                            method.kind === "api"
-                              ? "api_key"
-                              : interactiveUsesToken
-                                ? "token"
-                                : "oauth";
-                          const readyProfile = readyProviderProfileByType(
-                            runtimeProvider,
-                            expectedCredentialType,
-                          );
-                          const credentialReady = availability.supported && Boolean(readyProfile);
-
-                          if (!availability.supported) {
-                            return html`
-                              <div class="providers-setup-card is-disabled">
-                                <div>
-                                  <div class="providers-setup-card__title-row">
-                                    <span
-                                      class="providers-method-status ${credentialReady ? "ok" : ""}"
-                                      title=${
-                                        credentialReady
-                                          ? "Credential ready"
-                                          : "Credential not saved"
-                                      }
-                                      aria-label=${
-                                        credentialReady
-                                          ? "Credential ready"
-                                          : "Credential not saved"
-                                      }
-                                    ></span>
-                                    <div class="providers-setup-card__title">${displayTitle}</div>
-                                    ${renderProviderMethodHelp(method, methodProviderId, methodHelpText)}
-                                  </div>
-                                  ${
-                                    method.setupRequirement
-                                      ? html`
-                                          <div class="providers-setup-card__sub">
-                                            ${method.setupRequirement}
-                                          </div>
-                                        `
-                                      : nothing
-                                  }
-                                  ${
-                                    availability.reason
-                                      ? html`<div class="providers-setup-card__sub">${availability.reason}</div>`
-                                      : nothing
-                                  }
-                                </div>
-                              </div>
-                            `;
-                          }
-
-                          if (method.kind === "api") {
-                            return html`
-                              <form
-                                class="providers-setup-card"
-                                data-provider-api-key-form="true"
-                                data-provider-method-id=${method.methodId ?? ""}
-                                @submit=${handleApiKeySubmit}
-                              >
-                                <div>
-                                  <div class="providers-setup-card__title-row">
-                                    <span
-                                      class="providers-method-status ${credentialReady ? "ok" : ""}"
-                                      title=${
-                                        credentialReady
-                                          ? "Credential ready"
-                                          : "Credential not saved"
-                                      }
-                                      aria-label=${
-                                        credentialReady
-                                          ? "Credential ready"
-                                          : "Credential not saved"
-                                      }
-                                    ></span>
-                                    <div class="providers-setup-card__title">${displayTitle}</div>
-                                    ${renderProviderMethodHelp(method, methodProviderId, methodHelpText)}
-                                  </div>
-                                  ${
-                                    method.setupRequirement
-                                      ? html`
-                                          <div class="providers-setup-card__sub">
-                                            ${method.setupRequirement}
-                                          </div>
-                                        `
-                                      : nothing
-                                  }
-                                </div>
-                                <input type="hidden" name="provider" .value=${methodProviderId} />
-                                <label class="providers-field providers-field--bare">
-                                  <input
-                                    name="secret"
-                                    type="password"
-                                    required
-                                    placeholder="Paste API key"
-                                    aria-label=${availability.label}
-                                    autocomplete="off"
-                                  />
-                                </label>
-                                <button
-                                  type="submit"
-                                  class="btn primary"
-                                  ?disabled=${props.loading || !props.connected}
-                                >
-                                  ${credentialReady ? "Update API" : availability.buttonLabel}
-                                </button>
-                              </form>
-                            `;
-                          }
-
-                          const signInProfileId = preferredProviderProfileId({
-                            providerId: methodProviderId,
-                            runtimeProvider,
-                            orderedProfiles,
-                            preferOauth: !interactiveUsesToken,
-                          });
-                          return html`
-                            <div class="providers-setup-card">
-                              <div>
-                                <div class="providers-setup-card__title-row">
-                                  <span
-                                    class="providers-method-status ${credentialReady ? "ok" : ""}"
-                                    title=${
-                                      credentialReady ? "Credential ready" : "Credential not saved"
-                                    }
-                                    aria-label=${
-                                      credentialReady ? "Credential ready" : "Credential not saved"
-                                    }
-                                  ></span>
-                                  <div class="providers-setup-card__title">${displayTitle}</div>
-                                  ${renderProviderMethodHelp(method, methodProviderId, methodHelpText)}
-                                </div>
-                                ${
-                                  method.setupRequirement
-                                    ? html`
-                                        <div class="providers-setup-card__sub">
-                                          ${method.setupRequirement}
-                                        </div>
-                                      `
-                                    : nothing
-                                }
-                              </div>
-                              <button
-                                type="button"
-                                class="btn"
-                                data-provider-sign-in-button=${methodProviderId}
-                                data-provider-method-id=${method.methodId ?? ""}
-                                ?disabled=${props.loading || !props.connected}
-                                @click=${() =>
-                                  props.onRunProviderSignIn({
-                                    provider: methodProviderId,
-                                    profileId: signInProfileId,
-                                    ...(method.methodId ? { methodId: method.methodId } : {}),
-                                  })}
-                              >
-                                ${
-                                  credentialReady
-                                    ? interactiveUsesToken
-                                      ? "Update token"
-                                      : "Sign in again"
-                                    : availability.buttonLabel
-                                }
-                              </button>
-                            </div>
-                          `;
-                        })}
-                        ${providerSetupExtra}
-
-                      </div>
-                    </div>
+            : html`
+                ${prominentProviders.map(renderProviderCard)}
+                ${
+                  moreProviders.length
+                    ? html`
+                  <details class="providers-more" data-more-providers>
+                    <summary>More providers <span class="muted">${moreProviders.length}</span></summary>
+                    <div class="providers-stack">${moreProviders.map(renderProviderCard)}</div>
                   </details>
-                `;
-              })
+                `
+                    : nothing
+                }
+              `
         }
       </section>
     </section>

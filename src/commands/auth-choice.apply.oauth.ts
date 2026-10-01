@@ -89,7 +89,7 @@ export async function applyAuthChoiceOAuth(
       }
     } catch (err) {
       spin.stop("Chutes OAuth failed");
-      params.runtime.error(String(err));
+      params.runtime.error("Chutes sign-in failed.");
       await params.prompter.note(
         [
           "Trouble with OAuth?",
@@ -99,6 +99,7 @@ export async function applyAuthChoiceOAuth(
         ].join("\n"),
         "OAuth help",
       );
+      throw err;
     }
     return { config: nextConfig, agentModelOverride };
   }

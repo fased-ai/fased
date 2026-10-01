@@ -36,6 +36,7 @@ export type WizardProgress = {
 };
 
 export type WizardPrompter = {
+  signal?: AbortSignal;
   intro: (title: string) => Promise<void>;
   outro: (message: string) => Promise<void>;
   note: (message: string, title?: string) => Promise<void>;

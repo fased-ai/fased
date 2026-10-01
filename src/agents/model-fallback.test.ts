@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
@@ -14,6 +14,20 @@ import { runWithImageModelFallback, runWithModelFallback } from "./model-fallbac
 import { makeModelFallbackCfg } from "./test-helpers/model-fallback-config-fixture.js";
 
 const makeCfg = makeModelFallbackCfg;
+const testAuthDirectories = new Set<string>();
+async function createAuthTempDir(prefix: string): Promise<string> {
+  const directory = await fs.mkdtemp(prefix);
+  testAuthDirectories.add(directory);
+  return directory;
+}
+afterEach(async () => {
+  await Promise.all(
+    Array.from(testAuthDirectories, (directory) =>
+      fs.rm(directory, { recursive: true, force: true }),
+    ),
+  );
+  testAuthDirectories.clear();
+});
 
 function makeFallbacksOnlyCfg(): FasedAgentConfig {
   return {
@@ -44,7 +58,7 @@ async function withTempAuthStore<T>(
   store: AuthProfileStore,
   run: (tempDir: string) => Promise<T>,
 ): Promise<T> {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-auth-"));
+  const tempDir = await createAuthTempDir(path.join(os.tmpdir(), "fased-auth-"));
   saveAuthProfileStore(store, tempDir);
   try {
     return await run(tempDir);
@@ -352,7 +366,7 @@ describe("runWithModelFallback", () => {
     ]);
   });
 
-  it("keeps configured fallback chain when current model is a configured fallback", async () => {
+  it("keeps the one-fallback cap when current model is the configured fallback", async () => {
     const cfg = makeCfg({
       agents: {
         defaults: {
@@ -368,7 +382,7 @@ describe("runWithModelFallback", () => {
       if (provider === "anthropic" && model === "claude-haiku-3-5") {
         throw Object.assign(new Error("rate-limited"), { status: 429 });
       }
-      if (provider === "openrouter" && model === "openrouter/deepseek-chat") {
+      if (provider === "openai" && model === "gpt-4.1-mini") {
         return "ok";
       }
       throw new Error(`unexpected fallback candidate: ${provider}/${model}`);
@@ -382,11 +396,11 @@ describe("runWithModelFallback", () => {
     });
 
     expect(result.result).toBe("ok");
-    expect(result.provider).toBe("openrouter");
-    expect(result.model).toBe("openrouter/deepseek-chat");
+    expect(result.provider).toBe("openai");
+    expect(result.model).toBe("gpt-4.1-mini");
     expect(run.mock.calls).toEqual([
       ["anthropic", "claude-haiku-3-5"],
-      ["openrouter", "openrouter/deepseek-chat"],
+      ["openai", "gpt-4.1-mini"],
     ]);
   });
 
@@ -600,7 +614,7 @@ describe("runWithModelFallback", () => {
       usageStat: {
         cooldownUntil: Date.now() + 5 * 60_000,
       },
-      expectedReason: "unknown",
+      expectedReason: "rate_limit",
     });
   });
 
@@ -1282,7 +1296,7 @@ describe("runWithModelFallback", () => {
       provider: string,
       reason: "rate_limit" | "overloaded" | "auth" | "billing",
     ): Promise<{ store: AuthProfileStore; dir: string }> {
-      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-test-"));
+      const tmpDir = await createAuthTempDir(path.join(os.tmpdir(), "fased-test-"));
       const now = Date.now();
       const store: AuthProfileStore = {
         version: AUTH_STORE_VERSION,
@@ -1326,6 +1340,10 @@ describe("runWithModelFallback", () => {
 
       const result = await runWithModelFallback({
         cfg,
+        fallbacksOverride:
+          typeof cfg.agents?.defaults?.model === "object"
+            ? cfg.agents.defaults.model.fallbacks
+            : [],
         provider: "anthropic",
         model: "claude-opus-4-6",
         run,
@@ -1356,6 +1374,10 @@ describe("runWithModelFallback", () => {
 
       const result = await runWithModelFallback({
         cfg,
+        fallbacksOverride:
+          typeof cfg.agents?.defaults?.model === "object"
+            ? cfg.agents.defaults.model.fallbacks
+            : [],
         provider: "anthropic",
         model: "claude-opus-4-6",
         run,
@@ -1386,6 +1408,10 @@ describe("runWithModelFallback", () => {
 
       const result = await runWithModelFallback({
         cfg,
+        fallbacksOverride:
+          typeof cfg.agents?.defaults?.model === "object"
+            ? cfg.agents.defaults.model.fallbacks
+            : [],
         provider: "anthropic",
         model: "claude-opus-4-6",
         run,
@@ -1414,6 +1440,10 @@ describe("runWithModelFallback", () => {
 
       const result = await runWithModelFallback({
         cfg,
+        fallbacksOverride:
+          typeof cfg.agents?.defaults?.model === "object"
+            ? cfg.agents.defaults.model.fallbacks
+            : [],
         provider: "anthropic",
         model: "claude-opus-4-6",
         run,
@@ -1427,7 +1457,7 @@ describe("runWithModelFallback", () => {
 
     it("tries cross-provider fallbacks when same provider has rate limit", async () => {
       // Anthropic in rate limit cooldown, Groq available
-      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-test-"));
+      const tmpDir = await createAuthTempDir(path.join(os.tmpdir(), "fased-test-"));
       const store: AuthProfileStore = {
         version: AUTH_STORE_VERSION,
         profiles: {
@@ -1463,6 +1493,10 @@ describe("runWithModelFallback", () => {
 
       const result = await runWithModelFallback({
         cfg,
+        fallbacksOverride:
+          typeof cfg.agents?.defaults?.model === "object"
+            ? cfg.agents.defaults.model.fallbacks
+            : [],
         provider: "anthropic",
         model: "claude-opus-4-6",
         run,
@@ -1501,6 +1535,10 @@ describe("runWithModelFallback", () => {
 
       const result = await runWithModelFallback({
         cfg,
+        fallbacksOverride:
+          typeof cfg.agents?.defaults?.model === "object"
+            ? cfg.agents.defaults.model.fallbacks
+            : [],
         provider: "anthropic",
         model: "claude-opus-4-6",
         run,
@@ -1541,6 +1579,10 @@ describe("runWithModelFallback", () => {
 
       const result = await runWithModelFallback({
         cfg,
+        fallbacksOverride:
+          typeof cfg.agents?.defaults?.model === "object"
+            ? cfg.agents.defaults.model.fallbacks
+            : [],
         provider: "anthropic",
         model: "claude-opus-4-6",
         run,
@@ -1622,5 +1664,38 @@ describe("isAnthropicBillingError", () => {
     for (const sample of samples) {
       expect(isAnthropicBillingError(sample)).toBe(true);
     }
+  });
+});
+
+it("does not leave a selected ChatGPT plan connection for a differently billed fallback", async () => {
+  const cfg = makeCfg({
+    agents: {
+      defaults: { model: { primary: "openai-codex/gpt-test", fallbacks: ["openai/gpt-test"] } },
+    },
+  });
+  const store: AuthProfileStore = {
+    version: AUTH_STORE_VERSION,
+    profiles: {
+      "openai-codex:plan-test": {
+        type: "oauth",
+        provider: "openai-codex",
+        chatgptPlan: true,
+        clientId: "oaiapp_test",
+        subject: "owner",
+        access: "test-access",
+        refresh: "test-refresh",
+        expires: Date.now() + 3600000,
+      },
+    },
+  };
+  await withTempAuthStore(store, async (agentDir) => {
+    const run = vi.fn(async () => {
+      throw new Error("429 rate limit exceeded");
+    });
+    await expect(
+      runWithModelFallback({ cfg, agentDir, provider: "openai-codex", model: "gpt-test", run }),
+    ).rejects.toThrow();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith("openai-codex", "gpt-test");
   });
 });

@@ -245,14 +245,14 @@ describe("runtime provider model catalog", () => {
           authRoute: "anthropic",
           authMode: "oauth",
           credentialRoute: {
-            id: "anthropic-oauth",
-            label: "Sign in (Claude Code)",
+            id: "anthropic:oauth",
+            label: "Anthropic",
             authMode: "oauth",
           },
           credentialRoutes: [
             {
-              id: "anthropic-oauth",
-              label: "Sign in (Claude Code)",
+              id: "anthropic:oauth",
+              label: "Anthropic",
               authMode: "oauth",
             },
           ],

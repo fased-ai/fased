@@ -121,6 +121,22 @@ function getErrorMessage(err: unknown): string {
   return "";
 }
 
+function isStructuredQuotaExhaustion(err: unknown): boolean {
+  if (getErrorCode(err) === "insufficient_quota") {
+    return true;
+  }
+  try {
+    const payload = JSON.parse(getErrorMessage(err)) as {
+      error?: { code?: unknown; type?: unknown };
+    } | null;
+    return (
+      payload?.error?.code === "insufficient_quota" || payload?.error?.type === "insufficient_quota"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function hasTimeoutHint(err: unknown): boolean {
   if (!err) {
     return false;
@@ -177,6 +193,14 @@ export function resolveFailoverReasonFromError(err: unknown): FailoverReason | n
     return "timeout";
   }
   if (status === 400) {
+    // Providers also return quota exhaustion under 400. Preserve an explicit
+    // billing signal so the task can report its allowance rather than bad input.
+    if (
+      isStructuredQuotaExhaustion(err) ||
+      classifyFailoverReason(getErrorMessage(err)) === "billing"
+    ) {
+      return "billing";
+    }
     return "format";
   }
 

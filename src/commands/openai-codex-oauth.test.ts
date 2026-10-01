@@ -1,159 +1,102 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeEnv } from "../runtime.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 
-const mocks = vi.hoisted(() => ({
-  loginOpenAICodex: vi.fn(),
-  createVpsAwareOAuthHandlers: vi.fn(),
+const mocks = vi.hoisted(() => ({ exchange: vi.fn() }));
+vi.mock("../providers/chatgpt-plan-auth.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../providers/chatgpt-plan-auth.js")>()),
+  exchangeChatGptPlanCode: mocks.exchange,
 }));
-
-vi.mock("@mariozechner/pi-ai", () => ({
-  loginOpenAICodex: mocks.loginOpenAICodex,
-}));
-
-vi.mock("./oauth-flow.js", () => ({
-  createVpsAwareOAuthHandlers: mocks.createVpsAwareOAuthHandlers,
-}));
-
 import { loginOpenAICodexOAuth } from "./openai-codex-oauth.js";
 
-function createPrompter() {
-  const spin = { update: vi.fn(), stop: vi.fn() };
-  const prompter: Pick<WizardPrompter, "note" | "progress"> = {
-    note: vi.fn(async () => {}),
-    progress: vi.fn(() => spin),
-  };
-  return { prompter: prompter as unknown as WizardPrompter, spin };
-}
-
-function createRuntime(): RuntimeEnv {
+let stateDir: string;
+beforeEach(async () => {
+  stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-login-test-"));
+  vi.clearAllMocks();
+});
+afterEach(async () => {
+  await fs.rm(stateDir, { recursive: true });
+});
+function options(openUrl: (url: string) => Promise<void>, signal?: AbortSignal) {
   return {
-    log: vi.fn(),
-    error: vi.fn(),
-    exit: vi.fn((code: number) => {
-      throw new Error(`exit:${code}`);
-    }),
+    stateDir,
+    isRemote: false,
+    openUrl,
+    runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() } as unknown as RuntimeEnv,
+    prompter: {
+      signal,
+      progress: () => ({ update: vi.fn(), stop: vi.fn() }),
+    } as unknown as WizardPrompter,
   };
 }
+function resultUrl(url: string, state?: string) {
+  const auth = new URL(url);
+  const callback = new URL(auth.searchParams.get("redirect_uri")!);
+  callback.searchParams.set("state", state ?? auth.searchParams.get("state")!);
+  callback.searchParams.set("code", "local-test-code");
+  callback.searchParams.set("client_id", "oaiapp_test");
+  return callback;
+}
 
-describe("loginOpenAICodexOAuth", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe("ChatGPT local callback lifetime", () => {
+  it("starts a private available-port listener before opening the browser and exchanges once", async () => {
+    mocks.exchange.mockResolvedValue({ chatgptPlan: true, access: "test-token" });
+    let callback: URL | undefined;
+    const params = options(async (url) => {
+      callback = resultUrl(url);
+      const first = await fetch(callback);
+      expect(first.status).toBe(200);
+      expect(await first.text()).not.toContain("local-test-code");
+      expect((await fetch(callback)).status).toBe(410);
+    });
+    expect(await loginOpenAICodexOAuth(params)).toMatchObject({ chatgptPlan: true });
+    expect(mocks.exchange).toHaveBeenCalledTimes(1);
+    expect(params.runtime.log).not.toHaveBeenCalled();
+    await expect(fetch(callback!)).rejects.toThrow();
   });
-
-  it("returns credentials on successful oauth login", async () => {
-    const creds = {
-      provider: "openai-codex" as const,
-      access: "access-token",
-      refresh: "refresh-token",
-      expires: Date.now() + 60_000,
-      email: "user@example.com",
-    };
-    mocks.createVpsAwareOAuthHandlers.mockReturnValue({
-      onAuth: vi.fn(),
-      onPrompt: vi.fn(),
-    });
-    mocks.loginOpenAICodex.mockResolvedValue(creds);
-
-    const { prompter, spin } = createPrompter();
-    const runtime = createRuntime();
-    const result = await loginOpenAICodexOAuth({
-      prompter,
-      runtime,
-      isRemote: false,
-      openUrl: async () => {},
-    });
-
-    expect(result).toEqual(creds);
-    expect(mocks.loginOpenAICodex).toHaveBeenCalledOnce();
-    expect(spin.stop).toHaveBeenCalledWith("OpenAI OAuth complete");
-    expect(runtime.error).not.toHaveBeenCalled();
-  });
-
-  it("does not ask for manual OpenAI code input in local browser mode", async () => {
-    mocks.createVpsAwareOAuthHandlers.mockReturnValue({
-      onAuth: vi.fn(),
-      onPrompt: vi.fn(async () => "manual-code"),
-    });
-    mocks.loginOpenAICodex.mockImplementationOnce(async (options) => {
-      await expect(
-        options.onPrompt({ message: "Paste the authorization code (or full redirect URL):" }),
-      ).rejects.toThrow("OpenAI sign-in did not complete through the localhost callback");
-      return null;
-    });
-
-    const { prompter } = createPrompter();
-    const runtime = createRuntime();
-    const result = await loginOpenAICodexOAuth({
-      prompter,
-      runtime,
-      isRemote: false,
-      openUrl: async () => {},
-    });
-
-    expect(result).toBeNull();
-    expect(
-      mocks.createVpsAwareOAuthHandlers.mock.results[0]?.value.onPrompt,
-    ).not.toHaveBeenCalled();
-  });
-
-  it("keeps manual OpenAI code fallback in remote mode", async () => {
-    const creds = {
-      provider: "openai-codex" as const,
-      access: "access-token",
-      refresh: "refresh-token",
-      expires: Date.now() + 60_000,
-      email: "user@example.com",
-    };
-    const onPrompt = vi.fn(async () => "manual-code");
-    mocks.createVpsAwareOAuthHandlers.mockReturnValue({
-      onAuth: vi.fn(),
-      onPrompt,
-    });
-    mocks.loginOpenAICodex.mockImplementationOnce(async (options) => {
-      const code = await options.onPrompt({
-        message: "Paste the authorization code (or full redirect URL):",
-      });
-      expect(code).toBe("manual-code");
-      return creds;
-    });
-
-    const { prompter } = createPrompter();
-    const runtime = createRuntime();
-    const result = await loginOpenAICodexOAuth({
-      prompter,
-      runtime,
-      isRemote: true,
-      openUrl: async () => {},
-    });
-
-    expect(result).toEqual(creds);
-    expect(onPrompt).toHaveBeenCalledOnce();
-  });
-
-  it("reports oauth errors and rethrows", async () => {
-    mocks.createVpsAwareOAuthHandlers.mockReturnValue({
-      onAuth: vi.fn(),
-      onPrompt: vi.fn(),
-    });
-    mocks.loginOpenAICodex.mockRejectedValue(new Error("oauth failed"));
-
-    const { prompter, spin } = createPrompter();
-    const runtime = createRuntime();
-    await expect(
-      loginOpenAICodexOAuth({
-        prompter,
-        runtime,
-        isRemote: true,
-        openUrl: async () => {},
+  it("rejects a stale callback without consuming the current attempt", async () => {
+    mocks.exchange.mockResolvedValue({ chatgptPlan: true });
+    await loginOpenAICodexOAuth(
+      options(async (url) => {
+        expect((await fetch(resultUrl(url, "stale"))).status).toBe(400);
+        expect((await fetch(resultUrl(url))).status).toBe(200);
       }),
-    ).rejects.toThrow("oauth failed");
-
-    expect(spin.stop).toHaveBeenCalledWith("OpenAI OAuth failed");
-    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("oauth failed"));
-    expect(prompter.note).toHaveBeenCalledWith(
-      "Trouble with OAuth? See https://docs.fased.ai/start/faq",
-      "OAuth help",
     );
+    expect(mocks.exchange).toHaveBeenCalledTimes(1);
+  });
+  it("cancels a waiting browser flow and closes its listener", async () => {
+    const controller = new AbortController();
+    let callback: URL | undefined;
+    const params = options(async (url) => {
+      callback = resultUrl(url);
+      controller.abort();
+    }, controller.signal);
+    await expect(loginOpenAICodexOAuth(params)).rejects.toThrow("wizard cancelled");
+    expect(mocks.exchange).not.toHaveBeenCalled();
+    await expect(fetch(callback!)).rejects.toThrow();
+  });
+  it("cleans up a failed browser opening without exchanging", async () => {
+    await expect(
+      loginOpenAICodexOAuth(
+        options(async () => {
+          throw new Error("browser unavailable");
+        }),
+      ),
+    ).rejects.toThrow("browser unavailable");
+    expect(mocks.exchange).not.toHaveBeenCalled();
+  });
+  it("expires an unanswered attempt without exchanging", async () => {
+    await expect(
+      loginOpenAICodexOAuth({ ...options(async () => {}), timeoutMs: 10 }),
+    ).rejects.toThrow("expired");
+    expect(mocks.exchange).not.toHaveBeenCalled();
+  });
+  it("does not start server-local authentication for a remote owner's browser", async () => {
+    const params = { ...options(vi.fn()), isRemote: true };
+    await expect(loginOpenAICodexOAuth(params)).rejects.toThrow("local browser");
+    expect(params.openUrl).not.toHaveBeenCalled();
   });
 });

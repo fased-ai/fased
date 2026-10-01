@@ -13,6 +13,7 @@ import {
 } from "@mariozechner/pi-ai";
 import { resolveFasedAgentPackageRootSync } from "../infra/fased-root.js";
 import { resolvePluginInstallDir } from "../plugins/install.js";
+import { VERSION } from "../version.js";
 
 export const OPENAI_CODEX_APP_SERVER_VERSION = "0.144.1";
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
@@ -269,7 +270,7 @@ async function initializeClient(client: CodexAppServerClient, token: string): Pr
     clientInfo: {
       name: "fased",
       title: "Fased Agent",
-      version: OPENAI_CODEX_APP_SERVER_VERSION,
+      version: VERSION,
     },
     capabilities: { experimentalApi: true },
   });

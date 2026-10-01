@@ -52,6 +52,9 @@ function formatWizardSessionError(err: unknown): string {
 }
 
 class WizardSessionPrompter implements WizardPrompter {
+  get signal(): AbortSignal {
+    return this.session.signal;
+  }
   constructor(private session: WizardSession) {}
 
   async intro(title: string): Promise<void> {
@@ -197,6 +200,10 @@ class WizardSessionPrompter implements WizardPrompter {
 }
 
 export class WizardSession {
+  private abortController = new AbortController();
+  get signal(): AbortSignal {
+    return this.abortController.signal;
+  }
   private currentStep: WizardStep | null = null;
   private stepDeferred: Deferred<WizardStep | null> | null = null;
   private answerDeferred = new Map<string, Deferred<unknown>>();
@@ -240,6 +247,7 @@ export class WizardSession {
       return;
     }
     this.status = "cancelled";
+    this.abortController.abort();
     this.error = "cancelled";
     this.currentStep = null;
     for (const [, deferred] of this.answerDeferred) {
@@ -257,7 +265,9 @@ export class WizardSession {
   private async run(prompter: WizardPrompter) {
     try {
       await this.runner(prompter);
-      this.status = "done";
+      if (this.status === "running") {
+        this.status = "done";
+      }
     } catch (err) {
       if (err instanceof WizardCancelledError) {
         this.status = "cancelled";

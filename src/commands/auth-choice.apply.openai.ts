@@ -1,4 +1,10 @@
+import {
+  ensureAuthProfileStore,
+  listProfilesForProvider,
+  setAuthProfileOrder,
+} from "../agents/auth-profiles.js";
 import { ensureOpenAICodexRuntimeComponent } from "../agents/openai-codex-runtime-component.js";
+import { isChatGptPlanCredential } from "../providers/chatgpt-plan-auth.js";
 import { normalizeApiKeyInput, validateApiKeyInput } from "./auth-choice.api-key.js";
 import {
   createAuthChoiceAgentModelNoter,
@@ -82,40 +88,73 @@ export async function applyAuthChoiceOpenAI(
     let nextConfig = params.config;
     let agentModelOverride: string | undefined;
 
-    let creds;
-    try {
-      creds = await loginOpenAICodexOAuth({
-        prompter: params.prompter,
-        runtime: params.runtime,
-        isRemote: params.oauthBrowserMode === "local" ? false : isRemoteEnvironment(),
-        openUrl: params.openUrl ?? openOAuthUrl,
-        localBrowserMessage: "Complete sign-in in browser…",
-      });
-    } catch {
-      // The helper already surfaces the error to the user.
-      // Keep onboarding flow alive and return unchanged config.
-      return { config: nextConfig, agentModelOverride };
-    }
+    const store = ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false });
+    const registrations = listProfilesForProvider(store, "openai-codex").flatMap((profileId) => {
+      const credential = store.profiles[profileId];
+      return credential?.type === "oauth" && isChatGptPlanCredential(credential)
+        ? [{ profileId, credential }]
+        : [];
+    });
+    const selected = registrations.length
+      ? await params.prompter.select({
+          message: "Choose a ChatGPT account",
+          options: [
+            ...registrations.map(({ profileId, credential }) => ({
+              value: profileId,
+              label: `${credential.email ?? "ChatGPT account"} · ${profileId.slice(-6)}`,
+            })),
+            { value: "new", label: "Add another ChatGPT account" },
+          ],
+        })
+      : "new";
+    const existing = registrations.find(
+      (registration) => registration.profileId === selected,
+    )?.credential;
+    const creds = await loginOpenAICodexOAuth({
+      prompter: params.prompter,
+      existing,
+      runtime: params.runtime,
+      isRemote: params.oauthBrowserMode === "local" ? false : isRemoteEnvironment(),
+      openUrl: params.openUrl ?? openOAuthUrl,
+      localBrowserMessage: "Complete sign-in in browser…",
+    });
     if (creds) {
-      const runtimeComponent = await ensureOpenAICodexRuntimeComponent({ config: nextConfig });
-      nextConfig = runtimeComponent.config;
-      for (const warning of runtimeComponent.slotWarnings) {
-        await params.prompter.note(warning, "OpenAI runtime warning");
-      }
-      if (runtimeComponent.installed) {
-        await params.prompter.note(
-          "Installed the managed OpenAI sign-in runtime for authenticated model discovery and execution.",
-          "OpenAI runtime ready",
-        );
+      if (!isChatGptPlanCredential(creds)) {
+        const runtimeComponent = await ensureOpenAICodexRuntimeComponent({ config: nextConfig });
+        nextConfig = runtimeComponent.config;
+        for (const warning of runtimeComponent.slotWarnings) {
+          await params.prompter.note(warning, "OpenAI runtime warning");
+        }
+        if (runtimeComponent.installed) {
+          await params.prompter.note(
+            "Installed the managed OpenAI sign-in runtime for authenticated model discovery and execution.",
+            "OpenAI runtime ready",
+          );
+        }
       }
       const profileId = await writeOAuthCredentials("openai-codex", creds, params.agentDir, {
-        syncSiblingAgents: true,
+        syncSiblingAgents: !isChatGptPlanCredential(creds),
       });
       nextConfig = applyAuthProfileConfig(nextConfig, {
         profileId,
         provider: "openai-codex",
         mode: "oauth",
       });
+      if (isChatGptPlanCredential(creds)) {
+        await setAuthProfileOrder({
+          agentDir: params.agentDir,
+          provider: "openai-codex",
+          order: [profileId],
+        });
+        nextConfig = {
+          ...nextConfig,
+          auth: {
+            ...nextConfig.auth,
+            order: { ...nextConfig.auth?.order, "openai-codex": [profileId] },
+          },
+        };
+      }
+
       const discoveredModel = await discoverOpenAICodexDefaultModel({
         config: nextConfig,
         agentDir: params.agentDir,

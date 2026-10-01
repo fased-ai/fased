@@ -245,6 +245,21 @@ describe("failover-error", () => {
     ).toBe("billing");
   });
 
+  it("requires a structured insufficient_quota code under HTTP 400", () => {
+    expect(resolveFailoverReasonFromError({ status: 400, code: "insufficient_quota" })).toBe(
+      "billing",
+    );
+    expect(
+      resolveFailoverReasonFromError({
+        status: 400,
+        message: JSON.stringify({ error: { code: "insufficient_quota" } }),
+      }),
+    ).toBe("billing");
+    expect(
+      resolveFailoverReasonFromError({ status: 400, message: "invalid field insufficient_quota" }),
+    ).toBe("format");
+  });
+
   it("lets structured HTTP 400 payloads reuse provider-specific message classification", () => {
     expect(
       resolveFailoverReasonFromError({

@@ -39,6 +39,12 @@ export type ModelThinkingCapability = {
 };
 
 export const XHIGH_MODEL_REFS = [
+  "openai/gpt-6.1-sol",
+  "openai/gpt-6-astra",
+  "openai/gpt-6-luna",
+  "openai-codex/gpt-6.1-sol",
+  "openai-codex/gpt-6-astra",
+  "openai-codex/gpt-6-luna",
   "openai/gpt-5.6",
   "openai/gpt-5.6-terra",
   "openai/gpt-5.6-luna",
@@ -67,6 +73,12 @@ const XHIGH_MODEL_IDS = new Set(
 );
 const MAX_MODEL_REFS = new Set(
   [
+    "openai/gpt-6.1-sol",
+    "openai/gpt-6-astra",
+    "openai/gpt-6-luna",
+    "openai-codex/gpt-6.1-sol",
+    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-6-luna",
     "openai/gpt-5.6",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.6-terra",
@@ -76,7 +88,15 @@ const MAX_MODEL_REFS = new Set(
     "openai-codex/gpt-5.6-luna",
   ].map((entry) => entry.toLowerCase()),
 );
-const MAX_MODEL_IDS = new Set(["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+const MAX_MODEL_IDS = new Set([
+  "gpt-6.1-sol",
+  "gpt-6-astra",
+  "gpt-6-luna",
+  "gpt-5.6",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+]);
 
 function normalizeProviderId(provider?: string | null): string {
   if (!provider) {
@@ -194,6 +214,7 @@ function isAnthropicAdaptiveModel(model?: string | null): boolean {
   const modelId = model?.trim().toLowerCase() ?? "";
   return (
     modelId.includes("fable-5") ||
+    modelId.includes("opus-5") ||
     modelId.includes("opus-4-8") ||
     modelId.includes("opus-4.8") ||
     modelId.includes("opus-4-6") ||
@@ -256,7 +277,7 @@ function canInferReasoningFromProviderModel(provider?: string | null, model?: st
     normalizedProvider === "github-copilot" ||
     normalizedProvider === "copilot-proxy"
   ) {
-    return /^gpt-5(?:[.-]|$)/.test(modelId);
+    return /^gpt-[56](?:[.-]|$)/.test(modelId);
   }
   if (normalizedProvider === "anthropic") {
     return modelId.startsWith("claude-") || modelId.includes("claude-");
@@ -318,8 +339,19 @@ export function resolveModelThinkingCapability(params: {
   }
 
   const fallback = resolveFallbackThinkingMode(params.provider, params.model);
-  const fallbackLevels =
-    fallback.thinkingMode === "zai-binary"
+  const currentOpenAI =
+    ["openai", "openai-codex"].includes(normalizeProviderId(params.provider)) &&
+    ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"].includes(params.model?.trim().toLowerCase() ?? "");
+  const fallbackLevels = currentOpenAI
+    ? ([
+        ...(params.model === "gpt-6-luna" ? ["off" as const] : []),
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ] satisfies ModelThinkingLevel[])
+    : fallback.thinkingMode === "zai-binary"
       ? (["off", "low"] satisfies ModelThinkingLevel[])
       : listGenericThinkingLevels(params.provider, params.model);
   const thinkingLevels = explicitLevels.length > 0 ? explicitLevels : fallbackLevels;

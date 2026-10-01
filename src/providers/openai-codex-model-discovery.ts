@@ -1,4 +1,4 @@
-import { listProfilesForProvider, resolveApiKeyForProfile } from "../agents/auth-profiles.js";
+import { resolveAuthProfileOrder, resolveApiKeyForProfile } from "../agents/auth-profiles.js";
 import type { AuthProfileStore } from "../agents/auth-profiles.js";
 import {
   listOpenAICodexAppServerModels,
@@ -9,6 +9,7 @@ import { writeConfigFile } from "../config/config.js";
 import type { FasedAgentConfig } from "../config/types.js";
 import type { ModelCapabilityConfig } from "../config/types.models.js";
 import { normalizeThinkLevel } from "../shared/model-thinking.js";
+import { isChatGptPlanCredential } from "./chatgpt-plan-auth.js";
 import type { ProviderRefreshModelSnapshot } from "./refresh.js";
 
 const OPENAI_CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models";
@@ -176,7 +177,11 @@ export async function discoverOpenAICodexModels(params: {
   listAppServerModels?: typeof listOpenAICodexAppServerModels;
   ensureRuntime?: typeof ensureOpenAICodexRuntimeComponent;
 }): Promise<ProviderRefreshModelSnapshot[]> {
-  const profileId = listProfilesForProvider(params.store, OPENAI_CODEX_ROUTE)[0];
+  const profileId = resolveAuthProfileOrder({
+    cfg: params.cfg,
+    store: params.store,
+    provider: OPENAI_CODEX_ROUTE,
+  })[0];
   if (!profileId) {
     return [];
   }
@@ -188,6 +193,22 @@ export async function discoverOpenAICodexModels(params: {
   });
   if (!resolved?.apiKey) {
     return [];
+  }
+  const credential = params.store.profiles[profileId];
+  if (credential?.type === "oauth" && isChatGptPlanCredential(credential)) {
+    const response = await (params.fetchImpl ?? fetch)("https://api.openai.com/v1/models", {
+      headers: { authorization: `Bearer ${resolved.apiKey}`, accept: "application/json" },
+      redirect: "error",
+      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`ChatGPT plan model discovery failed (${response.status})`);
+    }
+    return parseModels(await response.json()).map((model) => ({
+      ...model,
+      responsesLite: false,
+      source: "chatgpt-plan-account",
+    }));
   }
   const accountId = extractChatGptAccountId(resolved.apiKey);
   if (!accountId) {

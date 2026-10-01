@@ -61,6 +61,7 @@ import { runCronTaskCoordinationNode } from "../task-coordination.js";
 import { buildCheapCheckInstruction, buildEscalationInstruction } from "../task-evaluator.js";
 import {
   plannerStrategyModelRole,
+  resolveTaskFallbacks,
   resolveTaskModelRole,
   type CronTaskModelRoleSelection,
 } from "../task-model-roles.js";
@@ -299,14 +300,6 @@ function buildSourceConflictReviewInstruction(signal: SourceVerificationSignal |
     `Source verification found conflicting evidence${issueCount ? ` (${issueCount} issue${issueCount === 1 ? "" : "s"})` : ""}.`,
     "Treat this as a review/escalation pass: compare the gathered sources explicitly, explain which source appears more reliable, call out uncertainty, and avoid presenting one side as settled fact.",
   ].join(" ");
-}
-
-function resolveTaskFallbacks(params: { job: CronJob; agentFallbacks?: string[] }) {
-  const escalationModel = params.job.executionPolicy?.modelPolicy?.escalationModel?.trim();
-  if (!escalationModel) {
-    return params.agentFallbacks;
-  }
-  return [escalationModel, ...(params.agentFallbacks ?? [])];
 }
 
 function resolveTaskSkillFilterOverride(job: CronJob): string[] | undefined {
@@ -1187,10 +1180,6 @@ export async function runCronIsolatedAgentTurn(params: {
     sourceConflictEscalationModel ||
     modelOverrideResult.model?.trim() ||
     requestedRoleSelection?.model;
-  const modelOverrideSource =
-    pendingEscalationModel || sourceConflictEscalationModel || requestedRoleSelection
-      ? "policy"
-      : modelOverrideResult.source;
   const modelOverrideSourceLabel =
     pendingEscalationModel || sourceConflictEscalationModel
       ? taskEscalationModel
@@ -1214,36 +1203,17 @@ export async function runCronIsolatedAgentTurn(params: {
       defaultModel: resolvedDefault.model,
     });
     if ("error" in resolvedOverride) {
-      if (modelOverrideSource === "policy") {
-        return {
-          status: "error",
-          error: resolvedOverride.error,
-          policy: resolveTaskPolicyTelemetry(
-            params.job,
-            effectiveExecutionModeForPolicy,
-            sourceVerification,
-            sourceQuality,
-            coordinationTelemetry,
-          ),
-        };
-      }
-      if (resolvedOverride.error.startsWith("model not allowed:")) {
-        logWarn(
-          `cron: payload.model '${modelOverride}' not allowed, falling back to agent defaults`,
-        );
-      } else {
-        return {
-          status: "error",
-          error: resolvedOverride.error,
-          policy: resolveTaskPolicyTelemetry(
-            params.job,
-            effectiveExecutionModeForPolicy,
-            sourceVerification,
-            sourceQuality,
-            coordinationTelemetry,
-          ),
-        };
-      }
+      return {
+        status: "error",
+        error: resolvedOverride.error,
+        policy: resolveTaskPolicyTelemetry(
+          params.job,
+          effectiveExecutionModeForPolicy,
+          sourceVerification,
+          sourceQuality,
+          coordinationTelemetry,
+        ),
+      };
     } else {
       provider = resolvedOverride.ref.provider;
       model = resolvedOverride.ref.model;
@@ -1749,14 +1719,18 @@ export async function runCronIsolatedAgentTurn(params: {
     });
     const messageChannel = resolvedDelivery.channel;
     const agentFallbacks = resolveAgentModelFallbacksOverride(params.cfg, agentId);
-    const fallbacksOverride = resolveTaskFallbacks({ job: params.job, agentFallbacks });
+    const fallbacksOverride = resolveTaskFallbacks({
+      job: params.job,
+      agentFallbacks,
+      hasModelPin: Boolean(modelOverride || cronSession.sessionEntry.modelOverride?.trim()),
+    });
     const fallbackResult = await runWithModelFallback({
       cfg: cfgWithAgentDefaults,
       provider,
       model,
       agentDir,
       fallbacksOverride,
-      run: (providerOverride, modelOverride) => {
+      run: (providerOverride, modelOverride, fallbackOptions) => {
         if (abortSignal?.aborted) {
           throw new Error(abortReason());
         }
@@ -1779,6 +1753,7 @@ export async function runCronIsolatedAgentTurn(params: {
           });
         }
         return runEmbeddedPiAgent({
+          ...fallbackOptions,
           sessionId: cronSession.sessionEntry.sessionId,
           sessionKey: agentSessionKey,
           agentId,

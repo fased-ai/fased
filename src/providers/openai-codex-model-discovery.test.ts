@@ -174,3 +174,41 @@ describe("OpenAI ChatGPT account model discovery", () => {
     ]);
   });
 });
+
+it("discovers a Fased plan registration through public account models without acquiring Codex", async () => {
+  const store: AuthProfileStore = {
+    version: 1,
+    profiles: {
+      "openai-codex:plan-test": {
+        type: "oauth",
+        provider: "openai-codex",
+        chatgptPlan: true,
+        clientId: "oaiapp_test",
+        subject: "owner",
+        hostId: "test-host",
+        idToken: "test-id",
+        scopes: ["chatgpt.tokens.use.direct"],
+        access: "opaque-plan-token",
+        refresh: "test-refresh",
+        expires: Date.now() + 3600000,
+      },
+    },
+  };
+  const request = vi.fn<typeof fetch>(async () =>
+    Response.json({ models: [{ slug: "gpt-test", visibility: "list", use_responses_lite: true }] }),
+  );
+  const ensureRuntime = vi.fn();
+  const result = await discoverOpenAICodexModels({
+    cfg: {},
+    store,
+    fetchImpl: request,
+    ensureRuntime,
+  });
+  expect(request.mock.calls[0][0]).toBe("https://api.openai.com/v1/models");
+  expect(result[0]).toMatchObject({
+    id: "gpt-test",
+    responsesLite: false,
+    source: "chatgpt-plan-account",
+  });
+  expect(ensureRuntime).not.toHaveBeenCalled();
+});
