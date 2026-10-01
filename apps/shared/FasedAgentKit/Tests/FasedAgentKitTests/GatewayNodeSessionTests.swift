@@ -141,6 +141,7 @@ private final class FakeGatewayWebSocketTask: WebSocketTasking, @unchecked Senda
               "stateVersion": { "presence": 0, "health": 0 },
               "uptimeMs": 0
             },
+            "auth": { "role": "node", "scopes": [] },
             "policy": { "maxPayload": 1, "maxBufferedBytes": 1, "tickIntervalMs": 30000 }
           }
         }
