@@ -5,6 +5,7 @@ import { formatAgentDisplayLabel, formatAgentDisplayName } from "./agent-display
 import { refreshChatAvatar } from "./app-chat.ts";
 import { loadProviderModelCatalog, syncUrlWithSessionKey } from "./app-settings.ts";
 import type { AppViewState } from "./app-view-state.ts";
+import { buildChatModelOption } from "./chat-model-ref.ts";
 import { createChatModelOverride } from "./chat-model-ref.ts";
 import {
   resolveChatModelOverrideValue,
@@ -859,6 +860,10 @@ async function resetCurrentChatSession(state: AppViewState) {
       await state.client.request("sessions.patch", {
         key: nextSessionKey,
         model: currentOverride,
+        authProfileId:
+          state.chatModelCatalog?.find(
+            (entry) => `${entry.provider}/${entry.id}` === currentOverride,
+          )?.metadata?.accountProfileId ?? null,
       });
     }
     await Promise.all([
@@ -1507,6 +1512,10 @@ async function switchChatModel(state: AppViewState, nextModel: string) {
       await state.client!.request("sessions.patch", {
         key: targetSessionKey,
         model: nextModel || null,
+        authProfileId: nextModel
+          ? (state.chatModelCatalog.find((entry) => buildChatModelOption(entry).value === nextModel)
+              ?.metadata?.accountProfileId ?? null)
+          : null,
       });
       void refreshVisibleToolsEffectiveForCurrentSession(state);
       await refreshSessionOptions(state);

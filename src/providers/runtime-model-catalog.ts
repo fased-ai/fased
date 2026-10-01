@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { resolveAuthProfileOrder } from "../agents/auth-profiles.js";
 import type { AuthProfileStore } from "../agents/auth-profiles.js";
 import { buildModelCatalogMergeKey } from "../agents/model-catalog-normalized.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
@@ -23,13 +24,17 @@ import { getProviderBrandManifestForRoute, type ProviderAuthMethodManifest } fro
 
 const DISCOVERY_TTL_MS = 5 * 60_000;
 
-type RuntimeDiscoveryCache = {
+type RuntimeDiscoveryCache<T = ProviderRefreshSnapshot> = {
   key: string;
   expiresAt: number;
-  value: Promise<ProviderRefreshSnapshot>;
+  pending: boolean;
+  value: Promise<T>;
 };
 
+const discoveryTimes = new WeakMap<object, string>();
 let cache: RuntimeDiscoveryCache | null = null;
+let interactiveCache: RuntimeDiscoveryCache<Map<string, ProviderRefreshModelSnapshot[]>> | null =
+  null;
 
 const SPECIALIZED_DISCOVERY_ROUTES = new Set(["openai-codex", "github-copilot"]);
 
@@ -96,6 +101,7 @@ function credentialRoutesForProvider(
 
 export function resetRuntimeProviderModelCatalogCache(): void {
   cache = null;
+  interactiveCache = null;
 }
 
 function discoveryKey(params: {
@@ -111,30 +117,58 @@ function discoveryKey(params: {
   const credentialIdentity = createHash("sha256")
     .update(JSON.stringify(params.store.profiles ?? {}))
     .digest("hex");
-  return JSON.stringify({ endpoints, credentialIdentity });
+  return JSON.stringify({
+    selectedProfiles: routes.map(
+      (provider) => resolveAuthProfileOrder({ cfg: params.cfg, store: params.store, provider })[0],
+    ),
+    endpoints,
+    credentialIdentity,
+    configOrder: params.cfg.auth?.order,
+    storeOrder: params.store.order,
+  });
 }
 
 async function loadSnapshot(params: {
   routes: Iterable<string>;
   cfg: FasedAgentConfig;
   store: AuthProfileStore;
+  forceRefresh?: boolean;
 }): Promise<ProviderRefreshSnapshot> {
   const key = discoveryKey(params);
   const now = Date.now();
-  if (cache?.key === key && cache.expiresAt > now) {
+  if (cache?.key === key && (cache.pending || (!params.forceRefresh && cache.expiresAt > now))) {
     return await cache.value;
   }
   const value = fetchProviderRefreshSnapshotForRoutes({
     routes: params.routes,
     env: buildProviderRefreshEnvFromCredentials({
       env: process.env,
-      authStores: [params.store],
+      authStores: [
+        {
+          ...params.store,
+          profiles: Object.fromEntries(
+            [...params.routes].flatMap((provider) => {
+              const profileId = resolveAuthProfileOrder({
+                cfg: params.cfg,
+                store: params.store,
+                provider,
+              })[0];
+              return profileId ? [[profileId, params.store.profiles[profileId]]] : [];
+            }),
+          ),
+        },
+      ],
       modelProviders: params.cfg.models?.providers,
     }),
   });
-  cache = { key, expiresAt: now + DISCOVERY_TTL_MS, value };
+  cache = { key, expiresAt: now + DISCOVERY_TTL_MS, pending: true, value };
   try {
-    return await value;
+    const result = await value;
+    discoveryTimes.set(result, new Date().toISOString());
+    if (cache?.value === value) {
+      cache.pending = false;
+    }
+    return result;
   } catch (error) {
     if (cache?.value === value) {
       cache = null;
@@ -143,7 +177,7 @@ async function loadSnapshot(params: {
   }
 }
 
-async function discoverInteractiveRoutes(params: {
+async function fetchInteractiveRoutes(params: {
   routes: Set<string>;
   cfg: FasedAgentConfig;
   store: AuthProfileStore;
@@ -171,6 +205,40 @@ async function discoverInteractiveRoutes(params: {
     );
   }
   return discovered;
+}
+
+async function discoverInteractiveRoutes(params: {
+  routes: Set<string>;
+  cfg: FasedAgentConfig;
+  store: AuthProfileStore;
+  agentDir?: string;
+  forceRefresh?: boolean;
+}): Promise<Map<string, ProviderRefreshModelSnapshot[]>> {
+  if (params.routes.size === 0) {
+    return new Map();
+  }
+  const key = `${discoveryKey(params)}:${params.agentDir ?? ""}`;
+  if (
+    interactiveCache?.key === key &&
+    (interactiveCache.pending || (!params.forceRefresh && interactiveCache.expiresAt > Date.now()))
+  ) {
+    return await interactiveCache.value;
+  }
+  const value = fetchInteractiveRoutes(params);
+  interactiveCache = { key, pending: true, expiresAt: Date.now() + DISCOVERY_TTL_MS, value };
+  try {
+    const result = await value;
+    discoveryTimes.set(result, new Date().toISOString());
+    if (interactiveCache?.value === value) {
+      interactiveCache.pending = false;
+    }
+    return result;
+  } catch (error) {
+    if (interactiveCache?.value === value) {
+      interactiveCache = null;
+    }
+    throw error;
+  }
 }
 
 function snapshotCapabilities(model: ProviderRefreshModelSnapshot): ModelCapabilityConfig {
@@ -295,6 +363,7 @@ export async function applyRuntimeProviderModelDiscovery(params: {
   routes: Iterable<string>;
   catalog: ModelCatalogEntry[];
   agentDir?: string;
+  forceRefresh?: boolean;
 }): Promise<ModelCatalogEntry[]> {
   const requestedRoutes = new Set(
     [...params.routes].map((route) => route.trim().toLowerCase()).filter(Boolean),
@@ -307,11 +376,15 @@ export async function applyRuntimeProviderModelDiscovery(params: {
   );
   const providerApiRoutes = [...requestedRoutes].filter((route) => !specializedRoutes.has(route));
   const interactiveRoutes = await discoverInteractiveRoutes({
-    routes: requestedRoutes,
+    routes: specializedRoutes,
+    forceRefresh: params.forceRefresh,
     cfg: params.cfg,
     store: params.store,
     agentDir: params.agentDir,
   }).catch(() => new Map<string, ProviderRefreshModelSnapshot[]>());
+  const retrievedTimes = new Map(
+    [...interactiveRoutes.keys()].map((route) => [route, discoveryTimes.get(interactiveRoutes)]),
+  );
   let discoveredRoutes = new Map<string, ProviderRefreshModelSnapshot[]>(interactiveRoutes);
   if (providerApiRoutes.length > 0) {
     try {
@@ -319,12 +392,14 @@ export async function applyRuntimeProviderModelDiscovery(params: {
         ...params,
         routes: providerApiRoutes,
       });
+      for (const route of snapshotRoutes(snapshot).keys()) {
+        retrievedTimes.set(route, discoveryTimes.get(snapshot));
+      }
       discoveredRoutes = new Map([...discoveredRoutes, ...snapshotRoutes(snapshot)]);
     } catch {
       // Authenticated route discovery remains usable when another provider is offline.
     }
   }
-  const retrievedAt = new Date().toISOString();
   const authoritativeRoutes = new Set(
     [...discoveredRoutes.keys()].filter((route) => requestedRoutes.has(route)),
   );
@@ -344,7 +419,7 @@ export async function applyRuntimeProviderModelDiscovery(params: {
       catalog: params.catalog,
       cfg: params.cfg,
       store: params.store,
-      retrievedAt,
+      retrievedAt: retrievedTimes.get(route) ?? new Date().toISOString(),
     }),
   );
   return [...retained, ...discovered].toSorted(

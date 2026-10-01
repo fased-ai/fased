@@ -129,7 +129,9 @@ const resolveAuthStorePathForDisplay = vi.hoisted(() => vi.fn(() => "~/.fased/au
 const resolveProfileUnusableUntilForDisplay = vi.hoisted(() => vi.fn(() => NOW + 120_000));
 const listProvidersWithStoredCredentials = vi.hoisted(() => vi.fn(() => ["openai"]));
 
-vi.mock("../../agents/auth-profiles.js", () => ({
+vi.mock("../../agents/auth-profiles.js", async (importOriginal) => ({
+  resolveAuthProfileOrder: (await importOriginal<typeof import("../../agents/auth-profiles.js")>())
+    .resolveAuthProfileOrder,
   ensureAuthProfileStore,
   listProvidersWithStoredCredentials,
   resolveAuthStorePathForDisplay,
@@ -725,6 +727,19 @@ describe("models.auth.status handler", () => {
           },
         },
       ],
+    });
+  });
+
+  it("rejects a missing explicitly selected account", async () => {
+    const { respond, invoke } = createInvoke(
+      "models.list",
+      { profileId: "missing:account", refresh: true },
+      createContext(),
+    );
+    await invoke();
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(respond.mock.calls[0]?.[2]).toMatchObject({
+      message: "Selected account is unavailable.",
     });
   });
 
@@ -1558,8 +1573,8 @@ describe("models.auth.status handler", () => {
       }
     }
 
-    expect(resolveManifestInteractiveAuthChoice("anthropic", "setup-token")).toBe("setup-token");
-    expect(resolveManifestInteractiveAuthChoice("anthropic", "oauth")).toBe("anthropic-oauth");
+    expect(resolveManifestInteractiveAuthChoice("anthropic", "setup-token")).toBeNull();
+    expect(resolveManifestInteractiveAuthChoice("anthropic", "oauth")).toBeNull();
     expect(resolveManifestInteractiveAuthChoice("openai", "openai-api-key")).toBeNull();
     expect(resolveManifestInteractiveAuthChoice("openai", "anthropic-oauth")).toBeNull();
   });
@@ -1710,83 +1725,26 @@ describe("models.auth.status handler", () => {
     );
   });
 
-  it("starts manifest Anthropic OAuth sign-in from the provider UI", async () => {
-    resolvePluginProviders.mockReturnValue([]);
-    applyAuthChoice.mockImplementationOnce(async ({ config, openUrl }) => {
-      if (!openUrl) {
-        throw new Error("expected openUrl");
-      }
-      await openUrl("https://claude.ai/oauth/authorize");
-      return { config };
-    });
-    const context = createContext();
+  it("rejects retired Anthropic anthropic-oauth credential imports", async () => {
     const { respond, invoke } = createInvoke(
       "models.auth.interactive.start",
       { provider: "anthropic", methodId: "anthropic-oauth" },
-      context,
+      createContext(),
     );
-
     await invoke();
-
-    const call = respond.mock.calls[0] as RespondCall | undefined;
-    expect(call?.[0]).toBe(true);
-    expect(call?.[1]).toMatchObject({
-      done: false,
-      status: "running",
-      step: {
-        type: "note",
-        title: "Open sign-in URL",
-        message: "https://claude.ai/oauth/authorize",
-      },
-    });
-    expect(applyAuthChoice).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authChoice: "anthropic-oauth",
-        agentDir: "/tmp/agents/main/agent",
-        agentId: "main",
-        openUrl: expect.any(Function),
-        setDefaultModel: false,
-      }),
-    );
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(applyAuthChoice).not.toHaveBeenCalled();
   });
 
-  it("starts manifest Anthropic setup-token from the provider UI", async () => {
-    resolvePluginProviders.mockReturnValue([]);
-    applyAuthChoice.mockImplementationOnce(async ({ config, prompter }) => {
-      if (!prompter) {
-        throw new Error("expected prompter");
-      }
-      await prompter.note("Run `claude setup-token` in your terminal.", "Anthropic setup-token");
-      return { config };
-    });
-    const context = createContext();
+  it("rejects retired Anthropic token credential imports", async () => {
     const { respond, invoke } = createInvoke(
       "models.auth.interactive.start",
       { provider: "anthropic", methodId: "token" },
-      context,
+      createContext(),
     );
-
     await invoke();
-
-    const call = respond.mock.calls[0] as RespondCall | undefined;
-    expect(call?.[0]).toBe(true);
-    expect(call?.[1]).toMatchObject({
-      done: false,
-      status: "running",
-      step: {
-        type: "note",
-        title: "Anthropic setup-token",
-        message: "Run `claude setup-token` in your terminal.",
-      },
-    });
-    expect(applyAuthChoice).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authChoice: "token",
-        agentDir: "/tmp/agents/main/agent",
-        agentId: "main",
-        setDefaultModel: false,
-      }),
-    );
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(applyAuthChoice).not.toHaveBeenCalled();
   });
 
   it("starts manifest Chutes OAuth sign-in from the provider UI", async () => {
@@ -1905,6 +1863,16 @@ describe("models.auth.status handler", () => {
     ] as const;
 
     for (const item of cases) {
+      if (!resolveManifestInteractiveAuthChoice(item.provider, item.methodId)) {
+        const { respond, invoke } = createInvoke(
+          "models.auth.interactive.start",
+          { provider: item.provider, methodId: item.methodId },
+          createContext(),
+        );
+        await invoke();
+        expect(respond.mock.calls[0]?.[0]).toBe(false);
+        continue;
+      }
       resolvePluginProviders.mockReturnValue([]);
       applyAuthChoice.mockReset();
       applyAuthChoice.mockImplementationOnce(async ({ config, openUrl }) => {

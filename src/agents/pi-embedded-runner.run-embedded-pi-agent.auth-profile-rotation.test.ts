@@ -35,7 +35,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.useRealTimers();
-  runEmbeddedAttemptMock.mockClear();
+  runEmbeddedAttemptMock.mockReset();
 });
 
 const baseUsage = {
@@ -515,7 +515,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
     expect(usageStats["openai:p2"]?.lastUsed).toBe(2);
   });
 
-  it("ignores user-locked profile when provider mismatches", async () => {
+  it("rejects a user-locked profile when provider mismatches", async () => {
     await withAgentWorkspace(async ({ agentDir, workspaceDir }) => {
       await writeAuthStore(agentDir, { includeAnthropic: true });
 
@@ -529,23 +529,25 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         }),
       );
 
-      await runEmbeddedPiAgent({
-        sessionId: "session:test",
-        sessionKey: "agent:test:mismatch",
-        sessionFile: path.join(workspaceDir, "session.jsonl"),
-        workspaceDir,
-        agentDir,
-        config: makeConfig(),
-        prompt: "hello",
-        provider: "openai",
-        model: "mock-1",
-        authProfileId: "anthropic:default",
-        authProfileIdSource: "user",
-        timeoutMs: 5_000,
-        runId: "run:mismatch",
-      });
+      await expect(
+        runEmbeddedPiAgent({
+          sessionId: "session:test",
+          sessionKey: "agent:test:mismatch",
+          sessionFile: path.join(workspaceDir, "session.jsonl"),
+          workspaceDir,
+          agentDir,
+          config: makeConfig(),
+          prompt: "hello",
+          provider: "openai",
+          model: "mock-1",
+          authProfileId: "anthropic:default",
+          authProfileIdSource: "user",
+          timeoutMs: 5_000,
+          runId: "run:mismatch",
+        }),
+      ).rejects.toThrow("Pinned auth profile");
 
-      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(1);
+      expect(runEmbeddedAttemptMock).not.toHaveBeenCalled();
     });
   });
 

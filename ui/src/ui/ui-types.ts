@@ -47,6 +47,8 @@ export type CronFormState = {
   plannerStrategy: "" | "cheap-model" | "strong-model";
   modelRole: "" | "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
   policyModel: string;
+  policyProfileId?: string;
+  accountModelCatalog?: import("./types.ts").ModelCatalogEntry[];
   escalationModel: string;
   coordinationMode: "none" | "consult" | "parallel";
   coordinationAgents: string;

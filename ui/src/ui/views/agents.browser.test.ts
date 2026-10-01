@@ -886,7 +886,7 @@ describe("Agents assembly UI", () => {
     render(renderAgents(props), container);
 
     const modelsButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.includes("Models"),
+      (button) => button.textContent?.includes("Model settings"),
     );
     expect(modelsButton).toBeInstanceOf(HTMLButtonElement);
     modelsButton!.click();
@@ -901,7 +901,7 @@ describe("Agents assembly UI", () => {
     expect(
       dialog!.querySelector<HTMLSelectElement>('select[data-agent-model-provider-select="true"]'),
     ).toBeNull();
-    expect(dialog!.textContent).toContain("Primary");
+    expect(dialog!.textContent).toContain("Default model");
     expect(dialog!.textContent).toContain("Fallback");
     expect(dialog!.querySelector("details.chat-select__popover")).toBeInstanceOf(
       HTMLDetailsElement,
@@ -1007,7 +1007,7 @@ describe("Agents assembly UI", () => {
     render(renderAgents(props), container);
 
     const modelsButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.includes("Models"),
+      (button) => button.textContent?.includes("Model settings"),
     );
     modelsButton?.click();
     const dialog = container.querySelector<HTMLDialogElement>('[data-agent-model-dialog="true"]');
@@ -1086,7 +1086,7 @@ describe("Agents assembly UI", () => {
 
     expect(container.textContent).toContain("discovering models...");
     const modelsButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.includes("Models"),
+      (button) => button.textContent?.includes("Model settings"),
     );
     modelsButton?.click();
     const dialog = container.querySelector<HTMLDialogElement>('[data-agent-model-dialog="true"]');
@@ -1145,7 +1145,7 @@ describe("Agents assembly UI", () => {
     render(renderAgents(props), container);
 
     const modelsButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.includes("Models"),
+      (button) => button.textContent?.includes("Model settings"),
     );
     expect(modelsButton).toBeInstanceOf(HTMLButtonElement);
     modelsButton!.click();
@@ -1213,7 +1213,7 @@ describe("Agents assembly UI", () => {
     render(renderAgents(props), container);
 
     const modelsButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.includes("Models"),
+      (button) => button.textContent?.includes("Model settings"),
     );
     expect(modelsButton).toBeInstanceOf(HTMLButtonElement);
     modelsButton!.click();
@@ -3995,7 +3995,7 @@ describe("Agents assembly UI", () => {
       button!.click();
     };
 
-    container.querySelector<HTMLButtonElement>('button[aria-label="Models"]')?.click();
+    container.querySelector<HTMLButtonElement>('button[aria-label="Model settings"]')?.click();
     expect(
       container.querySelector<HTMLDialogElement>('[data-agent-model-dialog="true"]')?.open,
     ).toBe(true);

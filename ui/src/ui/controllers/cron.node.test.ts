@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CRON_FORM } from "../app-defaults.ts";
 import {
   addCronJob,
+  buildCronExecutionPolicy,
   loadCronModelSuggestions,
   type CronModelSuggestionsState,
   type CronState,
@@ -55,6 +56,20 @@ function createState(overrides: Partial<TestCronState> = {}): TestCronState {
 }
 
 describe("cron controller task creation", () => {
+  it("round trips an explicit account pin without serializing discovery UI state", () => {
+    const policy = buildCronExecutionPolicy({
+      ...DEFAULT_CRON_FORM,
+      policyModel: "openai-codex/account-model",
+      policyProfileId: "openai-codex:work",
+      accountModelCatalog: [],
+    });
+    expect(policy.modelPolicy).toMatchObject({
+      model: "openai-codex/account-model",
+      authProfileId: "openai-codex:work",
+    });
+    expect(JSON.stringify(policy)).not.toContain("accountModelCatalog");
+  });
+
   it("loads task suggestions from the shared authenticated model payload", async () => {
     const request = vi.fn(async () => ({
       models: [

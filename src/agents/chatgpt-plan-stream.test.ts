@@ -93,10 +93,12 @@ describe("ChatGPT plan Responses contract", () => {
           { headers: { "content-type": "text/event-stream" } },
         ),
     );
-    const output = await createChatGptPlanStream({ token: "selected-test-token", fetchImpl })(
-      model,
-      { messages: [{ role: "user", content: "Check WEN", timestamp: Date.now() }] },
-      { maxTokens: 100 },
+    const output = await (
+      await createChatGptPlanStream({ token: "selected-test-token", fetchImpl })(
+        model,
+        { messages: [{ role: "user", content: "Check WEN", timestamp: Date.now() }] },
+        { maxTokens: 100 },
+      )
     ).result();
     expect(output.stopReason).toBe("stop");
     expect(fetchImpl.mock.calls[0][0]).toBe("https://api.openai.com/v1/responses");
@@ -112,9 +114,11 @@ describe("ChatGPT plan Responses contract", () => {
           { headers: { "content-type": "text/event-stream" } },
         ),
     );
-    const result = await createChatGptPlanStream({ token: "test-token", fetchImpl })(model, {
-      messages: [],
-    }).result();
+    const result = await (
+      await createChatGptPlanStream({ token: "test-token", fetchImpl })(model, {
+        messages: [],
+      })
+    ).result();
     expect(result.stopReason).toBe("error");
     expect(result.errorMessage).toContain("subscription_sharing_usage_limit_exceeded");
     expect(fetchImpl).toHaveBeenCalledTimes(1);

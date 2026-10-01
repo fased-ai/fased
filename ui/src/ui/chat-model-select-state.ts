@@ -1,12 +1,11 @@
 import type { AppViewState } from "./app-view-state.ts";
 import {
-  buildChatModelOption,
+  buildCatalogModelOptions,
   formatChatModelDisplay,
   normalizeChatModelOverrideValue,
   resolvePreferredServerChatModelValue,
 } from "./chat-model-ref.ts";
 import { normalizeAgentId, parseAgentSessionKey } from "./session-key.ts";
-import type { ModelCatalogEntry } from "./types.ts";
 
 type ChatModelSelectStateInput = Pick<
   AppViewState,
@@ -109,31 +108,6 @@ function resolveConfiguredAgentModelValue(state: ChatModelSelectStateInput): str
   return resolveModelPrimary(resolveConfiguredAgentModelConfig(state));
 }
 
-function buildChatModelOptions(catalog: ModelCatalogEntry[]): ChatModelSelectOption[] {
-  const seen = new Set<string>();
-  const options: ChatModelSelectOption[] = [];
-
-  const addOption = (value: string, label?: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return;
-    }
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    options.push({ value: trimmed, label: label ?? trimmed });
-  };
-
-  for (const entry of catalog) {
-    const option = buildChatModelOption(entry);
-    addOption(option.value, option.label);
-  }
-
-  return options;
-}
-
 export function resolveChatModelSelectState(
   state: ChatModelSelectStateInput,
 ): ChatModelSelectState {
@@ -145,7 +119,7 @@ export function resolveChatModelSelectState(
     currentOverride,
     defaultModel,
     defaultDisplay,
-    defaultLabel: defaultModel ? `Default (${defaultDisplay})` : "Default model",
-    options: buildChatModelOptions(state.chatModelCatalog ?? []),
+    defaultLabel: defaultModel ? `Use agent default (${defaultDisplay})` : "Use agent default",
+    options: buildCatalogModelOptions(state.chatModelCatalog ?? []),
   };
 }

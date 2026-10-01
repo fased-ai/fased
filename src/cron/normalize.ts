@@ -462,7 +462,7 @@ function coerceExecutionPolicy(policy: UnknownRecord) {
     if (role) {
       modelPolicy.role = role;
     }
-    for (const field of ["model", "thinking", "escalationModel"] as const) {
+    for (const field of ["model", "authProfileId", "thinking", "escalationModel"] as const) {
       const value = policy.modelPolicy[field];
       if (typeof value === "string" && value.trim()) {
         modelPolicy[field] = value.trim();

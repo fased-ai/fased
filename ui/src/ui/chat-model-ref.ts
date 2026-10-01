@@ -176,6 +176,21 @@ export function buildChatModelOption(entry: ModelCatalogEntry): { value: string;
   })();
   return {
     value,
-    label: provider ? `${entry.id} · ${providerDisplayName(provider)}` : entry.id,
+    label: `${provider ? `${entry.id} · ${providerDisplayName(provider)}` : entry.id}${entry.metadata?.recommendationTiers?.length ? ` · ${entry.metadata.recommendationTiers.map((tier) => tier[0].toUpperCase() + tier.slice(1)).join(" / ")}` : ""}`,
   };
+}
+
+/** Display only the gateway catalog; recommendations must never restrict discovery. */
+export function buildCatalogModelOptions(
+  catalog: ModelCatalogEntry[],
+): Array<{ value: string; label: string }> {
+  const options = new Map<string, { value: string; label: string }>();
+  for (const entry of catalog) {
+    const option = buildChatModelOption(entry);
+    if (!option.value.trim() || options.has(option.value.toLowerCase())) {
+      continue;
+    }
+    options.set(option.value.toLowerCase(), option);
+  }
+  return [...options.values()];
 }

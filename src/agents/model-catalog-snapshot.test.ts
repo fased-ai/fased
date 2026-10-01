@@ -118,12 +118,26 @@ describe("canonical model catalog snapshot", () => {
 
     const snapshot = await resolveCanonicalModelCatalogSnapshot({
       cfg,
-      store: { version: 1, profiles: {} },
+      store: {
+        version: 1,
+        profiles: {
+          "openai-codex:work": {
+            type: "oauth",
+            provider: "openai-codex",
+            access: "test-access",
+            refresh: "test-refresh",
+            expires: Date.now() + 60000,
+          },
+        },
+      },
       catalog: [],
       defaultProvider: "openai",
       agentId: "main",
     });
 
+    expect(
+      snapshot.models.find((entry) => entry.provider === "openai-codex")?.metadata.accountProfileId,
+    ).toBe("openai-codex:work");
     expect(snapshot.models).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -5,10 +5,12 @@ import {
   resolveAgentEffectiveModelPrimary,
   resolveAgentModelFallbacksOverride,
 } from "./agent-scope.js";
+import { resolveAuthProfileOrder } from "./auth-profiles.js";
 import type { AuthProfileStore } from "./auth-profiles.js";
 import { resolveAuthenticatedModelCatalog } from "./authenticated-model-catalog.js";
 import type { ModelCatalogEntry } from "./model-catalog.js";
 import { deriveModelMetadata, type ModelMetadata } from "./model-metadata.js";
+import { recommendAvailableModels } from "./model-recommendations.js";
 
 export type ModelAssignmentRole =
   | "primary"
@@ -146,6 +148,7 @@ export async function resolveCanonicalModelCatalogSnapshot(params: {
   defaultProvider: string;
   agentId: string;
   agentDir?: string;
+  forceRefresh?: boolean;
 }): Promise<CanonicalModelCatalogSnapshot> {
   const authenticated = await resolveAuthenticatedModelCatalog({
     cfg: params.cfg,
@@ -153,6 +156,7 @@ export async function resolveCanonicalModelCatalogSnapshot(params: {
     catalog: params.catalog,
     defaultProvider: params.defaultProvider,
     agentDir: params.agentDir,
+    forceRefresh: params.forceRefresh,
   });
   const configuredAssignments = collectAssignments({ cfg: params.cfg, agentId: params.agentId });
   const assignmentsByRef = new Map<string, ModelAssignmentRole[]>();
@@ -164,26 +168,36 @@ export async function resolveCanonicalModelCatalogSnapshot(params: {
   }
   const availableRefs = new Set(authenticated.usableCatalog.map(modelRef));
   const runnableRefs = new Set(authenticated.allowedCatalog.map(modelRef));
-  const models = authenticated.usableCatalog
-    .map((model): CanonicalModelCatalogEntry => {
-      const metadata = model.metadata ?? deriveModelMetadata({ model, cfg: params.cfg });
-      return {
-        ...model,
-        metadata,
-        available: true,
-        runnable: authenticated.allowAny || runnableRefs.has(modelRef(model)),
-        recommended: metadata.recommended === true,
-        assignedRoles: assignmentsByRef.get(modelRef(model)) ?? [],
-      };
-    })
-    .toSorted(
-      (left, right) =>
-        left.metadata.publicProviderLabel.localeCompare(right.metadata.publicProviderLabel) ||
-        Number(right.recommended) - Number(left.recommended) ||
-        (left.metadata.recommendationRank ?? Number.MAX_SAFE_INTEGER) -
-          (right.metadata.recommendationRank ?? Number.MAX_SAFE_INTEGER) ||
-        left.name.localeCompare(right.name),
-    );
+  const models = recommendAvailableModels(
+    authenticated.usableCatalog
+      .map((model): CanonicalModelCatalogEntry => {
+        const accountProfileId = resolveAuthProfileOrder({
+          cfg: params.cfg,
+          store: params.store,
+          provider: model.provider,
+        })[0];
+        const metadata = {
+          ...(model.metadata ?? deriveModelMetadata({ model, cfg: params.cfg })),
+          accountProfileId,
+        };
+        return {
+          ...model,
+          metadata,
+          available: true,
+          runnable: authenticated.allowAny || runnableRefs.has(modelRef(model)),
+          recommended: metadata.recommended === true,
+          assignedRoles: assignmentsByRef.get(modelRef(model)) ?? [],
+        };
+      })
+      .toSorted(
+        (left, right) =>
+          left.metadata.publicProviderLabel.localeCompare(right.metadata.publicProviderLabel) ||
+          Number(right.recommended) - Number(left.recommended) ||
+          (left.metadata.recommendationRank ?? Number.MAX_SAFE_INTEGER) -
+            (right.metadata.recommendationRank ?? Number.MAX_SAFE_INTEGER) ||
+          left.name.localeCompare(right.name),
+      ),
+  );
 
   return {
     generatedAt: new Date().toISOString(),

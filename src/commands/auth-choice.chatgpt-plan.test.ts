@@ -64,7 +64,7 @@ it("joins sign-in, account pinning and discovered model selection without acquir
   expect(result?.config.agents?.defaults?.model).toMatchObject({
     primary: "openai-codex/account-model",
   });
-  const select = vi.fn(async () => profileId);
+  const select = async <T>() => profileId as T;
   await applyAuthChoiceOpenAI({
     ...params,
     config: result!.config,

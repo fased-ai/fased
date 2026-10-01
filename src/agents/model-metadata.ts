@@ -91,6 +91,8 @@ export type ModelMetadata = {
   privateNetworkAllowed: boolean;
   recommended?: boolean;
   recommendationRank?: number;
+  accountProfileId?: string;
+  recommendationTiers?: Array<"fast" | "balanced" | "deep">;
   default?: boolean;
 };
 

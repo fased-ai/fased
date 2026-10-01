@@ -20,6 +20,7 @@ import type {
   CronTaskExecutionPolicy,
   CronTaskAdaptiveRoute,
   CronTaskRunDetail,
+  ModelCatalogEntry,
 } from "../types.ts";
 import { CRON_CHANNEL_LAST } from "../ui-types.ts";
 import type { CronFormState } from "../ui-types.ts";
@@ -81,6 +82,8 @@ export type ChatScheduleDraft = {
   plannerStrategy: "" | "cheap-model" | "strong-model";
   modelRole: "" | "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
   policyModel: string;
+  policyProfileId?: string;
+  accountModelCatalog?: ModelCatalogEntry[];
   escalationModel: string;
   coordinationMode: "none" | "consult" | "parallel";
   coordinationAgents: string;
@@ -229,6 +232,7 @@ export function buildCronTaskTemplatePatch(template: TaskTemplatePreset): Partia
     plannerStrategy: "",
     modelRole: "",
     policyModel: "",
+    policyProfileId: "",
     escalationModel: "",
     coordinationMode: "none",
     coordinationAgents: "",
@@ -262,6 +266,7 @@ type TaskPolicyPresetPatch = Partial<
     | "plannerStrategy"
     | "modelRole"
     | "policyModel"
+    | "policyProfileId"
     | "escalationModel"
     | "evaluatorEscalateOnSignal"
     | "evaluatorSignalIncludes"
@@ -293,6 +298,7 @@ export const DEFAULT_CHAT_SCHEDULE_DRAFT: ChatScheduleDraft = {
   plannerStrategy: "",
   modelRole: "",
   policyModel: "",
+  policyProfileId: "",
   escalationModel: "",
   coordinationMode: "none",
   coordinationAgents: "",
@@ -338,6 +344,7 @@ export function buildTaskPolicyPresetPatch(
       plannerStrategy: "",
       modelRole: "",
       policyModel: "",
+      policyProfileId: "",
       escalationModel: "",
       evaluatorEscalateOnSignal: true,
       evaluatorSignalIncludes: signalIncludes,
@@ -375,6 +382,7 @@ export function buildTaskPolicyPresetPatch(
       plannerStrategy: "",
       modelRole: "",
       policyModel: "",
+      policyProfileId: "",
       escalationModel: "",
       evaluatorEscalateOnSignal: false,
     };
@@ -387,6 +395,7 @@ export function buildTaskPolicyPresetPatch(
       plannerStrategy: "",
       modelRole: "",
       policyModel: "",
+      policyProfileId: "",
       escalationModel: "",
       evaluatorEscalateOnSignal: false,
     };
@@ -889,6 +898,7 @@ export function cronJobToForm(job: CronJob, prev: CronFormState): CronFormState 
         ? executionPolicy.planner.strategy
         : "",
     policyModel: executionPolicy?.modelPolicy?.model ?? "",
+    policyProfileId: executionPolicy?.modelPolicy?.authProfileId ?? "",
     modelRole: executionPolicy?.modelPolicy?.role ?? "",
     escalationModel: executionPolicy?.modelPolicy?.escalationModel ?? "",
     coordinationMode: executionPolicy?.coordination?.mode ?? "none",
@@ -1261,6 +1271,9 @@ export function buildCronExecutionPolicy(form: CronFormState): CronTaskExecution
   };
   if (form.policyModel.trim()) {
     modelPolicy.model = form.policyModel.trim();
+  }
+  if (form.policyProfileId?.trim()) {
+    modelPolicy.authProfileId = form.policyProfileId.trim();
   }
   if (form.modelRole) {
     modelPolicy.role = form.modelRole;
@@ -2011,6 +2024,7 @@ export function createChatScheduleDraftFromJob(job: CronJob): ChatScheduleDraft 
         : "",
     policyModel:
       modelPolicy?.model ?? (job.payload.kind === "agentTurn" ? (job.payload.model ?? "") : ""),
+    policyProfileId: modelPolicy?.authProfileId ?? "",
     modelRole: modelPolicy?.role ?? "",
     escalationModel: modelPolicy?.escalationModel ?? "",
     coordinationMode: coordination?.mode ?? "none",

@@ -183,7 +183,13 @@ export const ModelChoiceSchema = Type.Object(
           privateNetwork: Type.Boolean(),
           privateNetworkAllowed: Type.Boolean(),
           recommended: Type.Optional(Type.Boolean()),
+          accountProfileId: Type.Optional(NonEmptyString),
           recommendationRank: Type.Optional(Type.Integer({ minimum: 1 })),
+          recommendationTiers: Type.Optional(
+            Type.Array(
+              Type.Union([Type.Literal("fast"), Type.Literal("balanced"), Type.Literal("deep")]),
+            ),
+          ),
           default: Type.Optional(Type.Boolean()),
         },
         { additionalProperties: false },
@@ -380,6 +386,8 @@ export const AgentsFilesSetResultSchema = Type.Object(
 
 export const ModelsListParamsSchema = Type.Object(
   {
+    refresh: Type.Optional(Type.Boolean()),
+    profileId: Type.Optional(NonEmptyString),
     all: Type.Optional(Type.Boolean()),
     available: Type.Optional(Type.Boolean()),
     provider: Type.Optional(NonEmptyString),

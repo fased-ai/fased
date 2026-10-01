@@ -217,7 +217,8 @@ function addAgentModelOption(
 }
 
 function modelCatalogLabel(entry: ModelCatalogEntry): string {
-  return entry.name && entry.name !== entry.id ? `${entry.name} (${entry.id})` : entry.id;
+  const label = entry.name && entry.name !== entry.id ? `${entry.name} (${entry.id})` : entry.id;
+  return `${label}${entry.metadata?.recommendationTiers?.length ? ` · ${entry.metadata.recommendationTiers.join(" / ")}` : ""}`;
 }
 
 function modelCapabilityDetail(entry: ModelCatalogEntry): string {
@@ -3866,7 +3867,7 @@ export function renderAgentOverview(params: {
             ${providerNames.length > 0 ? providerNames.join(", ") : "No signed-in providers."}
           </div>
           <div class="agent-setup-card__links">
-            ${renderAgentModelDropdownAction({ label: "Models", icon: icons.plus, wide: true })}
+            ${renderAgentModelDropdownAction({ label: "Model settings", icon: icons.settings, wide: true })}
             ${renderSetupSummaryAction({
               label: "Providers",
               icon: icons.plus,
@@ -4034,7 +4035,7 @@ export function renderAgentOverview(params: {
           ? html`
               <div class="agent-provider-models" aria-label="Agent provider models">
                 <div class="agent-provider-models__head">
-                  ${renderAgentModelDropdownAction({ label: "Models", icon: icons.plus })}
+                  ${renderAgentModelDropdownAction({ label: "Model settings", icon: icons.settings })}
                 </div>
                 <div class="agent-provider-model-grid">
                   ${
@@ -4102,7 +4103,7 @@ export function renderAgentOverview(params: {
                                         `,
                                       )
                                     : html`
-                                        <span class="agent-provider-model-card__empty"> No Agent-specific models selected </span>
+                                        <span class="agent-provider-model-card__empty"> Using the application default </span>
                                       `
                                 }
                               </div>
@@ -4111,9 +4112,7 @@ export function renderAgentOverview(params: {
                         })
                       : html`
                           <div class="agent-provider-model-card">
-                            <div class="agent-provider-model-card__empty">
-                              Connect a provider before attaching Agent models.
-                            </div>
+                            <div class="agent-provider-model-card__empty">Connect an account to choose a default model.</div>
                           </div>
                         `
                   }
@@ -4139,7 +4138,7 @@ export function renderAgentOverview(params: {
       >
         <form class="agent-model-dialog__form" method="dialog">
           <div class="agent-model-dialog__head">
-            <div class="agent-model-dialog__title">Add Models</div>
+            <div class="agent-model-dialog__title">Model settings</div>
             <button
               type="button"
               class="agent-model-dialog__close"
@@ -4170,7 +4169,7 @@ export function renderAgentOverview(params: {
               : nothing
           }
           <label class="field agent-model-select-field">
-            <span>Primary</span>
+            <span>Default model</span>
             ${renderAgentModelPicker({
               ariaLabel: "Primary model",
               control: "main",
@@ -4207,6 +4206,8 @@ export function renderAgentOverview(params: {
               },
             })}
           </label>
+          <details class="agent-model-advanced" style="grid-column: 1 / -1">
+            <summary>Advanced</summary>
           <label class="field agent-model-select-field">
             <span>Fallback</span>
             ${renderAgentModelPicker({
@@ -4303,6 +4304,7 @@ export function renderAgentOverview(params: {
               })}
             </div>
           </div>
+          </details>
           </div>
         </form>
       </dialog>

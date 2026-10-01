@@ -656,6 +656,7 @@ export const CronTaskExecutionPolicySchema = Type.Object(
             ]),
           ),
           model: Type.Optional(NonEmptyString),
+          authProfileId: Type.Optional(NonEmptyString),
           thinking: Type.Optional(NonEmptyString),
           escalationModel: Type.Optional(NonEmptyString),
         },
@@ -716,6 +717,8 @@ const CronRunPolicyTelemetrySchema = Type.Object(
     modelOverride: Type.Optional(NonEmptyString),
     escalationModel: Type.Optional(NonEmptyString),
     modelSource: Type.Optional(NonEmptyString),
+    accountProfileId: Type.Optional(NonEmptyString),
+    accessMethod: Type.Optional(NonEmptyString),
     budget: Type.Optional(
       Type.Object(
         {

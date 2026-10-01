@@ -23,7 +23,7 @@ describe("provider login failures", () => {
       const params = {
         authChoice,
         config,
-        prompter: createWizardPrompter(),
+        prompter: createWizardPrompter({}),
         runtime: createExitThrowingRuntime(),
         setDefaultModel: false,
       } as ApplyAuthChoiceParams;
@@ -42,7 +42,7 @@ describe("provider login failures", () => {
         apply({
           authChoice,
           config: {},
-          prompter: createWizardPrompter(),
+          prompter: createWizardPrompter({}),
           runtime: createExitThrowingRuntime(),
         } as ApplyAuthChoiceParams),
       ).rejects.toThrow("official");

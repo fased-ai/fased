@@ -2,6 +2,8 @@ import type { GatewayBrowserClient } from "../gateway.ts";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../types.ts";
 
 export type LoadModelsOptions = {
+  refresh?: boolean;
+  profileId?: string;
   all?: boolean;
   available?: boolean;
   provider?: string | null;
@@ -30,6 +32,8 @@ export async function loadModelCatalogSnapshot(
     const provider = options.provider?.trim();
     return await client.request<ModelCatalogSnapshot>("models.list", {
       includeMetadata: true,
+      ...(options.refresh ? { refresh: true } : {}),
+      ...(options.profileId ? { profileId: options.profileId } : {}),
       ...(options.all ? { all: true } : {}),
       ...(options.available ? { available: true } : {}),
       ...(provider ? { provider } : {}),

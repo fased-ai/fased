@@ -74,6 +74,7 @@ import {
   selectZaiModelsForNormalUi,
   type ProviderRefreshRouteSnapshot,
 } from "./refresh.js";
+import { OPENAI_API_MODEL_IDS } from "./registry.js";
 
 function routeIds(route: ProviderRefreshRouteSnapshot | undefined): string[] | undefined {
   return route?.map((entry) => (typeof entry === "string" ? entry : entry.id));
@@ -387,7 +388,7 @@ describe("provider refresh", () => {
         providers: {
           openai: {
             routes: {
-              openai: ["gpt-5.5", "gpt-5.6", "gpt-5-codex"],
+              openai: [OPENAI_API_MODEL_IDS[0], "account-future-model"],
             },
           },
         },
@@ -399,9 +400,9 @@ describe("provider refresh", () => {
       brandId: "openai",
       route: "openai",
       missingSource: false,
-      additions: ["gpt-5-codex"],
+      additions: ["account-future-model"],
     });
-    expect(openai?.removals).toContain("gpt-5.6-terra");
+    expect(openai?.removals).toContain(OPENAI_API_MODEL_IDS[1]);
 
     const signIn = report.routes.find((route) => route.route === "openai-codex");
     expect(signIn).toMatchObject({

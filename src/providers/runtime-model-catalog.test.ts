@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthProfileStore } from "../agents/auth-profiles.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import type { FasedAgentConfig } from "../config/types.js";
+import { buildProviderRefreshEnvFromCredentials } from "./refresh.js";
 import {
   applyRuntimeProviderModelDiscovery,
   filterCatalogToAuthoritativeAvailability,
@@ -10,6 +11,10 @@ import {
 } from "./runtime-model-catalog.js";
 
 const fetchProviderRefreshSnapshotForRoutes = vi.hoisted(() => vi.fn());
+const discoverPlanModels = vi.hoisted(() => vi.fn());
+vi.mock("./openai-codex-model-discovery.js", () => ({
+  discoverOpenAICodexModels: discoverPlanModels,
+}));
 
 vi.mock("./refresh.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./refresh.js")>();
@@ -43,6 +48,7 @@ describe("runtime provider model catalog", () => {
   beforeEach(() => {
     resetRuntimeProviderModelCatalogCache();
     fetchProviderRefreshSnapshotForRoutes.mockReset();
+    discoverPlanModels.mockReset();
   });
 
   it("scopes discovery cache to the requested execution route", async () => {
@@ -60,6 +66,66 @@ describe("runtime provider model catalog", () => {
     await applyRuntimeProviderModelDiscovery({ cfg, store, routes: ["anthropic"], catalog: [] });
     expect(fetchProviderRefreshSnapshotForRoutes).toHaveBeenCalledTimes(2);
     expect(fetchProviderRefreshSnapshotForRoutes.mock.calls[1][0].routes).toEqual(["anthropic"]);
+  });
+
+  it("refreshes completed discovery but coalesces an in-flight refresh", async () => {
+    fetchProviderRefreshSnapshotForRoutes.mockResolvedValue({ providers: {} });
+    const params = { cfg, store, routes: ["openai"], catalog: [] };
+    await applyRuntimeProviderModelDiscovery(params);
+    await applyRuntimeProviderModelDiscovery(params);
+    expect(fetchProviderRefreshSnapshotForRoutes).toHaveBeenCalledTimes(1);
+    await applyRuntimeProviderModelDiscovery({ ...params, forceRefresh: true });
+    expect(fetchProviderRefreshSnapshotForRoutes).toHaveBeenCalledTimes(2);
+    let complete!: (snapshot: { providers: {} }) => void;
+    fetchProviderRefreshSnapshotForRoutes.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const first = applyRuntimeProviderModelDiscovery({ ...params, forceRefresh: true });
+    await vi.waitFor(() => expect(fetchProviderRefreshSnapshotForRoutes).toHaveBeenCalledTimes(3));
+    const second = applyRuntimeProviderModelDiscovery({ ...params, forceRefresh: true });
+    await Promise.resolve();
+    complete({ providers: {} });
+    await Promise.all([first, second]);
+    expect(fetchProviderRefreshSnapshotForRoutes).toHaveBeenCalledTimes(3);
+  });
+
+  it("refreshes subscription discovery and preserves cached discovery timestamps", async () => {
+    discoverPlanModels.mockResolvedValue([{ id: "account-model", source: "provider-api" }]);
+    const params = { cfg, store, routes: ["openai-codex"], catalog: [] };
+    const first = await applyRuntimeProviderModelDiscovery(params);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1000);
+    const cached = await applyRuntimeProviderModelDiscovery(params);
+    clock.mockRestore();
+    expect(discoverPlanModels).toHaveBeenCalledTimes(1);
+    expect(cached[0].metadata?.retrievedAt).toBe(first[0].metadata?.retrievedAt);
+    await applyRuntimeProviderModelDiscovery({ ...params, forceRefresh: true });
+    expect(discoverPlanModels).toHaveBeenCalledTimes(2);
+  });
+
+  it("discovers using the configured account priority rather than profile insertion order", async () => {
+    fetchProviderRefreshSnapshotForRoutes.mockResolvedValue({ providers: {} });
+    const accountStore = {
+      version: 1,
+      profiles: {
+        "openai:first": { type: "api_key", provider: "openai", key: "first-test-key" },
+        "openai:selected": { type: "api_key", provider: "openai", key: "selected-test-key" },
+      },
+    } as AuthProfileStore;
+    await applyRuntimeProviderModelDiscovery({
+      cfg: { ...cfg, auth: { order: { openai: ["openai:selected", "openai:first"] } } },
+      store: accountStore,
+      routes: ["openai"],
+      catalog: [],
+    });
+    expect(
+      Object.keys(
+        vi.mocked(buildProviderRefreshEnvFromCredentials).mock.lastCall![0]!.authStores![0]!
+          .profiles,
+      ),
+    ).toEqual(["openai:selected"]);
   });
 
   it("keeps credentials attached to their exact route within a public provider brand", () => {
