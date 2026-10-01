@@ -3,6 +3,7 @@ import Foundation
 import NaturalLanguage
 
 extension AttributedString {
+    @available(macOS 26.0, iOS 26.0, *)
     public func sentences(maxLength: Int? = nil) -> [AttributedString] {
         let tokenizer = NLTokenizer(unit: .sentence)
         let string = String(characters)
