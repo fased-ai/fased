@@ -289,18 +289,27 @@ export function buildZaiModelDefinition(params: {
 }
 
 export const XAI_BASE_URL = "https://api.x.ai/v1";
-export const XAI_DEFAULT_MODEL_ID = "grok-4.3";
+export const XAI_DEFAULT_MODEL_ID = "grok-4.7";
 export const XAI_DEFAULT_MODEL_REF = `xai/${XAI_DEFAULT_MODEL_ID}`;
-export const XAI_DEFAULT_CONTEXT_WINDOW = 1_000_000;
+export const XAI_DEFAULT_CONTEXT_WINDOW = 500_000;
 export const XAI_DEFAULT_MAX_TOKENS = 64_000;
 export const XAI_DEFAULT_COST = {
-  input: 1.25,
-  output: 2.5,
-  cacheRead: 0.2,
+  input: 2,
+  output: 6,
+  cacheRead: 0.5,
   cacheWrite: 0,
 };
 
 export const XAI_MODEL_CATALOG = [
+  {
+    id: "grok-4.7",
+    name: "Grok 4.7",
+    reasoning: true,
+    input: ["text", "image"] as const,
+    contextWindow: 500_000,
+    // Fased's response budget, not a vendor output-limit claim.
+    maxTokens: 64_000,
+  },
   {
     id: "grok-4.3",
     name: "Grok 4.3",
@@ -322,12 +331,15 @@ export const XAI_MODEL_CATALOG = [
 export function buildXaiModelDefinition(modelId = XAI_DEFAULT_MODEL_ID): ModelDefinitionConfig {
   const catalog = XAI_MODEL_CATALOG.find((entry) => entry.id === modelId) ?? XAI_MODEL_CATALOG[0];
   const capabilities: NonNullable<ModelDefinitionConfig["capabilities"]> =
-    catalog.id === "grok-4.3"
+    catalog.id === "grok-4.7" || catalog.id === "grok-4.3"
       ? {
           tools: true,
           json: true,
-          thinkingLevels: ["off", "low", "medium", "high"],
-          defaultThinkingLevel: "low",
+          thinkingLevels:
+            catalog.id === "grok-4.7"
+              ? ["low", "medium", "high", "xhigh"]
+              : ["off", "low", "medium", "high"],
+          defaultThinkingLevel: catalog.id === "grok-4.7" ? "high" : "low",
           thinkingMode: "xai-reasoning-effort",
           reasoningBudgetSupported: false,
         }
@@ -342,7 +354,10 @@ export function buildXaiModelDefinition(modelId = XAI_DEFAULT_MODEL_ID): ModelDe
     input: [...catalog.input],
     api: "openai-responses",
     capabilities,
-    cost: XAI_DEFAULT_COST,
+    cost:
+      catalog.id !== "grok-4.7"
+        ? { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 }
+        : XAI_DEFAULT_COST,
     contextWindow: catalog.contextWindow,
     maxTokens: catalog.maxTokens,
   };

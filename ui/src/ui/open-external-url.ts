@@ -79,3 +79,56 @@ export function openBlankWindowSafe(features = "noopener,noreferrer"): WindowPro
   }
   return opened;
 }
+
+// Reserve the tab inside the owner's click, before the gateway request loses
+// browser user activation. Never give the provider an opener into the dashboard.
+export function reserveProviderSignInWindow(provider: string) {
+  const hosts: Record<string, readonly string[]> = {
+    "openai-codex": ["auth.openai.com"],
+    anthropic: ["claude.ai", "console.anthropic.com"],
+    xai: ["auth.x.ai", "accounts.x.ai"],
+  };
+  const allowed = hosts[provider];
+  if (!allowed || typeof window === "undefined" || typeof window.open !== "function") {
+    return null;
+  }
+  let popup: Window | null;
+  try {
+    popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      return null;
+    }
+    popup.opener = null;
+  } catch {
+    return null;
+  }
+  let navigated = false;
+  return {
+    navigate(value: string) {
+      if (navigated || popup.closed) {
+        return false;
+      }
+      try {
+        const url = new URL(value);
+        if (
+          url.protocol !== "https:" ||
+          url.username ||
+          url.password ||
+          !allowed.includes(url.hostname)
+        ) {
+          return false;
+        }
+        popup.location.replace(url.href);
+        navigated = true;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    dispose() {
+      if (!navigated && !popup.closed) {
+        popup.close();
+      }
+    },
+  };
+}

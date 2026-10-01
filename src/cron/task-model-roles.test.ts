@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
 import {
   plannerStrategyModelRole,
+  resolveTaskFallbacks,
   resolveTaskModelRole,
   taskExplicitModelRef,
 } from "./task-model-roles.js";
@@ -50,6 +51,35 @@ function job(overrides: Partial<CronJob> = {}): CronJob {
 }
 
 describe("task model roles", () => {
+  it("does not inherit agent fallbacks for a pinned task", () => {
+    expect(
+      resolveTaskFallbacks({
+        job: job({
+          payload: { kind: "agentTurn", message: "Check", model: "openai-codex/gpt-6.1-sol" },
+        }),
+        agentFallbacks: ["openai/gpt-6.1-sol"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("permits only the task's explicit escalation when pinned", () => {
+    expect(
+      resolveTaskFallbacks({
+        job: job({
+          executionPolicy: { modelPolicy: { escalationModel: "anthropic/claude-sonnet-5-5" } },
+        }),
+        hasModelPin: true,
+        agentFallbacks: ["openai/gpt-6.1-sol"],
+      }),
+    ).toEqual(["anthropic/claude-sonnet-5-5"]);
+  });
+
+  it("preserves explicitly configured agent fallbacks for an unpinned task", () => {
+    expect(resolveTaskFallbacks({ job: job(), agentFallbacks: ["openai/gpt-6-luna"] })).toEqual([
+      "openai/gpt-6-luna",
+    ]);
+  });
+
   it("resolves agent task model roles before global defaults", () => {
     expect(
       resolveTaskModelRole({

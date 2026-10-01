@@ -35,7 +35,7 @@ const installRunEmbeddedMocks = () => {
     ensureRuntimePluginsLoaded: vi.fn(),
   }));
   vi.doMock("./pi-embedded-runner/model.js", () => ({
-    resolveModelAsync: async (provider: string, modelId: string) => ({
+    resolveModelForExecution: async (provider: string, modelId: string) => ({
       model: {
         id: modelId,
         name: modelId,
@@ -1185,7 +1185,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
     });
   });
 
-  it("can probe one billing-disabled profile when transient cooldown probe is allowed without fallback models", async () => {
+  it("rejects billing-disabled profiles even when a transient cooldown probe is requested", async () => {
     await withTimedAgentWorkspace(async ({ agentDir, workspaceDir, now }) => {
       await writeAuthStore(agentDir, {
         usageStats: {
@@ -1212,24 +1212,25 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         }),
       );
 
-      const result = await runEmbeddedPiAgentInline({
-        sessionId: "session:test",
-        sessionKey: "agent:test:billing-cooldown-probe-no-fallbacks",
-        sessionFile: path.join(workspaceDir, "session.jsonl"),
-        workspaceDir,
-        agentDir,
-        config: makeConfig(),
-        prompt: "hello",
-        provider: "openai",
-        model: "mock-1",
-        authProfileIdSource: "auto",
-        allowTransientCooldownProbe: true,
-        timeoutMs: 5_000,
-        runId: "run:billing-cooldown-probe-no-fallbacks",
-      });
+      await expect(
+        runEmbeddedPiAgentInline({
+          sessionId: "session:test",
+          sessionKey: "agent:test:billing-cooldown-probe-no-fallbacks",
+          sessionFile: path.join(workspaceDir, "session.jsonl"),
+          workspaceDir,
+          agentDir,
+          config: makeConfig(),
+          prompt: "hello",
+          provider: "openai",
+          model: "mock-1",
+          authProfileIdSource: "auto",
+          allowTransientCooldownProbe: true,
+          timeoutMs: 5_000,
+          runId: "run:billing-cooldown-probe-no-fallbacks",
+        }),
+      ).rejects.toThrow();
 
-      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(1);
-      expect(result.payloads?.[0]?.text ?? "").toContain("ok");
+      expect(runEmbeddedAttemptMock).not.toHaveBeenCalled();
     });
   });
 

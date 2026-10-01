@@ -1,3 +1,5 @@
+import { reserveProviderSignInWindow } from "../open-external-url.js";
+export { reserveProviderSignInWindow } from "../open-external-url.js";
 import type { GatewayBrowserClient } from "../gateway.ts";
 import type {
   ModelsAuthClearResult,
@@ -69,6 +71,7 @@ export type ConfigState = {
   configAuthActionBusyProfileId: string | null;
   configAuthAction: ConfigAuthActionState | null;
   configAuthPromptResolver?: ConfigAuthPromptResolver | null;
+  configAuthCancelRun?: (() => void) | null;
   configAuthActionRunId?: number;
   configSchema: unknown;
   configSchemaVersion: string | null;
@@ -155,6 +158,8 @@ export function cancelConfigAuthPrompt(state: ConfigState) {
 }
 
 export function dismissConfigAuthAction(state: ConfigState) {
+  state.configAuthCancelRun?.();
+  state.configAuthCancelRun = null;
   const resolver = state.configAuthPromptResolver;
   state.configAuthPromptResolver = null;
   state.configAuthActionRunId = (state.configAuthActionRunId ?? 0) + 1;
@@ -666,6 +671,8 @@ export async function runInteractiveProviderAuthCredential(
   if (!state.client || !state.connected) {
     return false;
   }
+  state.configAuthCancelRun?.();
+  const browserHandoff = reserveProviderSignInWindow(params.provider);
   const runId = (state.configAuthActionRunId ?? 0) + 1;
   state.configAuthActionRunId = runId;
   const isCurrentRun = () => state.configAuthActionRunId === runId;
@@ -677,6 +684,16 @@ export async function runInteractiveProviderAuthCredential(
   state.configAuthActionBusyProfileId = params.profileId;
   let lastWizardUrl: string | null = null;
   let activeWizardSessionId: string | null = null;
+  state.configAuthCancelRun = () => {
+    if (activeWizardSessionId && state.client && state.connected) {
+      void state.client
+        .request("wizard.cancel", { sessionId: activeWizardSessionId })
+        .catch(() => {});
+      activeWizardSessionId = null;
+    }
+    state.configAuthActionBusyProfileId = null;
+    browserHandoff?.dispose();
+  };
   setConfigAuthAction(
     state,
     buildConfigAuthActionState({
@@ -757,6 +774,11 @@ export async function runInteractiveProviderAuthCredential(
       throw new Error("interactive provider auth did not return a session id");
     }
 
+    if (!isCurrentRun()) {
+      await state.client.request("wizard.cancel", { sessionId: activeWizardSessionId });
+      activeWizardSessionId = null;
+      return false;
+    }
     while (!next.done) {
       const step = next.step;
       if (!step) {
@@ -769,6 +791,9 @@ export async function runInteractiveProviderAuthCredential(
       );
       if (describedStep.url) {
         lastWizardUrl = describedStep.url;
+        if (isCurrentRun()) {
+          browserHandoff?.navigate(describedStep.url);
+        }
       }
       setConfigAuthAction(
         state,
@@ -780,10 +805,12 @@ export async function runInteractiveProviderAuthCredential(
       const answer = await promptForWizardStep(state, step, params.promptMode ?? "browserPrompt");
       if (answer.cancelled) {
         const showCancelledState = isCurrentRun() && state.configAuthAction !== null;
-        await state.client.request<WizardStatusResult>("wizard.cancel", {
-          sessionId: activeWizardSessionId,
-        });
-        activeWizardSessionId = null;
+        if (activeWizardSessionId) {
+          await state.client.request<WizardStatusResult>("wizard.cancel", {
+            sessionId: activeWizardSessionId,
+          });
+          activeWizardSessionId = null;
+        }
         if (showCancelledState) {
           setConfigAuthAction(
             state,
@@ -805,17 +832,26 @@ export async function runInteractiveProviderAuthCredential(
       }
 
       next = {
-        ...(await state.client.request<WizardNextResult>("wizard.next", {
-          sessionId: activeWizardSessionId,
-          answer: {
-            stepId: step.id,
-            value: answer.value,
+        ...(await state.client.request<WizardNextResult>(
+          "wizard.next",
+          {
+            sessionId: activeWizardSessionId,
+            answer: {
+              stepId: step.id,
+              value: answer.value,
+            },
           },
-        })),
+          // OAuth/device authorization can take 15 minutes. Keep ordinary RPCs
+          // at their default deadline; Cancel sends a separate immediate RPC.
+          { timeoutMs: 16 * 60 * 1000 },
+        )),
         sessionId: activeWizardSessionId,
       };
     }
 
+    if (!isCurrentRun()) {
+      return false;
+    }
     if (next.status !== "done") {
       throw new Error(next.error ?? `interactive provider auth ended with status ${next.status}`);
     }
@@ -866,10 +902,14 @@ export async function runInteractiveProviderAuthCredential(
         }),
       );
     }
-    state.lastError = String(err);
+    if (isCurrentRun()) {
+      state.lastError = String(err);
+    }
     return false;
   } finally {
+    browserHandoff?.dispose();
     if (isCurrentRun()) {
+      state.configAuthCancelRun = null;
       state.configAuthActionBusyProfileId = null;
     }
   }

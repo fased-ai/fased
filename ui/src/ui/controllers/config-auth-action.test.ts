@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  reserveProviderSignInWindow,
   describeWizardStepForConfigAction,
   dismissConfigAuthAction,
   runInteractiveProviderAuthCredential,
@@ -223,6 +224,78 @@ describe("describeWizardStepForConfigAction", () => {
     ]);
   });
 
+  it("uses the login deadline only for wizard continuation", async () => {
+    const client = {
+      request: vi.fn(async (method: string) => {
+        if (method === "models.auth.interactive.start") {
+          return {
+            sessionId: "s",
+            done: false,
+            step: { id: "note", type: "note", message: "Opening sign-in" },
+          };
+        }
+        if (method === "wizard.next") {
+          return { done: true, status: "failed", error: "No login" };
+        }
+        return {};
+      }),
+    };
+    const state = createConfigState(client);
+    await runInteractiveProviderAuthCredential(state, {
+      profileId: "xai:default",
+      provider: "xai",
+      promptMode: "browserPrompt",
+    });
+    expect(client.request).toHaveBeenCalledWith(
+      "wizard.next",
+      { sessionId: "s", answer: { stepId: "note", value: null } },
+      { timeoutMs: 960000 },
+    );
+  });
+
+  it("cancels a pending OAuth callback immediately without stale errors", async () => {
+    let finish: (value: unknown) => void = () => {};
+    let waiting = false;
+    const client = {
+      request: vi.fn(async (method: string) => {
+        if (method === "models.auth.interactive.start") {
+          return {
+            sessionId: "waiting",
+            done: false,
+            step: { id: "note", type: "note", message: "Sign in" },
+          };
+        }
+        if (method === "wizard.next") {
+          waiting = true;
+          return await new Promise((resolve) => {
+            finish = resolve;
+          });
+        }
+        if (method === "wizard.cancel") {
+          finish({ done: true, status: "cancelled" });
+          return { status: "cancelled" };
+        }
+        throw new Error(method);
+      }),
+    };
+    const state = createConfigState(client);
+    const pending = runInteractiveProviderAuthCredential(state, {
+      profileId: "xai:default",
+      provider: "xai",
+      promptMode: "browserPrompt",
+    });
+    for (let i = 0; i < 20 && !waiting; i++) {
+      await Promise.resolve();
+    }
+    expect(waiting).toBe(true);
+    dismissConfigAuthAction(state);
+    await expect(pending).resolves.toBe(false);
+    expect(client.request).toHaveBeenCalledWith("wizard.cancel", { sessionId: "waiting" });
+    expect(state.configAuthAction).toBeNull();
+    expect(state.lastError).toBeNull();
+    expect(state.configAuthActionBusyProfileId).toBeNull();
+  });
+
   it("continues Anthropic setup-token through the Providers modal wizard", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     let nextCount = 0;
@@ -381,5 +454,48 @@ describe("describeWizardStepForConfigAction", () => {
         .filter((request) => request.method === "wizard.cancel")
         .map((request) => request.params),
     ).toEqual([{ sessionId: "anthropic-session" }]);
+  });
+});
+
+describe("provider sign-in browser handoff", () => {
+  it("reserves a browser before async work and navigates only to the selected provider", () => {
+    const popup = { opener: {}, location: { replace: vi.fn() }, close: vi.fn(), closed: false };
+    const open = vi.fn(() => popup);
+    Object.assign(window, { open });
+    const handoff = reserveProviderSignInWindow("openai-codex");
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(popup.opener).toBeNull();
+    expect(handoff?.navigate("https://auth.openai.com/api/accounts/authorize?state=test")).toBe(
+      true,
+    );
+    expect(popup.location.replace).toHaveBeenCalledOnce();
+    handoff?.dispose();
+    expect(popup.close).not.toHaveBeenCalled();
+    Reflect.deleteProperty(window, "open");
+  });
+  it("rejects mismatched hosts, credentials and non-HTTPS URLs, then closes unused tabs", () => {
+    const popup = { opener: {}, location: { replace: vi.fn() }, close: vi.fn(), closed: false };
+    Object.assign(window, { open: vi.fn(() => popup) });
+    const handoff = reserveProviderSignInWindow("xai");
+    for (const url of [
+      "https://auth.openai.com/",
+      "https://auth.x.ai.evil.example/",
+      "https://user:secret@auth.x.ai/",
+      "http://auth.x.ai/",
+    ]) {
+      expect(handoff?.navigate(url)).toBe(false);
+    }
+    handoff?.dispose();
+    expect(popup.location.replace).not.toHaveBeenCalled();
+    expect(popup.close).toHaveBeenCalledOnce();
+    Reflect.deleteProperty(window, "open");
+  });
+  it("leaves manual links usable when popups are blocked or no browser method applies", () => {
+    const open = vi.fn(() => null);
+    Object.assign(window, { open });
+    expect(reserveProviderSignInWindow("xai")).toBeNull();
+    expect(reserveProviderSignInWindow("openai")).toBeNull();
+    expect(open).toHaveBeenCalledOnce();
+    Reflect.deleteProperty(window, "open");
   });
 });

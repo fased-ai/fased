@@ -824,8 +824,18 @@ describe("runReplyAgent typing (heartbeat)", () => {
         meta: {},
       });
       vi.spyOn(modelFallbackModule, "runWithModelFallback").mockImplementationOnce(
-        async ({ run }: { run: (provider: string, model: string) => Promise<unknown> }) => ({
-          result: await run("deepinfra", "moonshotai/Kimi-K2.5"),
+        async ({
+          run,
+        }: {
+          run: (
+            provider: string,
+            model: string,
+            options?: { allowTransientCooldownProbe?: boolean },
+          ) => Promise<unknown>;
+        }) => ({
+          result: await run("deepinfra", "moonshotai/Kimi-K2.5", {
+            allowTransientCooldownProbe: true,
+          }),
           provider: "deepinfra",
           model: "moonshotai/Kimi-K2.5",
           attempts: [
@@ -853,6 +863,9 @@ describe("runReplyAgent typing (heartbeat)", () => {
         }
       });
       const res = await run();
+      expect(state.runEmbeddedPiAgentMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allowTransientCooldownProbe: true }),
+      );
       off();
       const payload = Array.isArray(res)
         ? (res[0] as { text?: string })

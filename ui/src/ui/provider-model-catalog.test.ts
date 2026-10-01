@@ -13,8 +13,8 @@ describe("buildManifestModelCatalog", () => {
         },
         {
           provider: "openai",
-          id: "gpt-5.5",
-          name: "GPT-5.5 runtime",
+          id: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol runtime",
           contextWindow: 400000,
           maxTokens: 128000,
           reasoning: true,
@@ -25,13 +25,15 @@ describe("buildManifestModelCatalog", () => {
     );
 
     const refs = catalog.map((entry) => `${entry.provider}/${entry.id}`);
-    expect(refs).toContain("openai/gpt-5.5");
-    expect(refs).toContain("anthropic/claude-opus-4-8");
+    expect(refs).toContain("openai/gpt-6.1-sol");
+    expect(refs).toContain("anthropic/claude-opus-5-5");
     expect(refs).not.toContain("amazon-bedrock/anthropic.claude-sonnet-4");
 
-    const openai = catalog.find((entry) => entry.provider === "openai" && entry.id === "gpt-5.5");
+    const openai = catalog.find(
+      (entry) => entry.provider === "openai" && entry.id === "gpt-6.1-sol",
+    );
     expect(openai).toMatchObject({
-      name: "GPT-5.5 runtime",
+      name: "GPT-6.1 Sol runtime",
       catalogSource: "manifest",
       contextWindow: 400000,
       maxTokens: 128000,
@@ -40,14 +42,7 @@ describe("buildManifestModelCatalog", () => {
     expect(openai?.metadata?.features).toEqual(
       expect.arrayContaining(["text", "vision", "reasoning"]),
     );
-    expect(openai?.metadata?.thinkingLevels).toEqual([
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
+    expect(openai?.metadata?.thinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
   it("keeps the chat catalog scoped to providers returned by the gateway", () => {
@@ -59,8 +54,8 @@ describe("buildManifestModelCatalog", () => {
       },
       {
         provider: "openai",
-        id: "gpt-5.5",
-        name: "GPT-5.5 runtime",
+        id: "gpt-6.1-sol",
+        name: "GPT-6.1 Sol runtime",
         contextWindow: 400000,
         maxTokens: 128000,
         reasoning: true,
@@ -69,7 +64,7 @@ describe("buildManifestModelCatalog", () => {
     ] satisfies ModelCatalogEntry[]);
 
     const refs = catalog.map((entry) => `${entry.provider}/${entry.id}`);
-    expect(refs).toContain("openai/gpt-5.5");
+    expect(refs).toContain("openai/gpt-6.1-sol");
     expect(refs).not.toContain("anthropic/claude-opus-4-7");
     expect(refs).not.toContain("amazon-bedrock/anthropic.claude-sonnet-4");
   });

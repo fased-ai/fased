@@ -37,6 +37,11 @@ export type ApplyAuthChoiceResult = {
 export async function applyAuthChoice(
   params: ApplyAuthChoiceParams,
 ): Promise<ApplyAuthChoiceResult> {
+  if (params.authChoice === "qwen-portal") {
+    throw new Error(
+      "Qwen portal OAuth was discontinued. Connect a Model Studio API key instead; coding subscriptions are not general unattended automation access.",
+    );
+  }
   const handlers: Array<(p: ApplyAuthChoiceParams) => Promise<ApplyAuthChoiceResult | null>> = [
     applyAuthChoiceAnthropic,
     applyAuthChoiceVllm,

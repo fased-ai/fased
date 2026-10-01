@@ -21,8 +21,6 @@ describe("buildAuthChoiceOptions", () => {
 
     for (const value of [
       "github-copilot",
-      "anthropic-oauth",
-      "token",
       "zai-api-key",
       "qianfan-api-key",
       "copilot-proxy",
@@ -43,8 +41,6 @@ describe("buildAuthChoiceOptions", () => {
       "chutes-api-key",
       "qwen-coding-plan-api-key",
       "qwen-api-key",
-      "xai-oauth",
-      "xai-device-code",
       "xai-api-key",
       "mistral-api-key",
       "volcengine-api-key",
@@ -52,6 +48,15 @@ describe("buildAuthChoiceOptions", () => {
       "vllm",
     ]) {
       expect(options.some((opt) => opt.value === value)).toBe(true);
+    }
+  });
+
+  it("does not offer third-party subscription token import", () => {
+    expect(getOptions().map((option) => option.value)).not.toEqual(
+      expect.arrayContaining(["anthropic-oauth", "token", "xai-oauth", "xai-device-code"]),
+    );
+    for (const value of ["anthropic-oauth", "token", "xai-oauth", "xai-device-code"]) {
+      expect(getOptions().some((option) => option.value === value)).toBe(false);
     }
   });
 
@@ -141,16 +146,8 @@ describe("buildAuthChoiceOptions", () => {
 
     expect(xaiGroup).toBeDefined();
     expect(xaiGroup?.label).toBe("xAI (Grok)");
-    expect(xaiGroup?.options.map((opt) => opt.value)).toEqual([
-      "xai-oauth",
-      "xai-device-code",
-      "xai-api-key",
-    ]);
-    expect(xaiGroup?.options.map((opt) => opt.label)).toEqual([
-      "xAI sign-in",
-      "xAI device code",
-      "xAI API key",
-    ]);
+    expect(xaiGroup?.options.map((opt) => opt.value)).toEqual(["xai-api-key"]);
+    expect(xaiGroup?.options.map((opt) => opt.label)).toEqual(["xAI API key"]);
   });
 
   it("shows Mistral in grouped provider selection from the shared manifest", () => {

@@ -3,12 +3,14 @@ import type { ProviderHeaders, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import WebSocket from "ws";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { loadConfig, writeConfigFile, type FasedAgentConfig } from "../../config/config.js";
+import { isChatGptPlanCredential } from "../../providers/chatgpt-plan-auth.js";
 import { resolveFasedAgentAgentDir } from "../agent-paths.js";
 import {
   ensureAuthProfileStore,
   listProfilesForProvider,
   resolveApiKeyForProfile,
 } from "../auth-profiles.js";
+import { createChatGptPlanStream } from "../chatgpt-plan-stream.js";
 import { createOpenAICodexAppServerStreamFn } from "../openai-codex-app-server.js";
 import { ensureOpenAICodexRuntimeComponent } from "../openai-codex-runtime-component.js";
 import { streamSimple } from "../pi-ai-compat-runtime.js";
@@ -633,6 +635,22 @@ function createCodexResponsesLiteWrapper(
     },
   });
   return (model, context, options) => {
+    const token = params?.resolvedApiKey?.trim() || options?.apiKey;
+    if (token) {
+      const store = ensureAuthProfileStore(params?.agentDir ?? resolveFasedAgentAgentDir(), {
+        allowKeychainPrompt: false,
+      });
+      const plan = Object.values(store.profiles).find(
+        (credential) =>
+          credential.type === "oauth" &&
+          credential.provider === "openai-codex" &&
+          credential.access === token &&
+          isChatGptPlanCredential(credential),
+      );
+      if (plan) {
+        return createChatGptPlanStream({ token })(model, context, options);
+      }
+    }
     if (!usesCodexResponsesLite(model)) {
       return underlying(model, context, options);
     }
@@ -1114,6 +1132,23 @@ function sanitizeGoogleThinkingPayload(params: {
     return;
   }
   const thinkingConfigObj = thinkingConfig as Record<string, unknown>;
+  if (params.modelId?.toLowerCase() === "gemini-3.8-flash") {
+    // 3.8 accepts levels only; minimal/off and token budgets are invalid.
+    delete thinkingConfigObj.thinkingBudget;
+    const requested = params.thinkingLevel;
+    const prior =
+      typeof thinkingConfigObj.thinkingLevel === "string"
+        ? thinkingConfigObj.thinkingLevel.toUpperCase()
+        : "";
+    thinkingConfigObj.thinkingLevel = requested
+      ? requested === "off" || requested === "minimal"
+        ? "LOW"
+        : (mapThinkLevelToGoogleThinkingLevel(requested) ?? "HIGH")
+      : ["LOW", "MEDIUM", "HIGH"].includes(prior)
+        ? prior
+        : "MEDIUM";
+    return;
+  }
   const thinkingBudget = thinkingConfigObj.thinkingBudget;
   if (typeof thinkingBudget !== "number" || thinkingBudget >= 0) {
     return;

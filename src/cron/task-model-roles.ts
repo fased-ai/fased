@@ -103,6 +103,21 @@ export function taskExplicitModelRef(job: CronJob): string | undefined {
   return job.payload.kind === "agentTurn" ? job.payload.model?.trim() || undefined : undefined;
 }
 
+export function resolveTaskFallbacks(params: {
+  job: CronJob;
+  agentFallbacks?: string[];
+  hasModelPin?: boolean;
+}): string[] | undefined {
+  const escalationModel = params.job.executionPolicy?.modelPolicy?.escalationModel?.trim();
+  // A pin must not inherit a possibly differently billed agent fallback chain.
+  if (params.hasModelPin || taskExplicitModelRef(params.job)) {
+    return escalationModel ? [escalationModel] : [];
+  }
+  return escalationModel
+    ? [escalationModel, ...(params.agentFallbacks ?? [])]
+    : params.agentFallbacks;
+}
+
 export function plannerStrategyModelRole(
   strategy: CronTaskPlannerStrategy | undefined,
 ): CronTaskModelRole | undefined {

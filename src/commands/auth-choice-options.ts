@@ -212,6 +212,16 @@ function resolveBaseAuthChoiceOptions(): AuthChoiceOption[] {
     buildRegistryProviderAuthChoiceOptions(),
     STATIC_BASE_AUTH_CHOICE_OPTIONS,
     buildManifestAuthChoiceOptions(),
+  ).filter(
+    (option) =>
+      ![
+        "anthropic-oauth",
+        "oauth",
+        "token",
+        "setup-token",
+        "xai-oauth",
+        "xai-device-code",
+      ].includes(option.value),
   );
 }
 

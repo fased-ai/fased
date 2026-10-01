@@ -640,6 +640,7 @@ describe("applyXaiProviderConfig", () => {
     expect(cfg.models?.providers?.xai?.apiKey).toBe("old-key");
     expect(cfg.models?.providers?.xai?.models.map((m) => m.id)).toEqual([
       "custom-model",
+      "grok-4.7",
       "grok-4.3",
       "grok-build-0.1",
     ]);

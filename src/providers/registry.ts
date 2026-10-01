@@ -311,6 +311,7 @@ export const KIMI_CODING_MODEL_REFS = KIMI_CODING_MODEL_IDS.map(
 );
 
 export const GOOGLE_GEMINI_MODEL_IDS = [
+  "gemini-3.8-flash",
   "gemini-3.5-flash",
   "gemini-3.1-pro-preview",
   "gemini-3-flash-preview",
@@ -823,10 +824,12 @@ const GOOGLE_MODEL_CAPABILITY_OVERRIDES: Record<string, ModelCapabilityConfig> =
       json: true,
       audio: true,
       video: true,
-      thinkingLevels: [...BASE_THINKING_LEVELS],
-      defaultThinkingLevel: "low",
+      thinkingLevels: ref.endsWith("/gemini-3.8-flash")
+        ? ["low", "medium", "high"]
+        : [...BASE_THINKING_LEVELS],
+      defaultThinkingLevel: ref.endsWith("/gemini-3.8-flash") ? "medium" : "low",
       thinkingMode: "google-thinking-budget",
-      reasoningBudgetSupported: true,
+      reasoningBudgetSupported: !ref.endsWith("/gemini-3.8-flash"),
     } satisfies ModelCapabilityConfig,
   ]),
 );
@@ -1080,8 +1083,8 @@ export const OPENAI_PROVIDER_MANIFEST: ProviderBrandManifest = {
       id: "openai-codex",
       route: OPENAI_CODEX_ROUTE_ID,
       kind: "oauth",
-      label: "ChatGPT sign-in",
-      hint: "Open the OpenAI sign-in URL, finish login in the browser, then Fased completes the OAuth flow.",
+      label: "Continue with ChatGPT",
+      hint: "Uses your eligible ChatGPT plan allowance. API keys use separate API billing.",
     },
     {
       id: "openai-api-key",
@@ -1108,24 +1111,8 @@ export const ANTHROPIC_PROVIDER_MANIFEST: ProviderBrandManifest = {
   id: ANTHROPIC_PROVIDER_BRAND_ID,
   label: "Anthropic",
   priority: 2,
-  hint: "Claude Code OAuth + setup-token + API key",
+  hint: "Claude API key; subscription accounts remain in the official Claude Code app",
   methods: [
-    {
-      id: "anthropic-oauth",
-      route: ANTHROPIC_ROUTE_ID,
-      kind: "oauth",
-      label: "Sign in (Claude Code)",
-      hint: "Claude or Console account; Pro, Max, Team, Enterprise, or Console access",
-      buttonLabel: "Sign in",
-    },
-    {
-      id: "token",
-      route: ANTHROPIC_ROUTE_ID,
-      kind: "token",
-      label: "Token (setup-token)",
-      hint: "run `claude setup-token` elsewhere, then paste the token here",
-      buttonLabel: "Paste token",
-    },
     {
       id: "apiKey",
       route: ANTHROPIC_ROUTE_ID,
@@ -1402,24 +1389,8 @@ export const XAI_PROVIDER_MANIFEST: ProviderBrandManifest = {
   id: XAI_PROVIDER_BRAND_ID,
   label: "xAI (Grok)",
   priority: 3,
-  hint: "Grok API key or xAI account sign-in",
+  hint: "Grok API key; subscription sign-in is provided by the official Grok CLI",
   methods: [
-    {
-      id: "xai-oauth",
-      route: XAI_ROUTE_ID,
-      kind: "oauth",
-      label: "xAI sign-in",
-      hint: "Browser sign-in for eligible xAI/Grok accounts",
-      buttonLabel: "Sign in",
-    },
-    {
-      id: "xai-device-code",
-      route: XAI_ROUTE_ID,
-      kind: "device",
-      label: "xAI device code",
-      hint: "Remote-friendly sign-in for eligible xAI/Grok accounts",
-      buttonLabel: "Device code",
-    },
     {
       id: "xai-api-key",
       route: XAI_ROUTE_ID,

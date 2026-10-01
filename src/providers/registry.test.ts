@@ -116,7 +116,7 @@ describe("provider registry", () => {
       groups
         .find((entry) => entry.value === "anthropic")
         ?.options.find((option) => option.value === "token")?.hint,
-    ).toContain("claude setup-token");
+    ).toBeUndefined();
     expect(
       groups
         .find((entry) => entry.value === "google")
@@ -232,6 +232,12 @@ describe("provider registry", () => {
         reasoningBudgetSupported: true,
       },
     );
+    expect(lookupProviderManifestModelCapability("google", "gemini-3.8-flash")).toMatchObject({
+      tools: true,
+      thinkingLevels: ["low", "medium", "high"],
+      defaultThinkingLevel: "medium",
+      reasoningBudgetSupported: false,
+    });
     expect(lookupProviderManifestModelCapability("xai", "grok-4.5")).toMatchObject({
       tools: true,
       json: true,
@@ -431,10 +437,12 @@ describe("provider registry", () => {
       "google-gemini-cli",
     ]);
     expect(GOOGLE_PROVIDER_MANIFEST.models.recommended).toEqual([
+      "google/gemini-3.8-flash",
       "google/gemini-3.5-flash",
       "google/gemini-3.1-pro-preview",
       "google/gemini-3-flash-preview",
       "google/gemini-3.1-flash-lite",
+      "google-gemini-cli/gemini-3.8-flash",
       "google-gemini-cli/gemini-3.5-flash",
       "google-gemini-cli/gemini-3.1-pro-preview",
       "google-gemini-cli/gemini-3-flash-preview",
@@ -540,11 +548,7 @@ describe("provider registry", () => {
   });
 
   it("keeps xAI auth methods and current models route-compatible", () => {
-    expect(XAI_PROVIDER_MANIFEST.methods.map((method) => method.id)).toEqual([
-      "xai-oauth",
-      "xai-device-code",
-      "xai-api-key",
-    ]);
+    expect(XAI_PROVIDER_MANIFEST.methods.map((method) => method.id)).toEqual(["xai-api-key"]);
     expect(isStandardProviderModelRef("xai/grok-4.7")).toBe(true);
     expect(XAI_PROVIDER_MANIFEST.models.recommended).toEqual(["xai/grok-4.7"]);
     expect(isStandardProviderModelRef("xai/grok-4.5")).toBe(false);

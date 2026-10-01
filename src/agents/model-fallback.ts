@@ -3,6 +3,8 @@ import {
   resolveAgentModelFallbackValues,
   resolveAgentModelPrimaryValue,
 } from "../config/model-input.js";
+import { isChatGptPlanCredential } from "../providers/chatgpt-plan-auth.js";
+import { stripAnsi } from "../terminal/ansi.js";
 import {
   ensureAuthProfileStore,
   getSoonestCooldownExpiry,
@@ -12,11 +14,13 @@ import {
 } from "./auth-profiles.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import {
+  FailoverError,
   coerceToFailoverError,
   describeFailoverError,
   isFailoverError,
   isTimeoutError,
 } from "./failover-error.js";
+import { LiveSessionModelSwitchError } from "./live-model-switch-error.js";
 import {
   buildConfiguredAllowlistKeys,
   buildModelAliasIndex,
@@ -27,6 +31,10 @@ import {
 } from "./model-selection.js";
 import type { FailoverReason } from "./pi-embedded-helpers.js";
 import { isLikelyContextOverflowError } from "./pi-embedded-helpers.js";
+
+export type ModelFallbackRunOptions = {
+  allowTransientCooldownProbe?: boolean;
+};
 
 type ModelCandidate = {
   provider: string;
@@ -54,7 +62,8 @@ function isFallbackAbortError(err: unknown): boolean {
     return false;
   }
   const name = "name" in err ? String(err.name) : "";
-  return name === "AbortError";
+  const reason = "reason" in err ? String(err.reason) : "";
+  return name === "AbortError" && reason !== "reason: error";
 }
 
 function shouldRethrowAbort(err: unknown): boolean {
@@ -119,18 +128,24 @@ function throwFallbackFailureSummary(params: {
   lastError: unknown;
   label: string;
   formatAttempt: (attempt: FallbackAttempt) => string;
+  soonestCooldownExpiry?: number;
 }): never {
   if (params.attempts.length <= 1 && params.lastError) {
     throw params.lastError;
   }
   const summary =
     params.attempts.length > 0 ? params.attempts.map(params.formatAttempt).join(" | ") : "unknown";
-  throw new Error(
+  const error = new Error(
     `All ${params.label} failed (${params.attempts.length || params.candidates.length}): ${summary}`,
     {
       cause: params.lastError instanceof Error ? params.lastError : undefined,
     },
   );
+  if (params.soonestCooldownExpiry !== undefined) {
+    error.name = "FallbackSummaryError";
+    Object.assign(error, { soonestCooldownExpiry: params.soonestCooldownExpiry });
+  }
+  throw error;
 }
 
 function resolveImageFallbackCandidates(params: {
@@ -399,7 +414,7 @@ function resolveCooldownDecision(params: {
   // is commonly model-scoped and can recover on a sibling model.
   const shouldAttemptDespiteCooldown =
     (params.isPrimary && (!params.requestedModel || shouldProbe)) ||
-    (!params.isPrimary && inferredReason === "rate_limit");
+    (!params.isPrimary && (inferredReason === "rate_limit" || inferredReason === "overloaded"));
   if (!shouldAttemptDespiteCooldown) {
     return {
       type: "skip",
@@ -422,7 +437,7 @@ export async function runWithModelFallback<T>(params: {
   agentDir?: string;
   /** Optional explicit fallbacks list; when provided (even empty), replaces agents.defaults.model.fallbacks. */
   fallbacksOverride?: string[];
-  run: (provider: string, model: string) => Promise<T>;
+  run: (provider: string, model: string, options?: ModelFallbackRunOptions) => Promise<T>;
   onError?: ModelFallbackErrorHandler;
 }): Promise<ModelFallbackRunResult<T>> {
   const candidates = resolveFallbackCandidates({
@@ -434,13 +449,32 @@ export async function runWithModelFallback<T>(params: {
   const authStore = params.cfg
     ? ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false })
     : null;
+  if (authStore && params.provider === "openai-codex") {
+    const selectedId = resolveAuthProfileOrder({
+      cfg: params.cfg,
+      store: authStore,
+      provider: params.provider,
+    })[0];
+    const credential = selectedId ? authStore.profiles[selectedId] : undefined;
+    if (credential?.type === "oauth" && isChatGptPlanCredential(credential)) {
+      // A ChatGPT plan allowance is not consent to spend against another connection.
+      // Cross-connection fallback stays disabled until its billing/budget boundary exists.
+      for (let index = candidates.length - 1; index >= 0; index--) {
+        if (candidates[index].provider !== "openai-codex") {
+          candidates.splice(index, 1);
+        }
+      }
+    }
+  }
   const attempts: FallbackAttempt[] = [];
   let lastError: unknown;
 
   const hasFallbackCandidates = candidates.length > 1;
+  const probedProviders = new Set<string>();
 
   for (let i = 0; i < candidates.length; i += 1) {
     const candidate = candidates[i];
+    let probeOptions: ModelFallbackRunOptions | undefined;
     if (authStore) {
       const profileIds = resolveAuthProfileOrder({
         cfg: params.cfg,
@@ -467,16 +501,20 @@ export async function runWithModelFallback<T>(params: {
           profileIds,
         });
 
-        if (decision.type === "skip") {
+        if (decision.type === "skip" || probedProviders.has(candidate.provider)) {
           attempts.push({
             provider: candidate.provider,
             model: candidate.model,
-            error: decision.error,
+            error:
+              decision.type === "skip"
+                ? decision.error
+                : `Provider ${candidate.provider} already used its cooldown probe`,
             reason: decision.reason,
           });
           continue;
         }
 
+        probeOptions = { allowTransientCooldownProbe: true };
         if (decision.markProbe) {
           markProbeAttempt(now, probeThrottleKey);
         }
@@ -484,7 +522,9 @@ export async function runWithModelFallback<T>(params: {
     }
 
     try {
-      const result = await params.run(candidate.provider, candidate.model);
+      const result = probeOptions
+        ? await params.run(candidate.provider, candidate.model, probeOptions)
+        : await params.run(candidate.provider, candidate.model);
       return {
         result,
         provider: candidate.provider,
@@ -504,10 +544,17 @@ export async function runWithModelFallback<T>(params: {
         throw err;
       }
       const normalized =
-        coerceToFailoverError(err, {
-          provider: candidate.provider,
-          model: candidate.model,
-        }) ?? err;
+        err instanceof LiveSessionModelSwitchError
+          ? new FailoverError(err.message, {
+              reason: "unknown",
+              provider: candidate.provider,
+              model: candidate.model,
+              cause: err,
+            })
+          : (coerceToFailoverError(err, {
+              provider: candidate.provider,
+              model: candidate.model,
+            }) ?? err);
 
       // Even unrecognized errors should not abort the fallback loop when
       // there are remaining candidates.  Only abort/context-overflow errors
@@ -517,6 +564,15 @@ export async function runWithModelFallback<T>(params: {
         throw err;
       }
 
+      if (probeOptions && (!isKnownFailover || normalized.reason !== "model_not_found")) {
+        probedProviders.add(candidate.provider);
+      }
+      if (isKnownFailover && normalized.reason === "model_not_found" && i < candidates.length - 1) {
+        const label = Array.from(stripAnsi(`${candidate.provider}/${candidate.model}`))
+          .filter((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)
+          .join("");
+        console.warn(`Model "${label}" not found; trying the configured fallback.`);
+      }
       lastError = isKnownFailover ? normalized : err;
       const described = describeFailoverError(normalized);
       attempts.push({
@@ -537,10 +593,34 @@ export async function runWithModelFallback<T>(params: {
     }
   }
 
+  // Execution may have persisted a fresh cooldown. Report only the scopes
+  // attempted in this run, never another model's timer.
+  let soonestCooldownExpiry: number | undefined;
+  if (params.cfg) {
+    const freshStore = ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false });
+    for (const candidate of candidates) {
+      const ids = resolveAuthProfileOrder({
+        cfg: params.cfg,
+        store: freshStore,
+        provider: candidate.provider,
+      });
+      for (const id of ids) {
+        const stats = freshStore.usageStats?.[id];
+        if (stats?.cooldownModel && stats.cooldownModel !== candidate.model) {
+          continue;
+        }
+        const expiry = getSoonestCooldownExpiry(freshStore, [id]);
+        if (expiry !== null && expiry > Date.now()) {
+          soonestCooldownExpiry = Math.min(soonestCooldownExpiry ?? expiry, expiry);
+        }
+      }
+    }
+  }
   throwFallbackFailureSummary({
     attempts,
     candidates,
     lastError,
+    soonestCooldownExpiry,
     label: "models",
     formatAttempt: (attempt) =>
       `${attempt.provider}/${attempt.model}: ${attempt.error}${

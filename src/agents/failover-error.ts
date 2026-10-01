@@ -1,8 +1,9 @@
 import {
   classifyFailoverReason,
-  isAuthPermanentErrorMessage,
-  type FailoverReason,
-} from "./pi-embedded-helpers.js";
+  classifyFailoverReasonFromHttpStatus,
+  classifyFailoverSignal,
+} from "./pi-embedded-helpers/errors.js";
+import type { FailoverReason } from "./pi-embedded-helpers/types.js";
 
 const TIMEOUT_HINT_RE =
   /timeout|timed out|deadline exceeded|context deadline exceeded|stop reason:\s*abort|reason:\s*abort|unhandled stop reason:\s*abort/i;
@@ -55,6 +56,8 @@ export function resolveFailoverStatus(reason: FailoverReason): number | undefine
       return 403;
     case "timeout":
       return 408;
+    case "overloaded":
+      return 503;
     case "format":
       return 400;
     case "model_not_found":
@@ -70,9 +73,10 @@ function getStatusCode(err: unknown): number | undefined {
   }
   const candidate =
     (err as { status?: unknown; statusCode?: unknown }).status ??
-    (err as { statusCode?: unknown }).statusCode;
+    (err as { statusCode?: unknown }).statusCode ??
+    (err as { code?: unknown }).code;
   if (typeof candidate === "number") {
-    return candidate;
+    return candidate >= 100 && candidate <= 599 ? candidate : undefined;
   }
   if (typeof candidate === "string" && /^\d+$/.test(candidate)) {
     return Number(candidate);
@@ -121,6 +125,22 @@ function getErrorMessage(err: unknown): string {
   return "";
 }
 
+function isStructuredQuotaExhaustion(err: unknown): boolean {
+  if (getErrorCode(err) === "insufficient_quota") {
+    return true;
+  }
+  try {
+    const payload = JSON.parse(getErrorMessage(err)) as {
+      error?: { code?: unknown; type?: unknown };
+    } | null;
+    return (
+      payload?.error?.code === "insufficient_quota" || payload?.error?.type === "insufficient_quota"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function hasTimeoutHint(err: unknown): boolean {
   if (!err) {
     return false;
@@ -152,47 +172,84 @@ export function isTimeoutError(err: unknown): boolean {
 }
 
 export function resolveFailoverReasonFromError(err: unknown): FailoverReason | null {
+  return resolveWrappedFailover(err, new Set(), 0);
+}
+
+function resolveWrappedFailover(
+  err: unknown,
+  seen: Set<object>,
+  depth: number,
+): FailoverReason | null {
   if (isFailoverError(err)) {
     return err.reason;
   }
-
-  const status = getStatusCode(err);
-  if (status === 402) {
-    return "billing";
+  if (depth > 8) {
+    return null;
   }
-  if (status === 429) {
+  if (err && typeof err === "object") {
+    if (seen.has(err)) {
+      return null;
+    }
+    seen.add(err);
+    for (const key of ["cause", "error", "reason"] as const) {
+      if (key in err) {
+        const nested = resolveWrappedFailover(
+          (err as Record<string, unknown>)[key],
+          seen,
+          depth + 1,
+        );
+        if (nested) {
+          return nested;
+        }
+      }
+    }
+  }
+  const code = (getErrorCode(err) ?? "").toUpperCase();
+  if (["RESOURCE_EXHAUSTED", "THROTTLING_EXCEPTION"].includes(code)) {
     return "rate_limit";
   }
-  if (status === 401 || status === 403) {
-    const msg = getErrorMessage(err);
-    if (msg && isAuthPermanentErrorMessage(msg)) {
-      return "auth_permanent";
-    }
-    return "auth";
+  if (code === "OVERLOADED_ERROR") {
+    return "overloaded";
   }
+  if (
+    ["ETIMEDOUT", "ESOCKETTIMEDOUT", "ECONNRESET", "ECONNABORTED", "EHOSTDOWN", "EPIPE"].includes(
+      code,
+    )
+  ) {
+    return "timeout";
+  }
+  const status = getStatusCode(err);
   if (status === 408) {
     return "timeout";
   }
-  if (status === 502 || status === 503 || status === 504) {
-    return "timeout";
+  const message = getErrorMessage(err);
+  if (!message && status !== undefined && [521, 522, 523, 524].includes(status)) {
+    return null;
   }
-  if (status === 400) {
-    return "format";
+  const provider =
+    err && typeof err === "object" && "provider" in err && typeof err.provider === "string"
+      ? err.provider
+      : undefined;
+  if (status === 400 && isStructuredQuotaExhaustion(err)) {
+    return "billing";
   }
-
-  const code = (getErrorCode(err) ?? "").toUpperCase();
-  if (["ETIMEDOUT", "ESOCKETTIMEDOUT", "ECONNRESET", "ECONNABORTED"].includes(code)) {
-    return "timeout";
+  const signal = classifyFailoverSignal(message);
+  if (signal?.kind === "context_overflow") {
+    return null;
+  }
+  if (status !== undefined) {
+    const reason = classifyFailoverReasonFromHttpStatus(status, message, { provider });
+    if (reason) {
+      return reason;
+    }
+    if (status === 400) {
+      return "format";
+    }
   }
   if (isTimeoutError(err)) {
     return "timeout";
   }
-
-  const message = getErrorMessage(err);
-  if (!message) {
-    return null;
-  }
-  return classifyFailoverReason(message);
+  return message ? classifyFailoverReason(message, { provider }) : null;
 }
 
 export function describeFailoverError(err: unknown): {

@@ -11,6 +11,7 @@ import {
   ZAI_CODING_CN_BASE_URL,
   ZAI_CODING_GLOBAL_BASE_URL,
 } from "./onboard-auth.js";
+import { CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF, ZAI_DEFAULT_MODEL_REF } from "./onboard-auth.js";
 import type { AuthChoice } from "./onboard-types.js";
 
 vi.mock("../providers/github-copilot-auth.js", () => ({
@@ -124,7 +125,7 @@ describe("applyAuthChoice", () => {
     }
   });
 
-  it("does not throw when openai-codex oauth fails", async () => {
+  it("propagates openai-codex oauth failure", async () => {
     tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "fased-auth-"));
     process.env.FASED_STATE_DIR = tempStateDir;
     process.env.FASED_AGENT_DIR = path.join(tempStateDir, "agent");
@@ -158,7 +159,7 @@ describe("applyAuthChoice", () => {
         runtime,
         setDefaultModel: false,
       }),
-    ).resolves.toEqual({ config: {} });
+    ).rejects.toThrow("oauth failed");
   });
 
   it("prompts and writes MiniMax API key when selecting minimax-api", async () => {
@@ -422,7 +423,7 @@ describe("applyAuthChoice", () => {
     );
     expect(result.config.models?.providers?.zai?.baseUrl).toBe(ZAI_CODING_CN_BASE_URL);
     expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
-      "zai/glm-5.1",
+      ZAI_DEFAULT_MODEL_REF,
     );
 
     const authProfilePath = authProfilePathFor(requireAgentDir());
@@ -580,7 +581,7 @@ describe("applyAuthChoice", () => {
     expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
       "openai/gpt-4o-mini",
     );
-    expect(result.agentModelOverride).toBe("xai/grok-4.3");
+    expect(result.agentModelOverride).toBe("xai/grok-4.7");
 
     const authProfilePath = authProfilePathFor(requireAgentDir());
     const raw = await fs.readFile(authProfilePath, "utf8");
@@ -1062,7 +1063,7 @@ describe("applyAuthChoice", () => {
       mode: "api_key",
     });
     expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
-      "cloudflare-ai-gateway/claude-sonnet-4-6",
+      CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF,
     );
 
     const authProfilePath = authProfilePathFor(requireAgentDir());
@@ -1154,7 +1155,7 @@ describe("applyAuthChoice", () => {
 
     expect(text).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "Paste the redirect URL",
+        message: expect.stringContaining("Paste the redirect URL"),
       }),
     );
     expect(result.config.auth?.profiles?.["chutes:remote-user"]).toMatchObject({
@@ -1335,8 +1336,8 @@ describe("resolvePreferredProviderForAuthChoice", () => {
     expect(resolvePreferredProviderForAuthChoice("github-copilot")).toBe("github-copilot");
   });
 
-  it("maps qwen-portal to the provider", () => {
-    expect(resolvePreferredProviderForAuthChoice("qwen-portal")).toBe("qwen-portal");
+  it("does not select the discontinued qwen-portal provider", () => {
+    expect(resolvePreferredProviderForAuthChoice("qwen-portal")).toBeUndefined();
   });
 
   it("returns undefined for unknown choices", () => {

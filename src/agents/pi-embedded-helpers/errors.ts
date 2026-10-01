@@ -73,6 +73,7 @@ export function isContextOverflowError(errorMessage?: string): boolean {
     lower.includes("context length exceeded") ||
     lower.includes("maximum context length") ||
     lower.includes("prompt is too long") ||
+    lower.includes("input exceeds the maximum number of tokens") ||
     lower.includes("exceeds model context window") ||
     lower.includes("model token limit") ||
     (hasRequestSizeExceeds && hasContextWindow) ||
@@ -672,11 +673,15 @@ const ERROR_PATTERNS = {
   rateLimit: [
     /rate[_ ]limit|too many requests|429/,
     "model_cooldown",
+    "throttlingexception",
+    "monthly limit reached",
+    "weekly/monthly limit exhausted",
     "cooling down",
     "exceeded your current quota",
     "resource has been exhausted",
     "quota exceeded",
     "resource_exhausted",
+    /subscription quota.*automatic quota refresh/i,
     "usage limit",
     "tpm",
     "tokens per minute",
@@ -693,6 +698,8 @@ const ERROR_PATTERNS = {
     "deadline exceeded",
     "context deadline exceeded",
     /without sending (?:any )?chunks?/i,
+    /(?:stop reason|reason):\s*(?:error|network_error)\b/i,
+    /connection error|fetch failed|network error|econnrefused|enotfound|eai_again/i,
     /\bstop reason:\s*abort\b/i,
     /\breason:\s*abort\b/i,
     /\bunhandled stop reason:\s*abort\b/i,
@@ -702,13 +709,14 @@ const ERROR_PATTERNS = {
     ZAI_BILLING_CODE_1311_RE,
     "payment required",
     "insufficient credits",
+    /requires? more credits/i,
     "credit balance",
     "plans & billing",
     "insufficient balance",
   ],
   authPermanent: [
-    /api[_ ]?key[_ ]?(?:revoked|invalid|deactivated|deleted)/i,
-    "invalid_api_key",
+    /api[_ ]?key[_ ]?(?:revoked|deactivated|deleted)/i,
+    "not allowed for this organization",
     "key has been disabled",
     "key has been revoked",
     "account has been deactivated",
@@ -835,7 +843,7 @@ export function isOverloadedErrorMessage(raw: string): boolean {
 
 function isSpecificOverloadedErrorMessage(raw: string): boolean {
   return (
-    /overloaded|overloaded_error|high demand|capacity limit|temporarily unavailable|engine overloaded|api is busy/i.test(
+    /overload(?:ed|ing)|overloaded_error|high demand|capacity limit|temporarily unavailable|engine overloaded|api is busy/i.test(
       raw,
     ) || /\b529\b/.test(raw)
   );
@@ -852,7 +860,7 @@ function isPeriodicLimitMessage(raw: string): boolean {
 }
 
 function hasExplicitBillingMarker(raw: string): boolean {
-  return /\b(?:insufficient credits?|credit balance|upgrade your plan|api key has reached its maximum allowed monthly spending limit)\b/i.test(
+  return /\b(?:insufficient credits?|add more credits|credit balance|upgrade your plan|api key has reached its maximum allowed monthly spending limit)\b/i.test(
     raw,
   );
 }
@@ -1033,6 +1041,9 @@ export function classifyFailoverReason(
   if (isJsonApiInternalServerError(raw)) {
     return "timeout";
   }
+  if (hasExplicitBillingMarker(raw)) {
+    return "billing";
+  }
   if (isRateLimitErrorMessage(raw)) {
     return "rate_limit";
   }
@@ -1063,6 +1074,17 @@ export function classifyFailoverReasonFromHttpStatus(
   opts?: { provider?: string },
 ): FailoverReason | null {
   const message = (body ?? "").trim();
+  if (status === 402 && /weekly\/monthly limit exhausted/i.test(message)) {
+    return "billing";
+  }
+  if (
+    status === 410 &&
+    isSessionExpiredErrorMessage(message) &&
+    !hasExplicitBillingMarker(message) &&
+    !/auth|api[_ ]?key|token/i.test(message)
+  ) {
+    return "session_expired";
+  }
   const explicit = message ? classifyFailoverReason(message, opts) : null;
   if (explicit) {
     if (status === 402 && explicit === "billing" && isPeriodicLimitMessage(message)) {
@@ -1120,7 +1142,10 @@ export function classifyFailoverSignal(
   if (isLikelyContextOverflowError(message)) {
     return { kind: "context_overflow" };
   }
-  const reason = classifyFailoverReason(message);
+  const reason =
+    typeof input !== "string" && input.status !== undefined
+      ? classifyFailoverReasonFromHttpStatus(input.status, message)
+      : classifyFailoverReason(message);
   return reason ? { kind: reason } : null;
 }
 

@@ -1,3 +1,10 @@
+vi.mock("../agents/openai-codex-runtime-component.js", () => ({
+  ensureOpenAICodexRuntimeComponent: vi.fn(async ({ config }: { config: unknown }) => ({
+    config,
+    slotWarnings: [],
+    installed: false,
+  })),
+}));
 import fs from "node:fs/promises";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -144,7 +151,7 @@ describe("applyAuthChoice", () => {
     activeStateDir = null;
   });
 
-  it("does not throw when openai-codex oauth fails", async () => {
+  it("propagates openai-codex oauth failure", async () => {
     await setupTempState();
 
     loginOpenAICodexOAuth.mockRejectedValueOnce(new Error("oauth failed"));
@@ -160,7 +167,7 @@ describe("applyAuthChoice", () => {
         runtime,
         setDefaultModel: false,
       }),
-    ).resolves.toEqual({ config: {} });
+    ).rejects.toThrow("oauth failed");
   });
 
   it("stores openai-codex OAuth with email profile id", async () => {
@@ -205,43 +212,18 @@ describe("applyAuthChoice", () => {
     });
   });
 
-  it("stores Anthropic OAuth separately from setup-token", async () => {
+  it("rejects Claude subscription token import without modifying profiles", async () => {
     await setupTempState();
-
-    loginAnthropicOAuth.mockResolvedValueOnce({
-      refresh: "anthropic-refresh",
-      access: "sk-ant-oat-test",
-      expires: Date.now() + 60_000,
-    });
-
-    const prompter = createPrompter({});
-    const runtime = createExitThrowingRuntime();
-    const openUrl = vi.fn(async () => {});
-
-    const result = await applyAuthChoice({
-      authChoice: "anthropic-oauth",
-      config: {},
-      prompter,
-      runtime,
-      openUrl,
-      setDefaultModel: false,
-    });
-
-    expect(loginAnthropicOAuth).toHaveBeenCalledWith(
-      expect.objectContaining({
-        openUrl,
+    await expect(
+      applyAuthChoice({
+        authChoice: "anthropic-oauth",
+        config: {},
+        prompter: createPrompter({}),
+        runtime: createExitThrowingRuntime(),
+        setDefaultModel: false,
       }),
-    );
-    expect(result.config.auth?.profiles?.["anthropic:default"]).toMatchObject({
-      provider: "anthropic",
-      mode: "oauth",
-    });
-    expect(await readAuthProfile("anthropic:default")).toMatchObject({
-      type: "oauth",
-      provider: "anthropic",
-      refresh: "anthropic-refresh",
-      access: "sk-ant-oat-test",
-    });
+    ).rejects.toThrow("official Claude Code");
+    await expect(readAuthProfile("anthropic:default")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("prompts and writes provider API key for common providers", async () => {
@@ -881,7 +863,7 @@ describe("applyAuthChoice", () => {
         token: "sk-xai-test",
         promptMessage: "Enter xAI API key",
         existingPrimary: "openai/gpt-4o-mini",
-        expectedOverride: "xai/grok-4.3",
+        expectedOverride: "xai/grok-4.7",
         profileId: "xai:default",
         profileProvider: "xai",
         agentId: "agent-1",
@@ -1288,7 +1270,7 @@ describe("applyAuthChoice", () => {
         runtime: createExitThrowingRuntime(),
         setDefaultModel: true,
       }),
-    ).rejects.toThrow("Unsupported provider auth choice");
+    ).rejects.toThrow("Qwen portal OAuth was discontinued");
     expect(pluginRun).not.toHaveBeenCalled();
   });
 

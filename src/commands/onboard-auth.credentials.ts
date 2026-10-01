@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
@@ -10,6 +11,7 @@ import {
   type SecretInput,
   type SecretRef,
 } from "../config/types.secrets.js";
+import { isChatGptPlanCredential } from "../providers/chatgpt-plan-auth.js";
 import { PROVIDER_ENV_VARS } from "../secrets/provider-env-vars.js";
 import { normalizeSecretInput } from "../utils/normalize-secret-input.js";
 import type { SecretInputMode } from "./onboard-types.js";
@@ -199,7 +201,13 @@ export async function writeOAuthCredentials(
   const canonicalProvider = provider.trim();
   const email =
     typeof creds.email === "string" && creds.email.trim() ? creds.email.trim() : "default";
-  const profileId = `${canonicalProvider}:${email}`;
+  const accountLabel = isChatGptPlanCredential(creds)
+    ? `plan-${createHash("sha256")
+        .update(JSON.stringify([creds.clientId, creds.subject]))
+        .digest("hex")
+        .slice(0, 24)}`
+    : email;
+  const profileId = `${canonicalProvider}:${accountLabel}`;
   const resolvedAgentDir = path.resolve(resolveAuthAgentDir(agentDir));
   const targetAgentDirs = options?.syncSiblingAgents
     ? resolveSiblingAgentDirs(resolvedAgentDir)

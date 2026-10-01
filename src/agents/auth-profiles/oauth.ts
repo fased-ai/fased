@@ -4,6 +4,10 @@ import { refreshXaiOAuthCredential } from "../../commands/xai-oauth.js";
 import { loadConfig, type FasedAgentConfig } from "../../config/config.js";
 import { coerceSecretRef } from "../../config/types.secrets.js";
 import { withFileLock } from "../../infra/file-lock.js";
+import {
+  isChatGptPlanCredential,
+  refreshChatGptPlanCredential,
+} from "../../providers/chatgpt-plan-auth.js";
 import { resolveSecretRefString, type SecretRefResolveCache } from "../../secrets/resolve.js";
 import { refreshChutesTokens } from "../chutes-oauth.js";
 import { AUTH_STORE_LOCK_OPTIONS, log } from "./constants.js";
@@ -182,8 +186,12 @@ async function refreshOAuthTokenWithLock(params: {
       [cred.provider]: cred,
     };
 
-    const result =
-      String(cred.provider) === "chutes"
+    const result = isChatGptPlanCredential(cred)
+      ? await (async () => {
+          const newCredentials = await refreshChatGptPlanCredential(cred);
+          return { apiKey: newCredentials.access, newCredentials };
+        })()
+      : String(cred.provider) === "chutes"
         ? await (async () => {
             const newCredentials = await refreshChutesTokens({
               credential: cred,

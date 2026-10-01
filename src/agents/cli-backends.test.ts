@@ -3,6 +3,18 @@ import type { FasedAgentConfig } from "../config/config.js";
 import { resolveCliBackendConfig } from "./cli-backends.js";
 
 describe("resolveCliBackendConfig reliability merge", () => {
+  it("disables native Claude tools and permission bypass for both fresh and resumed runs", () => {
+    const config = resolveCliBackendConfig("claude-cli")?.config;
+    for (const args of [config?.args, config?.resumeArgs]) {
+      expect(args).not.toContain("--dangerously-skip-permissions");
+      expect(args).toEqual(
+        expect.arrayContaining(["--tools", "", "--disallowedTools", "*", "--bare"]),
+      );
+    }
+    expect(config?.modelAliases?.["claude-opus-4-8"]).toBeUndefined();
+    expect(config?.modelAliases?.["claude-sonnet-5"]).toBeUndefined();
+  });
+
   it("clears inherited Claude provider-routing and auth env by default", () => {
     const resolved = resolveCliBackendConfig("claude-cli");
 

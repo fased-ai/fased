@@ -85,3 +85,17 @@ describe("WizardSession", () => {
     expect(done.error).toContain("token=***");
   });
 });
+
+test("cancellation aborts a waiting provider flow and cannot become done afterward", async () => {
+  let signal: AbortSignal | undefined;
+  const session = new WizardSession(async (prompter) => {
+    signal = prompter.signal;
+    await new Promise<void>((resolve) =>
+      prompter.signal?.addEventListener("abort", () => resolve(), { once: true }),
+    );
+  });
+  session.cancel();
+  await Promise.resolve();
+  expect(signal?.aborted).toBe(true);
+  expect((await session.next()).status).toBe("cancelled");
+});

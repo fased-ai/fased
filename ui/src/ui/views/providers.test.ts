@@ -132,8 +132,8 @@ describe("renderProviders", () => {
     const text = flattenTemplateText(renderProviders(createBaseProps()));
 
     expect(text).toContain("Sign in");
-    expect(text).toContain("Sign in (Claude Code)");
-    expect(text).toContain("Token (setup-token)");
+    expect(text).not.toContain("Sign in (Claude Code)");
+    expect(text).not.toContain("Token (setup-token)");
     expect(text).toContain("API key");
     expect(text).toContain("Gemini API key");
     expect(text).toContain("BytePlus API key");
@@ -171,24 +171,24 @@ describe("renderProviders", () => {
     expect(text).toContain("Agent models for OpenRouter Add Model");
   });
 
-  it("renders provider cards in the onboarding order when no provider is signed in", async () => {
+  it("renders primary connections before optional providers when none is signed in", async () => {
     const { renderProviders } = await import("./providers.ts");
     const text = flattenTemplateText(renderProviders(createBaseProps()));
     const providerCardIds = [
       "openai",
       "anthropic",
+      "google",
+      "xai",
+      "openrouter",
       "chutes",
       "ollama",
       "lmstudio",
       "vllm",
       "minimax",
       "moonshot",
-      "google",
-      "xai",
       "mistral",
       "volcengine",
       "byteplus",
-      "openrouter",
       "qwen",
       "zai",
       "qianfan",
@@ -525,7 +525,7 @@ describe("renderProviders", () => {
     );
 
     expect(text).toContain("auth.openai.com/oauth/authorize");
-    expect(text).toContain("full URL hidden");
+    expect(text).toContain("Open browser to sign in");
   });
 
   it("keeps Advanced Config out of normal provider rows", async () => {

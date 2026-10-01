@@ -182,7 +182,7 @@ export async function runAgentTurnWithFallback(params: {
       const onToolResult = params.opts?.onToolResult;
       const fallbackResult = await runWithModelFallback({
         ...resolveModelFallbackOptions(params.followupRun.run),
-        run: (provider, model) => {
+        run: (provider, model, fallbackOptions) => {
           // Notify that model selection is complete (including after fallback).
           // This allows responsePrefix template interpolation with the actual model.
           params.opts?.onModelSelected?.({
@@ -294,6 +294,7 @@ export async function runAgentTurnWithFallback(params: {
             authProfile,
           });
           return runEmbeddedPiAgent({
+            ...fallbackOptions,
             ...embeddedContext,
             groupId: resolveGroupSessionKey(params.sessionCtx)?.id,
             groupChannel:

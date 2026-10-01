@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -20,4 +21,26 @@ export function saveJsonFile(pathname: string, data: unknown) {
   }
   fs.writeFileSync(pathname, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   fs.chmodSync(pathname, 0o600);
+}
+
+// Used for rotating credential records: never truncate the active token set.
+export function saveJsonFileAtomic(pathname: string, data: unknown) {
+  fs.mkdirSync(path.dirname(pathname), { recursive: true, mode: 0o700 });
+  const temporary = `${pathname}.${randomUUID()}.tmp`;
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(descriptor, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(temporary, pathname);
+  } finally {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+    if (fs.existsSync(temporary)) {
+      fs.unlinkSync(temporary);
+    }
+  }
 }
