@@ -308,8 +308,8 @@ enum ExecApprovalsStore {
             agents: file.agents)
     }
 
-    static func loadFile() -> ExecApprovalsFile {
-        let url = self.fileURL()
+    static func loadFile(at explicitURL: URL? = nil) -> ExecApprovalsFile {
+        let url = explicitURL ?? self.fileURL()
         guard FileManager().fileExists(atPath: url.path) else {
             return ExecApprovalsFile(version: 1, socket: nil, defaults: nil, agents: [:])
         }
@@ -326,12 +326,12 @@ enum ExecApprovalsStore {
         }
     }
 
-    static func saveFile(_ file: ExecApprovalsFile) {
+    static func saveFile(_ file: ExecApprovalsFile, at explicitURL: URL? = nil) {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(file)
-            let url = self.fileURL()
+            let url = explicitURL ?? self.fileURL()
             try FileManager().createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
@@ -342,10 +342,10 @@ enum ExecApprovalsStore {
         }
     }
 
-    static func ensureFile() -> ExecApprovalsFile {
-        let url = self.fileURL()
+    static func ensureFile(at explicitURL: URL? = nil) -> ExecApprovalsFile {
+        let url = explicitURL ?? self.fileURL()
         let existed = FileManager().fileExists(atPath: url.path)
-        let loaded = self.loadFile()
+        let loaded = self.loadFile(at: url)
         let loadedHash = self.hashFile(loaded)
 
         var file = self.normalizeIncoming(loaded)
@@ -354,7 +354,7 @@ enum ExecApprovalsStore {
         }
         let path = file.socket?.path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if path.isEmpty {
-            file.socket?.path = self.socketPath()
+            file.socket?.path = url.deletingLastPathComponent().appendingPathComponent("exec-approvals.sock").path
         }
         let token = file.socket?.token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if token.isEmpty {
@@ -364,7 +364,7 @@ enum ExecApprovalsStore {
             file.agents = [:]
         }
         if !existed || loadedHash != self.hashFile(file) {
-            self.saveFile(file)
+            self.saveFile(file, at: url)
         }
         return file
     }
