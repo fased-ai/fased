@@ -1,8 +1,8 @@
 import AppKit
-import Foundation
-import Observation
 import FasedAgentKit
 import FasedAgentProtocol
+import Foundation
+import Observation
 import OSLog
 
 @MainActor
@@ -76,7 +76,9 @@ final class DevicePairingApprovalPrompter {
             await self.loadPendingRequestsFromGateway()
             let stream = await GatewayConnection.shared.subscribe(bufferingNewest: 200)
             for await push in stream {
-                if Task.isCancelled { return }
+                if Task.isCancelled {
+                    return
+                }
                 await MainActor.run { [weak self] in self?.handle(push: push) }
             }
         }

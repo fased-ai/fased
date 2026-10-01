@@ -37,7 +37,8 @@ jobs:
       run_macos_runtime: ${{ steps.scope.outputs.run_macos_runtime }}
       run_macos_app: ${{ steps.scope.outputs.run_macos_app }}
       run_ui: ${{ steps.scope.outputs.run_ui }}
-      run_ui_wen: ${{ steps.scope.outputs.run_ui_wen }}
+      # The protected-base classifier may use its previous UI lane name until this PR lands.
+      run_ui_wen: ${{ steps.scope.outputs.run_ui_wen == 'true' || steps.scope.outputs.run_ui_mining == 'true' }}
       run_skills: ${{ steps.scope.outputs.run_skills }}
     steps:
       - name: Checkout proposed tree

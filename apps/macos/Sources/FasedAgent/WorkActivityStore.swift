@@ -1,7 +1,7 @@
-import Foundation
-import Observation
 import FasedAgentKit
 import FasedAgentProtocol
+import Foundation
+import Observation
 import SwiftUI
 
 @MainActor

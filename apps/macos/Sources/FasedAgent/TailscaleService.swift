@@ -1,7 +1,7 @@
 import AppKit
+import FasedAgentDiscovery
 import Foundation
 import Observation
-import FasedAgentDiscovery
 import os
 
 /// Manages Tailscale integration and status checking.

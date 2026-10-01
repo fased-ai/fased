@@ -888,6 +888,8 @@ describe("runOnboardingWizard", () => {
       assignments: {},
       updatedAt: "2026-03-15T00:00:00.000Z",
     });
+    nextRoleWalletIdentity.mockReturnValueOnce({ walletName: "Wallet", walletId: "wallet-1" });
+    nextRoleWalletIdentity.mockReturnValueOnce({ walletName: "Wallet 2", walletId: "wallet-2" });
     let rolePromptCount = 0;
     const select = vi.fn(async (opts: unknown) => {
       const rawMessage = (opts as { message?: unknown })?.message;
@@ -951,26 +953,41 @@ describe("runOnboardingWizard", () => {
       expect(walletSetupCommand).toHaveBeenNthCalledWith(
         1,
         expect.anything(),
-        expect.objectContaining({ role: "agent", rpcUrl: "https://accepted.example/solana" }),
+        expect.objectContaining({
+          mode: "local-signer-create",
+          chain: "solana",
+          walletId: "wallet-1",
+          walletName: "Wallet",
+          rpcUrl: "https://accepted.example/solana",
+        }),
       );
       expect(walletSetupCommand).toHaveBeenNthCalledWith(
         2,
         expect.anything(),
-        expect.objectContaining({ role: "agent", rpcUrl: "https://rejected.example/solana" }),
+        expect.objectContaining({
+          mode: "local-signer-create",
+          chain: "solana",
+          walletId: "wallet-2",
+          walletName: "Wallet",
+          rpcUrl: "https://rejected.example/solana",
+        }),
       );
-      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT).toBe(
+      expect(walletSetupCommand).toHaveBeenCalledTimes(2);
+      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_1).toBe(
         "https://accepted.example/solana",
       );
-      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__VAULT).toBeUndefined();
+      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_2).toBeUndefined();
+      expect(Object.values(process.env)).not.toContain("https://rejected.example/solana");
       for (const [written] of writeConfigFile.mock.calls) {
+        expect(JSON.stringify(written)).not.toContain("https://rejected.example/solana");
         expect(
           (written as { env?: { vars?: Record<string, string> } }).env?.vars
-            ?.FASED_WALLET_SOLANA_RPC_URL__VAULT,
+            ?.FASED_WALLET_SOLANA_RPC_URL__WALLET_2,
         ).toBeUndefined();
       }
     } finally {
-      delete process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT;
-      delete process.env.FASED_WALLET_SOLANA_RPC_URL__VAULT;
+      delete process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_1;
+      delete process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_2;
     }
   });
 
@@ -2009,7 +2026,12 @@ describe("runOnboardingWizard", () => {
         expect.objectContaining({
           mode: "local-signer-import",
           importFile: path.join(tempHome, "wallet.json"),
-          role: "agent",
+          chain: "solana",
+          walletId: "agent",
+          walletName: "Wallet",
+          nonInteractive: true,
+          noDoctor: true,
+          noSignerHints: true,
           rpcUrl: "https://api.devnet.solana.com",
         }),
       );
@@ -2139,7 +2161,14 @@ describe("runOnboardingWizard", () => {
     expect(walletRolePrompt).toBeUndefined();
     expect(walletSetupCommand).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ role: "agent" }),
+      expect.objectContaining({
+        mode: "local-signer-create",
+        chain: "solana",
+        walletId: "agent",
+        walletName: "Wallet",
+        rpcUrl: "https://api.devnet.solana.com",
+        force: true,
+      }),
     );
     expect(prompter.note).toHaveBeenCalledWith(
       expect.stringContaining("Fased needs no personal Mining wallet"),
@@ -2155,7 +2184,7 @@ describe("runOnboardingWizard", () => {
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("AGENT WALLET: Agent Wallet"),
+      expect.stringContaining("WALLET: Agent Wallet"),
       "Operator readiness",
     );
     expect(prompter.note).not.toHaveBeenCalledWith(

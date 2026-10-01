@@ -39,7 +39,9 @@ enum AnthropicAuthResolver {
         oauthStatus: FasedAgentOAuthStore.AnthropicOAuthStatus = FasedAgentOAuthStore
             .anthropicOAuthStatus()) -> AnthropicAuthMode
     {
-        if oauthStatus.isConnected { return .oauthFile }
+        if oauthStatus.isConnected {
+            return .oauthFile
+        }
 
         if let token = environment["ANTHROPIC_OAUTH_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !token.isEmpty
@@ -209,7 +211,9 @@ enum FasedAgentOAuthStore {
         case connected(expiresAtMs: Int64?)
 
         var isConnected: Bool {
-            if case .connected = self { return true }
+            if case .connected = self {
+                return true
+            }
             return false
         }
 
@@ -261,7 +265,9 @@ enum FasedAgentOAuthStore {
         var seen = Set<String>()
         return urls.filter { url in
             let path = url.standardizedFileURL.path
-            if seen.contains(path) { return false }
+            if seen.contains(path) {
+                return false
+            }
             seen.insert(path)
             return true
         }
@@ -331,7 +337,9 @@ enum FasedAgentOAuthStore {
 
     private static func firstString(in dict: [String: Any], keys: [String]) -> String? {
         for key in keys {
-            if let value = dict[key] as? String { return value }
+            if let value = dict[key] as? String {
+                return value
+            }
         }
         return nil
     }

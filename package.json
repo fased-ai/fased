@@ -259,6 +259,7 @@
     "test:signer:portable": "bash scripts/test-fased-signerd-portable-builds.sh",
     "test:smoke:agent-flow": "vitest run --config vitest.unit.config.ts src/auto-reply/reply/channel-command-control-flow.test.ts -t \"Provider -> Agent -> Skill -> Chat -> Task -> Memory -> Channel delivery\"",
     "test:ui": "pnpm lint:ui:no-raw-window-open && pnpm --dir ui test",
+    "test:ui:mining": "pnpm test:ui:wen",
     "test:ui:wen": "pnpm --dir ui exec vitest run --config vitest.config.ts src/ui/views/wen && pnpm --dir ui exec vitest run --config vitest.campaign-wire.config.ts",
     "test:voicecall:closedloop": "vitest run extensions/voice-call/src/manager.test.ts extensions/voice-call/src/media-stream.test.ts src/plugins/voice-call.plugin.test.ts --maxWorkers=1",
     "test:watch": "vitest",

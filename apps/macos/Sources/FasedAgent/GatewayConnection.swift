@@ -1,7 +1,7 @@
-import Foundation
 import FasedAgentChatUI
 import FasedAgentKit
 import FasedAgentProtocol
+import Foundation
 import OSLog
 
 private let gatewayConnectionLogger = Logger(subsystem: "ai.fased", category: "gateway.connection")
@@ -502,7 +502,9 @@ extension GatewayConnection {
 
     func healthSnapshot(timeoutMs: Double? = nil) async throws -> HealthSnapshot {
         let data = try await self.requestRaw(method: .health, timeoutMs: timeoutMs)
-        if let snap = decodeHealthSnapshot(from: data) { return snap }
+        if let snap = decodeHealthSnapshot(from: data) {
+            return snap
+        }
         throw GatewayDecodingError(method: Method.health.rawValue, message: "failed to decode health snapshot")
     }
 
@@ -541,9 +543,15 @@ extension GatewayConnection {
         var params: [String: AnyCodable] = [
             "skillKey": AnyCodable(skillKey),
         ]
-        if let enabled { params["enabled"] = AnyCodable(enabled) }
-        if let apiKey { params["apiKey"] = AnyCodable(apiKey) }
-        if let env, !env.isEmpty { params["env"] = AnyCodable(env) }
+        if let enabled {
+            params["enabled"] = AnyCodable(enabled)
+        }
+        if let apiKey {
+            params["apiKey"] = AnyCodable(apiKey)
+        }
+        if let env, !env.isEmpty {
+            params["env"] = AnyCodable(env)
+        }
         return try await self.requestDecoded(method: .skillsUpdate, params: params)
     }
 
@@ -562,8 +570,12 @@ extension GatewayConnection {
             return FasedAgentSessionsPreviewPayload(ts: 0, previews: [])
         }
         var params: [String: AnyCodable] = ["keys": AnyCodable(resolvedKeys)]
-        if let limit { params["limit"] = AnyCodable(limit) }
-        if let maxChars { params["maxChars"] = AnyCodable(maxChars) }
+        if let limit {
+            params["limit"] = AnyCodable(limit)
+        }
+        if let maxChars {
+            params["maxChars"] = AnyCodable(maxChars)
+        }
         let timeout = timeoutMs.map { Double($0) }
         return try await self.requestDecoded(
             method: .sessionsPreview,
@@ -580,7 +592,9 @@ extension GatewayConnection {
     {
         let resolvedKey = self.canonicalizeSessionKey(sessionKey)
         var params: [String: AnyCodable] = ["sessionKey": AnyCodable(resolvedKey)]
-        if let limit { params["limit"] = AnyCodable(limit) }
+        if let limit {
+            params["limit"] = AnyCodable(limit)
+        }
         let timeout = timeoutMs.map { Double($0) }
         return try await self.requestDecoded(
             method: .chatHistory,
@@ -634,7 +648,9 @@ extension GatewayConnection {
 
     func talkMode(enabled: Bool, phase: String? = nil) async {
         var params: [String: AnyCodable] = ["enabled": AnyCodable(enabled)]
-        if let phase { params["phase"] = AnyCodable(phase) }
+        if let phase {
+            params["phase"] = AnyCodable(phase)
+        }
         try? await self.requestVoid(method: .talkMode, params: params)
     }
 

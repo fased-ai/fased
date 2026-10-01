@@ -194,13 +194,13 @@ enum HostEnvSecurityPolicy {
         "WGETRC",
         "XDG_CONFIG_DIRS",
         "XDG_CONFIG_HOME",
-        "YARN_RC_FILENAME"
+        "YARN_RC_FILENAME",
     ]
 
     static let blockedInheritedPrefixes: [String] = [
         "BASH_FUNC_",
         "DYLD_",
-        "LD_"
+        "LD_",
     ]
 
     static let blockedKeys: Set<String> = [
@@ -293,7 +293,7 @@ enum HostEnvSecurityPolicy {
         "SVN_EDITOR",
         "SVN_SSH",
         "VAGRANT_VAGRANTFILE",
-        "VIMINIT"
+        "VIMINIT",
     ]
 
     static let blockedOverrideKeys: Set<String> = [
@@ -438,19 +438,19 @@ enum HostEnvSecurityPolicy {
         "XDG_CONFIG_DIRS",
         "XDG_CONFIG_HOME",
         "YARN_RC_FILENAME",
-        "ZDOTDIR"
+        "ZDOTDIR",
     ]
 
     static let blockedOverridePrefixes: [String] = [
         "CARGO_REGISTRIES_",
         "GIT_CONFIG_",
         "NPM_CONFIG_",
-        "TF_VAR_"
+        "TF_VAR_",
     ]
 
     static let blockedPrefixes: [String] = [
         "BASH_FUNC_",
         "DYLD_",
-        "LD_"
+        "LD_",
     ]
 }

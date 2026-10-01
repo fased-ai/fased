@@ -1,8 +1,8 @@
 import AppKit
-import Observation
 import FasedAgentDiscovery
 import FasedAgentIPC
 import FasedAgentKit
+import Observation
 import SwiftUI
 
 struct GeneralSettings: View {
@@ -124,7 +124,8 @@ struct GeneralSettings: View {
             }
 
             if self.state.connectionMode == .local {
-                Text("Compatibility only: this app can attach to an existing local CLI but does not install or update it.")
+                Text(
+                    "Compatibility only: this app can attach to an existing local CLI but does not install or update it.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -435,10 +436,14 @@ struct GeneralSettings: View {
 
             if let snap = snapshot {
                 let linkId = snap.channelOrder?.first(where: {
-                    if let summary = snap.channels[$0] { return summary.linked != nil }
+                    if let summary = snap.channels[$0] {
+                        return summary.linked != nil
+                    }
                     return false
                 }) ?? snap.channels.keys.first(where: {
-                    if let summary = snap.channels[$0] { return summary.linked != nil }
+                    if let summary = snap.channels[$0] {
+                        return summary.linked != nil
+                    }
                     return false
                 })
                 let linkLabel =

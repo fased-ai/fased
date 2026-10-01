@@ -1,8 +1,8 @@
 import AppKit
-import Observation
 import FasedAgentChatUI
 import FasedAgentDiscovery
 import FasedAgentIPC
+import Observation
 import SwiftUI
 
 enum UIStrings {

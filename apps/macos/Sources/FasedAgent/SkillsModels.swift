@@ -1,5 +1,5 @@
-import Foundation
 import FasedAgentProtocol
+import Foundation
 
 struct SkillsStatusReport: Codable {
     let workspaceDir: String

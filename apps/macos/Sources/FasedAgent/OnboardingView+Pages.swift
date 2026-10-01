@@ -383,7 +383,8 @@ extension OnboardingView {
         self.onboardingPage {
             Text("Connect to a managed runtime")
                 .font(.largeTitle.weight(.semibold))
-            Text("The signed Go lifecycle currently supports Linux Local and Hosting installations. This macOS app does not download or execute a separate Node/npm installer.")
+            Text(
+                "The signed Go lifecycle currently supports Linux Local and Hosting installations. This macOS app does not download or execute a separate Node/npm installer.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -391,10 +392,13 @@ extension OnboardingView {
                 .fixedSize(horizontal: false, vertical: true)
 
             self.onboardingCard(spacing: 10) {
-                Label("Use Remote mode to connect this app to a lifecycle-managed Linux instance.", systemImage: "lock.shield")
+                Label(
+                    "Use Remote mode to connect this app to a lifecycle-managed Linux instance.",
+                    systemImage: "lock.shield")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                Text("Local mode is compatibility-only for an already installed CLI. A native macOS lifecycle runtime must be shipped and verified separately before this app can install or update Local mode.")
+                Text(
+                    "Local mode is compatibility-only for an already installed CLI. A native macOS lifecycle runtime must be shipped and verified separately before this app can install or update Local mode.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

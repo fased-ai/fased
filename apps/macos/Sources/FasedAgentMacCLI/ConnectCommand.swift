@@ -1,7 +1,7 @@
-import Foundation
 import FasedAgentDiscovery
 import FasedAgentKit
 import FasedAgentProtocol
+import Foundation
 
 struct ConnectOptions {
     var url: String?
@@ -282,7 +282,9 @@ private func bestEffortEndpoint(opts: ConnectOptions, config: GatewayConfig) -> 
 }
 
 private func resolvedToken(opts: ConnectOptions, mode: String, config: GatewayConfig) -> String? {
-    if let token = opts.token, !token.isEmpty { return token }
+    if let token = opts.token, !token.isEmpty {
+        return token
+    }
     if mode == "remote" {
         return config.remoteToken
     }
@@ -290,7 +292,9 @@ private func resolvedToken(opts: ConnectOptions, mode: String, config: GatewayCo
 }
 
 private func resolvedPassword(opts: ConnectOptions, mode: String, config: GatewayConfig) -> String? {
-    if let password = opts.password, !password.isEmpty { return password }
+    if let password = opts.password, !password.isEmpty {
+        return password
+    }
     if mode == "remote" {
         return config.remotePassword
     }

@@ -1,5 +1,5 @@
-import Foundation
 import FasedAgentIPC
+import Foundation
 
 extension OnboardingView {
     @MainActor

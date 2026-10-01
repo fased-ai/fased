@@ -1,5 +1,5 @@
-import Foundation
 import FasedAgentDiscovery
+import Foundation
 
 enum GatewayDiscoveryHelpers {
     static func resolvedServiceHost(

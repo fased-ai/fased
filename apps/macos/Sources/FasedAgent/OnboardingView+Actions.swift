@@ -1,7 +1,7 @@
 import AppKit
-import Foundation
 import FasedAgentDiscovery
 import FasedAgentIPC
+import Foundation
 import SwiftUI
 
 extension OnboardingView {
@@ -57,7 +57,9 @@ extension OnboardingView {
     }
 
     func handleNext() {
-        if self.isWizardBlocking { return }
+        if self.isWizardBlocking {
+            return
+        }
         if self.currentPage < self.pageCount - 1 {
             withAnimation { self.currentPage += 1 }
         } else {

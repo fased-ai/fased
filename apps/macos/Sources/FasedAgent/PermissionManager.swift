@@ -3,15 +3,17 @@ import ApplicationServices
 import AVFoundation
 import CoreGraphics
 import CoreLocation
+import FasedAgentIPC
 import Foundation
 import Observation
-import FasedAgentIPC
 import Speech
 import UserNotifications
 
 enum PermissionManager {
     static func isLocationAuthorized(status: CLAuthorizationStatus, requireAlways: Bool) -> Bool {
-        if requireAlways { return status == .authorizedAlways }
+        if requireAlways {
+            return status == .authorizedAlways
+        }
         switch status {
         case .authorizedAlways, .authorizedWhenInUse:
             return true
@@ -471,7 +473,9 @@ final class PermissionMonitor {
     }
 
     private func checkStatus(force: Bool) async {
-        if self.isChecking { return }
+        if self.isChecking {
+            return
+        }
         let now = Date()
         if !force, let lastCheck, now.timeIntervalSince(lastCheck) < self.minimumCheckInterval {
             return

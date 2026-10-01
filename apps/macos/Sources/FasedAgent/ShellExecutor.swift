@@ -1,5 +1,5 @@
-import Foundation
 import FasedAgentIPC
+import Foundation
 
 enum ShellExecutor {
     struct ShellResult {
@@ -30,8 +30,12 @@ enum ShellExecutor {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = command
-        if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
-        if let env { process.environment = env }
+        if let cwd {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        }
+        if let env {
+            process.environment = env
+        }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -73,7 +77,9 @@ enum ShellExecutor {
                 group.addTask { await waitTask.value }
                 group.addTask {
                     try? await Task.sleep(nanoseconds: nanos)
-                    if process.isRunning { process.terminate() }
+                    if process.isRunning {
+                        process.terminate()
+                    }
                     _ = await waitTask.value // drain pipes after termination
                     return ShellResult(
                         stdout: "",
