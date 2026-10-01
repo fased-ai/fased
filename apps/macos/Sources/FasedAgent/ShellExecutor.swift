@@ -1,5 +1,6 @@
 import FasedAgentIPC
 import Foundation
+import os
 
 enum ShellExecutor {
     struct ShellResult {
@@ -54,14 +55,24 @@ enum ShellExecutor {
                 errorMessage: "failed to start: \(error.localizedDescription)")
         }
 
-        let outTask = Task { stdoutPipe.fileHandleForReading.readToEndSafely() }
-        let errTask = Task { stderrPipe.fileHandleForReading.readToEndSafely() }
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        let outTask = Task {
+            await self.runBlocking { stdoutPipe.fileHandleForReading.readToEndSafely() }
+        }
+        let errTask = Task {
+            await self.runBlocking { stderrPipe.fileHandleForReading.readToEndSafely() }
+        }
 
         let waitTask = Task { () -> ShellResult in
-            process.waitUntilExit()
+            await self.runBlocking { process.waitUntilExit() }
             let out = await outTask.value
             let err = await errTask.value
             let status = Int(process.terminationStatus)
+            if timedOut.withLock({ $0 }) {
+                return ShellResult(
+                    stdout: "", stderr: "", exitCode: nil, timedOut: true,
+                    success: false, errorMessage: "timeout")
+            }
             return ShellResult(
                 stdout: String(bytes: out, encoding: .utf8) ?? "",
                 stderr: String(bytes: err, encoding: .utf8) ?? "",
@@ -76,18 +87,17 @@ enum ShellExecutor {
             return await withTaskGroup(of: ShellResult.self) { group in
                 group.addTask { await waitTask.value }
                 group.addTask {
-                    try? await Task.sleep(nanoseconds: nanos)
+                    do {
+                        try await Task.sleep(nanoseconds: nanos)
+                    } catch {
+                        return await waitTask.value
+                    }
                     if process.isRunning {
+                        // Both race participants must report the same timeout outcome.
+                        timedOut.withLock { $0 = true }
                         process.terminate()
                     }
-                    _ = await waitTask.value // drain pipes after termination
-                    return ShellResult(
-                        stdout: "",
-                        stderr: "",
-                        exitCode: nil,
-                        timedOut: true,
-                        success: false,
-                        errorMessage: "timeout")
+                    return await waitTask.value // drain pipes after termination
                 }
                 let first = await group.next()!
                 group.cancelAll()
@@ -96,6 +106,16 @@ enum ShellExecutor {
         }
 
         return await waitTask.value
+    }
+
+    private static func runBlocking<T: Sendable>(
+        _ operation: @escaping @Sendable () -> T) async -> T
+    {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: operation())
+            }
+        }
     }
 
     static func run(command: [String], cwd: String?, env: [String: String]?, timeout: Double?) async -> Response {
