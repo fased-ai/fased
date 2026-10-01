@@ -405,29 +405,38 @@ jobs:
           swiftformat --lint Swabble/Sources --config .swiftformat
           swift build --package-path apps/macos --configuration release
           (
-            swift test --package-path apps/macos &
-            swift_test_pid=$!
             (
               timer_pid=""
               sample_pid=""
               trap 'kill "$timer_pid" "$sample_pid" 2>/dev/null || true' EXIT
               trap 'exit 0' TERM INT
+              while :; do
+                native_pids="$(ps -axo pid=,ppid=,comm= | awk '$3 ~ /(^|\/)swiftpm-testing$/ { print $1 }')"
+                if [ -n "$native_pids" ]; then break; fi
+                sleep 1 &
+                timer_pid=$!
+                wait "$timer_pid" || exit 0
+                timer_pid=""
+              done
               sleep 120 &
               timer_pid=$!
               wait "$timer_pid" || exit 0
-              if kill -0 "$swift_test_pid" 2>/dev/null; then
-                diagnostics_dir="$RUNNER_TEMP/fased-macos-stall"
-                mkdir -p "$diagnostics_dir"
-                ps -axo pid=,ppid=,comm= > "$diagnostics_dir/processes.txt"
-                cat "$diagnostics_dir/processes.txt"
-                while read -r native_pid; do
-                  sample_file="$diagnostics_dir/swiftpm-testing-$native_pid.sample.txt"
-                  /usr/bin/sample "$native_pid" 5 -file "$sample_file" &
-                  sample_pid=$!
-                  wait "$sample_pid" || true
-                  if [ -f "$sample_file" ]; then cat "$sample_file"; fi
-                done < <(awk '$3 ~ /(^|\/)swiftpm-testing$/ { print $1 }' "$diagnostics_dir/processes.txt")
-              fi
+              timer_pid=""
+              diagnostics_dir="$RUNNER_TEMP/fased-macos-stall"
+              mkdir -p "$diagnostics_dir"
+              ps -axo pid=,ppid=,comm= > "$diagnostics_dir/processes.txt"
+              cat "$diagnostics_dir/processes.txt"
+              while read -r native_pid; do
+                if ! ps -p "$native_pid" -o comm= | awk '/(^|\/)swiftpm-testing$/ { found=1 } END { exit !found }'; then
+                  continue
+                fi
+                sample_file="$diagnostics_dir/swiftpm-testing-$native_pid.sample.txt"
+                /usr/bin/sample "$native_pid" 5 -file "$sample_file" &
+                sample_pid=$!
+                wait "$sample_pid" || true
+                sample_pid=""
+                if [ -f "$sample_file" ]; then cat "$sample_file"; fi
+              done < <(printf '%s\n' "$native_pids")
             ) &
             sampler_pid=$!
             stop_sampler() {
@@ -436,7 +445,7 @@ jobs:
             }
             trap stop_sampler EXIT
             swift_test_status=0
-            wait "$swift_test_pid" || swift_test_status=$?
+            swift test --package-path apps/macos || swift_test_status=$?
             stop_sampler
             trap - EXIT
             exit "$swift_test_status"
