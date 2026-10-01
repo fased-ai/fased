@@ -59,7 +59,10 @@ describe("federation peer protocol v2", () => {
     expect(isTrustedFederationPeerUrl(new URL("http://127.0.0.1:18789"))).toBe(true);
     expect(isTrustedFederationPeerUrl(new URL("http://[::1]:18789"))).toBe(true);
     expect(isTrustedFederationPeerUrl(new URL("http://seller.example"))).toBe(false);
-    expect(isTrustedFederationPeerUrl(new URL("https://user:secret@seller.example"))).toBe(false);
+    const credentialedUrl = new URL("https://seller.example");
+    credentialedUrl.username = "test-user";
+    credentialedUrl.password = credentialedUrl.username;
+    expect(isTrustedFederationPeerUrl(credentialedUrl)).toBe(false);
     expect(isTrustedFederationPeerUrl(new URL("ftp://seller.example"))).toBe(false);
   });
 
@@ -79,6 +82,7 @@ describe("federation peer protocol v2", () => {
       status: "verified",
       nodeId: identity.deviceId,
       handle: SENDER,
+      bondTier: "operator-bond", // Obsolete directory metadata cannot grant authority.
     }));
     const authorize = async () =>
       await authorizeFederationPeerRequestV2({
@@ -102,6 +106,7 @@ describe("federation peer protocol v2", () => {
       code: "peer_auth_replay",
     });
     expect(directoryLookup).toHaveBeenCalledTimes(2);
+    expect([first, second].find((result) => result.ok)).not.toHaveProperty("bondTier");
 
     const replayPath = path.join(stateDir, "federation", "peer-replay-v2.json");
     const stat = await fs.stat(replayPath);

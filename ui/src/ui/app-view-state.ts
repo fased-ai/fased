@@ -20,47 +20,11 @@ import type {
   WalletSkillGrantRow,
 } from "./controllers/wallet-skill-grants.ts";
 import type {
-  FederationContentSummarizeRunResult,
-  FederationOperatorEconomyFeeBucketBalanceView,
-  FederationOperatorEconomyFeeBucketJournalRow,
-  FederationOperatorEconomyFeeCollectionStatus,
-  FederationOperatorEconomyFeeObjectRecord,
-  FederationOperatorEconomyFeeReconciliationReport,
-  FederationDisputeReviewRequest,
-  FederationDecisionConfidence,
-  FederationDisputeNotaryOpinion,
-  FederationDisputeNotaryRecord,
-  FederationDisputeReasonCode,
-  FederationDisputeStatus,
-  FederationDisputeRecord,
   FederationDirectoryEntry,
-  FederationLocalOfferEntry,
-  FederationLocalOrderEntry,
-  FederationLocalRequestEntry,
-  FederationMarketplaceIndexEntry,
-  FederationMarketplaceIndexPreview,
-  FederationMarketplaceFulfillmentMode,
-  FederationMarketplacePriceUnit,
-  FederationOfferDirectoryEntry,
-  FederationPaidContentSummarizeRunRequest,
-  FederationReviewDeliveryOutcome,
-  FederationReviewPaymentStatus,
-  FederationReviewRecord,
   FederationStatus,
   FederationToken,
 } from "./federation-api.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
-import type {
-  MiningUiNotification,
-  SatMainnetSyncStatus,
-  SatMinerProfile,
-  SatMiningHistory,
-  SatMiningReadiness,
-  SatMiningRecoverySummary,
-  SatMiningRuntimeStatus,
-  SatMiningWalletOption,
-} from "./mining-api.ts";
-import type { SavedMiningProfile } from "./mining-profiles.ts";
 import type { Tab } from "./navigation.ts";
 import type {
   AppNotification,
@@ -484,162 +448,6 @@ export type AppViewState = {
   federationToken: FederationToken | null;
   federationStatus: FederationStatus | null;
   federationManagedMode: boolean;
-  federationAdminToken: string;
-  federationReviewReason: string;
-  federationReviewBusyHandle: string | null;
-  federationBondWalletIdDraft: string;
-  federationBondAmountDraft: string;
-  federationBondTierDraft: "basic-bond" | "operator-bond";
-  federationBondAutoSubmitProof: boolean;
-  federationBondActionBusy: boolean;
-  federationBondBusyAction: string | null;
-  federationOperatorEconomyLoading: boolean;
-  federationOperatorEconomyError: string | null;
-  federationOperatorEconomyCollectionStatus: FederationOperatorEconomyFeeCollectionStatus[];
-  federationOperatorEconomyFeeObjects: FederationOperatorEconomyFeeObjectRecord[];
-  federationOperatorEconomyBucketJournal: FederationOperatorEconomyFeeBucketJournalRow[];
-  federationOperatorEconomyBucketBalances: FederationOperatorEconomyFeeBucketBalanceView[];
-  federationOperatorEconomyReconciliationReports: FederationOperatorEconomyFeeReconciliationReport[];
-  federationOperatorEconomyAutoFeeDecisions: import("./federation-api.js").FederationOperatorEconomyAutoFeeDecisionRecord[];
-  federationOperatorEconomyShowcase:
-    | import("./federation-api.js").FederationOperatorEconomyShowcaseMeta
-    | null;
-  federationLocalOffers: FederationLocalOfferEntry[];
-  federationLocalRequests: FederationLocalRequestEntry[];
-  federationLocalOrders: FederationLocalOrderEntry[];
-  federationLocalOffersLoading: boolean;
-  federationLocalRequestsLoading: boolean;
-  federationLocalOrdersLoading: boolean;
-  federationLocalOffersError: string | null;
-  federationLocalRequestsError: string | null;
-  federationLocalOrdersError: string | null;
-  federationLocalOffersMessage: string | null;
-  federationLocalOfferBusy: boolean;
-  federationLocalOrderBusy: boolean;
-  federationLocalOfferDraftOpen: boolean;
-  federationLocalListingDraftKind: "offer" | "request";
-  federationLocalOfferEditingId: string | null;
-  federationLocalRequestEditingId: string | null;
-  federationLocalOfferEnabledDraft: boolean;
-  federationLocalOfferTitleDraft: string;
-  federationLocalOfferSummaryDraft: string;
-  federationLocalOfferServiceKindDraft: string;
-  federationLocalOfferInputShapeDraft: string;
-  federationLocalOfferDeliveryShapeDraft: string;
-  federationLocalOfferCapabilitiesDraft: string;
-  federationLocalOfferPriceAmountDraft: string;
-  federationLocalOfferPricingModelDraft: string;
-  federationLocalOfferPriceUnitDraft: FederationMarketplacePriceUnit;
-  federationLocalOfferCurrencyDraft: string;
-  federationLocalOfferFulfillmentModeDraft: FederationMarketplaceFulfillmentMode;
-  federationLocalOfferAcceptedAssetsDraft: string;
-  federationLocalOfferPaymentRailsDraft: string;
-  federationOffersLoading: boolean;
-  federationOffersError: string | null;
-  federationOffersHint: string | null;
-  federationOffers: FederationOfferDirectoryEntry[];
-  federationOffersQuery: string;
-  federationOffersServiceKindFilter: string;
-  federationMarketplaceSection: import("./views/federation.js").FederationMarketplaceSection;
-  federationMarketplaceKindFilter: "all" | "offer" | "request";
-  federationMarketplaceTrustFilter: string;
-  federationMarketplaceStatusFilter: string;
-  federationMarketplaceDateFromFilter: string;
-  federationMarketplaceDateToFilter: string;
-  federationMarketplaceSort: import("./views/federation.js").FederationMarketplaceSort;
-  federationSelectedOfferId: string;
-  federationMarketplaceIndexLoading: boolean;
-  federationMarketplaceIndexPublishing: boolean;
-  federationMarketplaceIndexError: string | null;
-  federationMarketplaceIndexMessage: string | null;
-  federationMarketplaceIndexPreview: FederationMarketplaceIndexPreview | null;
-  federationMarketplaceIndexEntries: FederationMarketplaceIndexEntry[];
-  federationMarketplaceIndexSelectedEntryId: string;
-  federationMarketplaceIndexDetailTab: import("./views/federation.js").FederationMarketplaceIndexDetailTab;
-  federationMarketplaceFeedbackOrderId: string;
-  federationMarketplaceSellerProfileHandle: string;
-  federationMarketplaceSellerProfileTab: import("./views/federation.js").FederationMarketplaceSellerProfileTab;
-  federationMarketplaceSellerProfileLoading: boolean;
-  federationMarketplaceSellerProfileError: string | null;
-  federationMarketplaceSellerProfileEntries: FederationMarketplaceIndexEntry[];
-  federationMarketplaceSellerProfileReviews: FederationReviewRecord[];
-  federationMarketplaceSellerProfileDisputes: FederationDisputeRecord[];
-  federationMarketplaceSellerProfileNotaryRecords: FederationDisputeNotaryRecord[];
-  federationOfferReviewsLoading: boolean;
-  federationOfferReviewsError: string | null;
-  federationOfferReviews: FederationReviewRecord[];
-  federationOfferDisputesLoading: boolean;
-  federationOfferDisputesError: string | null;
-  federationOfferDisputes: FederationDisputeRecord[];
-  federationOfferFeedbackBusy: boolean;
-  federationOfferFeedbackError: string | null;
-  federationOfferFeedbackMessage: string | null;
-  federationOfferFeedbackTab: "review" | "dispute";
-  federationEscrowBusyOrderId: string | null;
-  federationEscrowError: string | null;
-  federationEscrowMessage: string | null;
-  federationMarketplaceOrderDeliveryDraftOrderId: string;
-  federationMarketplaceOrderDeliveryKindDraft: "app-inbox" | "webhook";
-  federationMarketplaceOrderDeliveryWebhookUrlDraft: string;
-  federationMarketplaceOrderDeliveryBusyOrderId: string | null;
-  federationMarketplaceOrderDeliveryError: string | null;
-  federationMarketplaceOrderDeliveryMessage: string | null;
-  federationMarketplaceManualOrderBusyId: string | null;
-  federationMarketplaceManualOrderError: string | null;
-  federationMarketplaceManualOrderMessage: string | null;
-  federationMarketplaceCapabilityOrderBusyId: string | null;
-  federationMarketplaceCapabilityOrderError: string | null;
-  federationMarketplaceCapabilityOrderMessage: string | null;
-  federationSummarizeSourceText: string;
-  federationSummarizeStyle: "plain" | "bullets";
-  federationSummarizeMaxSentences: string;
-  federationSummarizeBusy: boolean;
-  federationSummarizeError: string | null;
-  federationPaidSummarizeBusy: boolean;
-  federationPaidSummarizeError: string | null;
-  federationSummarizeResult: FederationContentSummarizeRunResult | null;
-  federationPaidQuoteAmountDraft: string;
-  federationPaidQuoteAssetDecimalsDraft: string;
-  federationPaidQuoteCurrencyDraft: string;
-  federationPaidQuoteChainDraft: FederationPaidContentSummarizeRunRequest["quote"]["chain"];
-  federationPaidQuoteAssetKindDraft: FederationPaidContentSummarizeRunRequest["quote"]["assetKind"];
-  federationPaidQuoteAssetAddressDraft: string;
-  federationPaidQuotePayeeAddressDraft: string;
-  federationPaidQuoteExpiresMinutesDraft: string;
-  federationReviewRatingDraft: string;
-  federationReviewOutcomeDraft: FederationReviewDeliveryOutcome;
-  federationReviewPaymentStatusDraft: FederationReviewPaymentStatus;
-  federationReviewInvoiceIdDraft: string;
-  federationReviewReceiptIdDraft: string;
-  federationReviewSummaryDraft: string;
-  federationDisputeReasonCodeDraft: FederationDisputeReasonCode;
-  federationDisputePaymentStatusDraft: FederationReviewPaymentStatus;
-  federationDisputeInvoiceIdDraft: string;
-  federationDisputeReceiptIdDraft: string;
-  federationDisputeSummaryDraft: string;
-  federationOperatorDisputesLoading: boolean;
-  federationOperatorDisputesError: string | null;
-  federationOperatorDisputes: FederationDisputeRecord[];
-  federationOperatorDisputeProviderFilter: string;
-  federationOperatorDisputeOfferIdFilter: string;
-  federationOperatorDisputeStatusFilter: "all" | FederationDisputeStatus;
-  federationOperatorDisputePaymentStatusFilter: "all" | FederationReviewPaymentStatus;
-  federationOperatorSelectedCaseId: string;
-  federationOperatorDisputeReviewStatusDraft: FederationDisputeReviewRequest["status"];
-  federationOperatorDisputeResolutionDraft: string;
-  federationOperatorDisputeReviewBusy: boolean;
-  federationOperatorDisputeReviewError: string | null;
-  federationOperatorDisputeReviewMessage: string | null;
-  federationDisputeNotaryRecordsLoading: boolean;
-  federationDisputeNotaryRecordsError: string | null;
-  federationDisputeNotaryRecords: FederationDisputeNotaryRecord[];
-  federationDisputeNotaryOpinionDraft: FederationDisputeNotaryOpinion;
-  federationDisputeNotaryConfidenceDraft: FederationDecisionConfidence;
-  federationDisputeNotaryRecommendedResolutionDraft: FederationDisputeReviewRequest["status"];
-  federationDisputeNotarySummaryDraft: string;
-  federationDisputeNotaryBusy: boolean;
-  federationDisputeNotaryError: string | null;
-  federationDisputeNotaryMessage: string | null;
   walletLoading: boolean;
   walletError: string | null;
   walletStatus: WalletStatus | null;
@@ -709,7 +517,7 @@ export type AppViewState = {
   walletRecurringTransferTz: string;
   walletRecurringTransferName: string;
   walletSecuritySetupWalletId: string;
-  walletSecuritySetupRole: "agent" | "mining" | "vault" | null;
+  walletSecuritySetupRole: "agent" | null;
   walletRpcProvider: string;
   walletRpcApiKey: string;
   walletRpcUrl: string;
@@ -743,69 +551,7 @@ export type AppViewState = {
   walletBalancesLoading: boolean;
   walletBalancesError: string | null;
   walletBalances: WalletBalancesResponse | null;
-  miningLoading: boolean;
-  miningSaving: boolean;
-  miningActionBusy: boolean;
-  miningCapitalActionBusy: "deposit" | "withdraw" | null;
-  miningPendingAction: "starting" | "stopping" | null;
-  miningError: string | null;
-  miningMessage: string | null;
-  miningWallets: SatMiningWalletOption[];
-  miningAttachedWalletId: string | null;
-  miningProfile: SatMinerProfile | null;
-  miningSavedProfiles: SavedMiningProfile[];
-  miningSelectedSavedProfileId: string;
-  miningSaveProfileName: string;
-  miningCapitalDepositDraft: string;
-  miningCapitalWithdrawDraft: string;
-  miningReadiness: SatMiningReadiness | null;
-  miningStatus: SatMiningRuntimeStatus | null;
-  miningMainnetSync: SatMainnetSyncStatus | null;
-  miningMainnetSyncBusy: boolean;
-  miningHistoryLoading: boolean;
-  miningHistoryError: string | null;
-  miningHistory: SatMiningHistory | null;
-  miningRecovery: SatMiningRecoverySummary | null;
-  miningRecoveryDisputeAuthority: string;
-  miningRecoveryTargetAuthority: string;
-  miningRecoveryEpochId: string;
-  miningRecoveryMicroRoundId: string;
-  miningRecoveryStatusFlag: string;
-  miningRecoveryBoardRoot: string;
-  miningRecoveryScoreRoot: string;
-  miningRecoveryCoordinationRoot: string;
-  miningRecoveryDraftRestored: boolean;
-  miningRecoveryDraftUpdatedAt: string | null;
-  miningRecoveryDraftSavedHint: string | null;
-  miningLastNotifiedAction: string | null;
-  miningNotifications: MiningUiNotification[];
   notifications?: AppNotification[];
-  miningConfirmClearHistory: boolean;
-  miningRecentActionsPage: number;
-  miningHistoryModalOpen: boolean;
-  miningActivityFilter: import("./views/mining.js").MiningActivityFilter;
-  miningActivityWindow: import("./views/mining.js").MiningPlannerWindow;
-  miningPlannerWindow: import("./views/mining.js").MiningPlannerWindow;
-  miningChartMetric: import("./views/mining.js").MiningChartMetric;
-  miningNowMs: number;
-  handleMiningTopUpReserve: () => Promise<void>;
-  handleMiningDepositCapital: () => Promise<void>;
-  handleMiningWithdrawCapital: () => Promise<void>;
-  handleMiningSetActiveCommit: () => Promise<void>;
-  handleMiningUpdateCommit: (lamports: string) => Promise<void>;
-  handleMiningCapitalDepositDraftChange: (value: string) => void;
-  handleMiningCapitalWithdrawDraftChange: (value: string) => void;
-  handleMiningPlannerWindowChange: (
-    window: import("./views/mining.js").MiningPlannerWindow,
-  ) => void;
-  handleMiningActivityWindowChange: (
-    window: import("./views/mining.js").MiningPlannerWindow,
-  ) => void;
-  handleMiningActivityFilterChange: (
-    filter: import("./views/mining.js").MiningActivityFilter,
-  ) => void;
-  handleMiningOpenHistoryModal: () => void;
-  handleMiningCloseHistoryModal: () => void;
   skillsLoading: boolean;
   skillsReport: SkillStatusReport | null;
   skillsError: string | null;
@@ -909,9 +655,6 @@ export type AppViewState = {
     | null;
   debugAcpxPushTestResult: string | null;
   debugAcpxPushTestError: string | null;
-  debugSatProtocolMaintenanceBusy: boolean;
-  debugSatProtocolMaintenanceResult: string | null;
-  debugSatProtocolMaintenanceError: string | null;
   logsLoading: boolean;
   logsError: string | null;
   logsFile: string | null;
@@ -1047,76 +790,17 @@ export type AppViewState = {
   handleCronRunsLoad: (jobId: string) => Promise<void>;
   handleCronFormUpdate: (path: string, value: unknown) => void;
   handleFederationLoad: () => Promise<void>;
-  handleFederationLoadOffers: () => Promise<void>;
-  handleFederationLoadLocalOffers: () => Promise<void>;
-  handleFederationLoadMarketplaceIndex: () => Promise<void>;
-  handleFederationPreviewMarketplaceIndex: () => Promise<void>;
-  handleFederationPublishMarketplaceIndex: () => Promise<void>;
-  handleFederationLoadOperatorEconomy: () => Promise<void>;
   handleFederationRegister: () => Promise<void>;
   handleFederationAttest: () => Promise<void>;
   handleFederationRenew: () => Promise<void>;
   handleFederationRevoke: () => Promise<void>;
-  handleFederationSetBondWallet: () => Promise<void>;
-  handleFederationClearBondWallet: () => Promise<void>;
-  handleFederationOpenBond: () => Promise<void>;
-  handleFederationIncreaseBond: () => Promise<void>;
-  handleFederationRequestBondUnlock: () => Promise<void>;
-  handleFederationCancelBondUnlock: () => Promise<void>;
-  handleFederationFinalizeBondUnlock: () => Promise<void>;
-  handleFederationSubmitBondProof: () => Promise<void>;
-  handleFederationInitBondStaking: () => Promise<void>;
-  handleFederationSyncBondStaking: () => Promise<void>;
-  handleFederationClaimBondStaking: () => Promise<void>;
-  handleFederationSelectOffer: (offerId: string) => void;
-  handleFederationStartLocalOfferDraft: (offerId?: string) => void;
-  handleFederationStartLocalRequestDraft: (requestId?: string) => void;
-  handleFederationCancelLocalOfferDraft: () => void;
-  handleFederationApplyMarketplaceServiceKind: (serviceKind: string) => void;
-  handleFederationSaveLocalOffer: () => Promise<void>;
-  handleFederationToggleLocalOffer: (offerId: string) => Promise<void>;
-  handleFederationDeleteLocalOffer: (offerId: string) => Promise<void>;
-  handleFederationToggleLocalRequest: (requestId: string) => Promise<void>;
-  handleFederationDeleteLocalRequest: (requestId: string) => Promise<void>;
-  handleFederationCreateOrderFromSelectedOffer: () => Promise<void>;
-  handleFederationCreateOrderFromLocalRequest: (requestId: string) => Promise<void>;
-  handleFederationDeleteLocalOrder: (orderId: string) => Promise<void>;
-  handleFederationOpenMarketplaceSellerProfile: (handle: string) => Promise<void>;
-  handleFederationLoadOfferReputation: () => Promise<void>;
-  handleFederationReview: (
-    handle: string,
-    status: FederationDirectoryEntry["status"],
-  ) => Promise<void>;
-  handleFederationPublishReview: () => Promise<void>;
-  handleFederationPublishDispute: () => Promise<void>;
-  handleFederationOfferFeedbackTabChange: (next: "review" | "dispute") => void;
-  handleFederationLoadOperatorDisputes: () => Promise<void>;
-  handleFederationReviewDispute: () => Promise<void>;
-  handleFederationRunContentSummarize: () => Promise<void>;
-  handleFederationRunPaidContentSummarize: () => Promise<void>;
-  handleFederationRunPaidContentSummarizeOrder: (orderId: string) => Promise<void>;
-  handleFederationPayMarketplaceManualOrder: (orderId: string) => Promise<void>;
-  handleFederationDeliverMarketplaceManualOrder: (orderId: string) => Promise<void>;
-  handleFederationRunMarketplaceCapabilityOrder: (orderId: string) => Promise<void>;
-  handleFederationSaveMarketplaceOrderDeliveryTarget: (orderId: string) => Promise<void>;
-  handleFederationFundMarketplaceEscrowOrder: (orderId: string) => Promise<void>;
-  handleFederationReleaseMarketplaceEscrowOrder: (orderId: string) => Promise<void>;
-  handleFederationRefundMarketplaceEscrowOrder: (orderId: string) => Promise<void>;
-  handleFederationCancelMarketplaceEscrowOrder: (orderId: string) => Promise<void>;
-  handleFederationOpenMarketplaceIndexOrderFeedback: (
-    orderId: string,
-    tab: "dispute" | "review",
-  ) => void;
-  handleFederationCreateOrderFromMarketplaceIndexEntry: (entryId: string) => Promise<void>;
-  handleFederationLoadDisputeNotaryAttestations: () => Promise<void>;
-  handleFederationPublishDisputeNotaryAttestation: () => Promise<void>;
   handleWalletLoad: () => Promise<void>;
   handleWalletMainPanelChange: (panel: "wallets" | "access" | "skill-grants") => void;
   handleWalletRefreshSignerDoctor: () => Promise<void>;
   handleWalletRotateKeys: () => Promise<void>;
   handleWalletResetKeys: () => Promise<void>;
   handleWalletSetApprovalsFilter: (filter: WalletApprovalFilter) => Promise<void>;
-  handleWalletAttachStandardVault: () => Promise<void>;
+  handleWalletAttachStandard: () => Promise<void>;
   handleWalletApproveRequest: (requestId: string) => Promise<void>;
   handleWalletRejectRequest: (requestId: string) => Promise<void>;
   handleWalletSendCreatePatch: (patch: Partial<WalletSendCreateInput>) => void;
@@ -1135,51 +819,6 @@ export type AppViewState = {
   handleWalletSkillGrantActionToggle: (action: string, enabled: boolean) => void;
   handleWalletSkillGrantSave: () => Promise<void>;
   handleWalletSkillGrantClear: (skillId: string) => Promise<void>;
-  handleMiningLoad: (opts?: { forceFresh?: boolean }) => Promise<void>;
-  handleMiningSave: () => Promise<void>;
-  handleMiningSaveLocalProfile: () => void;
-  handleMiningLoadSavedProfile: () => void;
-  handleMiningDeleteSavedProfile: () => void;
-  handleMiningStart: () => Promise<void>;
-  handleMiningStop: () => Promise<void>;
-  handleMiningMainnetSync: () => Promise<void>;
-  handleMiningRecentActionsPageChange: (page: number) => void;
-  handleMiningSelectedSavedProfileChange: (id: string) => void;
-  handleMiningSaveProfileNameChange: (value: string) => void;
-  handleMiningStrategyPresetChange: (preset: SatMinerProfile["strategyPreset"]) => void;
-  handleMiningStrategyExecutionChange: (execution: SatMinerProfile["strategyExecution"]) => void;
-  handleMiningCycleCadenceChange: (cadence: SatMinerProfile["cycleCadence"]) => void;
-  handleMiningStrategyModeChange: (mode: SatMinerProfile["strategyMode"]) => void;
-  handleMiningSkillConfigChange: (
-    patch: Partial<NonNullable<SatMinerProfile["skillConfig"]>>,
-  ) => void;
-  handleMiningRiskModeChange: (riskMode: SatMinerProfile["riskMode"]) => void;
-  handleMiningCommitLamportsChange: (lamports: string) => void;
-  handleMiningReserveLamportsChange: (lamports: string) => void;
-  handleMiningPayoutChange: (payout: boolean) => void;
-  handleMiningAutomationChange: (patch: Partial<SatMinerProfile["automation"]>) => void;
-  handleMiningSatSweepChange: (
-    patch: Partial<NonNullable<SatMinerProfile["automation"]["satSweep"]>>,
-  ) => void;
-  handleMiningRecoveryDisputeAuthorityChange: (value: string) => void;
-  handleMiningRecoveryTargetAuthorityChange: (value: string) => void;
-  handleMiningRecoveryEpochIdChange: (value: string) => void;
-  handleMiningRecoveryMicroRoundIdChange: (value: string) => void;
-  handleMiningRecoveryStatusFlagChange: (value: string) => void;
-  handleMiningRecoveryBoardRootChange: (value: string) => void;
-  handleMiningRecoveryScoreRootChange: (value: string) => void;
-  handleMiningRecoveryCoordinationRootChange: (value: string) => void;
-  handleMiningRetryClaim: () => Promise<void>;
-  handleMiningResolveDispute: () => Promise<void>;
-  handleMiningRepublishRoots: () => Promise<void>;
-  handleMiningClearHistory: () => Promise<void>;
-  handleMiningConfirmClearHistory: () => void;
-  handleMiningCancelClearHistory: () => void;
-  handleMiningResetRecoveryDraft: () => void;
-  handleMiningResetToSelectedCandidate: () => void;
-  handleMiningExportSupportBundle: () => void;
-  enqueueMiningNotification: (level: MiningUiNotification["level"], message: string) => void;
-  dismissMiningNotification: (id: string) => void;
   enqueueAppNotification: (input: {
     code: NotificationCode;
     category: NotificationCategory;
@@ -1249,7 +888,6 @@ export type AppViewState = {
   handleWalletApplyRecommendedPolicy: () => Promise<void>;
   handleOperatorReadinessOpenAdminControl: () => void;
   handleOperatorReadinessOpenTaskPayment: () => void;
-  handleOperatorReadinessOpenMining: () => void;
   handleOperatorReadinessOpenFederationReview: () => void;
   handleSessionsLoad: () => Promise<void>;
   handleSessionsPatch: (key: string, patch: unknown) => Promise<void>;

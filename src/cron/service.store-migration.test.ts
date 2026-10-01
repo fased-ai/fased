@@ -90,13 +90,13 @@ describe("CronService store migrations", () => {
     const persistedJob = persisted.jobs.find((entry) => entry.id === "legacy-agentturn-job");
     expect(persistedJob).toBeDefined();
     expect(persistedJob?.state).toEqual(expect.any(Object));
-    expect(persistedJob?.model).toBeUndefined();
-    expect(persistedJob?.thinking).toBeUndefined();
-    expect(persistedJob?.timeoutSeconds).toBeUndefined();
-    expect(persistedJob?.deliver).toBeUndefined();
-    expect(persistedJob?.channel).toBeUndefined();
-    expect(persistedJob?.to).toBeUndefined();
-    expect(persistedJob?.bestEffortDeliver).toBeUndefined();
+    expect(persistedJob).not.toHaveProperty("model");
+    expect(persistedJob).not.toHaveProperty("thinking");
+    expect(persistedJob).not.toHaveProperty("timeoutSeconds");
+    expect(persistedJob).not.toHaveProperty("deliver");
+    expect(persistedJob).not.toHaveProperty("channel");
+    expect(persistedJob).not.toHaveProperty("to");
+    expect(persistedJob).not.toHaveProperty("bestEffortDeliver");
     expect(await fs.readFile(store.storePath, "utf-8")).toBe(legacyBytes);
 
     cron.stop();

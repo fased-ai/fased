@@ -37,7 +37,7 @@ func TestWENBTCIntentCandidateV1(t *testing.T) {
 			t.Fatalf("mutation %d accepted", i)
 		}
 	}
-	for _, kind := range []string{intentWENBTCSubscriptionV1, intentSolanaNativeTransfer, intentSolanaSATAction, intentSolanaVaultBondAction} {
+	for _, kind := range []string{intentWENBTCSubscriptionV1, intentSolanaNativeTransfer, "solana.satAction", "solana.vaultBondAction"} {
 		if _, err := normalizeSignerIntentV2(signerIntentV2{Type: kind, WENBTC: &v, Destination: v.SourceAccount, Lamports: "1"}); err == nil {
 			t.Fatalf("WEN metadata allowed on %s", kind)
 		}

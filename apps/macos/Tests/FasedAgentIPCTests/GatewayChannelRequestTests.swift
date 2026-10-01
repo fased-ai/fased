@@ -4,7 +4,7 @@ import os
 import Testing
 @testable import FasedAgent
 
-@Suite struct GatewayChannelRequestTests {
+struct GatewayChannelRequestTests {
     private final class FakeWebSocketTask: WebSocketTasking, @unchecked Sendable {
         private let requestSendDelayMs: Int
         private let connectRequestID = OSAllocatedUnfairLock<String?>(initialState: nil)
@@ -53,7 +53,9 @@ import Testing
         }
 
         func receive() async throws -> URLSessionWebSocketTask.Message {
-            let id = self.connectRequestID.withLock { $0 } ?? "connect"
+            guard let id = self.connectRequestID.withLock({ $0 }) else {
+                return .data(GatewayWebSocketTestSupport.connectChallengeData())
+            }
             return .data(GatewayWebSocketTestSupport.connectOkData(id: id))
         }
 
@@ -62,7 +64,6 @@ import Testing
         {
             self.pendingReceiveHandler.withLock { $0 = completionHandler }
         }
-
     }
 
     private final class FakeWebSocketSession: WebSocketSessioning, @unchecked Sendable {
@@ -79,10 +80,10 @@ import Testing
         }
     }
 
-    @Test func requestTimeoutThenSendFailureDoesNotDoubleResume() async {
+    @Test func `request timeout then send failure does not double resume`() async throws {
         let session = FakeWebSocketSession(requestSendDelayMs: 100)
-        let channel = GatewayChannelActor(
-            url: URL(string: "ws://example.invalid")!,
+        let channel = try GatewayChannelActor(
+            url: #require(URL(string: "ws://example.invalid")),
             token: nil,
             session: WebSocketSessionBox(session: session))
 

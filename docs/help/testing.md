@@ -1,5 +1,5 @@
 ---
-summary: "Testing kit: unit/e2e/live suites plus wallet, mining, and Fased Network regression coverage."
+summary: "Testing kit: unit/e2e/live suites plus wallet, and Fased Network regression coverage."
 read_when:
   - Running tests locally or in CI
   - Adding regressions for model/provider bugs
@@ -128,59 +128,24 @@ Use this decision table:
 - Debugging UI-only state mismatch: reproduce in the focused page first, then
   add or update the matching UI/controller test.
 
-## Wallet, mining, and Fased Network regressions
-
 If you touch the operator stack, do not stop at generic unit tests.
 
 The minimum useful split is:
-
-- wallet and SAT UI rendering
-- wallet and SAT UI controllers
-- signer, passkey, mining, and Fased Network backend paths
 
 ### Fast UI confidence
 
 Run the main browser-surface regressions:
 
-```bash
-pnpm exec vitest run \
-  ui/src/ui/views/wallet.test.ts \
-  ui/src/ui/views/mining.test.ts \
-  ui/src/ui/views/federation.test.ts
-```
-
 ### Controller and interaction confidence
 
 Run the focused interaction tests:
-
-```bash
-pnpm exec vitest run \
-  ui/src/ui/controllers/wallet.test.ts \
-  ui/src/ui/controllers/mining.test.ts \
-  ui/src/ui/wallet-passkey.test.ts \
-  ui/src/ui/mining-commit.test.ts
-```
 
 ### Runtime and gateway confidence
 
 Run the backend regressions that cover signer health, SAT HTTP flows, passkey
 approval auth, and Fased Network attach logic:
 
-```bash
-pnpm exec vitest run \
-  src/commands/wallet.signer-doctor.test.ts \
-  src/gateway/server.wallet-approval-auth-http.test.ts \
-  src/gateway/server.sat-mining-http.test.ts \
-  src/federation/auto-connect.test.ts
-```
-
 Practical rule:
-
-- changing Wallet docs or labels usually needs the Wallet and passkey UI tests
-- changing Mining math, capital, commit, or readiness needs Mining UI plus SAT
-  HTTP tests
-- changing Fased Network bond or route logic needs Fased Network UI plus
-  `src/federation/auto-connect.test.ts`
 
 ## Live: Android node capability sweep
 

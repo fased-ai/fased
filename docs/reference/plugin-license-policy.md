@@ -45,14 +45,6 @@ You cannot relabel copied code as purely original work.
 
 Plugins that touch:
 
-- wallets
-- custody
-- mining
-- federation
-- operator network features
-- trading
-- market/news signals
-
 should include their own clear risk disclosure where appropriate.
 
 At minimum, those plugins should not imply:

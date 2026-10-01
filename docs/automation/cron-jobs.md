@@ -151,12 +151,6 @@ resulting task.
 Every time one of them runs, Fased writes run history. History is evidence of
 what happened. The saved definition controls future runs.
 
-Run history can include scheduled tasks, webhook triggers, channel runs, helper
-Agents, wallet approvals, marketplace order records, mining events, media jobs,
-CLI/system runs, and workflow nodes. Domain pages keep control of their own
-actions. Wallets still approve/sign, Marketplace still handles orders, and
-Mining still handles start/stop, capital, commit, claim, and recovery controls.
-
 Open a task row's run history or the explicit **Run history** filter when you
 need audit detail. Use **Advanced > Debug** when history looks stale or a run
 needs maintenance.
@@ -167,25 +161,12 @@ Task templates fill the whole task shape: schedule, prompt, objective, success
 criteria, execution policy, memory, skill access, and delivery. Saving the form
 turns the template into a normal Task definition.
 
-**Mining strategy review**
-
-Use when you want strategy review from mining status/history while funding,
-withdraw, start/stop, wallet send, and bond controls stay unchanged.
-
-**Mining status report**
-
-Use when you want a read-only mining report: running/stopped state, current
-cycle, wallet SOL/SAT, capital, locked capital, claimable SAT, and blockers.
-
 **Strategy A/B review**
 
 Use when you want evidence across `balanced`, `top_k`, `ranked`,
 `crowd_aware`, and `adaptive` while active commit settings stay unchanged.
 
 **Wallet reserve watch**
-
-Use when you want alerts before Agent, Vault, or Mining wallet fee reserves get
-too low.
 
 **Staking rewards watch**
 

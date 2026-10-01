@@ -172,14 +172,14 @@ func TestParseHostedMigrationPolicyV1CompilesAutomaticRoleBaselines(t *testing.T
 	}
 
 	input.Wallets[0].WalletID = "mining"
-	input.Wallets[0].BaselineRole = "mining"
+	input.Wallets[0].BaselineRole = "agent"
 	raw, _ = json.Marshal(input)
 	wallets, err = parseHostedMigrationPolicyV1(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wallets[0].Baseline == nil || wallets[0].Policy.Role != "mining" || wallets[0].Policy.BaselineVersion != 1 ||
-		wallets[0].Policy.TypedSATPrograms || len(wallets[0].Policy.Operations) == 0 {
+	if wallets[0].Baseline == nil || wallets[0].Policy.Role != "agent" || wallets[0].Policy.BaselineVersion != 1 ||
+		len(wallets[0].Policy.Operations) == 0 {
 		t.Fatalf("pre-launch Mining migration must receive its reviewed-use baseline: %#v", wallets[0])
 	}
 }

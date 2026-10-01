@@ -18,12 +18,6 @@ direction for signed identities, encrypted exchange, and selective disclosure.
 
 The strongest current privacy boundary is local ownership:
 
-- the operator controls the Fased runtime
-- sensitive wallet policy stays close to the node
-- admin surfaces should stay behind private access controls
-- channel and gateway credentials stay on the operator host
-- wallet roles separate mining, Agent activity, Vault work, and reserves
-
 Channel privacy depends on the channel. A Telegram, Discord, Slack, Matrix,
 Signal, or local UI integration inherits the security properties of that
 channel plus the Fased gateway policy around sessions, sender allowlists, and

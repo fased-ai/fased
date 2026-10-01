@@ -9,7 +9,6 @@ import {
   validateLocalSocketSignerResult,
   type LocalSocketSignerBalanceResult,
   type LocalSocketSignerJupiterTriggerHistoryV2,
-  type LocalSocketSignerSatReleaseAcknowledgement,
   type LocalSocketSignerRequest,
   type LocalSocketSignerOperationV2,
   type LocalSocketSignerPolicyV2,
@@ -102,10 +101,9 @@ export type LocalSocketSignerHealthProbe = {
     operationStates: string[];
     features: string[];
   };
-  satRelease?: LocalSocketSignerSatReleaseAcknowledgement;
   policies?: Array<{
     walletId: string;
-    role: "agent" | "mining" | "vault" | "profile" | "strategy";
+    role: "agent";
     version: number;
     hash: string;
   }>;
@@ -158,7 +156,6 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.policy.get": 5_000,
   "v2.policy.put": 5_000,
   "v2.policy.tighten": 5_000,
-  "v2.policy.activateBaseline": 10_000,
   "v2.wallet.get": 5_000,
   "v2.wallet.readiness": 5_000,
   "v2.wallet.create": 10_000,
@@ -173,15 +170,13 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.review.authorization.finish": 30_000,
   "v2.operation.get": 5_000,
   "v2.operation.reconcile": 20_000,
-  "v2.satLookup.binding.get": 5_000,
-  "v2.satCommitment.allocate": 5_000,
-  "v2.satCommitment.binding.get": 5_000,
   "v2.wenBtc.inspect": 30_000,
   "v2.wenMining.prepare": 30_000,
   "v2.wenBondClaim.journey": 30_000,
   "v2.wenBondClaim.review.prepare": 30_000,
   "v2.wenBondPurchase.journey": 30_000,
   "v2.wenBondPurchase.review.prepare": 30_000,
+  "v2.wenMarket.ownerProof.inspect": 5_000,
   "v2.wenMarket.journey": 30_000,
   "v2.wenMarket.review.prepare": 30_000,
   "v2.wenCampaign.journey": 30_000,
@@ -196,10 +191,6 @@ const SIGNER_SOCKET_TIMEOUT_MS: Record<LocalSocketSignerRequest["op"], number> =
   "v2.wenWithdrawal.prepare": 30_000,
   "v2.wenBtc.prepare": 30_000,
   "v2.wenBtc.route.preview": 30_000,
-  "v2.vaultMining.binding.inspect": 30_000,
-  "v2.vaultMining.commitment.allocate": 30_000,
-  "v2.keeperFeePayer.get": 5_000,
-  "v2.keeperFeePayer.ensure": 10_000,
   getAddresses: 10_000,
   getBalance: 15_000,
 };
@@ -361,7 +352,6 @@ export async function probeLocalSocketSignerHealth(
       schema?: LocalSocketSignerHealthProbe["schema"];
       network?: LocalSocketSignerHealthProbe["network"];
       capabilities?: LocalSocketSignerHealthProbe["capabilities"];
-      satRelease?: LocalSocketSignerHealthProbe["satRelease"];
       policies?: LocalSocketSignerHealthProbe["policies"];
       webAuthn?: LocalSocketSignerHealthProbe["webAuthn"];
       jupiter?: LocalSocketSignerHealthProbe["jupiter"];
@@ -406,21 +396,7 @@ export async function requireLocalSocketSignerProtocolV2(
   const missingFeatures = REQUIRED_PROTOCOL_V2_FEATURES.filter(
     (feature) => !capabilities?.features.includes(feature),
   );
-  const intentReviewFeatures =
-    intentType === "solana.vaultBondAction"
-      ? ["reviewedVaultBondActions", "signerOwnedStateRecheck", "durableReviewAuthorization"]
-      : intentType === "solana.agentCapitalAction"
-        ? ["reviewedAgentCapitalActions", "signerOwnedStateRecheck", "durableReviewAuthorization"]
-        : intentType === "solana.moneyFoundationAction"
-          ? [
-              "reviewedMoneyFoundationActions",
-              "preSignedEphemeralPositionMint",
-              "signerOwnedStateRecheck",
-              "durableReviewAuthorization",
-            ]
-          : intentType === "federation.bondChallenge"
-            ? ["reviewedFederationBondChallenges", "durableReviewAuthorization"]
-            : [];
+  const intentReviewFeatures: string[] = [];
   const missingIntentFeatures = intentReviewFeatures.filter(
     (feature) => !capabilities?.features.includes(feature),
   );

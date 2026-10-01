@@ -1,0 +1,11 @@
+{
+  "name": "@fased/wen",
+  "version": "0.1.76-rc.167",
+  "private": true,
+  "description": "WEN economy and policy-controlled strategy engine",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  }
+}

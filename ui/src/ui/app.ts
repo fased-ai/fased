@@ -75,63 +75,9 @@ import type { DreamingStatus } from "./controllers/dreaming.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
 import {
-  attestFederation as attestFederationInternal,
-  applyMarketplaceServiceKindDraft as applyMarketplaceServiceKindDraftInternal,
-  cancelFederationBondUnlock as cancelFederationBondUnlockInternal,
-  cancelMarketplaceEscrowOrder as cancelMarketplaceEscrowOrderInternal,
-  claimFederationBondStaking as claimFederationBondStakingInternal,
-  cancelLocalFederationOfferDraft as cancelLocalFederationOfferDraftInternal,
-  clearFederationBondWallet as clearFederationBondWalletInternal,
-  createMarketplaceOrderFromIndexEntry as createMarketplaceOrderFromIndexEntryInternal,
-  createMarketplaceOrderFromLocalRequest as createMarketplaceOrderFromLocalRequestInternal,
-  createMarketplaceOrderFromSelectedOffer as createMarketplaceOrderFromSelectedOfferInternal,
-  deleteLocalMarketplaceOrder as deleteLocalMarketplaceOrderInternal,
-  deleteLocalMarketplaceRequest as deleteLocalMarketplaceRequestInternal,
-  deleteLocalFederationOffer as deleteLocalFederationOfferInternal,
-  deliverMarketplaceManualOrder as deliverMarketplaceManualOrderInternal,
-  fundMarketplaceEscrowOrder as fundMarketplaceEscrowOrderInternal,
-  finalizeFederationBondUnlock as finalizeFederationBondUnlockInternal,
-  increaseFederationBond as increaseFederationBondInternal,
-  initFederationBondStaking as initFederationBondStakingInternal,
   loadFederation as loadFederationInternal,
-  loadLocalFederationOffers as loadLocalFederationOffersInternal,
-  loadLocalMarketplaceOrders as loadLocalMarketplaceOrdersInternal,
-  loadLocalMarketplaceRequests as loadLocalMarketplaceRequestsInternal,
-  loadFederationOfferReputation as loadFederationOfferReputationInternal,
-  loadFederationOffers as loadFederationOffersInternal,
-  loadMarketplaceFederationIndex as loadMarketplaceFederationIndexInternal,
-  loadFederationOperatorEconomy as loadFederationOperatorEconomyInternal,
-  loadFederationOperatorDisputes as loadFederationOperatorDisputesInternal,
-  loadFederationDisputeNotaryAttestations as loadFederationDisputeNotaryAttestationsInternal,
-  openMarketplaceSellerProfile as openMarketplaceSellerProfileInternal,
-  openMarketplaceIndexOrderFeedback as openMarketplaceIndexOrderFeedbackInternal,
-  openFederationBond as openFederationBondInternal,
-  payMarketplaceManualOrder as payMarketplaceManualOrderInternal,
-  previewMarketplaceFederationIndex as previewMarketplaceFederationIndexInternal,
-  publishMarketplaceFederationIndex as publishMarketplaceFederationIndexInternal,
-  publishFederationDispute as publishFederationDisputeInternal,
-  publishFederationDisputeNotaryAttestation as publishFederationDisputeNotaryAttestationInternal,
-  publishFederationReview as publishFederationReviewInternal,
   registerFederationHandle as registerFederationHandleInternal,
-  requestFederationBondUnlock as requestFederationBondUnlockInternal,
-  reviewFederationDispute as reviewFederationDisputeInternal,
-  reviewFederationDirectoryEntry as reviewFederationDirectoryEntryInternal,
-  releaseMarketplaceEscrowOrder as releaseMarketplaceEscrowOrderInternal,
-  refundMarketplaceEscrowOrder as refundMarketplaceEscrowOrderInternal,
-  runFederationContentSummarize as runFederationContentSummarizeInternal,
-  runPaidFederationContentSummarize as runPaidFederationContentSummarizeInternal,
-  runPaidFederationContentSummarizeOrder as runPaidFederationContentSummarizeOrderInternal,
-  runMarketplaceCapabilityOrder as runMarketplaceCapabilityOrderInternal,
-  saveMarketplaceOrderDeliveryTarget as saveMarketplaceOrderDeliveryTargetInternal,
-  saveLocalFederationOffer as saveLocalFederationOfferInternal,
-  setFederationBondWallet as setFederationBondWalletInternal,
-  selectFederationOffer as selectFederationOfferInternal,
-  startLocalFederationOfferDraft as startLocalFederationOfferDraftInternal,
-  startLocalMarketplaceRequestDraft as startLocalMarketplaceRequestDraftInternal,
-  submitFederationBondProof as submitFederationBondProofInternal,
-  syncFederationBondStaking as syncFederationBondStakingInternal,
-  toggleLocalMarketplaceRequest as toggleLocalMarketplaceRequestInternal,
-  toggleLocalFederationOffer as toggleLocalFederationOfferInternal,
+  attestFederation as attestFederationInternal,
   renewFederationToken as renewFederationTokenInternal,
   revokeFederationToken as revokeFederationTokenInternal,
 } from "./controllers/federation.ts";
@@ -139,29 +85,6 @@ import {
   loadMemory as loadMemoryInternal,
   rebuildMemoryWiki as rebuildMemoryWikiInternal,
 } from "./controllers/memory.ts";
-import {
-  clearMiningHistory as clearMiningHistoryInternal,
-  deleteSavedMiningProfile,
-  depositMiningCapital as depositMiningCapitalInternal,
-  exportMiningSupportBundle,
-  loadMining as loadMiningInternal,
-  loadMiningHistory as loadMiningHistoryInternal,
-  loadSavedMiningProfileIntoForm,
-  persistMiningRecoveryDraft,
-  resetMiningRecoveryDraft,
-  resetMiningRecoveryToSelectedCandidate,
-  republishMiningRoots as republishMiningRootsInternal,
-  resolveMiningDispute as resolveMiningDisputeInternal,
-  retryMiningClaim as retryMiningClaimInternal,
-  saveMiningProfile as saveMiningProfileInternal,
-  saveCurrentMiningProfileLocally,
-  setMiningActiveCommit as setMiningActiveCommitInternal,
-  startMining as startMiningInternal,
-  stopMining as stopMiningInternal,
-  syncMiningMainnet as syncMiningMainnetInternal,
-  topUpMiningReserve as topUpMiningReserveInternal,
-  withdrawMiningCapital as withdrawMiningCapitalInternal,
-} from "./controllers/mining.ts";
 import type { PluginsMarketplaceRemediationState } from "./controllers/plugins-marketplace.ts";
 import type {
   ClawHubMarketplaceReview,
@@ -196,23 +119,6 @@ import {
   type DashboardLayout,
 } from "./dashboard-layout.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
-import {
-  createDefaultMinerProfile,
-  riskModeToStrategyPreset,
-  strategyExecutionToMode,
-  strategyModeToExecution,
-  strategyPresetToRiskMode,
-  type MiningUiNotification,
-  type SatMainnetSyncStatus,
-  type SatMinerProfile,
-  type SatMiningHistory,
-  type SatMiningReadiness,
-  type SatMiningRecoverySummary,
-  type SatMiningRuntimeStatus,
-  type SatMiningWalletOption,
-} from "./mining-api.ts";
-import { normalizeMiningCommitLamports } from "./mining-commit.ts";
-import type { SavedMiningProfile } from "./mining-profiles.ts";
 import type { Tab } from "./navigation.ts";
 import {
   buildNotificationDeliveryText,
@@ -328,7 +234,6 @@ import {
   formatRawTokenPolicyAmount,
   formatWalletPolicyAllowlist,
   toRawTokenPolicyAmount,
-  toRawPolicyAmount,
 } from "./wallet-policy.ts";
 import {
   connectWalletStandardAccount,
@@ -787,20 +692,6 @@ function formatPolicyDraftValue(raw: string | undefined): string {
   }
 }
 
-function formatSolLamportsCompact(raw: string | bigint): string {
-  try {
-    const lamports = BigInt(raw);
-    const sign = lamports < 0n ? "-" : "";
-    const value = lamports < 0n ? -lamports : lamports;
-    const whole = value / 1_000_000_000n;
-    const fraction = (value % 1_000_000_000n).toString().padStart(9, "0").slice(0, 3);
-    const trimmedFraction = fraction.replace(/0+$/, "");
-    return trimmedFraction ? `${sign}${whole}.${trimmedFraction}` : `${sign}${whole}`;
-  } catch {
-    return String(raw);
-  }
-}
-
 function inferWalletPreferredChain(
   wallet:
     | {
@@ -1003,7 +894,6 @@ function taskLedgerResultSignature(result: TaskListResult | null): string {
 
 @customElement("fased-app")
 export class FasedAgentApp extends LitElement {
-  private miningNotificationTimers = new Map<string, number>();
   private notificationCooldowns = new Map<string, number>();
   private walletReloadAfterSettingsTimer: number | null = null;
   @state() settings: UiSettings = loadSettings();
@@ -1382,287 +1272,13 @@ export class FasedAgentApp extends LitElement {
   @state() federationToken: import("./federation-api.js").FederationToken | null = null;
   @state() federationStatus: import("./federation-api.js").FederationStatus | null = null;
   @state() federationManagedMode = false;
-  @state() federationAdminToken = "";
-  @state() federationReviewReason = "";
-  @state() federationReviewBusyHandle: string | null = null;
-  @state() federationBondWalletIdDraft = "";
-  @state() federationBondAmountDraft = "1";
-  @state() federationBondTierDraft: "basic-bond" | "operator-bond" = "basic-bond";
-  @state() federationBondAutoSubmitProof = true;
-  @state() federationBondActionBusy = false;
-  @state() federationBondBusyAction: string | null = null;
-  @state() federationOperatorEconomyLoading = false;
-  @state() federationOperatorEconomyError: string | null = null;
-  @state()
-  federationOperatorEconomyCollectionStatus: import("./federation-api.js").FederationOperatorEconomyFeeCollectionStatus[] =
-    [];
-  @state()
-  federationOperatorEconomyFeeObjects: import("./federation-api.js").FederationOperatorEconomyFeeObjectRecord[] =
-    [];
-  @state()
-  federationOperatorEconomyBucketJournal: import("./federation-api.js").FederationOperatorEconomyFeeBucketJournalRow[] =
-    [];
-  @state()
-  federationOperatorEconomyBucketBalances: import("./federation-api.js").FederationOperatorEconomyFeeBucketBalanceView[] =
-    [];
-  @state()
-  federationOperatorEconomyReconciliationReports: import("./federation-api.js").FederationOperatorEconomyFeeReconciliationReport[] =
-    [];
-  @state()
-  federationOperatorEconomyAutoFeeDecisions: import("./federation-api.js").FederationOperatorEconomyAutoFeeDecisionRecord[] =
-    [];
-  @state()
-  federationOperatorEconomyShowcase:
-    | import("./federation-api.js").FederationOperatorEconomyShowcaseMeta
-    | null = null;
-  @state()
-  federationLocalOffers: import("./federation-api.js").FederationLocalOfferEntry[] = [];
-  @state()
-  federationLocalRequests: import("./federation-api.js").FederationLocalRequestEntry[] = [];
-  @state()
-  federationLocalOrders: import("./federation-api.js").FederationLocalOrderEntry[] = [];
-  @state() federationLocalOffersLoading = false;
-  @state() federationLocalRequestsLoading = false;
-  @state() federationLocalOrdersLoading = false;
-  @state() federationLocalRequestsError: string | null = null;
-  @state() federationLocalOrdersError: string | null = null;
-  @state() federationLocalOffersError: string | null = null;
-  @state() federationLocalOffersMessage: string | null = null;
-  @state() federationLocalOfferBusy = false;
-  @state() federationLocalOrderBusy = false;
-  @state() federationEscrowBusyOrderId: string | null = null;
-  @state() federationEscrowError: string | null = null;
-  @state() federationEscrowMessage: string | null = null;
-  @state() federationMarketplaceOrderDeliveryDraftOrderId = "";
-  @state() federationMarketplaceOrderDeliveryKindDraft: "app-inbox" | "webhook" = "app-inbox";
-  @state() federationMarketplaceOrderDeliveryWebhookUrlDraft = "";
-  @state() federationMarketplaceOrderDeliveryBusyOrderId: string | null = null;
-  @state() federationMarketplaceOrderDeliveryError: string | null = null;
-  @state() federationMarketplaceOrderDeliveryMessage: string | null = null;
-  @state() federationMarketplaceManualOrderBusyId: string | null = null;
-  @state() federationMarketplaceManualOrderError: string | null = null;
-  @state() federationMarketplaceManualOrderMessage: string | null = null;
-  @state() federationMarketplaceCapabilityOrderBusyId: string | null = null;
-  @state() federationMarketplaceCapabilityOrderError: string | null = null;
-  @state() federationMarketplaceCapabilityOrderMessage: string | null = null;
-  @state() federationLocalOfferDraftOpen = false;
-  @state() federationLocalListingDraftKind: "offer" | "request" = "offer";
-  @state() federationLocalOfferEditingId: string | null = null;
-  @state() federationLocalRequestEditingId: string | null = null;
-  @state() federationLocalOfferEnabledDraft = true;
-  @state() federationLocalOfferTitleDraft = "";
-  @state() federationLocalOfferSummaryDraft = "";
-  @state() federationLocalOfferServiceKindDraft = "";
-  @state() federationLocalOfferInputShapeDraft = "";
-  @state() federationLocalOfferDeliveryShapeDraft = "";
-  @state() federationLocalOfferCapabilitiesDraft = "";
-  @state() federationLocalOfferPriceAmountDraft = "";
-  @state() federationLocalOfferPricingModelDraft = "quote";
-  @state()
-  federationLocalOfferPriceUnitDraft: import("./federation-api.js").FederationMarketplacePriceUnit =
-    "per-job";
-  @state() federationLocalOfferCurrencyDraft = "USDC";
-  @state()
-  federationLocalOfferFulfillmentModeDraft: import("./federation-api.js").FederationMarketplaceFulfillmentMode =
-    "agent-approval";
-  @state() federationLocalOfferAcceptedAssetsDraft = "USDC, SOL, SAT, FCOD";
-  @state() federationLocalOfferPaymentRailsDraft = "agent-wallet";
-  @state() federationOffersLoading = false;
-  @state() federationOffersError: string | null = null;
-  @state() federationOffersHint: string | null = null;
-  @state() federationOffers: import("./federation-api.js").FederationOfferDirectoryEntry[] = [];
-  @state() federationOffersQuery = "";
-  @state() federationOffersServiceKindFilter = "all";
-  @state()
-  federationMarketplaceSection: import("./views/federation.ts").FederationMarketplaceSection =
-    "market";
-  @state() federationMarketplaceKindFilter: "all" | "offer" | "request" = "all";
-  @state() federationMarketplaceTrustFilter = "all";
-  @state() federationMarketplaceStatusFilter = "all";
-  @state() federationMarketplaceDateFromFilter = "";
-  @state() federationMarketplaceDateToFilter = "";
-  @state()
-  federationMarketplaceSort: import("./views/federation.ts").FederationMarketplaceSort = "latest";
-  @state() federationSelectedOfferId = "";
-  @state() federationMarketplaceIndexLoading = false;
-  @state() federationMarketplaceIndexPublishing = false;
-  @state() federationMarketplaceIndexError: string | null = null;
-  @state() federationMarketplaceIndexMessage: string | null = null;
-  @state()
-  federationMarketplaceIndexPreview:
-    | import("./federation-api.js").FederationMarketplaceIndexPreview
-    | null = null;
-  @state()
-  federationMarketplaceIndexEntries: import("./federation-api.js").FederationMarketplaceIndexEntry[] =
-    [];
-  @state() federationMarketplaceIndexSelectedEntryId = "";
-  @state()
-  federationMarketplaceIndexDetailTab: import("./views/federation.ts").FederationMarketplaceIndexDetailTab =
-    "overview";
-  @state() federationMarketplaceFeedbackOrderId = "";
-  @state() federationMarketplaceSellerProfileHandle = "";
-  @state()
-  federationMarketplaceSellerProfileTab: import("./views/federation.ts").FederationMarketplaceSellerProfileTab =
-    "summary";
-  @state() federationMarketplaceSellerProfileLoading = false;
-  @state() federationMarketplaceSellerProfileError: string | null = null;
-  @state()
-  federationMarketplaceSellerProfileEntries: import("./federation-api.js").FederationMarketplaceIndexEntry[] =
-    [];
-  @state()
-  federationMarketplaceSellerProfileReviews: import("./federation-api.js").FederationReviewRecord[] =
-    [];
-  @state()
-  federationMarketplaceSellerProfileDisputes: import("./federation-api.js").FederationDisputeRecord[] =
-    [];
-  @state()
-  federationMarketplaceSellerProfileNotaryRecords: import("./federation-api.js").FederationDisputeNotaryRecord[] =
-    [];
-  @state() federationOfferReviewsLoading = false;
-  @state() federationOfferReviewsError: string | null = null;
-  @state() federationOfferReviews: import("./federation-api.js").FederationReviewRecord[] = [];
-  @state() federationOfferDisputesLoading = false;
-  @state() federationOfferDisputesError: string | null = null;
-  @state() federationOfferDisputes: import("./federation-api.js").FederationDisputeRecord[] = [];
-  @state() federationOfferFeedbackBusy = false;
-  @state() federationOfferFeedbackError: string | null = null;
-  @state() federationOfferFeedbackMessage: string | null = null;
-  @state() federationOfferFeedbackTab: "review" | "dispute" = "review";
-  @state() federationSummarizeSourceText = "";
-  @state() federationSummarizeStyle: "plain" | "bullets" = "bullets";
-  @state() federationSummarizeMaxSentences = "2";
-  @state() federationSummarizeBusy = false;
-  @state() federationSummarizeError: string | null = null;
-  @state() federationPaidSummarizeBusy = false;
-  @state() federationPaidSummarizeError: string | null = null;
-  @state() federationSummarizeResult:
-    | import("./federation-api.js").FederationContentSummarizeRunResult
-    | null = null;
-  @state() federationPaidQuoteAmountDraft = "0.01";
-  @state() federationPaidQuoteAssetDecimalsDraft = "";
-  @state() federationPaidQuoteCurrencyDraft = "SOL";
-  @state()
-  federationPaidQuoteChainDraft: import("./federation-api.js").FederationPaidContentSummarizeRunRequest["quote"]["chain"] =
-    "solana";
-  @state()
-  federationPaidQuoteAssetKindDraft: import("./federation-api.js").FederationPaidContentSummarizeRunRequest["quote"]["assetKind"] =
-    "native";
-  @state() federationPaidQuoteAssetAddressDraft = "";
-  @state() federationPaidQuotePayeeAddressDraft = "";
-  @state() federationPaidQuoteExpiresMinutesDraft = "5";
-  @state() federationReviewRatingDraft = "5";
-  @state()
-  federationReviewOutcomeDraft: import("./federation-api.js").FederationReviewDeliveryOutcome =
-    "satisfied";
-  @state()
-  federationReviewPaymentStatusDraft: import("./federation-api.js").FederationReviewPaymentStatus =
-    "unpaid";
-  @state() federationReviewInvoiceIdDraft = "";
-  @state() federationReviewReceiptIdDraft = "";
-  @state() federationReviewSummaryDraft = "";
-  @state()
-  federationDisputeReasonCodeDraft: import("./federation-api.js").FederationDisputeReasonCode =
-    "delivery_mismatch";
-  @state()
-  federationDisputePaymentStatusDraft: import("./federation-api.js").FederationReviewPaymentStatus =
-    "unpaid";
-  @state() federationDisputeInvoiceIdDraft = "";
-  @state() federationDisputeReceiptIdDraft = "";
-  @state() federationDisputeSummaryDraft = "";
-  @state() federationOperatorDisputesLoading = false;
-  @state() federationOperatorDisputesError: string | null = null;
-  @state()
-  federationOperatorDisputes: import("./federation-api.js").FederationDisputeRecord[] = [];
-  @state() federationOperatorDisputeProviderFilter = "";
-  @state() federationOperatorDisputeOfferIdFilter = "";
-  @state()
-  federationOperatorDisputeStatusFilter:
-    | "all"
-    | import("./federation-api.js").FederationDisputeStatus = "open";
-  @state()
-  federationOperatorDisputePaymentStatusFilter:
-    | "all"
-    | import("./federation-api.js").FederationReviewPaymentStatus = "all";
-  @state() federationOperatorSelectedCaseId = "";
-  @state()
-  federationOperatorDisputeReviewStatusDraft: import("./federation-api.js").FederationDisputeReviewRequest["status"] =
-    "under_review";
-  @state() federationOperatorDisputeResolutionDraft = "";
-  @state() federationOperatorDisputeReviewBusy = false;
-  @state() federationOperatorDisputeReviewError: string | null = null;
-  @state() federationOperatorDisputeReviewMessage: string | null = null;
-  @state() federationDisputeNotaryRecordsLoading = false;
-  @state() federationDisputeNotaryRecordsError: string | null = null;
-  @state()
-  federationDisputeNotaryRecords: import("./federation-api.js").FederationDisputeNotaryRecord[] =
-    [];
-  @state()
-  federationDisputeNotaryOpinionDraft: import("./federation-api.js").FederationDisputeNotaryOpinion =
-    "requires-manual-review";
-  @state()
-  federationDisputeNotaryConfidenceDraft: import("./federation-api.js").FederationDecisionConfidence =
-    "medium";
-  @state()
-  federationDisputeNotaryRecommendedResolutionDraft: Exclude<
-    import("./federation-api.js").FederationDisputeStatus,
-    "open"
-  > = "under_review";
-  @state() federationDisputeNotarySummaryDraft = "";
-  @state() federationDisputeNotaryBusy = false;
-  @state() federationDisputeNotaryError: string | null = null;
-  @state() federationDisputeNotaryMessage: string | null = null;
   @state() walletLoading = false;
   @state() walletError: string | null = null;
   @state() walletStatus: WalletStatus | null = null;
   @state() walletBalancesLoading = false;
   @state() walletBalancesError: string | null = null;
   @state() walletBalances: WalletBalancesResponse | null = null;
-
-  @state() miningLoading = false;
-  @state() miningSaving = false;
-  @state() miningActionBusy = false;
-  @state() miningCapitalActionBusy: "deposit" | "withdraw" | null = null;
-  @state() miningPendingAction: "starting" | "stopping" | null = null;
-  @state() miningError: string | null = null;
-  @state() miningMessage: string | null = null;
-  @state() miningWallets: SatMiningWalletOption[] = [];
-  @state() miningAttachedWalletId: string | null = null;
-  @state() miningProfile: SatMinerProfile | null = createDefaultMinerProfile();
-  @state() miningSavedProfiles: SavedMiningProfile[] = [];
-  @state() miningSelectedSavedProfileId = "";
-  @state() miningSaveProfileName = "";
-  @state() miningCapitalDepositDraft = "0.25";
-  @state() miningCapitalWithdrawDraft = "0";
-  @state() miningReadiness: SatMiningReadiness | null = null;
-  @state() miningStatus: SatMiningRuntimeStatus | null = null;
-  @state() miningMainnetSync: SatMainnetSyncStatus | null = null;
-  @state() miningMainnetSyncBusy = false;
-  @state() miningHistoryLoading = false;
-  @state() miningHistoryError: string | null = null;
-  @state() miningHistory: SatMiningHistory | null = null;
-  @state() miningRecovery: SatMiningRecoverySummary | null = null;
-  @state() miningRecoveryDisputeAuthority = "";
-  @state() miningRecoveryTargetAuthority = "";
-  @state() miningRecoveryEpochId = "";
-  @state() miningRecoveryMicroRoundId = "";
-  @state() miningRecoveryStatusFlag = "2";
-  @state() miningRecoveryBoardRoot = "";
-  @state() miningRecoveryScoreRoot = "";
-  @state() miningRecoveryCoordinationRoot = "";
-  @state() miningRecoveryDraftRestored = false;
-  @state() miningRecoveryDraftUpdatedAt: string | null = null;
-  @state() miningRecoveryDraftSavedHint: string | null = null;
-  @state() miningLastNotifiedAction: string | null = null;
-  @state() miningNotifications: MiningUiNotification[] = [];
   @state() notifications: AppNotification[] = [];
-  @state() miningConfirmClearHistory = false;
-  @state() miningRecentActionsPage = 1;
-  @state() miningHistoryModalOpen = false;
-  @state() miningActivityFilter: import("./views/mining.js").MiningActivityFilter = "all";
-  @state() miningActivityWindow: import("./views/mining.js").MiningPlannerWindow = "24h";
-  @state() miningPlannerWindow: import("./views/mining.js").MiningPlannerWindow = "24h";
-  @state() miningChartMetric: import("./views/mining.js").MiningChartMetric = "both";
-  @state() miningNowMs = Date.now();
   @state() walletSettingsLoading = false;
   @state() walletSettingsBusy = false;
   @state() walletSettingsError: string | null = null;
@@ -1729,7 +1345,7 @@ export class FasedAgentApp extends LitElement {
   @state() walletRecurringTransferTz = "";
   @state() walletRecurringTransferName = "";
   @state() walletSecuritySetupWalletId = "";
-  @state() walletSecuritySetupRole: "agent" | "mining" | "vault" | null = null;
+  @state() walletSecuritySetupRole: "agent" | null = null;
   @state() walletRpcProvider = "";
   @state() walletRpcApiKey = "";
   @state() walletRpcUrl = "";
@@ -1880,9 +1496,6 @@ export class FasedAgentApp extends LitElement {
     | null = null;
   @state() debugAcpxPushTestResult: string | null = null;
   @state() debugAcpxPushTestError: string | null = null;
-  @state() debugSatProtocolMaintenanceBusy = false;
-  @state() debugSatProtocolMaintenanceResult: string | null = null;
-  @state() debugSatProtocolMaintenanceError: string | null = null;
 
   @state() logsLoading = false;
   @state() logsError: string | null = null;
@@ -1911,8 +1524,6 @@ export class FasedAgentApp extends LitElement {
   private logsPollInterval: number | null = null;
   private debugPollInterval: number | null = null;
   private federationPollInterval: number | null = null;
-  private miningPollInterval: number | null = null;
-  private miningClockInterval: number | null = null;
   private logsScrollFrame: number | null = null;
   private toolStreamById = new Map<string, ToolStreamEntry>();
   private toolStreamOrder: string[] = [];
@@ -2357,10 +1968,6 @@ export class FasedAgentApp extends LitElement {
       window.history.replaceState({}, "", url.toString());
     }
     this.openTabSection("wallet", "wallet-wallets");
-  }
-
-  handleOperatorReadinessOpenMining() {
-    this.openTabSection("mining", "mining-dashboard");
   }
 
   handleOperatorReadinessOpenFederationReview() {
@@ -3714,102 +3321,6 @@ export class FasedAgentApp extends LitElement {
     await loadFederationInternal(this);
   }
 
-  async handleFederationLoadLocalOffers() {
-    await loadLocalFederationOffersInternal(this);
-    await loadLocalMarketplaceRequestsInternal(this);
-    await loadLocalMarketplaceOrdersInternal(this);
-    await previewMarketplaceFederationIndexInternal(this);
-  }
-
-  async handleFederationLoadOffers() {
-    await loadFederationOffersInternal(this);
-    await loadMarketplaceFederationIndexInternal(this);
-  }
-
-  async handleFederationLoadMarketplaceIndex() {
-    await loadMarketplaceFederationIndexInternal(this);
-  }
-
-  async handleFederationOpenMarketplaceSellerProfile(handle: string) {
-    await openMarketplaceSellerProfileInternal(this, handle);
-  }
-
-  async handleFederationPreviewMarketplaceIndex() {
-    await previewMarketplaceFederationIndexInternal(this);
-  }
-
-  async handleFederationPublishMarketplaceIndex() {
-    await publishMarketplaceFederationIndexInternal(this);
-  }
-
-  async handleFederationLoadOperatorEconomy() {
-    await loadFederationOperatorEconomyInternal(this);
-  }
-
-  handleFederationStartLocalOfferDraft(offerId?: string) {
-    startLocalFederationOfferDraftInternal(this, offerId);
-  }
-
-  handleFederationStartLocalRequestDraft(requestId?: string) {
-    startLocalMarketplaceRequestDraftInternal(this, requestId);
-  }
-
-  handleFederationCancelLocalOfferDraft() {
-    cancelLocalFederationOfferDraftInternal(this);
-  }
-
-  handleFederationApplyMarketplaceServiceKind(next: string) {
-    applyMarketplaceServiceKindDraftInternal(this, next);
-  }
-
-  async handleFederationSaveLocalOffer() {
-    await saveLocalFederationOfferInternal(this);
-  }
-
-  async handleFederationToggleLocalOffer(offerId: string) {
-    await toggleLocalFederationOfferInternal(this, offerId);
-  }
-
-  async handleFederationDeleteLocalOffer(offerId: string) {
-    await deleteLocalFederationOfferInternal(this, offerId);
-  }
-
-  async handleFederationToggleLocalRequest(requestId: string) {
-    await toggleLocalMarketplaceRequestInternal(this, requestId);
-  }
-
-  async handleFederationDeleteLocalRequest(requestId: string) {
-    await deleteLocalMarketplaceRequestInternal(this, requestId);
-  }
-
-  async handleFederationCreateOrderFromSelectedOffer() {
-    await createMarketplaceOrderFromSelectedOfferInternal(this);
-  }
-
-  async handleFederationCreateOrderFromMarketplaceIndexEntry(entryId: string) {
-    await createMarketplaceOrderFromIndexEntryInternal(this, entryId);
-  }
-
-  async handleFederationCreateOrderFromLocalRequest(requestId: string) {
-    await createMarketplaceOrderFromLocalRequestInternal(this, requestId);
-  }
-
-  async handleFederationDeleteLocalOrder(orderId: string) {
-    await deleteLocalMarketplaceOrderInternal(this, orderId);
-  }
-
-  async handleFederationLoadOfferReputation() {
-    await loadFederationOfferReputationInternal(this);
-  }
-
-  async handleFederationLoadOperatorDisputes() {
-    await loadFederationOperatorDisputesInternal(this);
-  }
-
-  async handleFederationLoadDisputeNotaryAttestations() {
-    await loadFederationDisputeNotaryAttestationsInternal(this);
-  }
-
   async handleFederationRegister() {
     await registerFederationHandleInternal(this);
   }
@@ -3832,131 +3343,6 @@ export class FasedAgentApp extends LitElement {
       return;
     }
     await revokeFederationTokenInternal(this);
-  }
-
-  async handleFederationSetBondWallet() {
-    await setFederationBondWalletInternal(this);
-  }
-
-  async handleFederationClearBondWallet() {
-    await clearFederationBondWalletInternal(this);
-  }
-
-  async handleFederationOpenBond() {
-    await openFederationBondInternal(this);
-  }
-
-  async handleFederationIncreaseBond() {
-    await increaseFederationBondInternal(this);
-  }
-
-  async handleFederationRequestBondUnlock() {
-    await requestFederationBondUnlockInternal(this);
-  }
-
-  async handleFederationCancelBondUnlock() {
-    await cancelFederationBondUnlockInternal(this);
-  }
-
-  async handleFederationFinalizeBondUnlock() {
-    await finalizeFederationBondUnlockInternal(this);
-  }
-
-  async handleFederationSubmitBondProof() {
-    await submitFederationBondProofInternal(this);
-  }
-
-  async handleFederationInitBondStaking() {
-    await initFederationBondStakingInternal(this);
-  }
-
-  async handleFederationSyncBondStaking() {
-    await syncFederationBondStakingInternal(this);
-  }
-
-  async handleFederationClaimBondStaking() {
-    await claimFederationBondStakingInternal(this);
-  }
-
-  async handleFederationReview(
-    handle: string,
-    status: import("./federation-api.js").FederationDirectoryEntry["status"],
-  ) {
-    await reviewFederationDirectoryEntryInternal(this, { handle, status });
-  }
-
-  async handleFederationRunContentSummarize() {
-    await runFederationContentSummarizeInternal(this);
-  }
-
-  async handleFederationRunPaidContentSummarize() {
-    await runPaidFederationContentSummarizeInternal(this);
-  }
-
-  async handleFederationRunPaidContentSummarizeOrder(orderId: string) {
-    await runPaidFederationContentSummarizeOrderInternal(this, orderId);
-  }
-
-  async handleFederationPayMarketplaceManualOrder(orderId: string) {
-    await payMarketplaceManualOrderInternal(this, orderId);
-  }
-
-  async handleFederationDeliverMarketplaceManualOrder(orderId: string) {
-    await deliverMarketplaceManualOrderInternal(this, orderId);
-  }
-
-  async handleFederationRunMarketplaceCapabilityOrder(orderId: string) {
-    await runMarketplaceCapabilityOrderInternal(this, orderId);
-  }
-
-  async handleFederationSaveMarketplaceOrderDeliveryTarget(orderId: string) {
-    await saveMarketplaceOrderDeliveryTargetInternal(this, orderId);
-  }
-
-  async handleFederationFundMarketplaceEscrowOrder(orderId: string) {
-    await fundMarketplaceEscrowOrderInternal(this, orderId);
-  }
-
-  async handleFederationReleaseMarketplaceEscrowOrder(orderId: string) {
-    await releaseMarketplaceEscrowOrderInternal(this, orderId);
-  }
-
-  async handleFederationRefundMarketplaceEscrowOrder(orderId: string) {
-    await refundMarketplaceEscrowOrderInternal(this, orderId);
-  }
-
-  async handleFederationCancelMarketplaceEscrowOrder(orderId: string) {
-    await cancelMarketplaceEscrowOrderInternal(this, orderId);
-  }
-
-  handleFederationOpenMarketplaceIndexOrderFeedback(orderId: string, tab: "dispute" | "review") {
-    openMarketplaceIndexOrderFeedbackInternal(this, orderId, tab);
-  }
-
-  handleFederationSelectOffer(offerId: string) {
-    this.federationMarketplaceFeedbackOrderId = "";
-    this.federationOfferFeedbackTab = "review";
-    selectFederationOfferInternal(this, offerId);
-  }
-
-  handleFederationOfferFeedbackTabChange(next: "review" | "dispute") {
-    this.federationOfferFeedbackTab = next;
-  }
-
-  async handleFederationPublishReview() {
-    await publishFederationReviewInternal(this);
-  }
-
-  async handleFederationPublishDispute() {
-    await publishFederationDisputeInternal(this);
-  }
-
-  async handleFederationReviewDispute() {
-    await reviewFederationDisputeInternal(this);
-  }
-
-  async handleFederationPublishDisputeNotaryAttestation() {
-    await publishFederationDisputeNotaryAttestationInternal(this);
   }
 
   async handleWalletLoad() {
@@ -3997,31 +3383,8 @@ export class FasedAgentApp extends LitElement {
     await clearWalletSkillGrant(this, skillId);
   }
 
-  private currentWalletPolicyRole(): "agent" | "mining" | "vault" {
-    const walletId =
-      this.walletDetailsWalletId.trim() || this.walletSendCreateForm.walletId?.trim() || undefined;
-    const wallet = walletId
-      ? this.walletNamedWallets.find((entry) => entry.id === walletId)
-      : undefined;
-    const metadataRoleRaw =
-      typeof wallet?.metadata?.purpose === "string"
-        ? wallet.metadata.purpose
-        : typeof wallet?.metadata?.role === "string"
-          ? wallet.metadata.role
-          : "";
-    const metadataRole = metadataRoleRaw.toLowerCase();
-    if (metadataRole === "mining") {
-      return "mining";
-    }
-    if (metadataRole === "agent") {
-      return "agent";
-    }
-    if (metadataRole === "vault") {
-      return "vault";
-    }
-    return walletId && walletId === String(this.walletDefaultWalletId ?? "").trim()
-      ? "agent"
-      : "vault";
+  private currentWalletPolicyRole(): "agent" {
+    return "agent";
   }
 
   private resolveRecurringTransferDecimals(mint: string): number {
@@ -4051,11 +3414,7 @@ export class FasedAgentApp extends LitElement {
   private focusWalletSecuritySetupIfNeeded() {
     const walletId = this.walletSecuritySetupWalletId.trim();
     const role = this.walletSecuritySetupRole;
-    if (
-      this.tab !== "wallet" ||
-      !walletId ||
-      (role !== "agent" && role !== "mining" && role !== "vault")
-    ) {
+    if (this.tab !== "wallet" || !walletId || (role !== "agent" && role !== "vault")) {
       return;
     }
     if (this.walletDetailsWalletId !== walletId) {
@@ -4194,545 +3553,6 @@ export class FasedAgentApp extends LitElement {
         }
       });
     }, delayMs);
-  }
-
-  async handleMiningLoad(opts?: { forceFresh?: boolean }) {
-    await loadMiningInternal(this, opts);
-  }
-
-  async handleMiningSave() {
-    if (!this.miningProfile) {
-      return;
-    }
-    const normalizedCommit = this.normalizeMiningCommitTarget(
-      String(this.miningProfile.funding.commitLamports ?? "250000000"),
-      { enforceSafeMax: false },
-    );
-    if (normalizedCommit.kind === "blocked") {
-      this.miningError = normalizedCommit.message;
-      this.miningMessage = null;
-      this.enqueueMiningNotification("warning", normalizedCommit.message);
-      return;
-    }
-    const nextProfile =
-      normalizedCommit.kind === "clamped"
-        ? {
-            ...this.miningProfile,
-            funding: {
-              ...this.miningProfile.funding,
-              commitLamports: normalizedCommit.commitLamports,
-            },
-          }
-        : this.miningProfile;
-    if (normalizedCommit.kind === "clamped") {
-      this.miningProfile = nextProfile;
-      this.miningMessage = normalizedCommit.message;
-      this.miningError = null;
-      this.enqueueMiningNotification("warning", normalizedCommit.message);
-    }
-    await saveMiningProfileInternal(this, nextProfile);
-  }
-
-  handleMiningSaveLocalProfile() {
-    saveCurrentMiningProfileLocally(this);
-  }
-
-  handleMiningLoadSavedProfile() {
-    loadSavedMiningProfileIntoForm(this);
-  }
-
-  handleMiningDeleteSavedProfile() {
-    deleteSavedMiningProfile(this);
-  }
-
-  async handleMiningStart() {
-    this.miningPendingAction = "starting";
-    try {
-      await startMiningInternal(this);
-    } finally {
-      this.miningPendingAction = null;
-    }
-  }
-
-  async handleMiningStop() {
-    this.miningPendingAction = "stopping";
-    try {
-      await stopMiningInternal(this);
-    } finally {
-      this.miningPendingAction = null;
-    }
-  }
-
-  async handleMiningMainnetSync() {
-    await syncMiningMainnetInternal(this);
-  }
-
-  handleMiningCapitalDepositDraftChange(value: string) {
-    this.miningCapitalDepositDraft = value;
-  }
-
-  handleMiningCapitalWithdrawDraftChange(value: string) {
-    this.miningCapitalWithdrawDraft = value;
-  }
-
-  async handleMiningTopUpReserve() {
-    try {
-      const approvalToken = await this.resolveWalletApprovalToken({
-        operation: "mining.capital",
-      });
-      await topUpMiningReserveInternal(this, approvalToken);
-    } catch (error) {
-      this.miningError = `Failed to authorize mining buffer top-up: ${String(error)}`;
-      this.enqueueMiningNotification("error", this.miningError);
-    }
-  }
-
-  async handleMiningDepositCapital() {
-    this.miningActionBusy = true;
-    this.miningCapitalActionBusy = "deposit";
-    this.miningError = null;
-    try {
-      const approvalToken = await this.resolveWalletApprovalToken({
-        operation: "mining.capital",
-      });
-      await depositMiningCapitalInternal(
-        this,
-        toRawPolicyAmount(this.miningCapitalDepositDraft, "solana"),
-        approvalToken,
-      );
-    } catch (error) {
-      this.miningError = `Failed to authorize mining fund action: ${String(error)}`;
-      this.enqueueMiningNotification("error", this.miningError);
-    } finally {
-      this.miningActionBusy = false;
-      this.miningCapitalActionBusy = null;
-    }
-  }
-
-  async handleMiningWithdrawCapital() {
-    this.miningActionBusy = true;
-    this.miningCapitalActionBusy = "withdraw";
-    this.miningError = null;
-    try {
-      const approvalToken = await this.resolveWalletApprovalToken({
-        operation: "mining.capital",
-      });
-      await withdrawMiningCapitalInternal(
-        this,
-        toRawPolicyAmount(this.miningCapitalWithdrawDraft, "solana"),
-        approvalToken,
-      );
-    } catch (error) {
-      this.miningError = `Failed to authorize mining withdraw action: ${String(error)}`;
-      this.enqueueMiningNotification("error", this.miningError);
-    } finally {
-      this.miningActionBusy = false;
-      this.miningCapitalActionBusy = null;
-    }
-  }
-
-  async handleMiningSetActiveCommit() {
-    const requestedCommitLamports = String(
-      this.miningProfile?.funding.commitLamports ?? "250000000",
-    );
-    const normalizedCommit = this.normalizeMiningCommitTarget(requestedCommitLamports, {
-      enforceSafeMax: true,
-    });
-    if (normalizedCommit.kind === "blocked") {
-      this.miningError = normalizedCommit.message;
-      this.miningMessage = null;
-      this.enqueueMiningNotification("warning", normalizedCommit.message);
-      return;
-    }
-    if (normalizedCommit.kind === "clamped") {
-      this.miningMessage = normalizedCommit.message;
-      this.enqueueMiningNotification("warning", normalizedCommit.message);
-    }
-    this.miningActionBusy = true;
-    this.miningError = null;
-    try {
-      const approvalToken = await this.resolveWalletApprovalToken({
-        operation: "mining.capital",
-      });
-      await setMiningActiveCommitInternal(this, normalizedCommit.commitLamports, approvalToken);
-    } catch (error) {
-      this.miningError = `Failed to authorize mining commit action: ${String(error)}`;
-      this.enqueueMiningNotification("error", this.miningError);
-    } finally {
-      this.miningActionBusy = false;
-    }
-  }
-
-  async handleMiningUpdateCommit(lamports: string) {
-    const normalizedTarget = this.normalizeMiningCommitTarget(String(lamports || "250000000"), {
-      enforceSafeMax: false,
-    });
-    const currentProfile = this.miningProfile ?? createDefaultMinerProfile();
-    const nextProfile = {
-      ...currentProfile,
-      funding: {
-        ...currentProfile.funding,
-        commitLamports: normalizedTarget.commitLamports,
-      },
-    };
-    this.miningProfile = nextProfile;
-    await saveMiningProfileInternal(this, nextProfile);
-    if (this.miningError?.startsWith("Mining profile save failed")) {
-      return;
-    }
-    await this.handleMiningSetActiveCommit();
-  }
-
-  private miningCommitInputLabel() {
-    const execution =
-      this.miningProfile?.strategyExecution ??
-      strategyModeToExecution(this.miningProfile?.strategyMode);
-    return execution === "auto" ? "target max" : "target";
-  }
-
-  private normalizeMiningCommitTarget(
-    requestedCommitLamports: string,
-    opts?: { enforceSafeMax?: boolean },
-  ) {
-    const selectedWalletId = String(
-      this.miningProfile?.walletId ??
-        this.miningStatus?.walletId ??
-        this.miningReadiness?.selectedWalletId ??
-        "",
-    ).trim();
-    const selectedWallet = this.miningWallets.find(
-      (wallet) => wallet.walletId === selectedWalletId,
-    );
-    const normalized = normalizeMiningCommitLamports({
-      requestedCommitLamports,
-      walletLamports:
-        this.miningReadiness?.balances.solBalanceLamports ??
-        selectedWallet?.solBalanceLamports ??
-        this.miningStatus?.currentSolBalanceLamports ??
-        "0",
-      capitalFundedLamports: this.miningStatus?.currentCapitalFundedLamports ?? "0",
-      capitalFreeLamports: this.miningStatus?.currentCapitalFreeLamports ?? "0",
-      capitalLockedLamports: this.miningStatus?.currentCapitalLockedLamports ?? "0",
-      pendingCycleCount: this.miningStatus?.currentCapitalPendingCycleCount,
-      signerReserveLamports: this.miningStatus?.signerReserveLamports,
-      signerFeeBufferLamports: this.miningStatus?.signerFeeBufferLamports,
-      enforceSafeMax: opts?.enforceSafeMax,
-    });
-    const label = this.miningCommitInputLabel();
-    if (normalized.kind === "blocked") {
-      return {
-        ...normalized,
-        message: `Cannot apply ${label} yet. Need ${formatSolLamportsCompact(normalized.minimumCapitalForMinimumCommitLamports)} SOL free for the minimum 0.25 SOL commit.`,
-      };
-    }
-    if (normalized.kind === "clamped") {
-      return {
-        ...normalized,
-        message: `Using safe commit: ${formatSolLamportsCompact(normalized.commitLamports)} SOL.`,
-      };
-    }
-    return {
-      ...normalized,
-      message: null,
-    };
-  }
-
-  private async persistMiningProfileUpdate(mutate: (current: SatMinerProfile) => SatMinerProfile) {
-    const current = this.miningProfile ?? createDefaultMinerProfile();
-    const next = mutate(current);
-    this.miningProfile = next;
-    await saveMiningProfileInternal(this, next);
-  }
-
-  handleMiningSelectedSavedProfileChange(id: string) {
-    this.miningSelectedSavedProfileId = id;
-  }
-
-  handleMiningSaveProfileNameChange(value: string) {
-    this.miningSaveProfileName = value;
-  }
-
-  handleMiningStrategyPresetChange(preset: SatMinerProfile["strategyPreset"]) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      strategyPreset: preset,
-      riskMode: strategyPresetToRiskMode(preset),
-    }));
-  }
-
-  handleMiningStrategyExecutionChange(execution: SatMinerProfile["strategyExecution"]) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      strategyExecution: execution,
-      strategyMode: strategyExecutionToMode(execution),
-      skillConfig: {
-        useAgentDefaultModel: true,
-        fallbackToBaseOnFailure: true,
-        ...current.skillConfig,
-        enabled: execution === "auto",
-      },
-    }));
-  }
-
-  handleMiningCycleCadenceChange(cycleCadence: SatMinerProfile["cycleCadence"]) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      cycleCadence,
-    }));
-  }
-
-  handleMiningStrategyModeChange(mode: SatMinerProfile["strategyMode"]) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      strategyExecution: strategyModeToExecution(mode),
-      strategyMode: mode,
-      skillConfig: {
-        useAgentDefaultModel: true,
-        fallbackToBaseOnFailure: true,
-        ...current.skillConfig,
-        enabled: mode === "skill",
-      },
-    }));
-  }
-
-  handleMiningSkillConfigChange(patch: Partial<NonNullable<SatMinerProfile["skillConfig"]>>) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      skillConfig: {
-        enabled: current.skillConfig?.enabled ?? false,
-        useAgentDefaultModel: true,
-        fallbackToBaseOnFailure: true,
-        ...current.skillConfig,
-        ...patch,
-      },
-    }));
-  }
-
-  handleMiningRiskModeChange(riskMode: SatMinerProfile["riskMode"]) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      riskMode,
-      strategyPreset: riskModeToStrategyPreset(riskMode),
-    }));
-  }
-
-  handleMiningCommitLamportsChange(lamports: string) {
-    const normalizedCommit = this.normalizeMiningCommitTarget(String(lamports || "250000000"), {
-      enforceSafeMax: false,
-    });
-    if (normalizedCommit.kind === "blocked") {
-      this.miningError = normalizedCommit.message;
-      this.miningMessage = null;
-      this.enqueueMiningNotification("warning", normalizedCommit.message);
-      return;
-    }
-    if (normalizedCommit.kind === "clamped") {
-      this.miningMessage = normalizedCommit.message;
-      this.miningError = null;
-      this.enqueueMiningNotification("warning", normalizedCommit.message);
-    } else {
-      this.miningError = null;
-    }
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      funding: {
-        ...current.funding,
-        commitLamports: normalizedCommit.commitLamports,
-      },
-    }));
-  }
-
-  handleMiningReserveLamportsChange(lamports: string) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      funding: {
-        ...current.funding,
-        minSolBalanceLamports: String(lamports || "150000000"),
-      },
-    }));
-  }
-
-  handleMiningPayoutChange(payout: boolean) {
-    void this.persistMiningProfileUpdate((current) => ({ ...current, payout }));
-  }
-
-  handleMiningAutomationChange(patch: Partial<SatMinerProfile["automation"]>) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      automation: {
-        ...current.automation,
-        ...patch,
-      },
-    }));
-  }
-
-  handleMiningSatSweepChange(
-    patch: Partial<NonNullable<SatMinerProfile["automation"]["satSweep"]>>,
-  ) {
-    void this.persistMiningProfileUpdate((current) => ({
-      ...current,
-      automation: {
-        ...current.automation,
-        satSweep: {
-          enabled: false,
-          mode: "all",
-          percentage: 100,
-          minRaw: "1",
-          keepRaw: "0",
-          ...current.automation.satSweep,
-          ...patch,
-        },
-      },
-    }));
-  }
-
-  handleMiningRecentActionsPageChange(nextPage: number) {
-    this.miningRecentActionsPage = Math.max(1, nextPage);
-  }
-
-  handleMiningActivityFilterChange(nextFilter: import("./views/mining.js").MiningActivityFilter) {
-    if (this.miningActivityFilter === nextFilter) {
-      return;
-    }
-    this.miningActivityFilter = nextFilter;
-    this.miningRecentActionsPage = 1;
-  }
-
-  handleMiningActivityWindowChange(window: import("./views/mining.js").MiningPlannerWindow) {
-    if (this.miningActivityWindow === window) {
-      return;
-    }
-    this.miningActivityWindow = window;
-    this.miningRecentActionsPage = 1;
-    void loadMiningHistoryInternal(this, {
-      window: this.miningPlannerWindow,
-      activityWindow: window,
-    });
-  }
-
-  handleMiningOpenHistoryModal() {
-    this.miningHistoryModalOpen = true;
-  }
-
-  handleMiningCloseHistoryModal() {
-    this.miningHistoryModalOpen = false;
-  }
-
-  handleMiningPlannerWindowChange(window: import("./views/mining.js").MiningPlannerWindow) {
-    if (this.miningPlannerWindow === window) {
-      return;
-    }
-    this.miningPlannerWindow = window;
-    void loadMiningHistoryInternal(this, {
-      window,
-      activityWindow: this.miningActivityWindow,
-    });
-  }
-
-  handleMiningRecoveryDisputeAuthorityChange(value: string) {
-    this.miningRecoveryDisputeAuthority = value;
-    persistMiningRecoveryDraft(this);
-  }
-
-  handleMiningRecoveryTargetAuthorityChange(value: string) {
-    this.miningRecoveryTargetAuthority = value;
-    persistMiningRecoveryDraft(this);
-  }
-
-  handleMiningRecoveryEpochIdChange(value: string) {
-    this.miningRecoveryEpochId = value;
-    persistMiningRecoveryDraft(this);
-  }
-
-  handleMiningRecoveryMicroRoundIdChange(value: string) {
-    this.miningRecoveryMicroRoundId = value;
-    persistMiningRecoveryDraft(this);
-  }
-
-  handleMiningRecoveryStatusFlagChange(value: string) {
-    this.miningRecoveryStatusFlag = value;
-    persistMiningRecoveryDraft(this);
-  }
-
-  handleMiningRecoveryBoardRootChange(value: string) {
-    this.miningRecoveryBoardRoot = value;
-    persistMiningRecoveryDraft(this);
-  }
-
-  handleMiningRecoveryScoreRootChange(value: string) {
-    this.miningRecoveryScoreRoot = value;
-    persistMiningRecoveryDraft(this);
-  }
-
-  handleMiningRecoveryCoordinationRootChange(value: string) {
-    this.miningRecoveryCoordinationRoot = value;
-    persistMiningRecoveryDraft(this);
-  }
-
-  async handleMiningRetryClaim() {
-    const epochId = Number(this.miningRecovery?.epochId ?? this.miningStatus?.currentEpochId ?? 0);
-    if (!epochId) {
-      this.miningError = "Missing epoch id for retry claim.";
-      return;
-    }
-    await retryMiningClaimInternal(this, epochId);
-  }
-
-  async handleMiningResolveDispute() {
-    await resolveMiningDisputeInternal(this);
-  }
-
-  async handleMiningRepublishRoots() {
-    await republishMiningRootsInternal(this);
-  }
-
-  async handleMiningClearHistory() {
-    this.miningConfirmClearHistory = false;
-    await clearMiningHistoryInternal(this);
-  }
-
-  handleMiningConfirmClearHistory() {
-    this.miningConfirmClearHistory = true;
-  }
-
-  handleMiningCancelClearHistory() {
-    this.miningConfirmClearHistory = false;
-  }
-
-  handleMiningResetRecoveryDraft() {
-    resetMiningRecoveryDraft(this);
-  }
-
-  handleMiningResetToSelectedCandidate() {
-    resetMiningRecoveryToSelectedCandidate(this);
-  }
-
-  handleMiningExportSupportBundle() {
-    exportMiningSupportBundle(this);
-  }
-
-  enqueueMiningNotification(level: MiningUiNotification["level"], message: string) {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const notification: MiningUiNotification = {
-      id,
-      level,
-      message,
-      createdAt: new Date().toISOString(),
-    };
-    this.miningNotifications = [notification, ...this.miningNotifications].slice(0, 5);
-    const timer = window.setTimeout(() => {
-      this.dismissMiningNotification(id);
-    }, 8000);
-    this.miningNotificationTimers.set(id, timer);
-  }
-
-  dismissMiningNotification(id: string) {
-    const timer = this.miningNotificationTimers.get(id);
-    if (timer != null) {
-      window.clearTimeout(timer);
-      this.miningNotificationTimers.delete(id);
-    }
-    this.miningNotifications = this.miningNotifications.filter((item) => item.id !== id);
   }
 
   enqueueAppNotification(input: {
@@ -5526,7 +4346,7 @@ export class FasedAgentApp extends LitElement {
     }
   }
 
-  async handleWalletAttachStandardVault() {
+  async handleWalletAttachStandard() {
     if (this.walletSettingsBusy) {
       return;
     }
@@ -5545,7 +4365,6 @@ export class FasedAgentApp extends LitElement {
       const created = await createWalletNamedWallet({
         name,
         providerId: "wallet-standard",
-        role: "vault",
         address: selection.account.address,
       });
       this.walletProviderTab = "wallet-standard";
@@ -5624,23 +4443,6 @@ export class FasedAgentApp extends LitElement {
       return;
     }
     const nextWalletId = String(walletId ?? "").trim() || null;
-    const miningWalletId =
-      String(
-        this.miningProfile?.walletId ||
-          this.miningStatus?.walletId ||
-          this.miningReadiness?.selectedWalletId ||
-          "",
-      ).trim() || null;
-    if (
-      nextWalletId &&
-      nextWalletId === miningWalletId &&
-      nextWalletId !== (String(this.walletDefaultWalletId ?? "").trim() || null)
-    ) {
-      this.walletSettingsError =
-        "Agent wallet must stay separate from SAT Mining. Clear the Agent default or choose a dedicated Agent wallet; @wallet:mining is reserved for SAT mining.";
-      this.walletSettingsMessage = null;
-      return;
-    }
     this.walletSettingsBusy = true;
     this.walletSettingsError = null;
     this.walletSettingsMessage = null;
@@ -5714,9 +4516,7 @@ export class FasedAgentApp extends LitElement {
       | "wallet.passkey-enroll"
       | "wallet.passkey-remove"
       | "wallet.execution-mode"
-      | "wallet.send"
-      | "mining.capital"
-      | "mining.policy";
+      | "wallet.send";
     requestId?: string;
   }): Promise<string | null> {
     if (!this.walletStatus) {

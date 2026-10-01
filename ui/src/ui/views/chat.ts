@@ -357,12 +357,6 @@ const CORE_COMMAND_SUGGESTIONS: ChatCommandSuggestion[] = [
     description: "Fased Network offers, marketplace, receipts, and work routing.",
     source: "core",
   },
-  {
-    token: "@mining",
-    label: "Mining",
-    description: "SAT mining status, readiness, and mining operations.",
-    source: "core",
-  },
 ];
 
 const UI_SAFE_SLASH_COMMANDS = new Set([

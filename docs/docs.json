@@ -924,12 +924,7 @@
           },
           {
             "group": "Optional WEN",
-            "pages": [
-              "wen/index",
-              "wen/automation",
-              "plugins/crypto/mining-page",
-              "plugins/crypto/mining-troubleshooting"
-            ]
+            "pages": ["wen/index", "wen/automation"]
           },
           {
             "group": "Troubleshooting",

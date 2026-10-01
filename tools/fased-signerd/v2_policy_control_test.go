@@ -79,7 +79,7 @@ func TestSignerApplicationPolicyCanOnlyTightenAtomically(t *testing.T) {
 		{
 			name:   "role change",
 			mutate: func(policy *signerPolicyV2) { policy.Role = "vault" },
-			want:   "cannot alter wallet identity or role",
+			want:   "ordinary wallet discriminator",
 		},
 	}
 	for _, test := range tests {
@@ -152,43 +152,14 @@ func TestSignerApplicationSocketPolicyTightenAndRoleBoundaries(t *testing.T) {
 		t.Fatalf("application socket rejected strict policy tightening: %v", err)
 	}
 
-	vaultPolicy := testSignerPolicyV2("vault", destination, 100, 500)
-	vaultPolicy.Role = "vault"
-	_, vaultStored, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
-		WalletID: "vault", ExpectedVersion: 0, Policy: vaultPolicy,
-	})
-	if err != nil {
-		t.Fatalf("create Vault fixture: %v", err)
-	}
-	_, err = service.execute(signerExecuteRequestV2{
-		RequestID: "vault-direct-request", PolicyHash: vaultStored.Hash,
-		Intent:         signerIntentV2{Type: intentSolanaNativeTransfer, Destination: destination, Lamports: "1"},
-		intentWalletID: "vault",
-	})
-	if err == nil || !strings.Contains(err.Error(), "requires signer-reviewed authorization") {
-		t.Fatalf("Vault direct execution did not fail closed: %v", err)
+	for _, role := range []string{"mining", "vault", "profile", "strategy", "keeper"} {
+		policy := testSignerPolicyV2("wallet", destination, 100, 500)
+		policy.Role = role
+		if _, err := normalizeSignerPolicyV2(policy); err == nil {
+			t.Fatalf("retired role accepted: %s", role)
+		}
 	}
 
-	miningPolicy := testSignerPolicyV2("mining", destination, 100, 500)
-	miningPolicy.Role = "mining"
-	_, miningStored, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
-		WalletID: "mining", ExpectedVersion: 0, Policy: miningPolicy,
-	})
-	if err != nil {
-		t.Fatalf("create Mining fixture: %v", err)
-	}
-	_, err = service.execute(signerExecuteRequestV2{
-		RequestID: "mining-send-request", PolicyHash: miningStored.Hash,
-		Intent:         signerIntentV2{Type: intentSolanaNativeTransfer, Destination: destination, Lamports: "1"},
-		intentWalletID: "mining",
-	})
-	if err == nil || !strings.Contains(err.Error(), "restricted to typed SAT operations") {
-		t.Fatalf("Mining generic autonomous transfer did not fail closed: %v", err)
-	}
-
-	if err := requireAutonomousRoleV2(signerPolicyV2{Role: "agent"}, normalizedIntentV2{Intent: signerIntentV2{Type: intentSolanaSATAction}}); err == nil || !strings.Contains(err.Error(), "require a Mining wallet") {
-		t.Fatalf("Agent accepted typed SAT automation: %v", err)
-	}
 }
 
 func TestExplicitManualPolicyCannotUseAutonomousExecution(t *testing.T) {

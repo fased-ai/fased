@@ -6,7 +6,7 @@ export type PluginSdkDistSmoke = {
   devicePair: typeof import("@fased/fased/plugin-sdk/device-pair");
   discord: typeof import("@fased/fased/plugin-sdk/discord");
   providerWebSearch: typeof import("@fased/fased/plugin-sdk/provider-web-search-config-contract");
-  satRuntime: typeof import("@fased/fased/plugin-sdk/sat-runtime");
+  wenRuntime: typeof import("@fased/fased/plugin-sdk/wen-runtime");
   slack: typeof import("@fased/fased/plugin-sdk/slack");
   telegram: typeof import("@fased/fased/plugin-sdk/telegram");
   whatsapp: typeof import("@fased/fased/plugin-sdk/whatsapp");

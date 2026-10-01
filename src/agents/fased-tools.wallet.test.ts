@@ -23,6 +23,7 @@ describe("fased tools wallet integration", () => {
       agentSessionKey: "agent:owner:main",
     });
     expect(tools.some((tool) => tool.name === "wallet")).toBe(true);
+    expect(tools.some((tool) => tool.name === "mining")).toBe(false);
   });
 
   it("omits wallet tool when wallet runtime is disabled", () => {

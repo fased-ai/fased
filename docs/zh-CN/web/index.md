@@ -25,14 +25,6 @@ Gateway 网关从与 Gateway 网关 WebSocket 相同的端口提供一个小型*
 
 当前 UI 模型：
 
-- `/dash` 是 Dashboard 小组件概览。
-- `/chat` 是浏览器聊天界面。
-- `/agents` 是普通设置入口：Models、Channels、Skills、Tools、Memory、Sessions、Services、Tasks、Coordination 和 Files 都围绕选定 Agent。
-- `/wallet`、`/mining`、`/federation`、`/marketplace` 负责各自的运行时工作流。
-- `/extensions` 负责全局扩展/插件生命周期。
-- `/notifications`、`/usage`、`/logs` 是运维监控页面。
-- `/config` 是 **Advanced**，其中包含 Config、Debug 和 Nodes 标签页。
-
 旧的全局 providers/channels/services/skills/tasks/memory/debug/nodes 路由仍可能存在，用于兼容、深链或管理员视图；普通用户导航应从选定 Agent 开始。
 
 ## Webhooks

@@ -5,7 +5,7 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { registerWenApprovalGateway } from "../../extensions/sat-mining/src/wen-approval-gateway.js";
+import { registerWenApprovalGateway } from "../../extensions/wen/src/wen-approval-gateway.js";
 import type { FasedAgentPluginApi } from "../../src/plugins/types.js";
 import { createWenCampaignGatewayProfile } from "../../src/wallet/wen-campaign-gateway-profile.js";
 

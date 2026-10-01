@@ -53,7 +53,7 @@ function isExplicitUserLookup(input: string, options: DiscordTargetParseOptions)
     /^<@!?(\d+)>$/.test(input) ||
     /^(user:|discord:)/.test(input) ||
     input.startsWith("@") ||
-    (/^\d+$/.test(input) && options.defaultKind === "user")
+    (/^\d+$/.test(input) && options?.defaultKind === "user")
   );
 }
 

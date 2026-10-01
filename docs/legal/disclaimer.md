@@ -1,8 +1,8 @@
 ---
 title: "Disclaimer"
-summary: "Product-specific risk clarification for Fased wallet, mining, network, marketplace, trading, and plugin surfaces."
+summary: "Product-specific risk clarification for Fased wallet, network, marketplace, trading, and plugin surfaces."
 read_when:
-  - You are using wallet, mining, network, marketplace, or trading-related features
+  - You are using wallet, network, marketplace, or trading-related features
   - You need the product risk disclaimer
 ---
 
@@ -24,21 +24,13 @@ flows should be treated as:
 - tax advice
 - regulatory advice
 
-Any wallet, mining, bond, federation, marketplace, trading, or news-related
+Any wallet, bond, federation, marketplace, trading, or news-related
 functionality is operator-controlled software behavior, not a recommendation to take
 any real-world action.
 
 ## Operator responsibility
 
 If you use Fased with:
-
-- wallets or signers
-- crypto assets
-- SAT mining
-- bonded federation
-- operator network features
-- marketplace offers
-- trading or market/news plugins
 
 you are solely responsible for:
 

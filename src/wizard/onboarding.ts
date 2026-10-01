@@ -50,12 +50,9 @@ import { resolveNativeSignerWalletId } from "../wallet/native-signer-wallet-id.j
 import type { WalletNamedWallet } from "../wallet/wallet-provider-registry.js";
 import { readWalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
 import {
-  checkNamedWalletFinancialAuthority,
-  checkNamedWalletDeletionSafety,
   deleteNamedWallet,
   nextRoleWalletIdentity,
   resolveWalletUserRole,
-  setNamedWalletRole,
   upsertNamedWallet,
 } from "../wallet/wallet-provider-registry.js";
 import { nextWalletDisplayName } from "../wallet/wallet-purpose-labels.js";
@@ -137,7 +134,7 @@ async function confirmOnboardingRepair(params: { prompter: WizardPrompter }): Pr
     [
       "Repair is for bad auth/session state while keeping the instance configuration intact.",
       "",
-      "It keeps gateway token/password, gateway settings, wallet assignments, SAT mining, Fased Network, plugins, Tailscale, and firewall state.",
+      "It keeps gateway token/password, gateway settings, wallet assignments, Fased Network, plugins, Tailscale, and firewall state.",
       "It can remove model/OAuth credentials and chat/session history depending on the scope you choose.",
       "",
       "For destructive config reset, use the explicit admin command: fased reset.",
@@ -359,144 +356,11 @@ export async function runOnboardingWizard(
     }
     return effectiveRpcUrl;
   };
-  const readSatMiningConfig = (
-    cfg: FasedAgentConfig,
-  ): {
-    walletId?: string;
-    network?: "local" | "devnet" | "mainnet-beta";
-  } => {
-    const config = cfg.plugins?.entries?.["sat-mining"]?.config;
-    if (!config || typeof config !== "object" || Array.isArray(config)) {
-      return {};
-    }
-    const value = config as { walletId?: unknown; network?: unknown };
-    const walletId =
-      typeof value.walletId === "string" ? value.walletId.trim() || undefined : undefined;
-    const network =
-      value.network === "local" || value.network === "devnet" || value.network === "mainnet-beta"
-        ? value.network
-        : undefined;
-    return { walletId, network };
-  };
-  const readFederationBondWalletId = (cfg: FasedAgentConfig): string | undefined => {
-    const value = cfg.federation?.bond?.walletId;
-    return typeof value === "string" ? value.trim() || undefined : undefined;
-  };
-  const assignFederationBondWallet = (
-    cfg: FasedAgentConfig,
-    params: { walletId: string },
-  ): FasedAgentConfig => ({
-    ...cfg,
-    federation: {
-      ...cfg.federation,
-      bond: {
-        ...cfg.federation?.bond,
-        walletId: params.walletId,
-      },
-    },
-  });
-  const clearFederationBondWallet = (cfg: FasedAgentConfig): FasedAgentConfig => {
-    const next = structuredClone(cfg);
-    if (next.federation?.bond) {
-      delete next.federation.bond.walletId;
-      if (Object.keys(next.federation.bond).length === 0) {
-        delete next.federation.bond;
-      }
-    }
-    if (next.federation && Object.keys(next.federation).length === 0) {
-      delete next.federation;
-    }
-    return next;
-  };
-  const assignWalletToSatMining = (
-    cfg: FasedAgentConfig,
-    params: { walletId: string; network: "local" | "devnet" | "mainnet-beta" },
-  ): FasedAgentConfig => {
-    const currentEntry = cfg.plugins?.entries?.["sat-mining"];
-    const currentConfig =
-      currentEntry?.config &&
-      typeof currentEntry.config === "object" &&
-      !Array.isArray(currentEntry.config)
-        ? currentEntry.config
-        : {};
-    return {
-      ...cfg,
-      plugins: {
-        ...cfg.plugins,
-        entries: {
-          ...cfg.plugins?.entries,
-          "sat-mining": {
-            enabled: true,
-            ...currentEntry,
-            config: {
-              ...currentConfig,
-              walletId: params.walletId,
-              role:
-                currentConfig.role === "validator" ||
-                currentConfig.role === "admin" ||
-                currentConfig.role === "miner"
-                  ? currentConfig.role
-                  : "miner",
-              network: params.network,
-              riskMode:
-                currentConfig.riskMode === "conservative" ||
-                currentConfig.riskMode === "balanced" ||
-                currentConfig.riskMode === "aggressive" ||
-                currentConfig.riskMode === "swarm"
-                  ? currentConfig.riskMode
-                  : "balanced",
-              claimMode:
-                currentConfig.claimMode === "auto" ||
-                currentConfig.claimMode === "manual" ||
-                currentConfig.claimMode === "prompt"
-                  ? currentConfig.claimMode
-                  : "auto",
-              payout: typeof currentConfig.payout === "boolean" ? currentConfig.payout : true,
-              automation:
-                currentConfig.automation &&
-                typeof currentConfig.automation === "object" &&
-                !Array.isArray(currentConfig.automation)
-                  ? currentConfig.automation
-                  : {
-                      autoFinalizeEpoch: true,
-                      autoClaim: true,
-                    },
-            },
-          },
-        },
-      },
-    };
-  };
-  const clearSatMiningAttachment = (cfg: FasedAgentConfig): FasedAgentConfig => {
-    const currentEntry = cfg.plugins?.entries?.["sat-mining"];
-    const currentConfig =
-      currentEntry?.config &&
-      typeof currentEntry.config === "object" &&
-      !Array.isArray(currentEntry.config)
-        ? currentEntry.config
-        : {};
-    const nextSatConfig = { ...currentConfig } as Record<string, unknown>;
-    delete nextSatConfig.walletId;
-    return {
-      ...cfg,
-      plugins: {
-        ...cfg.plugins,
-        entries: {
-          ...cfg.plugins?.entries,
-          "sat-mining": {
-            enabled: true,
-            ...currentEntry,
-            config: nextSatConfig,
-          },
-        },
-      },
-    };
-  };
   const hasCommand = (name: string): boolean => {
     const probe = spawnSync("bash", ["-lc", `command -v ${name}`], { stdio: "ignore" });
     return probe.status === 0;
   };
-  type WalletOnboardingPurpose = "agent" | "mining" | "vault";
+  type WalletOnboardingPurpose = "agent";
   const nextWalletIdentity = (purpose: WalletOnboardingPurpose) => {
     const registry = readWalletProviderRegistry(process.env);
     return nextRoleWalletIdentity(purpose, registry.wallets);
@@ -700,8 +564,6 @@ export async function runOnboardingWizard(
   const protectedLocalInstallerScaffold = isProtectedLocalInstallerScaffold(snapshot);
   let baseConfig: FasedAgentConfig = snapshot.valid ? snapshot.config : {};
   baseConfig = normalizeHostedWalletPaths(baseConfig, process.env);
-  let satMiningAttachment = readSatMiningConfig(baseConfig);
-  let federationBondWalletId = readFederationBondWalletId(baseConfig);
   const displayWalletName = (wallet: WalletNamedWallet): string => {
     return wallet.name.trim() || "Wallet";
   };
@@ -710,15 +572,6 @@ export async function runOnboardingWizard(
     return address.length > 6
       ? `${address.slice(0, 2)}..${address.slice(-2)}`
       : address || undefined;
-  };
-  const applySatMiningAttachment = (cfg: FasedAgentConfig): FasedAgentConfig => {
-    if (!satMiningAttachment.walletId) {
-      return cfg;
-    }
-    return assignWalletToSatMining(cfg, {
-      walletId: satMiningAttachment.walletId,
-      network: satMiningAttachment.network ?? "devnet",
-    });
   };
 
   if (snapshot.exists && !protectedLocalInstallerScaffold && !snapshot.valid) {
@@ -845,7 +698,7 @@ export async function runOnboardingWizard(
         {
           value: "modify",
           label: "Review settings",
-          hint: "Keeps wallets, secrets, sessions, bonds, and mining data.",
+          hint: "Keeps wallets, secrets, sessions, wallet state.",
         },
         {
           value: "repair",
@@ -988,7 +841,6 @@ export async function runOnboardingWizard(
         "",
         noteHeading("Optional later"),
         noteBullet("Fased Network: enable only when you want network tasks."),
-        noteBullet("Legacy mining recovery stays available for existing operations."),
       ].join("\n"),
       "Operator path",
     );
@@ -1162,7 +1014,7 @@ export async function runOnboardingWizard(
 
   let onboardingWalletSecurityFocus: {
     walletId: string;
-    role: "agent" | "mining" | "vault";
+    role: "agent";
   } | null = null;
 
   const offerHostedWalletSetup =
@@ -1258,88 +1110,45 @@ export async function runOnboardingWizard(
             });
             continue;
           }
-          const currentMiningWalletId = satMiningAttachment.walletId ?? "";
-          const currentBondWalletId = federationBondWalletId ?? "";
           const configuredSolanaRpcUrl =
             (nextConfig.env?.vars?.[rpcEnvKeyFor("solana", walletId)] ?? "").trim() ||
             String(process.env[rpcEnvKeyFor("solana", walletId)] ?? "").trim();
           const supportsSolanaWallet = Boolean(
             targetWallet.addresses?.solana || targetWallet.providerId === "local-socket-signer",
           );
-          const targetWalletPurpose = resolveWalletUserRole(targetWallet);
-          const manageAction = await prompter.select<
-            | "attach-federation-bond"
-            | "detach-federation-bond"
-            | "configure-solana-rpc"
-            | "retire-mining"
-            | "archive"
-            | "cancel"
-          >({
-            message: "Wallet action",
-            options: [
-              ...(supportsSolanaWallet
-                ? [
-                    {
-                      value: "configure-solana-rpc" as const,
-                      label: configuredSolanaRpcUrl ? "Update Solana RPC" : "Add Solana RPC",
-                      hint: configuredSolanaRpcUrl
-                        ? "Signer-owned RPC is configured; replace it without displaying credentials."
-                        : "Restore the per-wallet Solana RPC used for balances, readiness, and SAT mining.",
-                    },
-                  ]
-                : []),
-              ...(supportsSolanaWallet && currentBondWalletId === walletId
-                ? [
-                    {
-                      value: "detach-federation-bond" as const,
-                      label: "Clear Fased Network bond",
-                      hint: "Keep the wallet, but stop using it as the configured Fased Network bond Vault.",
-                    },
-                  ]
-                : supportsSolanaWallet && targetWalletPurpose === "vault"
+          const manageAction = await prompter.select<"configure-solana-rpc" | "archive" | "cancel">(
+            {
+              message: "Wallet action",
+              options: [
+                ...(supportsSolanaWallet
                   ? [
                       {
-                        value: "attach-federation-bond" as const,
-                        label:
-                          currentBondWalletId && currentBondWalletId !== walletId
-                            ? "Switch bond Vault here"
-                            : "Use for Fased Network bond",
-                        hint:
-                          currentBondWalletId && currentBondWalletId !== walletId
-                            ? `Current bond Vault: ${currentBondWalletId}`
-                            : "Use this Vault wallet for longer-lived SAT bond authority.",
+                        value: "configure-solana-rpc" as const,
+                        label: configuredSolanaRpcUrl ? "Update Solana RPC" : "Add Solana RPC",
+                        hint: configuredSolanaRpcUrl
+                          ? "Signer-owned RPC is configured; replace it without displaying credentials."
+                          : "Restore the per-wallet Solana RPC used for balances, readiness.",
                       },
                     ]
                   : []),
-              targetWalletPurpose === "mining"
-                ? {
-                    value: "retire-mining",
-                    label: "Retire and replace Mining wallet",
-                    hint: "Stop and drain Mining, verify recovery and balances, tombstone the old signer wallet, then attach a ready successor.",
-                  }
-                : {
-                    value: "archive",
-                    label: "Archive/remove from Fased",
-                    hint: "Disable signer use first, then remove this wallet registration.",
-                  },
-              {
-                value: "cancel",
-                label: "Back",
-              },
-            ],
-            initialValue: (() => {
-              if (supportsSolanaWallet && !configuredSolanaRpcUrl) {
-                return "configure-solana-rpc" as const;
-              }
-              if (currentBondWalletId === walletId) {
-                return "detach-federation-bond" as const;
-              }
-              if (supportsSolanaWallet && targetWalletPurpose === "vault") {
-                return "attach-federation-bond" as const;
-              }
-              return "cancel" as const;
-            })(),
-          });
+                {
+                  value: "archive",
+                  label: "Archive/remove from Fased",
+                  hint: "Disable signer use first, then remove this wallet registration.",
+                },
+                {
+                  value: "cancel",
+                  label: "Back",
+                },
+              ],
+              initialValue: (() => {
+                if (supportsSolanaWallet && !configuredSolanaRpcUrl) {
+                  return "configure-solana-rpc" as const;
+                }
+                return "cancel" as const;
+              })(),
+            },
+          );
           if (manageAction === "configure-solana-rpc") {
             const effectiveSolanaRpcUrl = await promptWalletRpcUrl({
               chain: "solana",
@@ -1420,136 +1229,21 @@ export async function runOnboardingWizard(
             });
             continue;
           }
-          if (manageAction === "retire-mining") {
-            await prompter.note(
-              [
-                "Mining retirement is a coordinated replacement, never a registry-only delete.",
-                `Run: fased wallet recovery export --wallet-id ${targetWallet.id} --output <absolute-recovery-path>`,
-                `Then run: fased wallet retire --wallet-id ${targetWallet.id} --successor-wallet-id <new-id> --successor-wallet-name <name> --recovery-file <absolute-recovery-path> --rpc-url <url>`,
-                "The command stops new jobs, waits for Clearing and reconciliation, records balances, commits the signer tombstone, and attaches the ready successor.",
-              ].join("\n"),
-              "Retire and replace Mining wallet",
-            );
-            addAnotherWallet = await prompter.confirm({
-              message: "Run another wallet setup action?",
-              initialValue: false,
-            });
-            continue;
-          }
-          if (manageAction === "attach-federation-bond") {
-            const agentDefaultWallet = readAgentDefaultWallet();
-            if (targetWalletPurpose !== "vault") {
-              await prompter.note(
-                [
-                  `${targetWallet.name} · @wallet:${walletId} is a ${targetWalletPurpose} wallet.`,
-                  "Fased Network bond requires a Vault wallet. Create a Vault wallet first, then assign it to bond.",
-                ].join("\n"),
-                "Fased Network bond",
-              );
-              addAnotherWallet = await prompter.confirm({
-                message: "Run another wallet setup action?",
-                initialValue: false,
-              });
-              continue;
-            }
-            if (agentDefaultWallet.walletId === walletId || currentMiningWalletId === walletId) {
-              await prompter.note(
-                [
-                  `${targetWallet.name} · @wallet:${walletId} is already used by ${agentDefaultWallet.walletId === walletId ? "Agent" : "Mining"}.`,
-                  "Create or select a Vault wallet instead of reusing this wallet.",
-                ].join("\n"),
-                "Fased Network bond",
-              );
-              addAnotherWallet = await prompter.confirm({
-                message: "Run another wallet setup action?",
-                initialValue: false,
-              });
-              continue;
-            }
-            federationBondWalletId = walletId;
-            nextConfig = assignFederationBondWallet(nextConfig, { walletId });
-            const advisories: string[] = [
-              noteHeading("Network bond"),
-              noteBullet(`Vault wallet: ${targetWallet.name} · @wallet:${walletId}`),
-            ];
-            await prompter.note(advisories.join("\n"), "Fased Network bond");
-            addAnotherWallet = await prompter.confirm({
-              message: "Run another wallet setup action?",
-              initialValue: false,
-            });
-            continue;
-          }
-          if (manageAction === "detach-federation-bond") {
-            federationBondWalletId = undefined;
-            nextConfig = clearFederationBondWallet(nextConfig);
-            await prompter.note(
-              `Cleared ${targetWallet.name} · @wallet:${walletId} as the Fased Network bond Vault.`,
-              "Fased Network bond",
-            );
-            addAnotherWallet = await prompter.confirm({
-              message: "Run another wallet setup action?",
-              initialValue: false,
-            });
-            continue;
-          }
-          if (resolveWalletUserRole(targetWallet) === "mining") {
-            await prompter.note(
-              "Mining wallets cannot be archived or deleted directly. Use Retire and replace Mining wallet so the signer tombstone is committed before registry detachment.",
-              "Mining retirement required",
-            );
-            addAnotherWallet = await prompter.confirm({
-              message: "Run another wallet setup action?",
-              initialValue: false,
-            });
-            continue;
-          }
           const archiveEnv = {
             ...process.env,
             ...nextConfig.env?.vars,
             FASED_HOST_PROFILE: hostProfile,
           } as NodeJS.ProcessEnv;
-          const financialAuthority = checkNamedWalletFinancialAuthority({
-            walletId: targetWallet.id,
-            env: archiveEnv,
-          });
-          if (financialAuthority) {
-            await prompter.note(
-              `This wallet is the current ${financialAuthority.role} for financial Agent ${financialAuthority.fasedAgentRecord}. Finalize and read back the authority rotation before archiving it.`,
-              "Authority rotation required",
-            );
-            addAnotherWallet = await prompter.confirm({
-              message: "Run another wallet setup action?",
-              initialValue: false,
-            });
-            continue;
-          }
-          const deletionSafety = checkNamedWalletDeletionSafety({
-            walletId: targetWallet.id,
-            env: archiveEnv,
-          });
-          if (!deletionSafety.ok) {
-            await prompter.note(deletionSafety.message, "Archive blocked");
-            addAnotherWallet = await prompter.confirm({
-              message: "Run another wallet setup action?",
-              initialValue: false,
-            });
-            continue;
-          }
           const signerOwned = targetWallet.providerId === "local-socket-signer";
           const archiveWarnings = [
             `This removes the Fased registration for ${targetWallet.name} (${targetWallet.id}); it does not transfer funds or erase provider custody.`,
             signerOwned
               ? "Before removal, Fased must durably replace the native signer policy with deny-all. The encrypted signer-owned key remains archived in signer storage for host-administrator recovery."
               : "The external provider or hardware wallet keeps its key; remove it there separately only if you intend to destroy that custody relationship.",
-            "Move funds out or verify your recovery procedure, and clear active Mining/Fased Network use before archiving.",
+            "Move funds out or verify your recovery procedure, and clear active wallet use before archiving.",
           ];
-          if (currentMiningWalletId === targetWallet.id || targetWalletPurpose === "mining") {
-            archiveWarnings.push(
-              "For @wallet:mining, stop mining first; move SAT/SOL out or verify recovery; then archive and re-register the singleton Mining wallet if needed.",
-            );
-          }
           archiveWarnings.push(
-            "If balances cannot be checked from this terminal, treat the balance as unknown and verify it from the Wallet or Mining page first.",
+            "If balances cannot be checked from this terminal, treat the balance as unknown and verify it from the Wallet page first.",
             "Use repair for auth/session recovery only; wallet archive is always per-wallet.",
           );
           await prompter.note(archiveWarnings.join("\n"), "Archive wallet");
@@ -1587,14 +1281,6 @@ export async function runOnboardingWizard(
             }
             for (const key of [rpcEnvKeyFor("solana", walletId)]) {
               nextConfig = setConfigEnvVar(nextConfig, key, undefined);
-            }
-            if (satMiningAttachment.walletId === walletId) {
-              satMiningAttachment = {};
-              nextConfig = clearSatMiningAttachment(nextConfig);
-            }
-            if (federationBondWalletId === walletId) {
-              federationBondWalletId = undefined;
-              nextConfig = clearFederationBondWallet(nextConfig);
             }
             await writeConfigFile(nextConfig);
             deleteNamedWallet({ walletId, env: archiveEnv });
@@ -1692,7 +1378,6 @@ export async function runOnboardingWizard(
                 walletId,
                 walletName,
                 rpcUrl: effectiveRpcUrl,
-                role: walletPurpose,
                 // Onboarding is repairable after a signer wallet was durably created but a
                 // later network/bootstrap step failed. The signer permits reuse only when the
                 // existing wallet has the exact requested role; it never overwrites the key.
@@ -1717,7 +1402,6 @@ export async function runOnboardingWizard(
                   walletId,
                   walletName,
                   rpcUrl: effectiveRpcUrl,
-                  role: walletPurpose,
                   force: true,
                   noDoctor: true,
                   noSignerHints: true,
@@ -1733,7 +1417,6 @@ export async function runOnboardingWizard(
               chain,
               walletId,
               walletName,
-              role: walletPurpose,
               rpcUrl: effectiveRpcUrl,
               importFile,
               noDoctor: true,
@@ -1819,16 +1502,9 @@ export async function runOnboardingWizard(
             );
           }
           if (walletId) {
-            setNamedWalletRole({
-              walletId,
-              role: walletPurpose,
-              env: process.env,
-            });
-          }
-          if (walletId) {
             onboardingWalletSecurityFocus = {
               walletId,
-              role: walletPurpose,
+              role: "agent",
             };
           }
           if (chain === "solana" && walletId) {
@@ -1845,12 +1521,6 @@ export async function runOnboardingWizard(
                 ].join("\n"),
                 "WEN",
               );
-            }
-            const currentBondWallet = federationBondWalletId ?? "";
-            if (currentBondWallet !== walletId) {
-              if (currentBondWallet) {
-                await prompter.note(`Keeping existing bond Vault: ${currentBondWallet}`, "Bond");
-              }
             }
           }
         } catch (err) {
@@ -1896,22 +1566,7 @@ export async function runOnboardingWizard(
           "",
           noteHeading("Assignments"),
           noteBullet(`Agent wallet: ${describeWalletRef(readAgentWalletSummary())}`),
-          ...(readRoleWallet("mining").walletId
-            ? [noteBullet(`Legacy mining wallet: ${describeWalletRef(readRoleWallet("mining"))}`)]
-            : []),
-          noteBullet(`Vault wallet: ${describeWalletRef(readRoleWallet("vault"))}`),
-          noteBullet(
-            `Fased Network bond Vault: ${
-              federationBondWalletId
-                ? describeWalletRef({
-                    walletId: federationBondWalletId,
-                    walletName: readWalletProviderRegistry(process.env).wallets.find(
-                      (wallet) => wallet.id === federationBondWalletId,
-                    )?.name,
-                  })
-                : "not assigned"
-            }`,
-          ),
+          noteBullet(`Vault wallet: ${describeWalletRef(readRoleWallet("agent"))}`),
           noteBullet(
             `Gateway Jupiter swaps: ${readJupiterSwapApiKey() ? "configured" : "not configured"}; Trigger: signer-owned configuration`,
           ),
@@ -2090,7 +1745,6 @@ export async function runOnboardingWizard(
     if (hostingMode) {
       nextConfig = persistHostedLocalSignerRuntime(nextConfig);
     }
-    nextConfig = applySatMiningAttachment(nextConfig);
     await writeConfigFile(nextConfig);
     if (flow !== "quickstart") {
       logConfigUpdated(runtime);
@@ -2106,8 +1760,6 @@ export async function runOnboardingWizard(
       process.env.FASED_SUPPRESS_CONFIG_OVERWRITE_LOG = previousSuppressOverwrite;
     }
   }
-
-  nextConfig = applySatMiningAttachment(nextConfig);
 
   const hostSecurity =
     hostProfile === "hosting"
@@ -2144,7 +1796,6 @@ export async function runOnboardingWizard(
       : null,
   });
   nextConfig = applyWizardMetadata(nextConfig, { command: "onboard", mode });
-  nextConfig = applySatMiningAttachment(nextConfig);
   await writeConfigFile(nextConfig);
   if (hostingMode) {
     activateHostedLocalSignerRuntimeEnv();

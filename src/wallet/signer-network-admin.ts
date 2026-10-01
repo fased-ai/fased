@@ -11,7 +11,7 @@ export type SignerNetworkSummary = {
 
 export type SignerPolicyInstallSummary = {
   walletId: string;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
   version: number;
   hash: string;
 };
@@ -100,7 +100,7 @@ export function applyHostedSignerOwnedWalletPolicy(params: {
   walletId: string;
   policy: {
     walletId?: string;
-    role: "agent" | "mining" | "vault" | "profile" | "strategy";
+    role: "agent";
     operations: string[];
     programs: string[];
     assets: unknown[];

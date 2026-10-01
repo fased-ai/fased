@@ -18,7 +18,6 @@ import {
   createMarketplaceTool,
 } from "./tools/marketplace-offer-draft-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
-import { createMiningTool } from "./tools/mining-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
 import { createSessionsHistoryTool } from "./tools/sessions-history-tool.js";
@@ -154,7 +153,6 @@ export function createFasedAgentTools(options?: {
       agentSessionKey: options?.agentSessionKey,
       config: options?.config,
     }),
-    createMiningTool(),
     ...(walletTool ? [walletTool] : []),
     ...(walletActionTool ? [walletActionTool] : []),
     createOffersTool(),

@@ -22,11 +22,11 @@ type signerWENBTCReadResultV1 struct {
 	exposure    signerWENBTCExposureV1 // Internal budget requirements, not a reservation.
 	rentLengths []uint64               // Internal account-creation costs from the verified batch.
 
-	Slot          uint64               `json:"slot,string"`
-	ReferenceSlot uint64               `json:"referenceSlot,string"`
-	Now           uint64               `json:"now,string"`
-	Data          []byte               `json:"dataBase64"`
-	Accounts      []signerSATAccountV2 `json:"accounts"`
+	Slot          uint64                 `json:"slot,string"`
+	ReferenceSlot uint64                 `json:"referenceSlot,string"`
+	Now           uint64                 `json:"now,string"`
+	Data          []byte                 `json:"dataBase64"`
+	Accounts      []signerTypedAccountV2 `json:"accounts"`
 	// A readback is not transaction admission. Valuation/caps and all monetary
 	// effects still require simulation and protected transaction verification.
 }
@@ -68,7 +68,7 @@ func readWENBTCSubscriptionRPCV1(ctx context.Context, client signerWENBTCReadRPC
 	if route != nil {
 		copied := *route
 		copied.Data = append([]byte(nil), route.Data...)
-		copied.Accounts = append([]signerSATAccountV2(nil), route.Accounts...)
+		copied.Accounts = append([]signerTypedAccountV2(nil), route.Accounts...)
 		route = &copied
 		load = loadWENBTCAcquisitionV1
 	}
@@ -78,7 +78,7 @@ func readWENBTCSubscriptionRPCV1(ctx context.Context, client signerWENBTCReadRPC
 	}
 	build := a.acceptanceInstruction
 	if route != nil {
-		build = func(now uint64) ([]byte, []signerSATAccountV2, error) {
+		build = func(now uint64) ([]byte, []signerTypedAccountV2, error) {
 			return a.acquisitionInstruction(wallet, *route, now)
 		}
 	}

@@ -25,31 +25,6 @@ function makeSkillJob(toolName: string, input: Record<string, unknown>): CronJob
 }
 
 describe("deterministic result adapters", () => {
-  it("formats mining status without a model summarizer", () => {
-    const adapted = adaptDeterministicSkillResult({
-      job: makeSkillJob("mining", { action: "status" }),
-      toolName: "mining",
-      outputText: "{}",
-      rawResult: {
-        details: {
-          running: true,
-          enabledWanted: true,
-          activeRiskMode: "deterministic",
-          nextActionDetail: "waiting for next cycle",
-          activeCommitSol: "0.5 SOL",
-        },
-      },
-    });
-
-    expect(adapted).toMatchObject({
-      adapterId: "mining:status",
-      directDelivery: true,
-    });
-    expect(adapted?.outputText).toContain("Mining status");
-    expect(adapted?.outputText).toContain("running: yes");
-    expect(adapted?.outputText).toContain("risk mode: deterministic");
-  });
-
   it("formats provider auth health without a model summarizer", () => {
     const adapted = adaptDeterministicSkillResult({
       job: makeSkillJob("gateway", { action: "models.auth.status" }),

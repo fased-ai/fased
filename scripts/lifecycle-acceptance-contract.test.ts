@@ -101,14 +101,18 @@ describe("lifecycle acceptance contract", () => {
           Object.fromEntries(
             Object.entries(scenarios).map(([scenario, predicates]) => [
               scenario,
-              predicates.filter(
-                (predicate) =>
-                  ![
-                    "lifecycle-performance",
-                    "installer-noop-performance",
-                    "updater-noop-performance",
-                  ].includes(predicate),
-              ),
+              predicates
+                .flatMap((predicate) =>
+                  predicate === "wallet-signer-doctor" ? [predicate, "mining-status"] : [predicate],
+                )
+                .filter(
+                  (predicate) =>
+                    ![
+                      "lifecycle-performance",
+                      "installer-noop-performance",
+                      "updater-noop-performance",
+                    ].includes(predicate),
+                ),
             ]),
           ),
         ]),
@@ -146,14 +150,18 @@ describe("lifecycle acceptance contract", () => {
           Object.fromEntries(
             Object.entries(scenarios).map(([scenario, predicates]) => [
               scenario,
-              predicates.filter(
-                (predicate) =>
-                  ![
-                    "lifecycle-performance",
-                    "installer-noop-performance",
-                    "updater-noop-performance",
-                  ].includes(predicate),
-              ),
+              predicates
+                .flatMap((predicate) =>
+                  predicate === "wallet-signer-doctor" ? [predicate, "mining-status"] : [predicate],
+                )
+                .filter(
+                  (predicate) =>
+                    ![
+                      "lifecycle-performance",
+                      "installer-noop-performance",
+                      "updater-noop-performance",
+                    ].includes(predicate),
+                ),
             ]),
           ),
         ]),
@@ -596,36 +604,6 @@ describe("lifecycle acceptance contract", () => {
     expect(hosting.match(/restart_managed_services_after_fixture_churn/gu)?.length).toBe(3);
     expect(hosting).not.toContain(
       "systemctl restart fased-host-updater.service fased-signerd.service fased-gateway.service",
-    );
-  });
-
-  it("binds the Hosting Mining fixture scope before the first target start", () => {
-    const hosting = readFileSync(
-      new URL("./docker/hosting-systemd/lifecycle-acceptance.sh", import.meta.url),
-      "utf8",
-    );
-    const fresh = hosting.slice(
-      hosting.indexOf("  install)"),
-      hosting.indexOf("  managed-update)"),
-    );
-    const managed = hosting.slice(
-      hosting.indexOf("  managed-update)"),
-      hosting.indexOf("  verify-reboot)"),
-    );
-    const helper = hosting.slice(
-      hosting.indexOf("install_fixture_sat_runtime_environment() {"),
-      hosting.indexOf("run_operator_acceptance() {"),
-    );
-
-    expect(helper).toContain("95-fixture-sat-runtime.conf");
-    expect(helper.indexOf("install_fixture_sat_runtime_environment")).toBeLessThan(
-      helper.indexOf("systemctl restart fased-gateway.service"),
-    );
-    expect(fresh.indexOf("install_fixture_sat_runtime_environment")).toBeLessThan(
-      fresh.indexOf("run_public_installer"),
-    );
-    expect(managed.indexOf("install_fixture_sat_runtime_environment")).toBeLessThan(
-      managed.indexOf("run_public_installer"),
     );
   });
 

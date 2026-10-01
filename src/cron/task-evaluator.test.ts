@@ -421,7 +421,6 @@ describe("task evaluator", () => {
       "gateway",
     ],
     ["Check wallet balance", "source-fetch-web-search", SOURCE_REPAIR_NODE_IDS.wallet, "wallet"],
-    ["Check mining status", "source-fetch-web-search", SOURCE_REPAIR_NODE_IDS.mining, "mining"],
     [
       "Check offers in the marketplace",
       "source-fetch-web-search",

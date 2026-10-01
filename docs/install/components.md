@@ -45,18 +45,10 @@ fased services install <component-id>
 A normal install includes:
 
 - Gateway, Control UI, browser Chat, Agents, Tasks, Tools, and provider clients
-- Solana wallet controls and the singleton Mining wallet flow
-- the bundled `sat-mining` runtime, SAT shared specs, Mining UI, and mining CLI
-- Fased Network, offers, requests, trust, bond, and marketplace controls
+- Solana wallet controls and current WEN SAT Devnet tools
+- Fased Network identity, directory, and relay functions
 - browser-control interfaces and the Fased browser extension files
 - file-backed memory and remote embedding-provider support
-
-The bundled `sat-mining` runtime is included and loaded with core. Creating or
-importing `@wallet:mining` through onboarding attaches the dedicated Mining
-wallet and makes readiness checks available. Do not install a separate mining
-package and do not run `fased plugins enable sat-mining` as the normal mining
-setup path. Mining does not start until readiness, capital, and commit checks
-pass and the operator explicitly starts it.
 
 ## Bundled official channels
 

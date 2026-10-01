@@ -50,10 +50,6 @@ may use any OS to perform the later Tailscale and SSH access check.
 
 ## After installation
 
-1. Connect a model under **Agent > Models**.
-2. Send a test message in **Chat**.
-3. Add channels, wallets, skills, or Mining only when needed.
-
 ```bash
 fased health
 fased dashboard

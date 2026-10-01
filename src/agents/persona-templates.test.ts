@@ -18,18 +18,13 @@ describe("reviewed PersonaTemplates", () => {
 
   it("composes capability metadata while forcing zero financial authority", () => {
     const payloads = buildTemplateProfilePayloads({
-      templateId: "mining-operator",
+      templateId: "private-operator",
       displayName: "Wally",
       taskModelRoutes: { strong: "openai/gpt-5", empty: undefined },
     });
 
     expect(payloads.persona.displayName).toBe("Wally");
-    expect(payloads.strategy.capabilityPacks).toEqual([
-      "miner",
-      "risk-officer",
-      "allocator",
-      "public-host",
-    ]);
+    expect(payloads.strategy.capabilityPacks).toEqual([]);
     expect(payloads.strategy.taskModelRoutes).toEqual({ strong: "openai/gpt-5" });
     expect(payloads.capitalPolicy).toEqual(createDenyAllCapitalPolicy());
   });

@@ -1,6 +1,6 @@
 import AppKit
-import Foundation
 import FasedAgentKit
+import Foundation
 import OSLog
 import Security
 

@@ -1,15 +1,6 @@
 # Onboarding Operations Guide
 
-This guide is the canonical operator path from a clean machine to a stable Fased
-runtime with optional wallets, Fased Network, plugins, and SAT mining.
-
 It is written for the current Fased operating model:
-
-- self-hosted first
-- private operator access first
-- wallet discipline before automation
-- Fased Network after base runtime health
-- SAT mining last
 
 ## 1. Before you start
 
@@ -111,8 +102,6 @@ Use when:
 
 Treat `remote` as a client connection mode.
 
-It is not the main path for hosting wallets, Fased Network state, or SAT mining.
-
 ## 4. Onboarding decisions that matter
 
 These decisions carry the most long-term consequence.
@@ -182,12 +171,6 @@ Do not invent wallet architecture from the dashboard after the fact.
 
 Decide the working model first:
 
-- `reserve` or cold wallet outside the runtime
-- `agent` wallet for ordinary sends, payments, skills, and automation
-- `mining` wallet for SAT only
-- `vault` wallet for manual storage and Fased Network bond assignment
-- optional second Agent wallet for isolated reviewed actions
-
 Recommended progression:
 
 - create/import with an explicit role and record both registry and canonical signer ids
@@ -198,10 +181,6 @@ Recommended progression:
 - only then fund a deliberately small balance
 - explicit `@wallet:<walletId>` handles for risky wallet actions
 - broad automation only after the signer path is proven
-
-The optional Control UI account passkey under Account Security protects the web
-account. It does not affect Agent or Mining readiness. See [Self-hosted wallet
-signer](/plugins/crypto/wallet-self-hosted).
 
 ## 7. Plugin rollout
 
@@ -216,8 +195,6 @@ If a plugin can move value, define:
 - which wallet it uses
 - which limits bound it
 - how you will disable it quickly
-
-Do not combine Fased Network, mining, and multiple high-risk plugins on an unproven runtime.
 
 ## 8. Fased Network bring-up
 
@@ -243,57 +220,11 @@ Important rule:
 - token present does not mean public route healthy
 - hosted state does not mean the runtime is actually reachable
 
-## 9. SAT mining bring-up
-
-Treat SAT mining as an operator workflow, not a decorative toggle.
-
-Normal sequence:
-
-1. create or import the signer-owned singleton `@wallet:mining` wallet through
-   terminal onboarding, the wallet CLI, or Wallets creation
-2. enter one RPC and verify the Mining policy/readiness
-3. keep automatic mining inside its exact SAT-only signer policy
-4. confirm readiness and exact policy/network hashes
-5. fund deliberately small miner capital
-6. set commit
-7. start mining
-8. watch runtime, actions, and recovery
-
-Use:
-
-```bash
-fased mining wallets
-fased mining readiness --wallet mining
-fased mining deposit-capital --sol 1
-fased mining set-commit --sol 0.75
-fased mining start --wallet mining
-fased mining status
-```
-
-Important distinctions:
-
-- attached wallet is not the same as funded capital
-- funded capital is not the same as active commit
-- enabled is not the same as participating in a live cycle
-
 ## 10. Recovery priorities
 
 If behavior drifts, recover in this order:
 
-1. host access
-2. runtime health
-3. wallet and signer health
-4. Fased Network state
-5. mining or reviewed automation
-
 Useful commands:
-
-```bash
-fased doctor --fix
-fased wallet signer doctor --json
-fased federation status --json
-fased mining status --json
-```
 
 Service checks:
 
@@ -312,12 +243,5 @@ sudo systemctl restart fased-gateway
 ## 11. First-week operator rules
 
 During the first week, change only one major layer at a time:
-
-- onboarding or profile
-- private access
-- wallet mode
-- Fased Network
-- plugins
-- mining
 
 That is how you keep failures attributable and recovery sane.

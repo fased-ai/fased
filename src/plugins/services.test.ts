@@ -133,7 +133,9 @@ describe("startPluginServices", () => {
         {
           id: "first",
           start: () => undefined,
-          checkpointForLifecycle: () => calls.push("first"),
+          checkpointForLifecycle: () => {
+            calls.push("first");
+          },
         },
         {
           id: "second",

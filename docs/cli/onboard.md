@@ -106,11 +106,6 @@ Fastest first interaction after onboarding:
 
 ## Repair mode
 
-`fased onboard --reset` is a safe repair path, not a factory reset. It clears
-selected auth/session state before continuing through onboarding and keeps
-`fased.json`, gateway token/password, gateway settings, wallet assignments, SAT
-mining, Fased Network, plugins, Tailscale, firewall state, and wallet material.
-
 ```bash
 fased onboard --reset
 fased onboard --reset --reset-scope sessions
@@ -134,15 +129,6 @@ Use onboarding when you want to connect:
 - other hosted model APIs not yet given a dedicated preset
 
 ## SAT runtime ids
-
-For SAT mining, mint, and bond ids:
-
-- pre-launch public installs keep `config/sat-runtime.env` empty
-- mainnet IDs are written by Mining Sync after the signed manifest verifies
-- explicit devnet or local testing can set all four IDs through env or the file
-
-Normal mainnet users should not paste IDs during onboarding. Wait for official
-Satcoin launch proof, then use the Mining page Sync control.
 
 ## Wallet note
 

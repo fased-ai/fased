@@ -596,16 +596,9 @@ async function main() {
     if (!doctor.includes("No plugin issues detected.")) {
       throw new Error(`packed core plugin doctor failed:\n${doctor}`);
     }
-    const satInfo = runCore(coreRoot, env, ["plugins", "info", "sat-mining"]);
-    if (!satInfo.includes("id: sat-mining") || !satInfo.includes("Status: loaded")) {
-      throw new Error(`packed core SAT plugin readiness failed:\n${satInfo}`);
-    }
-    const federationInfo = runCore(coreRoot, env, ["plugins", "info", "fased-federation"]);
-    if (
-      !federationInfo.includes("id: fased-federation") ||
-      federationInfo.includes("Status: error")
-    ) {
-      throw new Error(`packed core Fased Network plugin discovery failed:\n${federationInfo}`);
+    const wenInfo = runCore(coreRoot, env, ["plugins", "info", "wen"]);
+    if (!wenInfo.includes("id: wen") || !wenInfo.includes("Status: loaded")) {
+      throw new Error(`packed core WEN plugin readiness failed:\n${wenInfo}`);
     }
     const walletStatusRaw = runCore(coreRoot, env, ["wallet", "status", "--json"]);
     const walletStatus = JSON.parse(walletStatusRaw) as { ok?: unknown; status?: unknown };

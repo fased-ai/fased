@@ -13,9 +13,9 @@ import (
 // Provider swapInstruction representation. This accepts an instruction, never a
 // provider transaction, setup sequence, payer replacement or lookup authority.
 type signerWENBTCProviderInstructionV1 struct {
-	ProgramID string               `json:"programId"`
-	Accounts  []signerSATAccountV2 `json:"accounts"`
-	Data      string               `json:"data"`
+	ProgramID string                 `json:"programId"`
+	Accounts  []signerTypedAccountV2 `json:"accounts"`
+	Data      string                 `json:"data"`
 }
 
 // Review candidate only. Publication into admission.json is a separate protected
@@ -144,7 +144,7 @@ func (a signerWENBTCArtifactsV1) normalizeProviderSource(wallet solana.PublicKey
 				return signerWENBTCRouteV1{}, bad
 			}
 		}
-		route.Accounts = append([]signerSATAccountV2(nil), route.Accounts...)
+		route.Accounts = append([]signerTypedAccountV2(nil), route.Accounts...)
 		route.Accounts[3].Pubkey = source.String()
 	}
 	return route, nil

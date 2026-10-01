@@ -1202,7 +1202,7 @@ function sourceAuthorityForTool(params: {
   toolName?: string;
 }): CronTaskSourceAuthority {
   const tool = params.toolName?.trim();
-  if (tool === "gateway" || tool === "wallet" || tool === "mining" || tool === "offers") {
+  if (tool === "gateway" || tool === "wallet" || tool === "offers") {
     return "runtime";
   }
   if (tool === "web_fetch") {

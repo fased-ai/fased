@@ -32,10 +32,6 @@ const mocks = vi.hoisted(() => ({
   fsLstat: vi.fn(async (..._args: unknown[]) => null as import("node:fs").Stats | null),
   fsRealpath: vi.fn(async (p: string) => p),
   fsOpen: vi.fn(async () => ({}) as unknown),
-  detachFinancialAgentWorkspace: vi.fn((): { detached: boolean; fasedAgentRecord?: string } => ({
-    detached: false,
-  })),
-  findFinancialAgentBindingForLocalAgent: vi.fn(() => null),
   ensureAgentProfileState: vi.fn(async () => ({ agentId: "test-agent" })),
   ensureAgentProfileStates: vi.fn(async () => ({})),
   ensureAgentTruthStores: vi.fn(async () => ({ agentId: "test-agent" })),
@@ -76,11 +72,6 @@ vi.mock("../../config/sessions/paths.js", () => ({
 
 vi.mock("../../browser/trash.js", () => ({
   movePathToTrash: mocks.movePathToTrash,
-}));
-
-vi.mock("../../agents/financial-agent-binding.js", () => ({
-  detachFinancialAgentWorkspace: mocks.detachFinancialAgentWorkspace,
-  findFinancialAgentBindingForLocalAgent: mocks.findFinancialAgentBindingForLocalAgent,
 }));
 
 vi.mock("../../agents/agent-profile-store.js", () => ({
@@ -375,9 +366,9 @@ describe("agents.create", () => {
 
   it("applies an explicitly selected reviewed PersonaTemplate", async () => {
     const { respond, promise } = makeCall("agents.create", {
-      name: "Miner Agent",
-      workspace: "/home/user/agents/miner",
-      personaTemplateId: "mining-operator",
+      name: "Private Agent",
+      workspace: "/home/user/agents/private",
+      personaTemplateId: "private-operator",
     });
     await promise;
 
@@ -385,7 +376,7 @@ describe("agents.create", () => {
       expect.objectContaining({
         initialPayloads: expect.objectContaining({
           strategy: expect.objectContaining({
-            capabilityPacks: ["miner", "risk-officer", "allocator", "public-host"],
+            capabilityPacks: [],
           }),
           capitalPolicy: expect.objectContaining({ mode: "deny-all" }),
         }),
@@ -393,7 +384,7 @@ describe("agents.create", () => {
     );
     expect(respond).toHaveBeenCalledWith(
       true,
-      expect.objectContaining({ personaTemplateId: "mining-operator" }),
+      expect.objectContaining({ personaTemplateId: "private-operator" }),
       undefined,
     );
   });
@@ -618,7 +609,6 @@ describe("agents.delete", () => {
     mocks.loadConfigReturn = {};
     mocks.findAgentEntryIndex.mockReturnValue(0);
     mocks.pruneAgentConfig.mockReturnValue({ config: {}, removedBindings: 2 });
-    mocks.detachFinancialAgentWorkspace.mockReturnValue({ detached: false });
   });
 
   it("deletes an existing agent and trashes files by default", async () => {
@@ -633,34 +623,11 @@ describe("agents.delete", () => {
         ok: true,
         agentId: "test-agent",
         removedBindings: 2,
-        financialIdentity: { action: "none" },
       },
       undefined,
     );
     expect(mocks.writeConfigFile).toHaveBeenCalled();
     // moveToTrashBestEffort calls fs.access then movePathToTrash for each dir
-    expect(mocks.movePathToTrash).toHaveBeenCalled();
-  });
-
-  it("detaches a financial identity while trashing only local Agent files", async () => {
-    mocks.detachFinancialAgentWorkspace.mockReturnValue({
-      detached: true,
-      fasedAgentRecord: "FinancialRecord1111111111111111111111111111",
-    });
-
-    const { respond, promise } = makeCall("agents.delete", { agentId: "test-agent" });
-    await promise;
-
-    expect(mocks.detachFinancialAgentWorkspace).toHaveBeenCalledWith({
-      localAgentId: "test-agent",
-    });
-    expect(respond).toHaveBeenCalledWith(
-      true,
-      expect.objectContaining({
-        financialIdentity: expect.objectContaining({ action: "detached" }),
-      }),
-      undefined,
-    );
     expect(mocks.movePathToTrash).toHaveBeenCalled();
   });
 

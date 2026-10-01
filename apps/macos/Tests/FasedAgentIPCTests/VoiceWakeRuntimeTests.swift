@@ -43,7 +43,7 @@ import Testing
 
     @Test func trimsAfterTriggerHandlesWidthInsensitiveForms() {
         let triggers = ["fased"]
-        let text = "ＯｐｅｎＣｌａｗ 请帮我"
+        let text = "Ｆａｓｅｄ 请帮我"
         #expect(VoiceWakeRuntime._testTrimmedAfterTrigger(text, triggers: triggers) == "请帮我")
     }
 

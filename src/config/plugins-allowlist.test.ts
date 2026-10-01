@@ -30,21 +30,16 @@ describe("repairInstalledPluginAllowlist", () => {
         allow: ["telegram"],
         entries: {
           feishu: { enabled: true },
-          "sat-mining": {
+          wen: {
             enabled: true,
-            config: { walletId: "mining" },
+            config: {},
           },
         },
       },
     });
 
-    expect(result.repairedPluginIds).toEqual(["feishu", "memory-core", "sat-mining"]);
-    expect(result.config.plugins?.allow).toEqual([
-      "feishu",
-      "memory-core",
-      "sat-mining",
-      "telegram",
-    ]);
+    expect(result.repairedPluginIds).toEqual(["feishu", "memory-core", "wen"]);
+    expect(result.config.plugins?.allow).toEqual(["feishu", "memory-core", "telegram", "wen"]);
   });
 
   it("does not add memory-core when the memory slot is intentionally disabled", () => {

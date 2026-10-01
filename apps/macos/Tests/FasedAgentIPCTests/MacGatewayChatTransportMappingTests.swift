@@ -13,8 +13,7 @@ import Testing
             configpath: nil,
             statedir: nil,
             sessiondefaults: nil,
-            authmode: nil,
-            updateavailable: nil)
+            authmode: nil)
 
         let hello = HelloOk(
             type: "hello",
@@ -23,7 +22,10 @@ import Testing
             features: [:],
             snapshot: snapshot,
             canvashosturl: nil,
-            auth: nil,
+            auth: [
+                "role": FasedAgentProtocol.AnyCodable("operator"),
+                "scopes": FasedAgentProtocol.AnyCodable([] as [String]),
+            ],
             policy: [:])
 
         let mapped = MacGatewayChatTransport.mapPushToTransportEvent(.snapshot(hello))

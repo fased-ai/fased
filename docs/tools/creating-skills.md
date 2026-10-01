@@ -53,16 +53,6 @@ while **Agent > Channels** remains the fuller account setup UI. Do not paste
 channel credentials into skill-local JSON unless a skill explicitly declares its
 own typed config field.
 
-Some dependency installers use Homebrew. On Linux/WSL this means Linuxbrew, and
-the gateway process must have Linuxbrew's `bin` directory in `PATH`. Installing a
-dependency never grants Agent access, tools, wallet actions, or mining actions.
-
-Security boundary: a skill can teach the Agent what to do, but it does not
-automatically receive tools, wallet signing, mining wallet access, channel
-credentials, or task autonomy. Generic skill wallet grants are limited to the
-Agent wallet role. Satcoin mining uses the dedicated Mining runtime and the
-singleton `@wallet:mining` path, not arbitrary third-party skills.
-
 ## Step-by-Step: Your First Skill
 
 In the Control UI, use **Agents > select Agent > Skills > + Skill** for the
@@ -84,11 +74,6 @@ normal path. Creating from an Agent automatically uses that Agent workspace.
 7. Open the created skill and edit `SKILL.md`.
 8. Allow it on the Agent from the skill detail **Agent access** section or from
    the row toggle.
-
-The template creates starter `SKILL.md` content only. It does not install
-external binaries, configure API credentials, grant tools, grant wallets, or
-enable mining. Those stay explicit in **Services**, **Agent > Tools**, and
-**Wallets > Skill Grants**.
 
 ### 1. Create the Directory
 
@@ -151,10 +136,6 @@ fased skills wallet grant my-skill \
   --output-mint <TOKEN_MINT> \
   --max-amount 100000000
 ```
-
-The grant is Agent-wallet-only. Skills cannot use Mining or Vault wallets for
-generic wallet actions, and installed plugin-catalog skills must come from an
-allowlisted registry origin.
 
 If you publish the skill through the plugin catalog, Fased records requested wallet
 permissions, requested tool access, and install metadata from the skill metadata

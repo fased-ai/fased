@@ -9,7 +9,6 @@ export type WalletAuditAction =
   | "wallet_rpc_updated"
   | "wallet_archived"
   | "wallet_policy_updated"
-  | "mining_policy_updated"
   | "passkey_enrolled"
   | "passkey_removed"
   | "passkey_verified"

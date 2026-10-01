@@ -605,20 +605,6 @@ function graphWalletAction(message: string): string {
   return "status";
 }
 
-function graphMiningAction(message: string): string {
-  const text = message.toLowerCase();
-  if (/\breadiness\b/.test(text)) {
-    return "readiness";
-  }
-  if (/\bhistory\b/.test(text)) {
-    return "history";
-  }
-  if (/\bprofile\b/.test(text)) {
-    return "profile";
-  }
-  return "status";
-}
-
 function graphOffersAction(message: string): string {
   const text = message.toLowerCase();
   if (/\borders?\b/.test(text)) {
@@ -654,9 +640,7 @@ function graphToolInput(
   if (toolName === "wallet") {
     return { action: graphWalletAction(message) };
   }
-  if (toolName === "mining") {
-    return { action: graphMiningAction(message) };
-  }
+
   if (toolName === "gateway") {
     return { action: graphGatewayAction(message) };
   }
@@ -689,7 +673,6 @@ function sourceFetchToolCandidates(message: string): string[] {
       ? "gateway"
       : undefined,
     /\bwallet\b|\bwallets?\b|\bbalances?\b|\baddress\b/.test(text) ? "wallet" : undefined,
-    /\bmining\b|\bsat mining\b|\bminers?\b/.test(text) ? "mining" : undefined,
     /\boffers?\b|\bmarketplace\b|\borders?\b|\brequests?\b/.test(text) ? "offers" : undefined,
     /\bweb\b|\bsearch\b|\bsource\b|\bmarket\b|\brisk\b|\bnews\b|\bprice\b|\bweather\b|\blive\b/.test(
       text,
@@ -713,9 +696,7 @@ function sourceFetchToolForNodeId(nodeId: string): string | undefined {
   if (nodeId === "source-fetch-wallet") {
     return "wallet";
   }
-  if (nodeId === "source-fetch-mining") {
-    return "mining";
-  }
+
   if (nodeId === "source-fetch-offers") {
     return "offers";
   }
@@ -731,9 +712,7 @@ function sourceFetchToolForNodeId(nodeId: string): string | undefined {
   if (nodeId.startsWith("source-fetch-repair-wallet")) {
     return "wallet";
   }
-  if (nodeId.startsWith("source-fetch-repair-mining")) {
-    return "mining";
-  }
+
   if (nodeId.startsWith("source-fetch-repair-offers")) {
     return "offers";
   }
@@ -751,7 +730,6 @@ function toolPassToolCandidates(message: string, job: CronJob): string[] {
   const text = message.toLowerCase();
   const candidates = [
     /\bwallet\b/.test(text) ? "wallet" : undefined,
-    /\bmining\b|\bsat mining\b|\bminers?\b/.test(text) ? "mining" : undefined,
     /\bgateway\b|\bproviders?\b|\bmodel auth\b|\bapi\b/.test(text) ? "gateway" : undefined,
     /\boffers?\b|\bmarketplace\b/.test(text) ? "offers" : undefined,
     firstUrlFromText(message) ? "web_fetch" : undefined,

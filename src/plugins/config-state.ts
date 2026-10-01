@@ -40,10 +40,7 @@ export type PluginRuntimeAccess = {
   };
 };
 
-export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([
-  ...CORE_RUNTIME_CHANNEL_IDS,
-  "sat-mining",
-]);
+export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([...CORE_RUNTIME_CHANNEL_IDS, "wen"]);
 
 const normalizeList = (value: unknown): string[] => {
   if (!Array.isArray(value)) {

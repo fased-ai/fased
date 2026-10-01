@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright-core";
 import { expect, test, vi } from "vitest";
-import plugin from "../../extensions/sat-mining/index.js";
+import plugin from "../../extensions/wen/index.js";
 import { createServer } from "../../ui/node_modules/vite/dist/node/index.js";
 import { createEmptyPluginRegistry } from "../plugins/registry.js";
 import {
@@ -14,8 +14,8 @@ import {
 } from "./test-helpers.js";
 
 // Diagnostic wrapper only: all values and failures come from the real profile.
-vi.mock("fased/plugin-sdk/sat-runtime", async (original) => {
-  const actual = await original<typeof import("../plugin-sdk/sat-runtime.js")>();
+vi.mock("fased/plugin-sdk/wen-runtime", async (original) => {
+  const actual = await original<typeof import("../plugin-sdk/wen-runtime.js")>();
   return {
     ...actual,
     async createLocalWenRecoveryProfile(

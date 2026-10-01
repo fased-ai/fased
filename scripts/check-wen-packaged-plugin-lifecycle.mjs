@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
 // Package fixture only: no configured wallet, public RPC or gateway process.
 const index = process.argv.indexOf("--root");
@@ -12,16 +11,11 @@ const pluginLoader = createJiti(import.meta.url, {
   extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".json"],
   alias: {
     "fased/plugin-sdk": root + "/dist/plugin-sdk/index.js",
-    "fased/plugin-sdk/sat-runtime": root + "/dist/plugin-sdk/sat-runtime.js",
+    "fased/plugin-sdk/wen-runtime": root + "/dist/plugin-sdk/wen-runtime.js",
   },
 });
-const { default: mining, shouldActivateMining } = await pluginLoader.import(
-  root + "/extensions/sat-mining/index.ts",
-);
+const { default: wen } = await pluginLoader.import(root + "/extensions/wen/index.ts");
 const { default: memory } = await pluginLoader.import(root + "/extensions/memory-core/index.ts");
-const { SAT_MINING_GATEWAY_METHODS } = await import(
-  pathToFileURL(root + "/dist/plugin-sdk/sat-runtime.js")
-);
 // Keep the acceptance list independent of the implementation's WEN constants:
 // dropping a route or changing its scope must fail this packaged check.
 const wenMethods = [
@@ -42,6 +36,14 @@ const wenMethods = [
   "wen.campaign.approval.execute",
   "wen.campaign.approval.recover",
   "wen.campaign.approval.selection",
+  "wen.market.approval.prepare",
+  "wen.market.approval.begin",
+  "wen.market.approval.finish",
+  "wen.market.approval.cancel",
+  "wen.market.approval.execute",
+  "wen.market.approval.recover",
+  "wen.market.approval.owner-confirm",
+  "wen.market.approval.selection",
 ];
 const readWenMethods = new Set(["wen.economy.read", "wen.acquisition.handoff"]);
 const stateDir = await fs.mkdtemp("/tmp/wen-plugin-registration-");
@@ -79,13 +81,12 @@ try {
       },
     },
   };
-  mining.register(api);
-  assert.deepEqual([...methods.keys()], [...SAT_MINING_GATEWAY_METHODS, ...wenMethods]);
+  wen.register(api);
+  assert.deepEqual([...methods.keys()], wenMethods);
   assert.equal(services.length, 1);
-  assert.equal(services[0].id, "sat-mining");
+  assert.equal(services[0].id, "wen");
   assert.deepEqual(toolNames, ["wen_economy_facts", "wen_acquisition_request"]);
   const context = { stateDir };
-  assert.equal(await shouldActivateMining(api, context), false);
   for (let i = 0; i < 2; i++) {
     await services[0].start(context);
     await services[0].checkpointForLifecycle(context);
@@ -93,18 +94,7 @@ try {
   }
   assert.equal(commands, 0);
   assert.deepEqual(toolNames, ["wen_economy_facts", "wen_acquisition_request"]);
-  assert.equal(logs.length, 2);
-  assert.equal(await shouldActivateMining({ pluginConfig: { enabled: true } }, context), true);
-  await fs.mkdir(path.join(stateDir, "wallet"));
-  await fs.writeFile(path.join(stateDir, "wallet/provider-registry.v1.json"), "{}");
-  assert.equal(await shouldActivateMining(api, context), false);
-  await fs.rm(path.join(stateDir, "wallet"), { recursive: true });
-  await fs.mkdir(path.join(stateDir, "sat-mining/wallets/test"), { recursive: true });
-  await fs.writeFile(
-    path.join(stateDir, "sat-mining/wallets/test/mining.sqlite"),
-    "detection fixture only",
-  );
-  assert.equal(await shouldActivateMining(api, context), true);
+  assert.equal(logs.length, 0);
   let toolFactory, cliFactory;
   memory.register({
     registerTool(fn) {
@@ -136,7 +126,6 @@ try {
       readWenMethods: readWenMethods.size,
       acquisitionTools: toolNames.length,
       dormantStartCheckpointStopCycles: 2,
-      recoveryTriggers: ["configuration", "mining database presence"],
       memoryRegistration: true,
       scope:
         "packaged registration and dormant lifecycle fixture; no operational mining, database replay, gateway startup or installed acceptance",

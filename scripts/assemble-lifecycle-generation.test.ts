@@ -15,7 +15,7 @@ describe("lifecycle generation plugin lock", () => {
   it("binds the required bundled plugins into one canonical lock", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-plugin-lock-"));
     roots.push(root);
-    for (const id of ["sat-mining", "memory-core"]) {
+    for (const id of ["wen", "memory-core"]) {
       const pluginRoot = path.join(root, "extensions", id);
       await fs.mkdir(pluginRoot, { recursive: true });
       await fs.writeFile(path.join(pluginRoot, "fased.plugin.json"), `${JSON.stringify({ id })}\n`);
@@ -33,7 +33,7 @@ describe("lifecycle generation plugin lock", () => {
       entries: Array<{ id: string; required: boolean; digest: string }>;
     };
 
-    expect(lock.entries.map((entry) => entry.id)).toEqual(["memory-core", "sat-mining"]);
+    expect(lock.entries.map((entry) => entry.id)).toEqual(["memory-core", "wen"]);
     expect(lock.entries.every((entry) => entry.required)).toBe(true);
     expect(lock.entries.every((entry) => /^sha256:[0-9a-f]{64}$/.test(entry.digest))).toBe(true);
     expect(digest).toBe(
@@ -61,7 +61,7 @@ describe("lifecycle generation plugin lock", () => {
     for (const [directory, id] of [
       ["memory-core", "memory-core"],
       ["runtime-browser", "browser-runtime"],
-      ["sat-mining", "sat-mining"],
+      ["wen", "wen"],
     ]) {
       const pluginRoot = path.join(root, "extensions", directory);
       await fs.mkdir(pluginRoot, { recursive: true });
@@ -76,7 +76,7 @@ describe("lifecycle generation plugin lock", () => {
     expect(lock.entries.map((entry) => entry.id)).toEqual([
       "browser-runtime",
       "memory-core",
-      "sat-mining",
+      "wen",
     ]);
     expect(lock.entries[0].directory).toBe("runtime-browser");
     expect(lock.entries[1].directory).toBeUndefined();
@@ -85,7 +85,7 @@ describe("lifecycle generation plugin lock", () => {
   it("rejects duplicate manifest ids from different bundled directories", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "fased-plugin-lock-"));
     roots.push(root);
-    for (const directory of ["memory-core", "memory-core-copy", "sat-mining"]) {
+    for (const directory of ["memory-core", "memory-core-copy", "wen"]) {
       const pluginRoot = path.join(root, "extensions", directory);
       await fs.mkdir(pluginRoot, { recursive: true });
       const id = directory === "memory-core-copy" ? "memory-core" : directory;

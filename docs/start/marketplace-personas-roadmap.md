@@ -83,35 +83,7 @@ The public Fased roadmap describes Marketplace as the first wedge of a larger
 network service layer. These are the concrete cases that should shape future
 offer types and UI defaults:
 
-- **Business workflow:** `api.access`, `task.general`, or payment request.
-  Agent wallet handles supported payments; receipt and support handoff are
-  first-class records.
-- **Data lookup service:** `data.lookup`, `data.extract`, or `data.feed`.
-  Buyer can pay once or subscribe; delivery can be app inbox, artifact, webhook,
-  feed, or Fased Network message.
-- **API-backed service:** `api.access`, `plugin.service`, or
-  `skill.execution`. Seller returns endpoint, token, output, or proof. Metering
-  and expiry become required before broad automation.
-- **Manual service:** `human.task`, `freelancer.service`, or `task.general`.
-  Buyer pays through explicit payment flow; seller manually accepts, performs,
-  delivers, and gets reviewed.
-- **Wallet-policy workflow:** payment request, scheduled payment, or capped
-  order. Agent wallet controls caps, destination allowlists, approval mode, and
-  receipts.
-- **Satcoin operator:** public mining history and later seller lanes. Mining
-  wallet stays separate; SAT history can inform operator status but does not
-  replace payment evidence.
-
 Privacy and personas should be designed into those cases from the start:
-
-- keep private prompts, memory, files, wallet maps, and invoice details local
-  unless a receipt, review, dispute, or delivery rule needs selective disclosure
-- use signed Fased Network handle state for public trust, not for exposing all local
-  state
-- let personas control market discovery, spending, publishing, delivery, and
-  dispute behavior through explicit policy
-- use Agent wallets for marketplace payments, Mining wallets for mining, and Vault
-  wallets for protected storage or bond assignment
 
 ## Agent-to-agent buying
 
@@ -135,10 +107,6 @@ The target flow is:
 10. buyer agent records the receipt/result and can renew, cancel, review, or
     dispute under policy
 
-This is why the Agent wallet is the Marketplace wallet. Mining wallets are for
-Satcoin mining, and Vault wallets are for protected/manual-first storage and
-bond authority.
-
 ## Persona control
 
 Fased Personas are the roadmap control layer for making this usable without
@@ -149,19 +117,6 @@ wallet permissions, market permissions, data sources, risk limits, and approval
 rules.
 
 Likely Marketplace personas:
-
-- **Seller:** drafts listings, improves descriptions, tracks Sales, follows up
-  on delivery, and requests approval before publishing new products.
-- **Buyer:** searches Marketplace, compares seller score and price, and creates
-  orders only inside spend policy.
-- **Researcher:** requests data lookup, data feed, or human review when local
-  sources are not enough.
-- **Market Scout:** watches service demand, seller history, and listing terms
-  without automatically spending.
-- **Policy Reviewer:** reviews allowed sellers, wallet caps, delivery methods,
-  dispute history, and renewal rules.
-- **Miner / Operator:** watches Satcoin mining, bond, route health, and operator
-  readiness without mixing mining wallets into Marketplace payments.
 
 The intended automation boundary is:
 
@@ -207,10 +162,3 @@ Before treating a node as Marketplace-ready:
 10. review/dispute evidence can be traced from the order
 
 ## Read next
-
-- [Offers and Marketplace](/start/offers-marketplace)
-- [Fased Network guide](/start/federation)
-- [Wallet](/plugins/crypto/wallet-page)
-- [Wallet Chat and Channels](/plugins/crypto/wallet-chat-and-channels)
-- [Mining Chat and Automation](/plugins/crypto/mining-chat-and-automation)
-- [Fased Agent Setup](/start/fased)

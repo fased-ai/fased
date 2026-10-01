@@ -12,7 +12,6 @@ import type { DreamingStatus } from "../controllers/dreaming.ts";
 import { closeDialogOnBackdropClick } from "../dialog.ts";
 import type { FederationStatus, FederationToken } from "../federation-api.ts";
 import { icons } from "../icons.ts";
-import type { SatMinerProfile, SatMiningReadiness, SatMiningRuntimeStatus } from "../mining-api.ts";
 import type { Tab } from "../navigation.ts";
 import { parseAgentSessionKey } from "../session-key.ts";
 import type {
@@ -285,12 +284,6 @@ export type AgentsProps = {
     status: WalletStatus | null;
     namedWallets: WalletNamedWallet[];
     defaultWalletId: string | null;
-  };
-  mining: {
-    attachedWalletId: string | null;
-    profile: SatMinerProfile | null;
-    readiness: SatMiningReadiness | null;
-    status: SatMiningRuntimeStatus | null;
   };
   federation: {
     token: FederationToken | null;
@@ -1703,7 +1696,6 @@ export function renderAgents(props: AgentsProps) {
                       },
                       plugins: props.plugins,
                       wallet: props.wallet,
-                      mining: props.mining,
                       federation: props.federation,
                       modelCatalog: props.modelCatalog,
                       modelCatalogLoading: props.modelCatalogLoading,
@@ -1780,7 +1772,6 @@ export function renderAgents(props: AgentsProps) {
                         },
                         plugins: props.plugins,
                         wallet: props.wallet,
-                        mining: props.mining,
                         federation: props.federation,
                         modelCatalog: props.modelCatalog,
                         modelCatalogLoading: props.modelCatalogLoading,
@@ -2119,7 +2110,7 @@ export function renderAgents(props: AgentsProps) {
 function renderAgentTabs(
   active: AgentsPanel,
   onSelect: (panel: AgentsPanel) => void,
-  counts: Record<string, number | null>,
+  _counts: Record<string, number | null>,
 ) {
   const tabs: Array<{ id: AgentsPanel; label: string }> = [
     { id: "overview", label: "Setup" },
@@ -2133,25 +2124,21 @@ function renderAgentTabs(
     { id: "tools", label: "Tools" },
     { id: "skills", label: "Skills" },
   ];
+  const primary = new Set<AgentsPanel>(["overview", "providers", "cron", "sessions"]);
+  const renderTab = (tab: { id: AgentsPanel; label: string }) => {
+    const isActive = active === tab.id || (tab.id === "cron" && active === "coordination");
+    return html`<button class="agent-tab ${isActive ? "active" : ""}" type="button" @click=${() => onSelect(tab.id)}>${tab.label}</button>`;
+  };
   return html`
-    <div class="agent-tabs">
-      ${tabs.map((tab) => {
-        const isActive = active === tab.id || (tab.id === "cron" && active === "coordination");
-        return html`
-          <button
-            class="agent-tab ${isActive ? "active" : ""}"
-            type="button"
-            @click=${() => onSelect(tab.id)}
-          >
-            ${tab.label}${
-              counts[tab.id] != null
-                ? html`<span class="agent-tab-count">(${counts[tab.id]})</span>`
-                : nothing
-            }
-          </button>
-        `;
-      })}
+    <div class="agent-tabs" aria-label="Agent sections">
+      ${tabs.filter((tab) => primary.has(tab.id)).map(renderTab)}
     </div>
+    <details class="agent-advanced" ?open=${!primary.has(active) && active !== "coordination"}>
+      <summary>Advanced</summary>
+      <div class="agent-tabs" aria-label="Advanced agent sections">
+        ${tabs.filter((tab) => !primary.has(tab.id)).map(renderTab)}
+      </div>
+    </details>
   `;
 }
 

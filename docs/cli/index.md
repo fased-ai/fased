@@ -11,13 +11,6 @@ title: "CLI Reference"
 `fased` is the scriptable control surface for Fased. It is not just a Gateway
 wrapper. The CLI manages:
 
-- onboarding and install flows
-- config and secrets
-- Agent workspaces, chat app accounts, routing, skills, services, tools, and tasks
-- live gateway control and diagnostics
-- plugins, skills, and hooks
-- wallets, Fased Network, and mining where enabled
-
 For the short command list, start with [CLI Cheatsheet](/cli/cheatsheet).
 
 The browser setup path is Agent-first: open **Agents**, select an Agent, then use
@@ -28,52 +21,7 @@ Nodes**.
 
 ## Command map
 
-```mermaid
-flowchart TD
-  cli["fased CLI"] --> setup["setup and lifecycle"]
-  cli --> runtime["runtime and ops"]
-  cli --> agent["agents and tasks"]
-  cli --> route["channels and devices"]
-  cli --> models["models and plugins"]
-  cli --> network["wallet and network"]
-
-  setup --> onboard["onboard / setup / config"]
-  runtime --> gateway["gateway / status / doctor"]
-  agent --> tasks["message / sessions / task"]
-  route --> channels["channels / pairing / nodes"]
-  models --> providers["models / providers / plugins"]
-  network --> wallets["wallet / mining / federation / sat"]
-
-  classDef root fill:#17191f,stroke:#ff8a6b,color:#fff;
-  classDef group fill:#101317,stroke:#475569,color:#e5e7eb;
-  classDef leaf fill:#20130f,stroke:#ff8a6b,color:#fff;
-  class cli root;
-  class setup,runtime,agent,route,models,network group;
-  class onboard,gateway,tasks,channels,providers,wallets leaf;
-```
-
 ## Main command groups
-
-<CardGroup cols={2}>
-  <Card title="Setup and lifecycle" icon="rocket" href="/cli/onboard">
-    Onboarding, config, update, uninstall, shell completion, and reset flows.
-  </Card>
-  <Card title="Runtime and ops" icon="activity" href="/cli/gateway">
-    Gateway control, health, doctor, logs, services, security, secrets, and sandboxing.
-  </Card>
-  <Card title="Agents and tasks" icon="bot" href="/cli/agents">
-    Agents, messages, sessions, memory, task definitions, hooks, approvals, and skills.
-  </Card>
-  <Card title="Channels and devices" icon="message-circle" href="/cli/channels">
-    Channel accounts, pairing, QR flows, local nodes, browser, voice call, and DNS.
-  </Card>
-  <Card title="Models and plugins" icon="blocks" href="/cli/models">
-    Model selection, provider status, plugin management, and ACP agents.
-  </Card>
-  <Card title="Wallet and network" icon="network" href="/cli/wallet">
-    Wallets, mining, Fased Network, directory, federation, and SAT operator operations.
-  </Card>
-</CardGroup>
 
 `cron` is still documented as a compatibility alias for `task`. `daemon` is
 still documented as a compatibility service command.

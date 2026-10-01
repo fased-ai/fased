@@ -22,7 +22,9 @@ public enum TailscaleNetwork {
             let isUp = (flags & IFF_UP) != 0
             let isLoopback = (flags & IFF_LOOPBACK) != 0
             let family = ptr.pointee.ifa_addr.pointee.sa_family
-            if !isUp || isLoopback || family != UInt8(AF_INET) { continue }
+            if !isUp || isLoopback || family != UInt8(AF_INET) {
+                continue
+            }
 
             var addr = ptr.pointee.ifa_addr.pointee
             var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
@@ -38,7 +40,9 @@ public enum TailscaleNetwork {
             let len = buffer.prefix { $0 != 0 }
             let bytes = len.map { UInt8(bitPattern: $0) }
             guard let ip = String(bytes: bytes, encoding: .utf8) else { continue }
-            if self.isTailnetIPv4(ip) { return ip }
+            if self.isTailnetIPv4(ip) {
+                return ip
+            }
         }
 
         return nil

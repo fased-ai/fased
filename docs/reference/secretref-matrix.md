@@ -74,7 +74,7 @@ ref fails.
   May define plugin-specific credential paths. Review the plugin manifest, UI
   hints, and plugin docs.
 
-Installing a skill or plugin does **not** grant wallet, mining, tool, or
+Installing a skill or plugin does **not** grant wallet, tool, or
 autonomous task access. Those grants stay separate.
 
 ## Secret Proxy Boundary

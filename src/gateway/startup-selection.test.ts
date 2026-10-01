@@ -56,9 +56,9 @@ describe("gateway optional startup selection", () => {
     expect(areChannelsConfigured({ channels: { defaults: { groupPolicy: "allowlist" } } })).toBe(
       false,
     );
-    expect(areChannelsConfigured({ channels: { telegram: { enabled: false, token: "x" } } })).toBe(
-      false,
-    );
+    expect(
+      areChannelsConfigured({ channels: { telegram: { enabled: false, botToken: "x" } } }),
+    ).toBe(false);
     expect(isBrowserServiceConfigured({ browser: { enabled: false, cdpUrl: "http://x" } })).toBe(
       false,
     );

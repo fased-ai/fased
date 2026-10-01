@@ -69,7 +69,11 @@ const readWalletProviderRegistry = vi.hoisted(() =>
     updatedAt: "2026-03-15T00:00:00.000Z",
   })),
 );
-const upsertNamedWallet = vi.hoisted(() => vi.fn(() => ({ id: "wallet-1" })));
+const upsertNamedWallet = vi.hoisted(() =>
+  vi.fn((_input: { name?: string; walletId?: string; metadata?: Record<string, unknown> }) => ({
+    id: "wallet-1",
+  })),
+);
 const deleteNamedWallet = vi.hoisted(() => vi.fn());
 const checkNamedWalletDeletionSafety = vi.hoisted(() => vi.fn(() => ({ ok: true, details: null })));
 const checkNamedWalletFinancialAuthority = vi.hoisted(() => vi.fn(() => null));
@@ -884,6 +888,8 @@ describe("runOnboardingWizard", () => {
       assignments: {},
       updatedAt: "2026-03-15T00:00:00.000Z",
     });
+    nextRoleWalletIdentity.mockReturnValueOnce({ walletName: "Wallet", walletId: "wallet-1" });
+    nextRoleWalletIdentity.mockReturnValueOnce({ walletName: "Wallet 2", walletId: "wallet-2" });
     let rolePromptCount = 0;
     const select = vi.fn(async (opts: unknown) => {
       const rawMessage = (opts as { message?: unknown })?.message;
@@ -947,26 +953,41 @@ describe("runOnboardingWizard", () => {
       expect(walletSetupCommand).toHaveBeenNthCalledWith(
         1,
         expect.anything(),
-        expect.objectContaining({ role: "agent", rpcUrl: "https://accepted.example/solana" }),
+        expect.objectContaining({
+          mode: "local-signer-create",
+          chain: "solana",
+          walletId: "wallet-1",
+          walletName: "Wallet",
+          rpcUrl: "https://accepted.example/solana",
+        }),
       );
       expect(walletSetupCommand).toHaveBeenNthCalledWith(
         2,
         expect.anything(),
-        expect.objectContaining({ role: "agent", rpcUrl: "https://rejected.example/solana" }),
+        expect.objectContaining({
+          mode: "local-signer-create",
+          chain: "solana",
+          walletId: "wallet-2",
+          walletName: "Wallet",
+          rpcUrl: "https://rejected.example/solana",
+        }),
       );
-      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT).toBe(
+      expect(walletSetupCommand).toHaveBeenCalledTimes(2);
+      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_1).toBe(
         "https://accepted.example/solana",
       );
-      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__VAULT).toBeUndefined();
+      expect(process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_2).toBeUndefined();
+      expect(Object.values(process.env)).not.toContain("https://rejected.example/solana");
       for (const [written] of writeConfigFile.mock.calls) {
+        expect(JSON.stringify(written)).not.toContain("https://rejected.example/solana");
         expect(
           (written as { env?: { vars?: Record<string, string> } }).env?.vars
-            ?.FASED_WALLET_SOLANA_RPC_URL__VAULT,
+            ?.FASED_WALLET_SOLANA_RPC_URL__WALLET_2,
         ).toBeUndefined();
       }
     } finally {
-      delete process.env.FASED_WALLET_SOLANA_RPC_URL__AGENT;
-      delete process.env.FASED_WALLET_SOLANA_RPC_URL__VAULT;
+      delete process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_1;
+      delete process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_2;
     }
   });
 
@@ -1204,259 +1225,6 @@ describe("runOnboardingWizard", () => {
     expect(promptDefaultModel).not.toHaveBeenCalled();
   });
 
-  it("does not offer SAT mining attach or switch for an existing self-hosted Solana wallet", async () => {
-    writeConfigFile.mockClear();
-    readConfigFileSnapshot.mockResolvedValueOnce({
-      exists: true,
-      valid: true,
-      config: {
-        env: {
-          vars: {
-            FASED_WALLET_SOLANA_RPC_URL__WALLET_1: "https://api.devnet.solana.com",
-          },
-        },
-        plugins: {
-          entries: {
-            "sat-mining": {
-              enabled: true,
-              config: {
-                enabled: true,
-                network: "devnet",
-                riskMode: "balanced",
-              },
-            },
-          },
-        },
-      },
-    });
-    readWalletProviderRegistry.mockReturnValue({
-      providers: {
-        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-      },
-      wallets: [
-        {
-          id: "wallet-1",
-          name: "Wallet 1",
-          providerId: "local-socket-signer",
-          addresses: { solana: "miner-sol-1" },
-          metadata: { selfHosted: true },
-        },
-        {
-          id: "agent-2",
-          name: "Agent 2",
-          providerId: "local-socket-signer",
-          addresses: { solana: "agent-two-solana-address" },
-          metadata: { selfHosted: true, role: "agent", purpose: "agent" },
-        },
-      ],
-      assignments: {},
-      updatedAt: "2026-03-15T00:00:00.000Z",
-    });
-    const select = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Wallet setup action") {
-        return "manage-self-hosted";
-      }
-      if (message === "Select wallet to manage") {
-        expect((opts as { options?: unknown }).options).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              value: "wallet-1",
-              label: "Wallet 1 · @wallet:wallet-1",
-              hint: "mi..-1",
-            }),
-            expect.objectContaining({
-              value: "agent-2",
-              label: "Agent 2 · @wallet:agent-2",
-              hint: "ag..ss",
-            }),
-          ]),
-        );
-        return "wallet-1";
-      }
-      if (message === "Wallet action") {
-        const actionOptions = Array.isArray((opts as { options?: unknown[] }).options)
-          ? ((opts as { options?: Array<{ value?: unknown }> }).options ?? []).flatMap((option) =>
-              typeof option.value === "string" && option.value.length > 0 ? [option.value] : [],
-            )
-          : [];
-        expect(actionOptions).toContain("configure-solana-rpc");
-        expect(actionOptions).not.toContain("attach-sat-mining");
-        expect(actionOptions).not.toContain("detach-sat-mining");
-        return "cancel";
-      }
-      if (message === "How do you want to hatch your bot?") {
-        return "skip";
-      }
-      return "quickstart";
-    }) as unknown as WizardPrompter["select"];
-    const confirm = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Run another wallet setup action?") {
-        return false;
-      }
-      return false;
-    }) as unknown as WizardPrompter["confirm"];
-    const prompter = createWizardPrompter({ select, confirm });
-
-    await runOnboardingWizard(
-      {
-        acceptRisk: true,
-        flow: "quickstart",
-        authChoice: "skip",
-        installDaemon: false,
-        skipProviders: true,
-        skipSkills: true,
-        skipHealth: true,
-        skipUi: true,
-      },
-      createRuntime({ throwsOnExit: true }),
-      prompter,
-    );
-
-    expect(writeConfigFile).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        plugins: {
-          entries: {
-            "sat-mining": expect.objectContaining({
-              config: expect.not.objectContaining({
-                walletId: "wallet-1",
-              }),
-            }),
-          },
-        },
-      }),
-    );
-  });
-
-  it("routes the singleton Mining wallet to coordinated retirement instead of archive", async () => {
-    deleteNamedWallet.mockClear();
-    lockSignerOwnedWalletForArchive.mockClear();
-    restartLocalSocketSigner.mockClear();
-    resolveWalletUserRole.mockReset();
-    resolveWalletUserRole.mockReturnValue("mining");
-    readConfigFileSnapshot.mockResolvedValueOnce({
-      exists: true,
-      valid: true,
-      config: {
-        env: {
-          vars: {
-            FASED_WALLET_SOLANA_RPC_URL__MINING: "https://api.devnet.solana.com",
-            FASED_WALLET_SOLANA_KEYSTORE_PATH__MINING: "/tmp/fased-test-mining-wallet.enc",
-          },
-        },
-        plugins: {
-          entries: {
-            "sat-mining": {
-              enabled: true,
-              config: {
-                enabled: true,
-                walletId: "mining",
-                network: "devnet",
-                riskMode: "balanced",
-              },
-            },
-          },
-        },
-      },
-    });
-    readWalletProviderRegistry.mockReturnValue({
-      providers: {
-        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-      },
-      wallets: [
-        {
-          id: "mining",
-          name: "Mining",
-          providerId: "local-socket-signer",
-          addresses: { solana: "mining-sol-1" },
-          metadata: { selfHosted: true, role: "mining", signerWalletId: "mining" },
-        },
-      ],
-      assignments: {},
-      updatedAt: "2026-03-15T00:00:00.000Z",
-    });
-    const select = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Wallet setup action") {
-        return "manage-self-hosted";
-      }
-      if (message === "Select wallet to manage") {
-        return "mining";
-      }
-      if (message === "Wallet action") {
-        return "retire-mining";
-      }
-      if (message === "How do you want to hatch your bot?") {
-        return "skip";
-      }
-      return "quickstart";
-    }) as unknown as WizardPrompter["select"];
-    const text = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === 'Type wallet id "mining" to archive/remove this wallet from Fased') {
-        return "mining";
-      }
-      return "";
-    }) as unknown as WizardPrompter["text"];
-    const confirm = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Run another wallet setup action?") {
-        return false;
-      }
-      return false;
-    }) as unknown as WizardPrompter["confirm"];
-    const prompter = createWizardPrompter({ select, text, confirm });
-
-    await runOnboardingWizard(
-      {
-        acceptRisk: true,
-        flow: "quickstart",
-        authChoice: "skip",
-        installDaemon: false,
-        skipProviders: true,
-        skipSkills: true,
-        skipHealth: true,
-        skipUi: true,
-      },
-      createRuntime({ throwsOnExit: true }),
-      prompter,
-    );
-
-    expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("fased wallet retire --wallet-id mining"),
-      "Retire and replace Mining wallet",
-    );
-    expect(lockSignerOwnedWalletForArchive).not.toHaveBeenCalled();
-    expect(deleteNamedWallet).not.toHaveBeenCalled();
-    expect(restartLocalSocketSigner).not.toHaveBeenCalled();
-    resolveWalletUserRole.mockReset();
-    resolveWalletUserRole.mockReturnValue(undefined);
-  });
-
   it("keeps a hyphenated signer wallet registered when deny-all is not acknowledged", async () => {
     deleteNamedWallet.mockClear();
     restartLocalSocketSigner.mockClear();
@@ -1558,214 +1326,6 @@ describe("runOnboardingWizard", () => {
     );
     resolveWalletUserRole.mockReset();
     resolveWalletUserRole.mockReturnValue(undefined);
-  });
-
-  it("offers only Solana RPC repair for an existing self-hosted Solana wallet without RPC", async () => {
-    writeConfigFile.mockClear();
-    restartLocalSocketSigner.mockClear();
-    readConfigFileSnapshot.mockResolvedValueOnce({
-      exists: true,
-      valid: true,
-      config: {
-        plugins: {
-          entries: {
-            "sat-mining": {
-              enabled: true,
-              config: {
-                enabled: true,
-                network: "devnet",
-                riskMode: "balanced",
-              },
-            },
-          },
-        },
-      },
-    });
-    readWalletProviderRegistry.mockReturnValue({
-      providers: {
-        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-      },
-      wallets: [
-        {
-          id: "wallet-1",
-          name: "Wallet 1",
-          providerId: "local-socket-signer",
-          addresses: { solana: "miner-sol-1" },
-          metadata: { selfHosted: true },
-        },
-      ],
-      assignments: {},
-      updatedAt: "2026-03-15T00:00:00.000Z",
-    });
-    let actionOptions: string[] = [];
-    const select = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Wallet setup action") {
-        return "manage-self-hosted";
-      }
-      if (message === "Select wallet to manage") {
-        return "wallet-1";
-      }
-      if (message === "Wallet action") {
-        actionOptions = Array.isArray((opts as { options?: unknown[] }).options)
-          ? ((opts as { options?: Array<{ value?: unknown }> }).options ?? []).flatMap((option) =>
-              typeof option.value === "string" && option.value.length > 0 ? [option.value] : [],
-            )
-          : [];
-        return "cancel";
-      }
-      if (message === "How do you want to hatch your bot?") {
-        return "skip";
-      }
-      return "quickstart";
-    }) as unknown as WizardPrompter["select"];
-    const confirm = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Run another wallet setup action?") {
-        return false;
-      }
-      return false;
-    }) as unknown as WizardPrompter["confirm"];
-    const prompter = createWizardPrompter({ select, confirm });
-
-    await runOnboardingWizard(
-      {
-        acceptRisk: true,
-        flow: "quickstart",
-        authChoice: "skip",
-        installDaemon: false,
-        skipProviders: true,
-        skipSkills: true,
-        skipHealth: true,
-        skipUi: true,
-      },
-      createRuntime({ throwsOnExit: true }),
-      prompter,
-    );
-
-    expect(actionOptions).toContain("configure-solana-rpc");
-    expect(actionOptions).not.toContain("attach-sat-mining");
-    expect(writeConfigFile).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        plugins: {
-          entries: {
-            "sat-mining": expect.objectContaining({
-              config: expect.not.objectContaining({
-                walletId: expect.anything(),
-              }),
-            }),
-          },
-        },
-      }),
-    );
-    expect(restartLocalSocketSigner).not.toHaveBeenCalled();
-  });
-
-  it("does not offer SAT mining attachment for an existing self-hosted Solana wallet during onboarding", async () => {
-    writeConfigFile.mockClear();
-    readConfigFileSnapshot.mockResolvedValueOnce({
-      exists: true,
-      valid: true,
-      config: {
-        plugins: {
-          entries: {
-            "sat-mining": {
-              enabled: true,
-              config: {
-                enabled: true,
-                network: "devnet",
-                riskMode: "balanced",
-              },
-            },
-          },
-        },
-      },
-    });
-    readWalletProviderRegistry.mockReturnValue({
-      providers: {
-        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-      },
-      wallets: [
-        {
-          id: "solana-1",
-          name: "Solana 1",
-          providerId: "local-socket-signer",
-          addresses: { solana: "So11111111111111111111111111111111111111112" },
-          metadata: { selfHosted: true },
-        },
-      ],
-      assignments: {},
-      updatedAt: "2026-03-15T00:00:00.000Z",
-    });
-    let actionOptions: string[] = [];
-    const select = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Wallet setup action") {
-        return "manage-self-hosted";
-      }
-      if (message === "Select wallet to manage") {
-        return "solana-1";
-      }
-      if (message === "Wallet action") {
-        actionOptions = Array.isArray((opts as { options?: unknown[] }).options)
-          ? ((opts as { options?: Array<{ value?: unknown }> }).options ?? []).flatMap((option) =>
-              typeof option.value === "string" && option.value.length > 0 ? [option.value] : [],
-            )
-          : [];
-        return "cancel";
-      }
-      if (message === "How do you want to hatch your bot?") {
-        return "skip";
-      }
-      return "quickstart";
-    }) as unknown as WizardPrompter["select"];
-    const confirm = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Run another wallet setup action?") {
-        return false;
-      }
-      return false;
-    }) as unknown as WizardPrompter["confirm"];
-    const prompter = createWizardPrompter({ select, confirm });
-
-    await runOnboardingWizard(
-      {
-        acceptRisk: true,
-        flow: "quickstart",
-        authChoice: "skip",
-        installDaemon: false,
-        skipProviders: true,
-        skipSkills: true,
-        skipHealth: true,
-        skipUi: true,
-      },
-      createRuntime({ throwsOnExit: true }),
-      prompter,
-    );
-
-    expect(actionOptions).toContain("configure-solana-rpc");
-    expect(actionOptions).not.toContain("attach-sat-mining");
-    expect(actionOptions).not.toContain("detach-sat-mining");
   });
 
   it("can update Solana RPC for an existing self-hosted wallet during onboarding management", async () => {
@@ -1987,117 +1547,6 @@ describe("runOnboardingWizard", () => {
     expect(process.env.FASED_WALLET_SOLANA_RPC_URL__WALLET_1).not.toBe(
       "https://not-an-rpc.example",
     );
-  });
-
-  it("does not offer SAT mining detach from onboarding manage-self-hosted flow", async () => {
-    writeConfigFile.mockClear();
-    readConfigFileSnapshot.mockResolvedValueOnce({
-      exists: true,
-      valid: true,
-      config: {
-        plugins: {
-          entries: {
-            "sat-mining": {
-              enabled: true,
-              config: {
-                enabled: true,
-                network: "devnet",
-                riskMode: "balanced",
-                walletId: "wallet-1",
-              },
-            },
-          },
-        },
-      },
-    });
-    readWalletProviderRegistry.mockReturnValue({
-      providers: {
-        "embedded-keystore": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        "local-socket-signer": { enabled: true, updatedAt: "2026-03-15T00:00:00.000Z" },
-        alchemy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        turnkey: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-        privy: { enabled: false, updatedAt: "2026-03-15T00:00:00.000Z" },
-      },
-      wallets: [
-        {
-          id: "wallet-1",
-          name: "Wallet 1",
-          providerId: "local-socket-signer",
-          addresses: { solana: "miner-sol-1" },
-          metadata: { selfHosted: true },
-        },
-      ],
-      assignments: {},
-      updatedAt: "2026-03-15T00:00:00.000Z",
-    });
-    let actionOptions: string[] = [];
-    const select = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Wallet setup action") {
-        return "manage-self-hosted";
-      }
-      if (message === "Select wallet to manage") {
-        return "wallet-1";
-      }
-      if (message === "Wallet action") {
-        actionOptions = Array.isArray((opts as { options?: unknown[] }).options)
-          ? ((opts as { options?: Array<{ value?: unknown }> }).options ?? []).flatMap((option) =>
-              typeof option.value === "string" && option.value.length > 0 ? [option.value] : [],
-            )
-          : [];
-        return "cancel";
-      }
-      if (message === "How do you want to hatch your bot?") {
-        return "skip";
-      }
-      return "quickstart";
-    }) as unknown as WizardPrompter["select"];
-    const confirm = vi.fn(async (opts: unknown) => {
-      const message =
-        typeof (opts as { message?: unknown })?.message === "string"
-          ? String((opts as { message?: unknown }).message)
-          : "";
-      if (message === "Run another wallet setup action?") {
-        return false;
-      }
-      return false;
-    }) as unknown as WizardPrompter["confirm"];
-    const prompter = createWizardPrompter({ select, confirm });
-
-    await runOnboardingWizard(
-      {
-        acceptRisk: true,
-        flow: "quickstart",
-        authChoice: "skip",
-        installDaemon: false,
-        skipProviders: true,
-        skipSkills: true,
-        skipHealth: true,
-        skipUi: true,
-      },
-      createRuntime({ throwsOnExit: true }),
-      prompter,
-    );
-
-    expect(writeConfigFile).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        plugins: {
-          entries: {
-            "sat-mining": expect.objectContaining({
-              config: expect.objectContaining({
-                walletId: "wallet-1",
-              }),
-            }),
-          },
-        },
-      }),
-    );
-    expect(actionOptions).toContain("configure-solana-rpc");
-    expect(actionOptions).not.toContain("attach-sat-mining");
-    expect(actionOptions).not.toContain("detach-sat-mining");
   });
 
   it("exits when config is invalid", async () => {
@@ -2577,7 +2026,12 @@ describe("runOnboardingWizard", () => {
         expect.objectContaining({
           mode: "local-signer-import",
           importFile: path.join(tempHome, "wallet.json"),
-          role: "agent",
+          chain: "solana",
+          walletId: "agent",
+          walletName: "Wallet",
+          nonInteractive: true,
+          noDoctor: true,
+          noSignerHints: true,
           rpcUrl: "https://api.devnet.solana.com",
         }),
       );
@@ -2699,13 +2153,22 @@ describe("runOnboardingWizard", () => {
       prompter,
     );
 
-    const walletRolePrompt = select.mock.calls.find(
-      ([options]) => (options as { message?: string }).message === "Approval preset",
-    )?.[0] as { options?: Array<{ value: string }> } | undefined;
+    const walletRolePrompt = vi
+      .mocked(select)
+      .mock.calls.find(
+        ([options]) => (options as { message?: string }).message === "Approval preset",
+      )?.[0] as { options?: Array<{ value: string }> } | undefined;
     expect(walletRolePrompt).toBeUndefined();
     expect(walletSetupCommand).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ role: "agent" }),
+      expect.objectContaining({
+        mode: "local-signer-create",
+        chain: "solana",
+        walletId: "agent",
+        walletName: "Wallet",
+        rpcUrl: "https://api.devnet.solana.com",
+        force: true,
+      }),
     );
     expect(prompter.note).toHaveBeenCalledWith(
       expect.stringContaining("Fased needs no personal Mining wallet"),
@@ -2721,7 +2184,7 @@ describe("runOnboardingWizard", () => {
       "Operator readiness",
     );
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("AGENT WALLET: Agent Wallet"),
+      expect.stringContaining("WALLET: Agent Wallet"),
       "Operator readiness",
     );
     expect(prompter.note).not.toHaveBeenCalledWith(

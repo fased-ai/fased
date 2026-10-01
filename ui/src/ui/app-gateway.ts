@@ -1,7 +1,3 @@
-import {
-  GATEWAY_EVENT_MINING_CHANGED,
-  type GatewayMiningChangedEventPayload,
-} from "../../../src/gateway/events.js";
 import { GATEWAY_CLIENT_MODES } from "../../../src/gateway/protocol/client-info.js";
 import {
   CHAT_SESSIONS_ACTIVE_MINUTES,
@@ -40,7 +36,6 @@ import {
   pruneExecApprovalQueue,
   removeExecApproval,
 } from "./controllers/exec-approval.ts";
-import { applyMiningChangedEvent, loadMining } from "./controllers/mining.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import {
   applySessionChangedEvent,
@@ -452,18 +447,6 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       host.presenceEntries = payload.presence;
       host.presenceError = null;
       host.presenceStatus = null;
-    }
-    return;
-  }
-
-  if (evt.event === GATEWAY_EVENT_MINING_CHANGED) {
-    const payload = evt.payload as GatewayMiningChangedEventPayload | undefined;
-    const hasMiningPayload = Boolean(payload?.method);
-    const applied = hasMiningPayload
-      ? applyMiningChangedEvent(host as unknown as FasedAgentApp, payload)
-      : false;
-    if (!applied && hasMiningPayload && host.tab === "mining") {
-      void loadMining(host as unknown as FasedAgentApp, { quiet: true });
     }
     return;
   }

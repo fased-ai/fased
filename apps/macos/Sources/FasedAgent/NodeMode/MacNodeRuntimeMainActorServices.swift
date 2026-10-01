@@ -1,6 +1,6 @@
 import CoreLocation
-import Foundation
 import FasedAgentKit
+import Foundation
 
 @MainActor
 protocol MacNodeRuntimeMainActorServices: Sendable {

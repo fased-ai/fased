@@ -188,6 +188,18 @@ struct ExecAllowlistTests {
         }
     }
 
+    @Test func `modified environment does not match inner executable allowlist`() {
+        let resolution = ExecCommandResolution.resolve(
+            command: ["/usr/bin/env", "FOO=bar", "/usr/bin/printf", "ok"],
+            cwd: nil,
+            env: ["PATH": "/usr/bin:/bin"])
+        let match = ExecAllowlistMatcher.match(
+            entries: [ExecAllowlistEntry(pattern: "/usr/bin/printf")],
+            resolution: resolution)
+        #expect(resolution?.rawExecutable == "/usr/bin/env")
+        #expect(match == nil)
+    }
+
     @Test func resolveForAllowlistTreatsPlainShInvocationAsDirectExec() {
         let command = ["/bin/sh", "./script.sh"]
         let resolutions = ExecCommandResolution.resolveForAllowlist(
@@ -211,8 +223,8 @@ struct ExecAllowlistTests {
         #expect(resolutions[1].executableName == "touch")
     }
 
-    @Test func resolveForAllowlistUnwrapsEnvToEffectiveDirectExecutable() {
-        let command = ["/usr/bin/env", "FOO=bar", "/usr/bin/printf", "ok"]
+    @Test func resolveForAllowlistUnwrapsTransparentEnvToEffectiveDirectExecutable() {
+        let command = ["/usr/bin/env", "/usr/bin/printf", "ok"]
         let resolutions = ExecCommandResolution.resolveForAllowlist(
             command: command,
             rawCommand: nil,

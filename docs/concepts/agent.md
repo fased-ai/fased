@@ -61,12 +61,6 @@ owns the user-facing setup tabs:
 - **Files**: user-owned workspace bootstrap files such as `AGENTS.md`,
   `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`.
 
-Global/operator pages such as Dashboard, Usage, Logs, Advanced, Extensions,
-Wallets, Mining, Fased Network, and Marketplace still exist for runtime,
-security, specialized controls, and diagnostics. Advanced groups raw Config,
-Debug, and Nodes for operators. Normal Agent setup should not require raw config
-edits.
-
 ## Workspace (required)
 
 Each Agent has a workspace directory. The default Agent uses

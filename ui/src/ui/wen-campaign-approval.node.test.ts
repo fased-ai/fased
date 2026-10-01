@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CampaignReviewExpectation } from "../../../src/wallet/wen-campaign-review-contract.js";
-import type { CampaignSessionTransport } from "../../../src/wallet/wen-campaign-session.js";
 import { authorizeSignerReviewWithPasskey } from "./wallet-passkey.js";
 import { approveWenCampaign } from "./wen-campaign-approval.js";
 vi.mock("./wallet-passkey.js", () => ({ authorizeSignerReviewWithPasskey: vi.fn() }));
@@ -121,7 +120,7 @@ describe.each(["stop", "top-up", "withdraw"])("browser campaign %s", (operation)
       return {
         challengeId: mode === "changed-challenge" ? "other" : "challenge-1",
         credential: { id: "fixture" },
-      } satisfies CampaignSessionTransport;
+      };
     });
     const retain = vi.fn(async () => {
       events.push("retain");
@@ -144,6 +143,9 @@ describe.each(["stop", "top-up", "withdraw"])("browser campaign %s", (operation)
       ["lost-execute", "lost-recover"].includes(mode) ? 1 : 0,
     );
     if (executed) {
+      expect(transport.journey).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "execute", proof: { proofId: "proof-1" } }),
+      );
       expect(events.indexOf("retain")).toBeLessThan(events.indexOf("execute"));
       expect(retain).toHaveBeenCalledWith({
         requestId: review.requestId,

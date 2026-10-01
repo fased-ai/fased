@@ -20,11 +20,6 @@ x-i18n:
 最初はチャネル設定なしで始められます。`fased dashboard`を実行し、Control UIの**Chat**を使います。
 </Info>
 
-<Warning>
-ウォレット、Mining、Fased Networkなどのオペレーターモジュールを有効化する前に、リポジトリのリスク境界を読んでください：
-[`docs/legal/disclaimer.md`](https://github.com/fased-ai/fased/blob/main/docs/legal/disclaimer.md)。
-</Warning>
-
 ## 前提条件
 
 - Node 24推奨、または`node:sqlite`を含むNode 22.14以降
@@ -93,14 +88,6 @@ node -e 'require("node:sqlite"); console.log("node:sqlite ok")'
 </Steps>
 
 ## Control UIで続ける場所
-
-- **Agent > Models**: モデルと認証。
-- **Agent > Channels**: チャットアプリの接続。
-- **Agent > Services**: Gmail、Calendar、GitHub、web/search、custom APIなど。
-- **Agent > Skills / Tools**: Agentが使える能力。
-- **Agent > Memory**: セッション、QMD、アーカイブ状態。
-- **Agent > Tasks**: 保存された定期タスクと実行結果。
-- Wallets、Mining、Fased Network: 必要になった場合だけ設定。
 
 ## トラブル時の最初の確認
 

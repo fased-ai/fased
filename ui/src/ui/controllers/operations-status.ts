@@ -1,19 +1,6 @@
 import { createFederationApi } from "../federation-api.js";
 import type { FederationStatus, FederationToken } from "../federation-api.js";
 import {
-  getMiningProfile,
-  getMiningHistory,
-  getMiningReadiness,
-  getMiningStatus,
-  getMiningWalletAttachment,
-} from "../mining-api.js";
-import type {
-  SatMinerProfile,
-  SatMiningHistory,
-  SatMiningReadiness,
-  SatMiningRuntimeStatus,
-} from "../mining-api.js";
-import {
   getWalletBalances,
   getWalletNamedWallets,
   getWalletStatus,
@@ -27,11 +14,6 @@ export type OperationsStatusState = {
   walletNamedWallets: WalletNamedWallet[];
   walletAssignments: Record<string, string>;
   walletDefaultWalletId: string | null;
-  miningAttachedWalletId: string | null;
-  miningProfile: SatMinerProfile | null;
-  miningReadiness: SatMiningReadiness | null;
-  miningStatus: SatMiningRuntimeStatus | null;
-  miningHistory: SatMiningHistory | null;
   federationToken: FederationToken | null;
   federationStatus: FederationStatus | null;
 };
@@ -81,47 +63,6 @@ async function loadWalletSummary(state: OperationsStatusState) {
   }
 }
 
-async function loadMiningSummary(state: OperationsStatusState) {
-  const [profileResult, attachmentResult, statusResult, historyResult] = await Promise.allSettled([
-    getMiningProfile(),
-    getMiningWalletAttachment(),
-    getMiningStatus(),
-    getMiningHistory("7d", { activityWindow: "7d" }),
-  ]);
-
-  if (profileResult.status === "fulfilled") {
-    state.miningProfile = profileResult.value.profile;
-  }
-  if (statusResult.status === "fulfilled") {
-    state.miningStatus = statusResult.value.status;
-  }
-  if (historyResult.status === "fulfilled") {
-    state.miningHistory = historyResult.value.history;
-  }
-
-  let attachedWalletId: string | null = null;
-  if (attachmentResult.status === "fulfilled") {
-    attachedWalletId = attachmentResult.value.attachment?.walletId ?? null;
-  }
-  if (attachedWalletId === null && statusResult.status === "fulfilled") {
-    attachedWalletId = statusResult.value.status.walletId ?? null;
-  }
-  if (attachedWalletId === null && profileResult.status === "fulfilled") {
-    attachedWalletId = profileResult.value.profile?.walletId ?? null;
-  }
-  state.miningAttachedWalletId = attachedWalletId;
-
-  if (!attachedWalletId) {
-    state.miningReadiness = null;
-    return;
-  }
-
-  const readinessResult = await Promise.allSettled([getMiningReadiness(attachedWalletId)]);
-  if (readinessResult[0]?.status === "fulfilled") {
-    state.miningReadiness = readinessResult[0].value.readiness;
-  }
-}
-
 async function loadFederationSummary(state: OperationsStatusState) {
   const status = await createFederationApi().getStatus();
   state.federationStatus = status.status;
@@ -137,9 +78,5 @@ export async function loadOperationsStatus(state: OperationsStatusState): Promis
     return;
   }
 
-  await Promise.allSettled([
-    loadWalletSummary(state),
-    loadMiningSummary(state),
-    loadFederationSummary(state),
-  ]);
+  await Promise.allSettled([loadWalletSummary(state), loadFederationSummary(state)]);
 }

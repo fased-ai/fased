@@ -93,7 +93,6 @@ type signerReviewV2 struct {
 	SemanticIntent    json.RawMessage                    `json:"semanticIntent"`
 	ArtifactKind      string                             `json:"artifactKind"`
 	ArtifactDigest    string                             `json:"artifactDigest"`
-	VaultReference    *vaultReviewReferenceV1            `json:"vaultReference,omitempty"`
 	Transaction       *signerSolanaTransactionEnvelopeV2 `json:"transaction,omitempty"`
 	MessageBase64     string                             `json:"messageBase64,omitempty"`
 	StateDigest       string                             `json:"stateDigest,omitempty"`

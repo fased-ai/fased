@@ -138,24 +138,6 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 		default:
 			return errors.New("unknown signer admin wallet command")
 		}
-	case "owner-ceremony":
-		switch args[1] {
-		case "prepare":
-			return runSignerAdminOwnerCeremonyV1(args[2:], stdin, stdout, false)
-		case "execute":
-			return runSignerAdminOwnerCeremonyV1(args[2:], stdin, stdout, true)
-		default:
-			return errors.New("unknown signer admin owner-ceremony command")
-		}
-	case "keeper":
-		switch args[1] {
-		case "ensure-fee-payer":
-			return runSignerAdminKeeperFeePayerV2(args[2:], true, stdout)
-		case "fee-payer-status":
-			return runSignerAdminKeeperFeePayerV2(args[2:], false, stdout)
-		default:
-			return errors.New("unknown signer admin keeper command")
-		}
 	case "policy":
 		switch args[1] {
 		case "budget":
@@ -164,8 +146,6 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 			return runSignerAdminPolicyGet(args[2:], stdout)
 		case "put":
 			return runSignerAdminPolicyPut(args[2:], stdout)
-		case "activate-baseline":
-			return runSignerAdminPolicyActivateBaselineV1(args[2:], stdout)
 		default:
 			return errors.New("unknown signer admin policy command")
 		}
@@ -232,75 +212,8 @@ func runSignerAdminCLI(args []string, stdin io.Reader, stdout io.Writer, environ
 	}
 }
 
-func runSignerAdminOwnerCeremonyV1(args []string, stdin io.Reader, stdout io.Writer, execute bool) error {
-	fs, common := newSignerAdminFlagSet("owner-ceremony")
-	if err := parseSignerAdminFlags(fs, args); err != nil {
-		return err
-	}
-	if strings.TrimSpace(common.operatorSocket) != "" {
-		return errors.New("owner ceremony requires only --control-socket and an exact JSON request on stdin")
-	}
-	socket, err := requireSignerAdminControlSocket(common.controlSocket)
-	if err != nil {
-		return err
-	}
-	limited := io.LimitReader(stdin, maxSignerAdminPolicyBytes+1)
-	raw, err := io.ReadAll(limited)
-	if err != nil || len(raw) == 0 || len(raw) > maxSignerAdminPolicyBytes {
-		return errors.New("read bounded owner ceremony JSON from stdin")
-	}
-	defer zeroBytes(raw)
-	var body ownerCeremonyRequestV1
-	if err := decodeStrictJSONV2(raw, &body); err != nil {
-		return errors.New("owner ceremony JSON is invalid")
-	}
-	op := "v2.ownerCeremony.prepare"
-	if execute {
-		op = "v2.ownerCeremony.execute"
-	}
-	result, err := callSignerSocketWithSensitivityV1(socket, false, op, "", "", body, true)
-	if err != nil {
-		return err
-	}
-	return writeSignerAdminResult(result, stdout)
-}
-
 func signerAdminUsageError() error {
-	return errors.New("usage: fased-signerd admin {service|wallet|owner-ceremony|keeper|policy|network|rpc-profile|jupiter|webauthn|migration|wen-campaign|wen-market} <command> [flags]")
-}
-
-func runSignerAdminKeeperFeePayerV2(args []string, ensure bool, stdout io.Writer) error {
-	command := "keeper fee-payer-status"
-	if ensure {
-		command = "keeper ensure-fee-payer"
-	}
-	fs, common := newSignerAdminFlagSet(command)
-	var walletID string
-	var standalone bool
-	fs.StringVar(&walletID, "wallet-id", "", "parent Mining wallet or standalone Keeper identifier")
-	fs.BoolVar(&standalone, "standalone", false, "provision a generation-2 Keeper without a Mining parent")
-	if err := parseSignerAdminFlags(fs, args); err != nil {
-		return err
-	}
-	if strings.TrimSpace(common.operatorSocket) != "" {
-		return errors.New("keeper fee-payer management requires the signer control socket")
-	}
-	if _, err := requireSignerAdminControlSocket(common.controlSocket); err != nil {
-		return err
-	}
-	var err error
-	if walletID, err = validateSignerAdminWalletID(walletID); err != nil {
-		return err
-	}
-	op := "v2.keeperFeePayer.get"
-	body := any(nil)
-	if ensure {
-		op = "v2.keeperFeePayer.ensure"
-		body = signerKeeperFeePayerEnsureRequestV2{Standalone: standalone}
-	} else if standalone {
-		return errors.New("--standalone is valid only with keeper ensure-fee-payer")
-	}
-	return callAndWriteSignerAdmin(common.controlSocket, op, walletID, body, stdout)
+	return errors.New("usage: fased-signerd admin {service|wallet|policy|network|rpc-profile|jupiter|webauthn|migration|wen-campaign|wen-market} <command> [flags]")
 }
 
 func rejectSignerAdminNetworkEnvironmentV2(environ []string) error {
@@ -467,7 +380,7 @@ func lockedSignerAdminPolicy(walletID, role string) (signerPolicyV2, error) {
 	}
 	normalized, err := normalizeSignerPolicyV2(policy)
 	if err != nil {
-		return signerPolicyV2{}, fmt.Errorf("invalid --locked-role: %w", err)
+		return signerPolicyV2{}, fmt.Errorf("invalid internal deny-all policy: %w", err)
 	}
 	return normalized, nil
 }
@@ -476,7 +389,7 @@ func resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole string) (
 	hasPolicyFile := strings.TrimSpace(policyFile) != ""
 	hasLockedRole := strings.TrimSpace(lockedRole) != ""
 	if hasPolicyFile == hasLockedRole {
-		return signerPolicyV2{}, errors.New("exactly one of --policy-file or --locked-role is required")
+		return signerPolicyV2{}, errors.New("exactly one policy source is required")
 	}
 	if hasPolicyFile {
 		return loadSignerAdminPolicy(policyFile, walletID)
@@ -486,12 +399,10 @@ func resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole string) (
 
 func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet create")
-	var walletID, policyFile, lockedRole, baselineRole string
+	var walletID, policyFile, baselineRole string
 	var allowExisting, readOnly bool
 	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
-	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
-	fs.StringVar(&baselineRole, "baseline-role", "", "agent, mining, or vault signer-owned role baseline")
 	fs.BoolVar(&readOnly, "read-only", false, "create without signing permissions")
 	fs.BoolVar(&allowExisting, "allow-existing", false, "resume only an existing wallet with the same signer-owned role baseline")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
@@ -505,15 +416,13 @@ func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if readOnly && strings.TrimSpace(baselineRole) == "" {
-		baselineRole = "agent"
-	}
-	useBaseline := strings.TrimSpace(baselineRole) != ""
-	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
-		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
+	baselineRole = "agent"
+	useBaseline := strings.TrimSpace(policyFile) == ""
+	if readOnly && !useBaseline {
+		return errors.New("--read-only cannot be combined with --policy-file")
 	}
 	if operator && !useBaseline {
-		return errors.New("operator wallet create requires --baseline-role; arbitrary policies are unavailable on the operator socket")
+		return errors.New("operator wallet create uses only the default agent policy; arbitrary policies are unavailable on the operator socket")
 	}
 	if useBaseline {
 		baseline, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
@@ -527,11 +436,9 @@ func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 			}(),
 		})
 		if baselineErr != nil {
-			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
+			return fmt.Errorf("invalid default wallet policy: %w", baselineErr)
 		}
-		if baseline.Role == "keeper" {
-			return errors.New("use 'keeper ensure-fee-payer --wallet-id <Mining wallet>' for a bound Keeper fee payer")
-		}
+
 		if operator {
 			return callAndWriteSignerOperatorV1(
 				common.operatorSocket,
@@ -546,7 +453,7 @@ func runSignerAdminWalletCreate(args []string, stdout io.Writer) error {
 			Baseline:        &baseline,
 		}, stdout)
 	}
-	policy, err := resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
+	policy, err := loadSignerAdminPolicy(policyFile, walletID)
 	if err != nil {
 		return err
 	}
@@ -596,13 +503,11 @@ func runSignerAdminWalletBalanceV1(args []string, stdout io.Writer) error {
 
 func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet import")
-	var walletID, policyFile, lockedRole, baselineRole string
+	var walletID, policyFile, baselineRole string
 	var readOnly bool
 	fs.BoolVar(&readOnly, "read-only", false, "import without signing permissions")
 	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
-	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
-	fs.StringVar(&baselineRole, "baseline-role", "", "agent, mining, or vault signer-owned role baseline")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
@@ -617,15 +522,13 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 	if err != nil {
 		return err
 	}
-	if readOnly && strings.TrimSpace(baselineRole) == "" {
-		baselineRole = "agent"
-	}
-	useBaseline := strings.TrimSpace(baselineRole) != ""
-	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
-		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
+	baselineRole = "agent"
+	useBaseline := strings.TrimSpace(policyFile) == ""
+	if readOnly && !useBaseline {
+		return errors.New("--read-only cannot be combined with --policy-file")
 	}
 	if operator && !useBaseline {
-		return errors.New("operator wallet import requires --baseline-role; arbitrary policies are unavailable on the operator socket")
+		return errors.New("operator wallet import uses only the default agent policy; arbitrary policies are unavailable on the operator socket")
 	}
 	var policy signerPolicyV2
 	if useBaseline {
@@ -640,11 +543,11 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 			}(),
 		})
 		if baselineErr != nil {
-			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
+			return fmt.Errorf("invalid default wallet policy: %w", baselineErr)
 		}
 		baselineRole = baseline.Role
 	} else {
-		policy, err = resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
+		policy, err = loadSignerAdminPolicy(policyFile, walletID)
 		if err != nil {
 			return err
 		}
@@ -712,11 +615,9 @@ func runSignerAdminWalletImport(args []string, stdin io.Reader, stdout io.Writer
 
 func runSignerAdminWalletImportLegacy(args []string, stdout io.Writer) error {
 	fs, common := newSignerAdminFlagSet("wallet import-legacy")
-	var walletID, policyFile, lockedRole, baselineRole, keystorePath, passphrasePath string
+	var walletID, policyFile, baselineRole, keystorePath, passphrasePath string
 	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
 	fs.StringVar(&policyFile, "policy-file", "", "absolute strict policy JSON path")
-	fs.StringVar(&lockedRole, "locked-role", "", "agent, mining, or vault deny-all policy")
-	fs.StringVar(&baselineRole, "baseline-role", "", "agent, mining, or vault signer-owned role baseline")
 	fs.StringVar(&keystorePath, "keystore-path", "", "absolute owner-only legacy encrypted keystore path")
 	fs.StringVar(&passphrasePath, "passphrase-path", "", "absolute owner-only passphrase file path")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
@@ -733,10 +634,8 @@ func runSignerAdminWalletImportLegacy(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	useBaseline := strings.TrimSpace(baselineRole) != ""
-	if useBaseline && (strings.TrimSpace(policyFile) != "" || strings.TrimSpace(lockedRole) != "") {
-		return errors.New("--baseline-role cannot be combined with --policy-file or --locked-role")
-	}
+	baselineRole = "agent"
+	useBaseline := strings.TrimSpace(policyFile) == ""
 	var policy signerPolicyV2
 	if useBaseline {
 		baseline, baselineErr := normalizeRoleBaselineRequestV1(signerRoleBaselineRequestV1{
@@ -744,11 +643,11 @@ func runSignerAdminWalletImportLegacy(args []string, stdout io.Writer) error {
 			Role:    baselineRole,
 		})
 		if baselineErr != nil {
-			return fmt.Errorf("invalid --baseline-role: %w", baselineErr)
+			return fmt.Errorf("invalid default wallet policy: %w", baselineErr)
 		}
 		baselineRole = baseline.Role
 	} else {
-		policy, err = resolveSignerAdminCreationPolicy(walletID, policyFile, lockedRole)
+		policy, err = loadSignerAdminPolicy(policyFile, walletID)
 		if err != nil {
 			return err
 		}
@@ -870,8 +769,6 @@ func runSignerAdminWalletRotationCommit(args []string, stdin io.Reader, stdout i
 	var sourceWalletID, successorWalletID, rotationID, sourcePublicKey, successorPublicKey string
 	var sourceWalletVersion, sourcePolicyVersion signerAdminRequiredUint64
 	var successorWalletVersion, successorPolicyVersion, rotationVersion signerAdminRequiredUint64
-	var successorNetworkVersion signerAdminRequiredUint64
-	var successorNetworkHash string
 	fs.StringVar(&sourceWalletID, "wallet-id", "", "normalized source wallet identifier")
 	fs.StringVar(&successorWalletID, "successor-wallet-id", "", "exact successor wallet identifier")
 	fs.StringVar(&rotationID, "rotation-id", "", "exact prepared rotation digest")
@@ -882,8 +779,6 @@ func runSignerAdminWalletRotationCommit(args []string, stdin io.Reader, stdout i
 	fs.Var(&successorWalletVersion, "expected-successor-wallet-version", "required current successor wallet version")
 	fs.Var(&successorPolicyVersion, "expected-successor-policy-version", "required current successor policy version")
 	fs.Var(&rotationVersion, "expected-rotation-version", "required current rotation version")
-	fs.Var(&successorNetworkVersion, "expected-successor-network-version", "verified successor network version (required for Mining)")
-	fs.StringVar(&successorNetworkHash, "expected-successor-network-hash", "", "verified successor network hash (required for Mining)")
 	if err := parseSignerAdminFlags(fs, args); err != nil {
 		return err
 	}
@@ -913,34 +808,16 @@ func runSignerAdminWalletRotationCommit(args []string, stdin io.Reader, stdout i
 	if rotationID, err = normalizeSHA256DigestV2(rotationID, "--rotation-id"); err != nil {
 		return err
 	}
-	var evidenceInput struct {
-		RecoveryPackageHash string                            `json:"recoveryPackageHash"`
-		SafetyEvidence      *signerMiningRetirementEvidenceV1 `json:"safetyEvidence"`
-	}
-	raw, err := io.ReadAll(io.LimitReader(stdin, maxSignerAdminPolicyBytes+1))
-	if err != nil || len(raw) > maxSignerAdminPolicyBytes {
-		return errors.New("read Mining retirement evidence from stdin")
-	}
-	defer zeroBytes(raw)
-	if len(bytes.TrimSpace(raw)) > 0 {
-		if err := decodeSignerAdminStrictJSON(raw, &evidenceInput); err != nil {
-			return errors.New("stdin must contain one strict Mining retirement evidence object")
-		}
-	}
 	body := signerWalletRotationCommitRequestV2{
-		RotationID:                      rotationID,
-		SuccessorWalletID:               successorWalletID,
-		ExpectedSourcePublicKey:         sourcePublicKey,
-		ExpectedSuccessorPublicKey:      successorPublicKey,
-		ExpectedSourceWalletVersion:     sourceWalletVersion.value,
-		ExpectedSourcePolicyVersion:     sourcePolicyVersion.value,
-		ExpectedSuccessorWalletVersion:  successorWalletVersion.value,
-		ExpectedSuccessorPolicyVersion:  successorPolicyVersion.value,
-		ExpectedRotationVersion:         rotationVersion.value,
-		ExpectedSuccessorNetworkVersion: successorNetworkVersion.value,
-		ExpectedSuccessorNetworkHash:    strings.TrimSpace(successorNetworkHash),
-		RecoveryPackageHash:             strings.TrimSpace(evidenceInput.RecoveryPackageHash),
-		SafetyEvidence:                  evidenceInput.SafetyEvidence,
+		RotationID:                     rotationID,
+		SuccessorWalletID:              successorWalletID,
+		ExpectedSourcePublicKey:        sourcePublicKey,
+		ExpectedSuccessorPublicKey:     successorPublicKey,
+		ExpectedSourceWalletVersion:    sourceWalletVersion.value,
+		ExpectedSourcePolicyVersion:    sourcePolicyVersion.value,
+		ExpectedSuccessorWalletVersion: successorWalletVersion.value,
+		ExpectedSuccessorPolicyVersion: successorPolicyVersion.value,
+		ExpectedRotationVersion:        rotationVersion.value,
 	}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.wallet.rotation.commit", sourceWalletID, body, stdout)
 }
@@ -1005,55 +882,6 @@ func runSignerAdminPolicyPut(args []string, stdout io.Writer) error {
 	}
 	body := signerPolicyPutRequestV2{ExpectedVersion: expected.value, Policy: policy}
 	return callAndWriteSignerAdmin(common.controlSocket, "v2.policy.put", walletID, body, stdout)
-}
-
-func runSignerAdminPolicyActivateBaselineV1(args []string, stdout io.Writer) error {
-	fs, common := newSignerAdminFlagSet("policy activate-baseline")
-	var walletID, role string
-	var expected signerAdminRequiredUint64
-	fs.StringVar(&walletID, "wallet-id", "", "normalized wallet identifier")
-	fs.StringVar(&role, "baseline-role", "", "immutable signer role baseline")
-	fs.Var(&expected, "expected-version", "required current policy version")
-	if err := parseSignerAdminFlags(fs, args); err != nil {
-		return err
-	}
-	if !expected.set {
-		return errors.New("--expected-version is required")
-	}
-	_, operator, err := requireSignerAdminLifecycleSocket(common)
-	if err != nil {
-		return err
-	}
-	walletID, err = validateSignerAdminWalletID(walletID)
-	if err != nil {
-		return err
-	}
-	baseline := signerRoleBaselineRequestV1{Version: signerRoleBaselineVersionV1, Role: strings.TrimSpace(role)}
-	if _, err := normalizeRoleBaselineRequestV1(baseline); err != nil {
-		return err
-	}
-	if operator {
-		return callAndWriteSignerOperatorV1(
-			common.operatorSocket,
-			"v2.policy.activateBaseline",
-			walletID,
-			signerOperatorPolicyActivateBaselineRequestV1{
-				ExpectedVersion: expected.value,
-				Baseline:        baseline,
-			},
-			stdout,
-		)
-	}
-	return callAndWriteSignerAdmin(
-		common.controlSocket,
-		"v2.policy.activateBaseline",
-		walletID,
-		signerRoleBaselineActivationRequestV1{
-			ExpectedVersion: expected.value,
-			Baseline:        baseline,
-		},
-		stdout,
-	)
 }
 
 func runSignerAdminNetworkGet(args []string, stdout io.Writer) error {

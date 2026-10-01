@@ -84,7 +84,6 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624)", () => {
           sendMessageWhatsApp: vi.fn(),
           sendMessageTelegram: vi.fn(),
           sendMessageDiscord: vi.fn(),
-          sendMessageSignal: vi.fn(),
           sendMessageIMessage: vi.fn(),
         },
         job: makeJob({ kind: "agentTurn", message: "check status", deliver: false }),

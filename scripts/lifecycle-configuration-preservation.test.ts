@@ -144,7 +144,7 @@ describe("lifecycle configuration preservation", () => {
     ).toThrow("undeclared configuration change at /commands");
 
     const withUnknownPlugin = canonicalTargetConfiguration();
-    withUnknownPlugin.plugins.allow.push("sat-mining");
+    withUnknownPlugin.plugins.allow.push("wen");
     expect(() =>
       assertConfigurationPreserved({
         predecessor: predecessorConfiguration(),
@@ -152,6 +152,6 @@ describe("lifecycle configuration preservation", () => {
         targetVersion,
         profile: "hosting",
       }),
-    ).toThrow("target added undeclared plugin allow entry sat-mining");
+    ).toThrow("target added undeclared plugin allow entry wen");
   });
 });

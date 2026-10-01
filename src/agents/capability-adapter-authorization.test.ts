@@ -19,7 +19,7 @@ function fixture() {
     version: 1,
     adapterId: "fased.mining-adapter",
     adapterOperations: ["cycle.commit"],
-    capabilityPacks: ["miner"],
+    capabilityPacks: ["risk-officer"],
     permissions: {
       ...createZeroCapabilityPermissions(),
       walletRoles: ["mining"],

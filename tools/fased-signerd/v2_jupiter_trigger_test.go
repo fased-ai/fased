@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -16,10 +17,19 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 )
 
-const (
-	testJupiterAPIKeyV2 = "api-key-secret-123456"
-	testJupiterJWTV2    = "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ0ZXN0In0.c2lnbmF0dXJl"
+var (
+	testJupiterAPIKeyV2 = solana.NewWallet().PublicKey().String()
+	testJupiterJWTV2    = generatedJupiterFixtureTokenV2()
 )
+
+func generatedJupiterFixtureTokenV2() string {
+	wallet := solana.NewWallet()
+	header, _ := json.Marshal(map[string]string{"alg": "EdDSA", "typ": "JWT"})
+	claims, _ := json.Marshal(map[string]string{"sub": wallet.PublicKey().String()})
+	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
+	signature := ed25519.Sign(ed25519.PrivateKey(wallet.PrivateKey), []byte(unsigned))
+	return unsigned + "." + base64.RawURLEncoding.EncodeToString(signature)
+}
 
 func triggerCreateIntentForWalletV2(wallet solana.PublicKey) signerIntentV2 {
 	return signerIntentV2{
@@ -252,7 +262,7 @@ func TestJupiterTriggerReviewedCancelPrepareIsReadOnlyAndBindsExactState(t *test
 	store, keys := openTestSignerV2(t)
 	store.now = func() time.Time { return time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC) }
 	wallet, policy, intent := installTriggerTestWalletV2(
-		t, store, keys, "vault-trigger-cancel", "vault",
+		t, store, keys, "vault-trigger-cancel", "agent",
 		func(publicKey solana.PublicKey) signerIntentV2 {
 			return triggerCancelIntentForWalletV2(publicKey, "order-reviewed")
 		},
@@ -290,9 +300,9 @@ func TestJupiterTriggerReviewedCancelPrepareIsReadOnlyAndBindsExactState(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{testJupiterAPIKeyV2, testJupiterJWTV2, "signedTxBase64"} {
-		if strings.Contains(string(raw), secret) {
-			t.Fatalf("review response leaked %q: %s", secret, raw)
+	for _, sensitiveValue := range []string{testJupiterAPIKeyV2, testJupiterJWTV2, "signedTxBase64"} {
+		if strings.Contains(string(raw), sensitiveValue) {
+			t.Fatalf("review response leaked %q: %s", sensitiveValue, raw)
 		}
 	}
 }
@@ -345,12 +355,12 @@ func TestJupiterTriggerPublicHistorySuppliesExactCancelIntentWithoutSecrets(t *t
 		order.Cancel.Program != solana.SystemProgramID.String() {
 		t.Fatalf("public history omitted exact cancel semantics: %#v", order)
 	}
-	for _, secret := range []string{
+	for _, sensitiveValue := range []string{
 		testJupiterAPIKeyV2, testJupiterJWTV2, vault.String(), "signedTxBase64", "unsignedTxBase64",
 		"requestId", "transaction", "privyWalletPubkey",
 	} {
-		if strings.Contains(string(raw), secret) {
-			t.Fatalf("public Trigger history leaked private field %q: %s", secret, raw)
+		if strings.Contains(string(raw), sensitiveValue) {
+			t.Fatalf("public Trigger history leaked private field %q: %s", sensitiveValue, raw)
 		}
 	}
 	if _, err := service.handle(request{

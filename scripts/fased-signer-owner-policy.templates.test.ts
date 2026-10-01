@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { __testing, normalizeOwnerPolicy } from "./fased-signer-owner-policy.mjs";
 
 const templateRoot = path.join(process.cwd(), "config", "signer-policies");
-const templateNames = ["agent.json.template", "mining.json.template", "vault.json.template"];
+const templateNames = ["agent.json.template"];
 const allTemplateNames = [...templateNames, "network.json.template"];
 
 function fillTemplate(raw: string) {
@@ -66,34 +66,19 @@ describe("packaged native signer policy templates", () => {
     },
   );
 
-  it("keeps Agent typed, Mining program-bound, and Vault reviewed without broad Jupiter defaults", async () => {
-    const policies = await Promise.all(
-      templateNames.map(async (name) => {
-        const raw = await fsp.readFile(path.join(templateRoot, name), "utf8");
-        const { filled } = fillTemplate(raw);
-        return normalizeOwnerPolicy(__testing.parseStrictJson(Buffer.from(filled), name));
-      }),
+  it("keeps Agent transfers exact and excludes broad signing defaults", async () => {
+    const raw = await fsp.readFile(path.join(templateRoot, "agent.json.template"), "utf8");
+    const { filled } = fillTemplate(raw);
+    const agent = normalizeOwnerPolicy(
+      __testing.parseStrictJson(Buffer.from(filled), "agent.json.template"),
     );
-    const [agent, mining, vault] = policies;
     expect(agent.operations).toEqual(["solana.nativeTransfer", "solana.splTransferChecked"]);
     expect(agent.programs).toContain(__testing.ASSOCIATED_TOKEN_PROGRAM);
-    expect(mining.operations.some((operation) => operation.startsWith("sat.commitCycle@"))).toBe(
-      true,
-    );
-    expect(mining.operations).toContain("solana.nativeTransfer");
-    expect(mining.operations).toContain("solana.splTransferChecked");
-    expect(mining.operations.some((operation) => operation.startsWith("satLookup."))).toBe(false);
-    expect(mining.programs).not.toContain(__testing.ADDRESS_LOOKUP_TABLE_PROGRAM);
-    expect(vault.operations).toContain("federation.bondChallenge");
-    expect(vault.operations.some((operation) => operation.startsWith("vaultBond."))).toBe(true);
-    expect(mining.programs).toContain(__testing.ASSOCIATED_TOKEN_PROGRAM);
-    expect(vault.programs).toContain(__testing.ASSOCIATED_TOKEN_PROGRAM);
-    for (const policy of policies) {
-      expect(policy.operations.some((operation) => operation.includes("signTx"))).toBe(false);
-      expect(policy.operations.some((operation) => operation.includes("jupiter"))).toBe(false);
-      expect(policy.operations).not.toContain("solana.satAction");
-      expect(policy.operations).not.toContain("solana.vaultBondAction");
-    }
+    expect(
+      agent.operations.some(
+        (operation) => operation.includes("signTx") || operation.includes("jupiter"),
+      ),
+    ).toBe(false);
   });
 
   it("is included through the existing packaged config directory", async () => {

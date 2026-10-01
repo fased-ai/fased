@@ -199,7 +199,7 @@ function fullMatrixPlan() {
     runHosting: true,
     runCiContracts: true,
     runT2Contracts: true,
-    runUiMining: true,
+    runUiWen: true,
     runSkills: true,
     fullMatrix: true,
   };
@@ -350,7 +350,7 @@ export function classifyChangedPaths(inputPaths, options = {}) {
     runHosting: false,
     runCiContracts: lane("ci-contract"),
     runT2Contracts: false,
-    runUiMining: runUi && paths.some((path) => path.includes("mining")),
+    runUiWen: runUi && paths.some((path) => path.includes("wen")),
     runSkills: lane("skills"),
     fullMatrix: false,
   };
@@ -442,7 +442,7 @@ export function outputEntries(plan, options = {}) {
     run_hosting: "runHosting",
     run_ci_contracts: "runCiContracts",
     run_t2_contracts: "runT2Contracts",
-    run_ui_mining: "runUiMining",
+    run_ui_wen: "runUiWen",
     run_skills: "runSkills",
     full_matrix: "fullMatrix",
   };

@@ -30,7 +30,7 @@ const formatExts = new Set([
   ".yaml",
   ".yml",
 ]);
-const exactByteFormatPrefixes = ["extensions/sat-mining/protocol-generation/"];
+const exactByteFormatPrefixes = ["extensions/wen/protocol-generation/"];
 
 export function selectStagedFiles(mode, files) {
   if (mode !== "lint" && mode !== "format") {

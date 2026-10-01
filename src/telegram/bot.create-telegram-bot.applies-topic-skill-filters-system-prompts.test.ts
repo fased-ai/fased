@@ -23,10 +23,6 @@ const commandExecMocks = vi.hoisted(() => ({
     result: { ok: true },
     replyText: "offers command ok",
   })),
-  executeMiningChatCommand: vi.fn(async () => ({
-    result: { ok: true },
-    replyText: "mining command ok",
-  })),
 }));
 
 vi.mock("../wallet/chat-command.js", async (importOriginal) => {
@@ -50,14 +46,6 @@ vi.mock("../federation/marketplace-chat-command.js", async (importOriginal) => {
   return {
     ...actual,
     executeOffersChatCommand: commandExecMocks.executeOffersChatCommand,
-  };
-});
-
-vi.mock("../mining/chat-command.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../mining/chat-command.js")>();
-  return {
-    ...actual,
-    executeMiningChatCommand: commandExecMocks.executeMiningChatCommand,
   };
 });
 
@@ -279,54 +267,7 @@ describe("createTelegramBot", () => {
       expect.objectContaining({ message_thread_id: 99 }),
     );
   });
-  it("routes authorized topic mining commands through deterministic dispatch", async () => {
-    onSpy.mockReset();
-    sendMessageSpy.mockReset();
-    commandSpy.mockReset();
-    replySpy.mockReset();
-    commandExecMocks.executeMiningChatCommand.mockClear();
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          groupPolicy: "open",
-          groups: {
-            "*": {
-              allowFrom: ["12345"],
-              requireMention: false,
-            },
-          },
-        },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
-
-    await handler(
-      makeForumGroupMessageCtx({
-        threadId: 99,
-        text: "Stop @mining.",
-        fromId: 12345,
-      }),
-    );
-
-    expect(replySpy).not.toHaveBeenCalled();
-    expect(commandExecMocks.executeMiningChatCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        command: expect.objectContaining({
-          action: "stop",
-          method: "sat.stopMining",
-          expectFinal: true,
-        }),
-      }),
-    );
-    expect(sendMessageSpy).toHaveBeenCalledWith(
-      "-1001234567890",
-      expect.stringContaining("mining command ok"),
-      expect.objectContaining({ message_thread_id: 99 }),
-    );
-  });
   it("threads native command replies inside topics", async () => {
     onSpy.mockReset();
     sendMessageSpy.mockReset();

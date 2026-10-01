@@ -67,7 +67,7 @@ The local v1 surface includes:
 - memory scope, skill scope, budget, escalation, and stop rules
 - explicit Agent task-model roles
 - deterministic or template-backed status/review paths where a concrete
-  adapter is wired; wallet, mining, and marketplace authority remains on the
+  adapter is wired; wallet, and marketplace authority remains on the
   owning surface
 - preflight, needs-access state, and resume-after-setup flow
 - run history, run transcript links, and run detail
@@ -160,16 +160,6 @@ and pass preflight before they run.
 ## Canonical Commands
 
 Channel examples:
-
-```text
-/task new check provider health hourly
-/task new every 15m Mining pulse: check mining status and send here
-/task list
-/task run <task-id>
-/task last <task-id>
-/task retry-run <run-id>
-/task clear-stale <run-id>
-```
 
 CLI examples:
 

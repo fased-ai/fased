@@ -1,7 +1,6 @@
 import type { Tab } from "./navigation.ts";
 import type { TaskSource, TaskRecord } from "./types.ts";
 import type { ChannelsView } from "./views/channels.types.ts";
-import type { MiningActivityFilter, MiningPlannerWindow } from "./views/mining.ts";
 
 export type TaskLedgerSourceRoute = {
   tab: Tab;
@@ -30,8 +29,6 @@ export type TaskLedgerSourceRoute = {
     | "failed"
     | "rejected"
     | "expired";
-  miningActivityFilter?: MiningActivityFilter;
-  miningActivityWindow?: MiningPlannerWindow;
   loadChannels?: boolean;
   loadCron?: boolean;
 };
@@ -69,20 +66,6 @@ function taskLedgerSessionKey(task: TaskRecord) {
   );
 }
 
-function miningFilterForTask(task: TaskRecord): MiningActivityFilter {
-  const action = taskMetadataString(task, "action").toLowerCase();
-  if (action.includes("wallet") || action.includes("capital") || action.includes("balance")) {
-    return "wallet";
-  }
-  if (
-    taskMetadataFirstString(task, ["cycleId", "currentCycleId", "epochId"]) ||
-    /(commit|reveal|claim|dispute|recovery|readiness|start|stop)/u.test(action)
-  ) {
-    return "cycle";
-  }
-  return "all";
-}
-
 export function resolveTaskLedgerSourceRoute(task: TaskRecord): TaskLedgerSourceRoute {
   const sessionKey = taskLedgerSessionKey(task);
   switch (task.source) {
@@ -98,35 +81,9 @@ export function resolveTaskLedgerSourceRoute(task: TaskRecord): TaskLedgerSource
         hash: taskLedgerAnchorId("wallet-approval", approvalId),
       };
     }
-    case "marketplace": {
-      const orderId = taskMetadataFirstString(task, ["orderId", "sellerOrderId"]);
-      const requestId = taskMetadataString(task, "requestId");
-      const offerId = taskMetadataString(task, "offerId");
-      const rawId = orderId || requestId || offerId || task.sourceId || task.taskId;
-      const prefix = orderId
-        ? "marketplace-order"
-        : requestId
-          ? "marketplace-request"
-          : "marketplace-offer";
-      return {
-        tab: "marketplace",
-        hash: taskLedgerAnchorId(prefix, rawId),
-      };
-    }
-    case "mining": {
-      const cycleId = taskMetadataFirstString(task, ["cycleId", "currentCycleId", "epochId"]);
-      const action = taskMetadataString(task, "action");
-      return {
-        tab: "mining",
-        miningActivityFilter: miningFilterForTask(task),
-        miningActivityWindow: "all",
-        hash: cycleId
-          ? taskLedgerAnchorId("mining-cycle", cycleId)
-          : action
-            ? taskLedgerAnchorId("mining-action", action)
-            : "mining-recent-activity",
-      };
-    }
+
+    case "mining":
+      return { tab: "wen" };
     case "channel": {
       const messageId = taskMetadataFirstString(task, [
         "messageId",
@@ -208,4 +165,9 @@ export function resolveTaskLedgerSourceRoute(task: TaskRecord): TaskLedgerSource
         hash: taskLedgerAnchorId("task-ledger", task.taskId),
       };
   }
+  return {
+    tab: "agents",
+    agentsPanel: "cron",
+    hash: taskLedgerAnchorId("task-ledger", task.taskId),
+  };
 }

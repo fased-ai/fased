@@ -219,19 +219,15 @@ func mustValidate(req request, cfg signerConfig) error {
 		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" || req.Operator != nil {
 			return errors.New("invalid signer request")
 		}
-	case "v2.ownerCeremony.prepare", "v2.ownerCeremony.execute":
-		if len(req.Request) == 0 || req.Chain != "" || req.WalletID != "" || req.Operator != nil {
-			return errors.New("invalid signer request")
-		}
-	case "v2.network.get", "v2.policy.get", "v2.policy.budget", "v2.wallet.get", "v2.wallet.readiness", "v2.wallet.reencrypt", "v2.wallet.rotation.status", "v2.jupiter.trigger.history", "v2.keeperFeePayer.get":
+	case "v2.network.get", "v2.policy.get", "v2.policy.budget", "v2.wallet.get", "v2.wallet.readiness", "v2.wallet.reencrypt", "v2.wallet.rotation.status", "v2.jupiter.trigger.history":
 		if len(req.Request) > 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.wenMarket.ownerProof.inspect", "v2.wenMarket.ownerApprove", "v2.wenBondClaim.draft.install", "v2.wenBondClaim.admission.install", "v2.wenBondPurchase.draft.install", "v2.wenBondPurchase.admission.install", "v2.wenMarket.draft.install", "v2.wenMarket.admission.install", "v2.wenMarket.budget.install", "v2.wenCampaign.draft.install", "v2.wenCampaign.admission.install", "v2.wenMining.claimReview.install", "v2.wenMining.preimage.install", "v2.wenMining.bootstrap.install", "v2.wenMining.review.install", "v2.wenBtc.route.install", "v2.network.put", "v2.network.bootstrap", "v2.network.setPrimary", "v2.network.repairMigratedPrimary", "v2.rpcProfile.bind", "v2.policy.put", "v2.policy.tighten", "v2.policy.activateBaseline", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile", "v2.satLookup.binding.get", "v2.satCommitment.allocate", "v2.satCommitment.binding.get", "v2.keeperFeePayer.ensure":
+	case "v2.wenMarket.ownerProof.inspect", "v2.wenMarket.ownerApprove", "v2.wenBondClaim.draft.install", "v2.wenBondClaim.admission.install", "v2.wenBondPurchase.draft.install", "v2.wenBondPurchase.admission.install", "v2.wenMarket.draft.install", "v2.wenMarket.admission.install", "v2.wenMarket.budget.install", "v2.wenCampaign.draft.install", "v2.wenCampaign.admission.install", "v2.wenMining.claimReview.install", "v2.wenMining.preimage.install", "v2.wenMining.bootstrap.install", "v2.wenMining.review.install", "v2.wenBtc.route.install", "v2.network.put", "v2.network.bootstrap", "v2.network.setPrimary", "v2.network.repairMigratedPrimary", "v2.rpcProfile.bind", "v2.policy.put", "v2.policy.tighten", "v2.wallet.create", "v2.wallet.import", "v2.wallet.importLegacy", "v2.wallet.recovery.export", "v2.wallet.recovery.import", "v2.wallet.exportRaw", "v2.wallet.rotation.create", "v2.wallet.rotation.commit", "v2.execute", "v2.review.get", "v2.review.prepare", "v2.review.execute", "v2.operation.get", "v2.operation.reconcile":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
-	case "v2.wenCampaign.review.prepare", "v2.wenCampaign.journey", "v2.wenBondClaim.review.prepare", "v2.wenBondClaim.journey", "v2.wenBondPurchase.review.prepare", "v2.wenBondPurchase.journey", "v2.wenMarket.review.prepare", "v2.wenMarket.journey", "v2.wenMining.claim.journey", "v2.wenMining.claim.review.prepare", "v2.wenMining.claim.propose", "v2.wenMining.claim.recover", "v2.wenMiningFunding.prepare", "v2.wenBTCClaim.prepare", "v2.wenNativeClaim.prepare", "v2.wenWithdrawal.prepare", "v2.wenMining.prepare", "v2.wenBtc.route.preview", "v2.wenBtc.inspect", "v2.wenBtc.prepare", "v2.vaultMining.binding.inspect", "v2.vaultMining.commitment.allocate":
+	case "v2.wenCampaign.review.prepare", "v2.wenCampaign.journey", "v2.wenBondClaim.review.prepare", "v2.wenBondClaim.journey", "v2.wenBondPurchase.review.prepare", "v2.wenBondPurchase.journey", "v2.wenMarket.review.prepare", "v2.wenMarket.journey", "v2.wenMining.claim.journey", "v2.wenMining.claim.review.prepare", "v2.wenMining.claim.propose", "v2.wenMining.claim.recover", "v2.wenMiningFunding.prepare", "v2.wenBTCClaim.prepare", "v2.wenNativeClaim.prepare", "v2.wenWithdrawal.prepare", "v2.wenMining.prepare", "v2.wenBtc.route.preview", "v2.wenBtc.inspect", "v2.wenBtc.prepare":
 		if len(req.Request) == 0 || req.Chain != "" || strings.TrimSpace(req.WalletID) == "" {
 			return errors.New("invalid signer request")
 		}
@@ -386,7 +382,6 @@ func parseArgs() signerConfig {
 		"v2.policy.budget":                     getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.put":                        getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.policy.tighten":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
-		"v2.policy.activateBaseline":           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 30),
 		"v2.wallet.get":                        getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 120),
 		"v2.wallet.readiness":                  getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 120),
 		"v2.wallet.create":                     getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 30),
@@ -402,9 +397,6 @@ func parseArgs() signerConfig {
 		"v2.execute":                           getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
 		"v2.operation.get":                     getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
 		"v2.operation.reconcile":               getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
-		"v2.satLookup.binding.get":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
-		"v2.satCommitment.allocate":            getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
-		"v2.satCommitment.binding.get":         getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
 		"v2.wenMining.preimage.install":        getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.wenBondClaim.draft.install":        getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
 		"v2.wenBondPurchase.draft.install":     getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_POLICY", 120),
@@ -441,10 +433,6 @@ func parseArgs() signerConfig {
 		"v2.wenMining.prepare":                 getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
 		"v2.wenBtc.prepare":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
 		"v2.wenBtc.inspect":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
-		"v2.vaultMining.binding.inspect":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
-		"v2.vaultMining.commitment.allocate":   getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 300),
-		"v2.keeperFeePayer.get":                getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OPERATION", 120),
-		"v2.keeperFeePayer.ensure":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WALLET", 10),
 		"v2.review.get":                        getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW", 300),
 		"v2.webauthn.registration.begin":       getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
 		"v2.webauthn.registration.finish":      getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_WEBAUTHN_ADMIN", 20),
@@ -457,8 +445,6 @@ func parseArgs() signerConfig {
 		"v2.lifecycle.upgrade.verify":          10,
 		"v2.lifecycle.upgrade.commit":          10,
 		"v2.lifecycle.upgrade.abort":           10,
-		"v2.ownerCeremony.prepare":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OWNER_CEREMONY", 12),
-		"v2.ownerCeremony.execute":             getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_OWNER_CEREMONY", 6),
 		"v2.review.prepare":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_REVIEW", 60),
 		"v2.review.execute":                    getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_EXECUTE", 60),
 		"getAddresses":                         getenvInt("FASED_WALLET_LOCAL_SIGNER_RATE_GETADDRESSES", 120),

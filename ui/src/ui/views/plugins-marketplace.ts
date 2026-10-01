@@ -1,5 +1,4 @@
 import { html, nothing } from "lit";
-import { formatAgentDisplayName } from "../agent-display.ts";
 import type { PluginsMarketplaceRemediationState } from "../controllers/plugins-marketplace.ts";
 import { icons } from "../icons.ts";
 import type { Tab } from "../navigation.ts";
@@ -1570,12 +1569,11 @@ function renderPluginExpanded(
   `;
 }
 
-const builtInIds = new Set(["memory-core", "sat-mining"]);
+const builtInIds = new Set(["memory-core", "wen"]);
 export function optionalModuleEntries(entries: PluginMarketplaceEntry[]) {
   return entries.filter(
     (entry) =>
-      !builtInIds.has(entry.id) &&
-      (entry.id !== "fased-federation" || entry.enabled || entry.loaded),
+      !builtInIds.has(entry.id) && (entry.enabled || entry.loaded || entry.id === "llm-task"),
   );
 }
 export function renderPluginsMarketplace(props: PluginsMarketplaceProps) {
@@ -2058,7 +2056,7 @@ export function renderPluginsMarketplace(props: PluginsMarketplaceProps) {
               ? html`<section class="card" aria-label="Built-in capabilities">
             <h3>Built-in capabilities</h3>
             <p>WEN desk and agent memory are included. Optional modules below run only when enabled.</p>
-            ${builtIns.map((entry) => html`<div>${entry.id === "sat-mining" ? "WEN Engine" : "Agent memory"} · ${entry.loaded ? "Ready" : "Unavailable"}</div>`)}
+            ${builtIns.map((entry) => html`<div>${entry.id === "wen" ? "WEN Engine" : "Agent memory"} · ${entry.loaded ? "Ready" : "Unavailable"}</div>`)}
           </section>`
               : nothing
           }
@@ -2068,13 +2066,9 @@ export function renderPluginsMarketplace(props: PluginsMarketplaceProps) {
                   <div class="chip-row">
                     <span class="chip">${plugins.length} optional modules</span>
                     ${activeCount > 0 ? html`<span class="chip chip-ok">${activeCount} active</span>` : nothing}
-                    <span class="chip">${props.report.diagnostics.length} diagnostics</span>
-                    <span class="chip">agent ${formatAgentDisplayName({ id: props.report.agentId })}</span>
-                    ${
-                      props.report.workspaceDir
-                        ? html`<span class="chip">${props.report.workspaceDir}</span>`
-                        : nothing
-                    }
+                    ${props.report.diagnostics.length ? html`<span class="chip">${props.report.diagnostics.length} needs attention</span>` : nothing}
+
+
                   </div>
                 `
               : nothing

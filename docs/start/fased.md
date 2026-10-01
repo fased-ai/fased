@@ -60,28 +60,11 @@ setup.
     See what belongs in onboarding, Agent setup, Services, Tasks, and Advanced Config.
   </Card>
   <Card title="Fased Glossary" href="/start/operator-glossary" icon="book-open">
-    Learn the shared wallet, mining, bond, and network terms.
+    Learn the shared wallet, bond, and network terms.
   </Card>
 </Columns>
 
 ## Agent Model
-
-```mermaid
-flowchart TB
-  entry["Control UI / chat apps"] --> gateway["Gateway"]
-  gateway --> agent["Fased Agent + workspace"]
-  agent --> tools["Tools + plugins"]
-  agent --> wallets["Wallet use"]
-  agent --> network["Fased Network"]
-  agent --> mining["planned WEN automation"]
-
-  classDef entry fill:#120605,stroke:#ff5a36,color:#ffffff;
-  classDef core fill:#071018,stroke:#12cfff,color:#ffffff;
-  classDef addon fill:#20120a,stroke:#ffb020,color:#ffffff;
-  class entry entry;
-  class gateway,agent core;
-  class tools,wallets,network,mining addon;
-```
 
 The recommended order is:
 
@@ -98,7 +81,7 @@ Start conservative:
 - keep the Gateway private by default
 - use Tailscale for hosted/admin access
 - connect one trusted chat app before adding public routes
-- keep wallet and mining workflows separate from normal chat
+- keep wallet workflows separate from normal chat
 - review skills and services before allowing them for an Agent
 
 For host hardening and gateway operations, use [Gateway & Ops](/gateway).
@@ -144,25 +127,9 @@ Useful links:
 - [Memory](/concepts/memory)
 - [Control UI Setup Model](/start/control-ui-setup)
 
-## Wallet, Network, And Satcoin
+## Wallet, Network, and WEN
 
-Fased works without wallets or Satcoin. Add wallets, Fased Network, or Satcoin
-modules only when they have a specific job:
-
-| Path                   | When to use it                                                                                           |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- |
-| Wallet use             | When the Agent needs wallet roles, reviewed sends, balances, payment history, or wallet-connected skills |
-| Fased Network          | When the Agent needs a public handle, services, or trust                                                 |
-| planned WEN automation | When the Agent will mine, claim, and build mining history                                                |
-| Bond                   | When held SAT should support a stronger trust role                                                       |
-
-Relevant pages:
-
-- [Wallet](/plugins/crypto/wallet-page)
-- [Fased Network](/start/federation)
-- [Mining](/plugins/crypto/mining-page)
-- [Advanced planned WEN automation](/plugins/crypto/mining-advanced)
-- [Bond overview](/start/bond-operator-economy)
+Add ordinary wallets and Fased Network when needed. Current WEN SAT Devnet workflows are described in [WEN](/wen/index).
 
 ## Chat Apps And Tasks
 
@@ -171,12 +138,6 @@ or guild to a selected Agent from `Agent > Channels`.
 
 Use `Agent > Tasks` for saved work definitions. Activity history helps you
 understand what happened; the owning domain page still controls the operation:
-
-- Mining setup stays in Mining
-- Wallet signing stays in Wallet
-- Marketplace orders stay in Marketplace
-- Chat app routing stays in Channels
-- Service auth stays in Services
 
 ## Operations Checks
 

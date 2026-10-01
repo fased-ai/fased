@@ -12,7 +12,6 @@ import { pathToFileURL } from "node:url";
 const MAX_POLICY_BYTES = 64 * 1024;
 const MAX_ADMIN_OUTPUT_BYTES = 128 * 1024;
 const ADMIN_TIMEOUT_MS = 20_000;
-const FEDERATION_POLICY_DOMAIN = "domain:fased:federation-bond-challenge-v1";
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"; // pragma: allowlist secret
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"; // pragma: allowlist secret
@@ -28,12 +27,11 @@ const BASE58_INDEX = new Map(
 const POLICY_KEYS = ["walletId", "role", "operations", "programs", "assets"];
 const ASSET_KEYS = ["asset", "destinations", "maxPerTx", "maxDaily"];
 const STORED_POLICY_KEYS = [...POLICY_KEYS.slice(0, 2), "version", ...POLICY_KEYS.slice(2), "hash"];
-const POLICY_ROLES = new Set(["agent", "mining", "vault", "profile"]);
+const POLICY_ROLES = new Set(["agent"]);
 const POLICY_OPERATIONS = new Set([
   "wen.market.buy.v1",
   "solana.nativeTransfer",
   "solana.splTransferChecked",
-  "federation.bondChallenge",
   "solana.jupiter.swap",
   "solana.jupiter.trigger.auth",
   "solana.jupiter.trigger.create",
@@ -41,84 +39,6 @@ const POLICY_OPERATIONS = new Set([
   "solana.jupiter.trigger.cancel",
   "solana.jupiter.trigger.withdraw",
 ]);
-const SAT_MINING_ACTIONS = new Set([
-  "abortEmptyCycle",
-  "claimCycleRewards",
-  "claimCycleRewardsBatch",
-  "claimProtocolDistributorSat",
-  "claimProtocolTreasury",
-  "cleanupBatch",
-  "closeCommitPhase",
-  "closeResolvedCycleArtifacts",
-  "closeResolvedCycleRegistryPage",
-  "closeResolvedMinerCycleState",
-  "commitCycle",
-  "compactPendingCycleRange",
-  "depositMinerCapital",
-  "distributeCyclePage",
-  "finalizeCycleSettlement",
-  "initMinerCapital",
-  "initializeCycle",
-  "openCycle",
-  "openDispute",
-  "refillRegistryReserveFromTreasury",
-  "releaseUnrevealedCommit",
-  "republishEpochRoots",
-  "resolveDispute",
-  "retargetUnlock",
-  "revealCycle",
-  "scoreCyclePage",
-  "sealCycleEntropy",
-  "setActiveCommit",
-  "settleCyclePage",
-  "topUpRegistryReserve",
-  "validatorAttestation",
-  "withdrawMinerCapital",
-]);
-const SAT_LOOKUP_TABLE_ACTIONS = new Set(["create", "extend", "deactivate", "close"]);
-const VAULT_BOND_ACTIONS = new Set([
-  "cancelBondUnlock",
-  "cancelBondUnlockV3",
-  "claimBondEpochRewardsV3",
-  "claimBondStakingRewards",
-  "claimUnallocatedStakingRewards",
-  "finalizeBondUnlock",
-  "finalizeBondUnlockV3",
-  "increaseBondPosition",
-  "increaseBondPositionV3",
-  "openBondPosition",
-  "registerBondEpochPositionV3",
-  "requestBondUnlock",
-  "requestBondUnlockV3",
-  "syncBondStakingPosition",
-  "syncBondStakingRewards",
-  "updateBondTierPolicy",
-]);
-const PROFILE_AGENT_CAPITAL_ACTIONS = new Set([
-  "activate_capital_offer",
-  "cancel_capital_offer",
-  "initialize_capital_offer",
-  "record_vault_result",
-]);
-const VAULT_AGENT_CAPITAL_ACTIONS = new Set([
-  "claim_vault_sat",
-  "deposit_capital_offer",
-  "finalize_vault_exit",
-  "refund_cancelled_position",
-  "request_vault_exit",
-]);
-const ASSOCIATED_TOKEN_PROGRAM_ACTIONS = new Set([
-  "claimBondStakingRewards",
-  "claimCycleRewards",
-  "claimCycleRewardsBatch",
-  "claimProtocolDistributorSat",
-  "claimProtocolTreasury",
-  "claimUnallocatedStakingRewards",
-  "finalizeBondUnlock",
-  "increaseBondPosition",
-  "openBondPosition",
-]);
-
 function compareCanonicalString(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -440,16 +360,10 @@ function normalizeAssetName(value, field) {
   if (typeof value !== "string" || value.trim() !== value) {
     throw new Error(`${field} must be a canonical policy asset`);
   }
-  if (
-    value === "solana:native" ||
-    value === "sat:action" ||
-    value === "sat:capital:lamports" ||
-    value === "agent-capital:action" ||
-    value === "federation:bond-challenge"
-  ) {
+  if (value === "solana:native") {
     return value;
   }
-  for (const prefix of ["solana:spl:", "sat:mint:"]) {
+  for (const prefix of ["solana:spl:"]) {
     if (value.startsWith(prefix)) {
       return `${prefix}${requireSolanaPublicKey(value.slice(prefix.length), `${field} mint`)}`;
     }
@@ -464,63 +378,17 @@ function normalizePolicyOperation(value, role, field) {
   if (POLICY_OPERATIONS.has(value)) {
     return value;
   }
-  const match = /^(sat|satLookup|vaultBond|agentCapital)\.([A-Za-z][A-Za-z0-9_]*)@(.+)$/u.exec(
-    value,
-  );
-  if (!match) {
-    if (value === "solana.satAction" || value === "solana.vaultBondAction") {
-      throw new Error(`${field} must name an exact action bound to its SAT program`);
-    }
-    throw new Error(`${field} is not a supported typed signer operation`);
-  }
-  const [, family, action, rawProgram] = match;
-  const program = requireSolanaPublicKey(rawProgram, `${field} program`);
-  if (family === "sat") {
-    if (role !== "mining" || !SAT_MINING_ACTIONS.has(action)) {
-      throw new Error(`${field} is not an allowed program-bound Mining action`);
-    }
-  } else if (family === "satLookup") {
-    if (
-      role !== "mining" ||
-      !SAT_LOOKUP_TABLE_ACTIONS.has(action) ||
-      program !== ADDRESS_LOOKUP_TABLE_PROGRAM
-    ) {
-      throw new Error(`${field} is not an allowed typed Mining lookup-table action`);
-    }
-  } else if (family === "vaultBond") {
-    if (role !== "vault" || !VAULT_BOND_ACTIONS.has(action)) {
-      throw new Error(`${field} is not an allowed program-bound Vault bond action`);
-    }
-  } else if (
-    !(
-      (role === "profile" && PROFILE_AGENT_CAPITAL_ACTIONS.has(action)) ||
-      (role === "vault" && VAULT_AGENT_CAPITAL_ACTIONS.has(action))
-    )
-  ) {
-    throw new Error(`${field} is not an allowed program-bound Agent Capital action for ${role}`);
-  }
-  return `${family}.${action}@${program}`;
+  throw new Error(`${field} is not a supported typed signer operation`);
 }
 
 function validatePolicyRelationships(policy) {
   const operations = new Set(policy.operations);
   const programs = new Set(policy.programs);
   const assets = new Set(policy.assets.map((asset) => asset.asset));
-  const hasFederation = operations.has("federation.bondChallenge");
-
-  if (operations.has("federation.bondChallenge") && policy.role !== "vault") {
-    throw new Error("federation operations require the immutable vault role");
-  }
   for (const operation of policy.operations) {
     const separator = operation.lastIndexOf("@");
     if (separator >= 0 && !programs.has(operation.slice(separator + 1))) {
       throw new Error(`program-bound operation ${operation} requires the same program in programs`);
-    }
-    const action = separator >= 0 ? operation.slice(operation.indexOf(".") + 1, separator) : "";
-    if (ASSOCIATED_TOKEN_PROGRAM_ACTIONS.has(action) && !programs.has(ASSOCIATED_TOKEN_PROGRAM)) {
-      throw new Error(
-        `program-bound operation ${operation} requires the Associated Token program used by its exact native codec`,
-      );
     }
   }
   if (operations.has("solana.nativeTransfer")) {
@@ -555,9 +423,7 @@ function validatePolicyRelationships(policy) {
       );
     }
   }
-  const hasOnChainOperation = policy.operations.some(
-    (operation) => operation !== "federation.bondChallenge",
-  );
+  const hasOnChainOperation = policy.operations.length > 0;
   if (hasOnChainOperation) {
     const native = policy.assets.find((asset) => asset.asset === "solana:native");
     if (
@@ -570,15 +436,6 @@ function validatePolicyRelationships(policy) {
       );
     }
   }
-  if (hasFederation) {
-    if (!programs.has(FEDERATION_POLICY_DOMAIN) || !assets.has("federation:bond-challenge")) {
-      throw new Error(
-        `federation.bondChallenge requires ${FEDERATION_POLICY_DOMAIN} and federation:bond-challenge`,
-      );
-    }
-  } else if (programs.has(FEDERATION_POLICY_DOMAIN) || assets.has("federation:bond-challenge")) {
-    throw new Error("the federation policy domain and asset require federation.bondChallenge");
-  }
 }
 
 export function normalizeOwnerPolicy(value) {
@@ -586,7 +443,7 @@ export function normalizeOwnerPolicy(value) {
   requireExactKeys(object, POLICY_KEYS, "policy");
   const walletId = requireCanonicalWalletID(object.walletId);
   if (typeof object.role !== "string" || !POLICY_ROLES.has(object.role)) {
-    throw new Error("policy role must be agent, mining, vault, or profile");
+    throw new Error("policy must use the ordinary wallet discriminator agent");
   }
   const operations = requireUniqueStrings(
     object.operations,
@@ -597,8 +454,7 @@ export function normalizeOwnerPolicy(value) {
   const programs = requireUniqueStrings(
     object.programs,
     "programs",
-    (program, field) =>
-      program === FEDERATION_POLICY_DOMAIN ? program : requireSolanaPublicKey(program, field),
+    (program, field) => requireSolanaPublicKey(program, field),
     { max: 64 },
   );
   if (!Array.isArray(object.assets) || object.assets.length < 1 || object.assets.length > 64) {
@@ -1470,18 +1326,11 @@ if (isMain) {
 export const __testing = Object.freeze({
   ADDRESS_LOOKUP_TABLE_PROGRAM,
   ASSOCIATED_TOKEN_PROGRAM,
-  ASSOCIATED_TOKEN_PROGRAM_ACTIONS,
-  FEDERATION_POLICY_DOMAIN,
   HOSTING_PATHS,
   SYSTEM_PROGRAM,
   NATIVE_FEE_RESERVATION_LAMPORTS,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
-  SAT_MINING_ACTIONS,
-  SAT_LOOKUP_TABLE_ACTIONS,
-  VAULT_BOND_ACTIONS,
-  PROFILE_AGENT_CAPITAL_ACTIONS,
-  VAULT_AGENT_CAPITAL_ACTIONS,
   assertSafeExecutable,
   encodeBase58,
   normalizeLockedStoredPolicy,

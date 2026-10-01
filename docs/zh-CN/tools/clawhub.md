@@ -36,7 +36,7 @@ x-i18n:
 1. 打开 **Agents**，选择要使用 skill 的 Agent。
 2. 打开 **Agent > Skills**。
 3. 在 **Agent > Skills** 中搜索。
-4. 点击结果，先审查来源、archive scan、权限、依赖安装计划和 wallet/mining 风险。
+4. 点击结果，先审查来源、archive scan、权限、依赖安装计划和 wallet 风险。
 5. 选择安装到共享 library 或该 Agent 工作区。
 6. 修复 readiness blocker（依赖、API key/env、config path）。
 7. 允许该 Agent 使用该 skill。
@@ -62,8 +62,6 @@ pnpm add -g clawhub
 ## 在 Fased 中的定位
 
 推荐路径是 **Agent > Skills**，因为它会显示安装目标、审查结果、依赖健康和每 Agent access。CLI 直接安装时，Fased 从 `<workspace>/skills`、`~/.fased/skills`、内置和额外目录加载 Skills，并会在**下一个**会话中生效。
-
-安装只表示 `SKILL.md` 已写入 library 或工作区。它不会自动安装依赖、授权 Agent、打开工具、授予钱包或启用 Mining。请在 Agent > Skills、Agent > Tools 和 Wallets > Skill Grants 中分别完成这些步骤。
 
 有关 Skills 加载、共享和权限控制的更多详情，请参阅
 [Skills](/tools/skills)。

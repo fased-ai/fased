@@ -1,5 +1,5 @@
 ---
-summary: "Fast CLI commands for opening the dashboard, starting the gateway, checking health, repairing config, and operating wallets/mining."
+summary: "Fast CLI commands for opening the dashboard, starting the gateway, checking health, repairing config, and operating wallets."
 read_when:
   - You want the common Fased commands without reading every CLI page
   - You are running from a source checkout and need the node fased.mjs form
@@ -179,54 +179,9 @@ Resolve IDs for allowlists or routing:
 fased channels resolve
 ```
 
-## Wallets and SAT mining
-
-Wallet status:
-
-```bash
-fased wallet status
-```
-
-Mining readiness:
-
-```bash
-fased mining readiness
-```
-
-Mining status:
-
-```bash
-fased mining status
-```
-
-List mining-eligible wallets:
-
-```bash
-fased mining wallets
-```
-
-Set a mining commit:
-
-```bash
-fased mining set-commit --sol 0.75
-```
-
-Start or stop mining:
-
-```bash
-fased mining start
-fased mining stop
-```
-
 ## Script-friendly output
 
 Use JSON when another tool reads the result:
-
-```bash
-fased gateway status --json
-fased channels status --json
-fased mining status --json
-```
 
 Use plain output for terminals or copied logs:
 
@@ -235,10 +190,3 @@ fased logs --plain --limit 100
 ```
 
 ## Read next
-
-- [Dashboard](/cli/dashboard)
-- [Gateway](/cli/gateway)
-- [Doctor](/cli/doctor)
-- [Channels](/cli/channels)
-- [Wallet](/cli/wallet)
-- [Mining](/cli/mining)

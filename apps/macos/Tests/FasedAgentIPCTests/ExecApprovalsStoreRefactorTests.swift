@@ -5,26 +5,28 @@ import Testing
 @Suite(.serialized)
 struct ExecApprovalsStoreRefactorTests {
     @Test
-    func ensureFileSkipsRewriteWhenUnchanged() async throws {
+    func `ensure file skips rewrite when unchanged`() async throws {
         let stateDir = FileManager().temporaryDirectory
             .appendingPathComponent("fased-state-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager().removeItem(at: stateDir) }
 
-        try await TestIsolation.withEnvValues(["FASED_STATE_DIR": stateDir.path]) {
-            _ = ExecApprovalsStore.ensureFile()
-            let url = ExecApprovalsStore.fileURL()
-            let firstWriteDate = try Self.modificationDate(at: url)
+        // App-state tests may use the process-global store concurrently. Keep this
+        // persistence assertion on its own exact file instead of changing their path.
+        let url = stateDir.appendingPathComponent("exec-approvals.json")
+        _ = ExecApprovalsStore.ensureFile(at: url)
+        let firstWriteDate = try Self.modificationDate(at: url)
+        let firstBytes = try Data(contentsOf: url)
 
-            try await Task.sleep(nanoseconds: 1_100_000_000)
-            _ = ExecApprovalsStore.ensureFile()
-            let secondWriteDate = try Self.modificationDate(at: url)
+        try await Task.sleep(nanoseconds: 1_100_000_000)
+        _ = ExecApprovalsStore.ensureFile(at: url)
+        let secondWriteDate = try Self.modificationDate(at: url)
 
-            #expect(firstWriteDate == secondWriteDate)
-        }
+        #expect(firstWriteDate == secondWriteDate)
+        #expect(try Data(contentsOf: url) == firstBytes)
     }
 
     @Test
-    func updateAllowlistReportsRejectedBasenamePattern() async throws {
+    func `update allowlist reports rejected basename pattern`() async {
         let stateDir = FileManager().temporaryDirectory
             .appendingPathComponent("fased-state-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager().removeItem(at: stateDir) }
@@ -46,7 +48,7 @@ struct ExecApprovalsStoreRefactorTests {
     }
 
     @Test
-    func updateAllowlistMigratesLegacyPatternFromResolvedPath() async throws {
+    func `update allowlist migrates legacy pattern from resolved path`() async {
         let stateDir = FileManager().temporaryDirectory
             .appendingPathComponent("fased-state-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager().removeItem(at: stateDir) }
@@ -55,7 +57,11 @@ struct ExecApprovalsStoreRefactorTests {
             let rejected = ExecApprovalsStore.updateAllowlist(
                 agentId: "main",
                 allowlist: [
-                    ExecAllowlistEntry(pattern: "echo", lastUsedAt: nil, lastUsedCommand: nil, lastResolvedPath: " /usr/bin/echo "),
+                    ExecAllowlistEntry(
+                        pattern: "echo",
+                        lastUsedAt: nil,
+                        lastUsedCommand: nil,
+                        lastResolvedPath: " /usr/bin/echo "),
                 ])
             #expect(rejected.isEmpty)
 

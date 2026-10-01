@@ -1,8 +1,6 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { findFinancialAuthorityUse } from "../agents/financial-agent-binding.js";
-import { resolveStateDir } from "../config/paths.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import { throwLegacyEmbeddedKeystoreMigrationRequired } from "./legacy-embedded-keystore.js";
 import { ensureWalletStateDir, walletApplicationStateFileMode } from "./wallet-runtime-config.js";
@@ -22,42 +20,23 @@ const WALLET_PROVIDER_REGISTRY_IDS: WalletProviderId[] = [
   "privy",
 ];
 
-export type WalletUserRole = "agent" | "vault" | "mining" | "profile" | "strategy";
+export type WalletUserRole = "agent";
 export type WalletRoleAccountChain = "solana" | "evm";
 
 export function nextRoleWalletIdentity(
-  role: WalletUserRole,
+  _role: WalletUserRole,
   wallets: ReadonlyArray<Pick<WalletNamedWallet, "id">>,
-  chain: WalletRoleAccountChain = "solana",
+  _chain: WalletRoleAccountChain = "solana",
 ): { walletName: string; walletId: string } {
-  const base =
-    role === "agent"
-      ? { walletName: "Agent", walletId: "agent" }
-      : role === "mining"
-        ? { walletName: "Mining", walletId: "mining" }
-        : role === "profile"
-          ? { walletName: "Profile", walletId: "profile" }
-          : role === "strategy"
-            ? {
-                walletName: chain === "evm" ? "Strategy EVM" : "Strategy Solana",
-                walletId: chain === "evm" ? "strategy-evm" : "strategy-solana",
-              }
-            : { walletName: "Vault", walletId: "vault" };
-  if (role === "mining" || role === "profile" || role === "strategy") {
-    return base;
-  }
-  const existingIds = new Set(wallets.map((wallet) => wallet.id));
-  if (!existingIds.has(base.walletId)) {
-    return base;
-  }
-  for (let index = 2; index < 1000; index += 1) {
-    const walletId = `${base.walletId}-${index}`;
-    if (!existingIds.has(walletId)) {
-      return { walletName: `${base.walletName} ${index}`, walletId };
+  const ids = new Set(wallets.map((w) => w.id));
+  for (let i = 1; i < 1000; i++) {
+    const id = i === 1 ? "wallet" : `wallet-${i}`;
+    if (!ids.has(id)) {
+      return { walletName: i === 1 ? "Wallet" : `Wallet ${i}`, walletId: id };
     }
   }
   const suffix = Date.now();
-  return { walletName: `${base.walletName} ${suffix}`, walletId: `${base.walletId}-${suffix}` };
+  return { walletName: `Wallet ${suffix}`, walletId: `wallet-${suffix}` };
 }
 
 export type WalletNamedWallet = {
@@ -74,21 +53,7 @@ export type WalletNamedWallet = {
 };
 
 export function normalizeWalletUserRole(value: unknown): WalletUserRole | undefined {
-  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
-  switch (raw) {
-    case "agent":
-      return "agent";
-    case "vault":
-      return "vault";
-    case "mining":
-      return "mining";
-    case "profile":
-      return "profile";
-    case "strategy":
-      return "strategy";
-    default:
-      return undefined;
-  }
+  return value === "agent" ? "agent" : undefined;
 }
 
 export function normalizeWalletRoleAccountChain(
@@ -123,42 +88,7 @@ export function resolveWalletRoleAccountChain(
   if (wallet.addresses?.evm && !wallet.addresses.solana) {
     return "evm";
   }
-  return wallet.addresses?.solana || resolveWalletUserRole(wallet) !== "strategy"
-    ? "solana"
-    : undefined;
-}
-
-function assertWalletRoleCardinality(
-  wallets: ReadonlyArray<WalletNamedWallet>,
-  candidate: WalletNamedWallet,
-): void {
-  const role = resolveWalletUserRole(candidate);
-  const peers = wallets.filter((wallet) => wallet.id !== candidate.id);
-  if (
-    (role === "mining" || role === "profile") &&
-    peers.some((wallet) => resolveWalletUserRole(wallet) === role)
-  ) {
-    throw new Error(
-      role === "profile"
-        ? "Only one Profile wallet may be registered"
-        : "Only one Mining wallet may be registered",
-    );
-  }
-  if (role === "strategy") {
-    const chain = resolveWalletRoleAccountChain(candidate);
-    if (!chain) {
-      throw new Error("Strategy wallet requires an explicit Solana or EVM role chain");
-    }
-    if (
-      peers.some(
-        (wallet) =>
-          resolveWalletUserRole(wallet) === "strategy" &&
-          resolveWalletRoleAccountChain(wallet) === chain,
-      )
-    ) {
-      throw new Error(`Only one Strategy wallet per chain may be registered (${chain})`);
-    }
-  }
+  return wallet.addresses?.solana ? "solana" : undefined;
 }
 
 export type WalletProviderConfigEntry = {
@@ -177,111 +107,6 @@ export type WalletProviderRegistry = {
   defaultWalletId?: string;
   updatedAt: string;
 };
-
-export type WalletDeletionMiningSafetyDetails = {
-  runtimeStorePath: string;
-  enabledWanted: boolean;
-  workerEnabled: boolean;
-  workerRunning: boolean;
-  capitalFundedLamports: string;
-  capitalLockedLamports: string;
-  capitalFreeLamports: string;
-  pendingCycleCount: number;
-  claimBacklogCount: number;
-  currentRunStartedAt: string | null;
-};
-
-export type WalletDeletionMiningSafetyResult =
-  | { ok: true; details: WalletDeletionMiningSafetyDetails | null }
-  | {
-      ok: false;
-      code: "wallet_delete_blocked_mining";
-      message: string;
-      details: WalletDeletionMiningSafetyDetails;
-    };
-
-export class WalletDeletionBlockedError extends Error {
-  readonly code = "wallet_delete_blocked_mining";
-  readonly details: WalletDeletionMiningSafetyDetails;
-
-  constructor(message: string, details: WalletDeletionMiningSafetyDetails) {
-    super(message);
-    this.name = "WalletDeletionBlockedError";
-    this.details = details;
-  }
-}
-
-export class WalletFinancialAuthorityBoundError extends Error {
-  readonly code = "wallet_financial_authority_rotation_required";
-  readonly fasedAgentRecord: string;
-  readonly role: "controller" | "recovery";
-
-  constructor(params: {
-    walletId: string;
-    fasedAgentRecord: string;
-    role: "controller" | "recovery";
-  }) {
-    super(
-      `${params.walletId} is the current ${params.role} for financial Agent ${params.fasedAgentRecord}; finalize and read back the authority rotation before archiving it`,
-    );
-    this.name = "WalletFinancialAuthorityBoundError";
-    this.fasedAgentRecord = params.fasedAgentRecord;
-    this.role = params.role;
-  }
-}
-
-function assertWalletIsNotFinancialAuthority(params: {
-  wallet: WalletNamedWallet | undefined;
-  env: NodeJS.ProcessEnv;
-}): void {
-  const address = params.wallet?.addresses?.solana;
-  if (!address) {
-    return;
-  }
-  const use = findFinancialAuthorityUse(address, params.env);
-  if (use) {
-    throw new WalletFinancialAuthorityBoundError({
-      walletId: params.wallet!.id,
-      fasedAgentRecord: use.fasedAgentRecord,
-      role: use.role,
-    });
-  }
-}
-
-function assertBoundWalletMutationSafe(params: {
-  existing: WalletNamedWallet | undefined;
-  candidate: WalletNamedWallet;
-  env: NodeJS.ProcessEnv;
-}): void {
-  const existingAddress = params.existing?.addresses?.solana;
-  if (!existingAddress) {
-    return;
-  }
-  const use = findFinancialAuthorityUse(existingAddress, params.env);
-  if (
-    use &&
-    (params.candidate.addresses?.solana !== existingAddress ||
-      resolveWalletUserRole(params.candidate) !== resolveWalletUserRole(params.existing))
-  ) {
-    throw new WalletFinancialAuthorityBoundError({
-      walletId: params.existing!.id,
-      fasedAgentRecord: use.fasedAgentRecord,
-      role: use.role,
-    });
-  }
-}
-
-export function checkNamedWalletFinancialAuthority(params: {
-  walletId: string;
-  env?: NodeJS.ProcessEnv;
-}): { fasedAgentRecord: string; role: "controller" | "recovery" } | null {
-  const env = params.env ?? process.env;
-  const wallet = readWalletProviderRegistry(env).wallets.find(
-    (entry) => entry.id === params.walletId.trim(),
-  );
-  const address = wallet?.addresses?.solana;
-  return address ? findFinancialAuthorityUse(address, env) : null;
-}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -308,209 +133,6 @@ function normalizeProviderId(value: unknown): WalletProviderId | null {
       return raw;
     default:
       return null;
-  }
-}
-
-function normalizeSatWalletStateKey(walletId?: string): string {
-  const trimmed = String(walletId ?? "").trim();
-  if (!trimmed) {
-    return "unattached";
-  }
-  return trimmed.replace(/[^a-zA-Z0-9._-]+/g, "_");
-}
-
-function readRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function readBoolean(value: unknown): boolean {
-  return value === true;
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function readNonNegativeBigInt(value: unknown): bigint {
-  if (typeof value === "bigint") {
-    return value > 0n ? value : 0n;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 0 ? BigInt(Math.trunc(value)) : 0n;
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (/^\d+$/.test(trimmed)) {
-      return BigInt(trimmed);
-    }
-  }
-  return 0n;
-}
-
-function readNonNegativeNumber(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 0 ? Math.trunc(value) : 0;
-  }
-  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
-    return Number(value);
-  }
-  return 0;
-}
-
-function anySatWorkerEnabledOrRunning(value: unknown): {
-  enabled: boolean;
-  running: boolean;
-} {
-  const workers = readRecord(value);
-  if (!workers) {
-    return { enabled: false, running: false };
-  }
-  let enabled = false;
-  let running = false;
-  for (const worker of Object.values(workers)) {
-    const record = readRecord(worker);
-    if (!record) {
-      continue;
-    }
-    enabled ||= readBoolean(record.enabled);
-    running ||= readBoolean(record.running);
-  }
-  return { enabled, running };
-}
-
-function formatLamportsAsSolExact(lamportsValue: string): string {
-  const lamports = readNonNegativeBigInt(lamportsValue);
-  const whole = lamports / 1_000_000_000n;
-  const fraction = (lamports % 1_000_000_000n).toString().padStart(9, "0").replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : `${whole}`;
-}
-
-function buildMiningDeleteBlockedMessage(details: WalletDeletionMiningSafetyDetails): string {
-  const reasons: string[] = [];
-  if (details.enabledWanted) {
-    reasons.push("mining is enabled");
-  }
-  if (details.workerRunning) {
-    reasons.push("a mining worker is running");
-  }
-  if (details.capitalFundedLamports !== "0") {
-    reasons.push(`miner capital remains funded (${details.capitalFundedLamports} lamports)`);
-  }
-  if (details.capitalLockedLamports !== "0") {
-    reasons.push(`locked capital remains (${details.capitalLockedLamports} lamports)`);
-  }
-  if (details.capitalFreeLamports !== "0") {
-    reasons.push(
-      `withdrawable miner capital remains (${details.capitalFreeLamports} lamports / ${formatLamportsAsSolExact(details.capitalFreeLamports)} SOL)`,
-    );
-  }
-  if (details.pendingCycleCount > 0) {
-    reasons.push(`${details.pendingCycleCount} pending mining cycle(s) remain`);
-  }
-  if (details.claimBacklogCount > 0) {
-    reasons.push(`${details.claimBacklogCount} claim backlog item(s) remain`);
-  }
-  const onlyFreeCapitalRemains =
-    !details.enabledWanted &&
-    !details.workerRunning &&
-    details.capitalLockedLamports === "0" &&
-    details.capitalFreeLamports !== "0" &&
-    details.pendingCycleCount === 0 &&
-    details.claimBacklogCount === 0;
-  return [
-    "Cannot delete this wallet while SAT mining still has active state.",
-    reasons.length ? `Reason: ${reasons.join("; ")}.` : undefined,
-    onlyFreeCapitalRemains
-      ? `Withdraw exactly ${formatLamportsAsSolExact(details.capitalFreeLamports)} SOL from Mining capital, then delete it.`
-      : "Stop mining, let Clearing finish, claim pending rewards, withdraw all miner capital back to the wallet, then delete it.",
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function readSatMiningRuntimeDeletionDetails(
-  walletId: string,
-  env: NodeJS.ProcessEnv,
-): WalletDeletionMiningSafetyDetails | null {
-  const runtimeStorePath = path.join(
-    resolveStateDir(env),
-    "sat-mining",
-    "wallets",
-    normalizeSatWalletStateKey(walletId),
-    "runtime-store.json",
-  );
-  if (!fs.existsSync(runtimeStorePath)) {
-    return null;
-  }
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(fs.readFileSync(runtimeStorePath, "utf8")) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const status = readRecord(parsed.lastKnownStatus);
-  const workers = anySatWorkerEnabledOrRunning(parsed.workers);
-  const capitalFundedLamports = readNonNegativeBigInt(
-    status?.currentCapitalFundedLamports,
-  ).toString();
-  const capitalLockedLamports = readNonNegativeBigInt(
-    status?.currentCapitalLockedLamports,
-  ).toString();
-  const capitalFreeLamports = readNonNegativeBigInt(status?.currentCapitalFreeLamports).toString();
-  const claimBacklog = Array.isArray(parsed.claimBacklog) ? parsed.claimBacklog.length : 0;
-  return {
-    runtimeStorePath,
-    enabledWanted: readBoolean(parsed.enabledWanted),
-    workerEnabled: workers.enabled,
-    workerRunning: workers.running,
-    capitalFundedLamports,
-    capitalLockedLamports,
-    capitalFreeLamports,
-    pendingCycleCount: readNonNegativeNumber(status?.currentCapitalPendingCycleCount),
-    claimBacklogCount: claimBacklog,
-    currentRunStartedAt: readString(parsed.currentRunStartedAt),
-  };
-}
-
-function hasMiningDeletionRisk(details: WalletDeletionMiningSafetyDetails): boolean {
-  return (
-    details.enabledWanted ||
-    details.workerRunning ||
-    details.capitalFundedLamports !== "0" ||
-    details.capitalLockedLamports !== "0" ||
-    details.capitalFreeLamports !== "0" ||
-    details.pendingCycleCount > 0 ||
-    details.claimBacklogCount > 0
-  );
-}
-
-export function checkNamedWalletDeletionSafety(params: {
-  walletId: string;
-  env?: NodeJS.ProcessEnv;
-}): WalletDeletionMiningSafetyResult {
-  const env = params.env ?? process.env;
-  const walletId = params.walletId.trim();
-  const details = readSatMiningRuntimeDeletionDetails(walletId, env);
-  if (!details || !hasMiningDeletionRisk(details)) {
-    return { ok: true, details };
-  }
-  return {
-    ok: false,
-    code: "wallet_delete_blocked_mining",
-    message: buildMiningDeleteBlockedMessage(details),
-    details,
-  };
-}
-
-export function assertNamedWalletDeletionSafe(params: {
-  walletId: string;
-  env?: NodeJS.ProcessEnv;
-}): void {
-  const safety = checkNamedWalletDeletionSafety(params);
-  if (!safety.ok) {
-    throw new WalletDeletionBlockedError(safety.message, safety.details);
   }
 }
 
@@ -819,8 +441,6 @@ export function upsertNamedWallet(params: {
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
-  assertBoundWalletMutationSafe({ existing, candidate: next, env });
-  assertWalletRoleCardinality(registry.wallets, next);
   registry.wallets = [...registry.wallets.filter((entry) => entry.id !== next.id), next].toSorted(
     (a, b) => a.createdAt.localeCompare(b.createdAt),
   );
@@ -845,14 +465,6 @@ export function deleteNamedWallet(params: {
   if (protectedWalletIds.has(walletId)) {
     throw new Error("walletId is protected from deletion");
   }
-  assertNamedWalletDeletionSafe({ walletId, env });
-  const targetWallet = registry.wallets.find((wallet) => wallet.id === walletId);
-  assertWalletIsNotFinancialAuthority({ wallet: targetWallet, env });
-  if (resolveWalletUserRole(targetWallet) === "mining") {
-    throw new Error(
-      "Mining wallets cannot be deleted directly; use Retire and replace Mining wallet so signer acknowledgement precedes registry detachment",
-    );
-  }
   const before = registry.wallets.length;
   registry.wallets = registry.wallets.filter((entry) => entry.id !== walletId);
   for (const [agentId, assignedWalletId] of Object.entries(registry.assignments)) {
@@ -866,73 +478,6 @@ export function deleteNamedWallet(params: {
   const removed = registry.wallets.length !== before;
   writeWalletProviderRegistry(registry, env);
   return { removed, registry };
-}
-
-export function replaceRetiredMiningWallet(params: {
-  sourceWalletId: string;
-  successor: Omit<WalletNamedWallet, "createdAt" | "updatedAt">;
-  signerAcknowledgement: {
-    rotationId: string;
-    sourceRetiredPolicyHash: string;
-    successorPublicKey: string;
-    successorPolicyHash: string;
-  };
-  env?: NodeJS.ProcessEnv;
-}): WalletNamedWallet {
-  const env = params.env ?? process.env;
-  const registry = readWalletProviderRegistry(env);
-  const sourceWalletId = params.sourceWalletId.trim();
-  if (
-    !/^sha256:[0-9a-f]{64}$/u.test(params.signerAcknowledgement.rotationId) ||
-    !/^sha256:[0-9a-f]{64}$/u.test(params.signerAcknowledgement.sourceRetiredPolicyHash) ||
-    !/^sha256:[0-9a-f]{64}$/u.test(params.signerAcknowledgement.successorPolicyHash) ||
-    params.signerAcknowledgement.successorPublicKey !== params.successor.addresses?.solana ||
-    params.successor.metadata?.rotationId !== params.signerAcknowledgement.rotationId ||
-    params.successor.metadata?.policyHash !== params.signerAcknowledgement.successorPolicyHash
-  ) {
-    throw new Error("signer retirement acknowledgement is missing or does not match the successor");
-  }
-  const sourceIndex = registry.wallets.findIndex((wallet) => wallet.id === sourceWalletId);
-  if (sourceIndex < 0) {
-    const existing = registry.wallets.find((wallet) => wallet.id === params.successor.id);
-    if (
-      existing?.providerId === "local-socket-signer" &&
-      existing.addresses?.solana === params.successor.addresses?.solana &&
-      resolveWalletUserRole(existing) === "mining"
-    ) {
-      return existing;
-    }
-    throw new Error("retired Mining source registration is missing");
-  }
-  const source = registry.wallets[sourceIndex];
-  if (resolveWalletUserRole(source) !== "mining") {
-    throw new Error("source registration is not the active Mining wallet");
-  }
-  assertWalletIsNotFinancialAuthority({ wallet: source, env });
-  if (
-    params.successor.id === sourceWalletId ||
-    registry.wallets.some((wallet) => wallet.id === params.successor.id)
-  ) {
-    throw new Error("Mining successor registration must use a new wallet id");
-  }
-  assertNamedWalletDeletionSafe({ walletId: sourceWalletId, env });
-  const now = nowIso();
-  const successor: WalletNamedWallet = {
-    ...params.successor,
-    createdAt: now,
-    updatedAt: now,
-  };
-  registry.wallets.splice(sourceIndex, 1, successor);
-  for (const [agentId, assignedWalletId] of Object.entries(registry.assignments)) {
-    if (assignedWalletId === sourceWalletId) {
-      delete registry.assignments[agentId];
-    }
-  }
-  if (registry.defaultWalletId === sourceWalletId) {
-    registry.defaultWalletId = undefined;
-  }
-  writeWalletProviderRegistry(registry, env);
-  return successor;
 }
 
 export function setAgentWalletAssignment(params: {
@@ -985,53 +530,6 @@ export function setDefaultWallet(params: {
     throw new Error("only an explicit Agent wallet can become the Default Agent wallet fallback");
   }
   registry.defaultWalletId = walletId;
-  writeWalletProviderRegistry(registry, env);
-  return registry;
-}
-
-export function setNamedWalletRole(params: {
-  walletId: string;
-  role: WalletUserRole;
-  env?: NodeJS.ProcessEnv;
-}): WalletProviderRegistry {
-  const env = params.env ?? process.env;
-  const registry = readWalletProviderRegistry(env);
-  const walletId = params.walletId.trim();
-  if (!walletId) {
-    throw new Error("walletId is required");
-  }
-  if (!registry.wallets.some((wallet) => wallet.id === walletId)) {
-    throw new Error("walletId does not exist");
-  }
-  const current = registry.wallets.find((wallet) => wallet.id === walletId)!;
-  const inferredStrategyChain = resolveWalletRoleAccountChain(current) ?? "solana";
-  const candidate: WalletNamedWallet = {
-    ...current,
-    metadata: {
-      ...current.metadata,
-      role: params.role,
-      purpose: params.role,
-      ...(params.role === "strategy" && !current.metadata?.roleChain
-        ? { roleChain: inferredStrategyChain }
-        : {}),
-    },
-    updatedAt: nowIso(),
-  };
-  assertBoundWalletMutationSafe({ existing: current, candidate, env });
-  assertWalletRoleCardinality(registry.wallets, candidate);
-  registry.wallets = registry.wallets.map((wallet) =>
-    wallet.id === walletId ? candidate : wallet,
-  );
-  if (params.role !== "agent" && registry.defaultWalletId === walletId) {
-    registry.defaultWalletId = undefined;
-  }
-  if (params.role !== "agent") {
-    for (const [agentId, assignedWalletId] of Object.entries(registry.assignments)) {
-      if (assignedWalletId === walletId) {
-        delete registry.assignments[agentId];
-      }
-    }
-  }
   writeWalletProviderRegistry(registry, env);
   return registry;
 }

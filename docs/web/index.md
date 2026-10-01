@@ -18,15 +18,6 @@ This page focuses on bind modes, security, and web-facing surfaces.
 
 ## Normal browser routes
 
-- `/dash`: widget dashboard.
-- `/chat`: browser chat for the selected Agent/session.
-- `/agents`: normal setup workbench for Models, Channels, Skills, Tools,
-  Memory, Sessions, Services, Tasks, and Files.
-- `/wallet`, `/mining`, `/federation`, `/marketplace`: focused workflows.
-- `/extensions`: global extension/plugin lifecycle.
-- `/notifications`, `/usage`, `/logs`: monitoring.
-- `/config`: Advanced surface with Config, Debug, and Nodes tabs.
-
 Older global provider/channel/service/skills/task routes can still exist for
 compatibility, deep links, or admin views. They are hidden or demoted from the
 primary navigation because normal setup starts from the selected Agent.

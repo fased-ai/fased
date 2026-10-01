@@ -1,4 +1,4 @@
-import { Option, type Command } from "commander";
+import { type Command } from "commander";
 import {
   walletCanaryCommand,
   walletInboundListCommand,
@@ -8,28 +8,20 @@ import {
   walletLimitOrdersConfigureCommand,
   walletMigrateCommand,
   walletPolicyProfileApplyCommand,
-  walletPolicyActivateRoleBaselineCommand,
   walletProviderConfigureCommand,
   walletRotateKeysCommand,
   walletRpcSetCommand,
   walletRpcProfileBindCommand,
   walletRpcProfileCreateCommand,
   walletRpcProfileListCommand,
-  walletRoleSetCommand,
   walletSetupCommand,
   walletSignerServeCommand,
   walletSignerDoctorCommand,
   walletStatusCommand,
 } from "../../commands/wallet.js";
 import { defaultRuntime } from "../../runtime.js";
-import { walletMiningRotationFacade } from "../../wallet/wallet-mining-rotation-facade.js";
 import { walletRecoveryFacade } from "../../wallet/wallet-recovery-facade.js";
 import { runCommandWithRuntime } from "../cli-utils.js";
-import {
-  addGatewayClientOptions,
-  callGatewayFromCli,
-  type GatewayRpcOpts,
-} from "../gateway-rpc.js";
 import { registerWalletWenReview } from "./register.wallet-wen.js";
 
 function resolvePublicWalletSetupChain(raw: unknown): "solana" | undefined {
@@ -74,7 +66,6 @@ export function registerWalletCommands(program: Command) {
     .description("Restore an encrypted signer recovery package into a new signer-owned wallet")
     .requiredOption("--wallet-id <id>", "New registered signer-owned wallet id")
     .requiredOption("--wallet-name <name>", "Wallet display name")
-    .requiredOption("--role <role>", "Permanent signer role: agent|mining|vault|profile|strategy")
     .requiredOption("--file <absolute-path>", "Owner-only encrypted recovery package")
     .option("--rpc-url <url>", "One primary Solana RPC URL")
     .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
@@ -83,7 +74,6 @@ export function registerWalletCommands(program: Command) {
         await walletRecoveryFacade.restoreEncrypted(defaultRuntime, {
           walletId: String(opts.walletId),
           walletName: String(opts.walletName),
-          role: String(opts.role),
           recoveryFile: String(opts.file),
           rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
           rpcProfileId: typeof opts.rpcProfile === "string" ? opts.rpcProfile : undefined,
@@ -134,7 +124,6 @@ export function registerWalletCommands(program: Command) {
     .description("Create a signer-owned Solana wallet; configure permissions separately")
     .option("--wallet-id <id>", "Named wallet id")
     .option("--wallet-name <name>", "Wallet display name")
-    .addOption(new Option("--role <role>", "Legacy compatibility role").hideHelp())
     .option("--rpc-url <url>", "One primary Solana RPC URL")
     .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
     .option("--force", "Resume only the same existing signer wallet", false)
@@ -147,7 +136,6 @@ export function registerWalletCommands(program: Command) {
           chain: "solana",
           walletId: typeof opts.walletId === "string" ? opts.walletId : undefined,
           walletName: typeof opts.walletName === "string" ? opts.walletName : undefined,
-          role: typeof opts.role === "string" ? opts.role : undefined,
           rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
           rpcProfileId: typeof opts.rpcProfile === "string" ? opts.rpcProfile : undefined,
           force: Boolean(opts.force),
@@ -162,7 +150,6 @@ export function registerWalletCommands(program: Command) {
     .description("Import an owner-only Solana keypair through the native signer lifecycle")
     .option("--wallet-id <id>", "Named wallet id")
     .option("--wallet-name <name>", "Wallet display name")
-    .addOption(new Option("--role <role>", "Legacy compatibility role").hideHelp())
     .option("--file <absolute-path>", "Owner-only Solana keypair JSON")
     .option("--rpc-url <url>", "One primary Solana RPC URL")
     .option("--rpc-profile <id>", "Existing signer-owned verified RPC profile")
@@ -175,7 +162,6 @@ export function registerWalletCommands(program: Command) {
           chain: "solana",
           walletId: typeof opts.walletId === "string" ? opts.walletId : undefined,
           walletName: typeof opts.walletName === "string" ? opts.walletName : undefined,
-          role: typeof opts.role === "string" ? opts.role : undefined,
           importFile: typeof opts.file === "string" ? opts.file : undefined,
           rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
           rpcProfileId: typeof opts.rpcProfile === "string" ? opts.rpcProfile : undefined,
@@ -184,49 +170,6 @@ export function registerWalletCommands(program: Command) {
         });
       });
     });
-
-  addGatewayClientOptions(
-    wallet
-      .command("retire")
-      .description("Safely retire and replace the active signer-owned Mining wallet")
-      .requiredOption("--wallet-id <id>", "Active Mining wallet id")
-      .requiredOption("--successor-wallet-id <id>", "New distinct Mining wallet id")
-      .requiredOption("--successor-wallet-name <name>", "New Mining wallet display name")
-      .requiredOption(
-        "--recovery-file <absolute-path>",
-        "Encrypted recovery package for the old wallet",
-      )
-      .requiredOption("--rpc-url <url>", "One primary Solana RPC URL for the successor")
-      .option("--json", "Print JSON output", false),
-  ).action(async (opts: GatewayRpcOpts & Record<string, unknown>) => {
-    await runCommandWithRuntime(defaultRuntime, async () => {
-      let liveMiningStatus: unknown = {};
-      try {
-        await callGatewayFromCli("sat.stopMining", opts, {}, { progress: opts.json !== true });
-        liveMiningStatus = await callGatewayFromCli(
-          "sat.getMiningStatus",
-          opts,
-          {},
-          {
-            progress: opts.json !== true,
-          },
-        );
-      } catch (error) {
-        liveMiningStatus = {
-          retirementGatewayError: error instanceof Error ? error.message : String(error),
-        };
-      }
-      await walletMiningRotationFacade.retireAndReplace(defaultRuntime, {
-        walletId: String(opts.walletId),
-        successorWalletId: String(opts.successorWalletId),
-        successorWalletName: String(opts.successorWalletName),
-        recoveryFile: String(opts.recoveryFile),
-        rpcUrl: String(opts.rpcUrl),
-        liveMiningStatus,
-        json: opts.json === true,
-      });
-    });
-  });
 
   const rpc = wallet.command("rpc").description("Signer-owned Solana RPC configuration");
   const rpcProfiles = rpc
@@ -302,9 +245,8 @@ export function registerWalletCommands(program: Command) {
       "local-signer-create|local-signer-import|local-signer-recovery-import|local-signer|turnkey|alchemy",
     )
     .option("--chain <chain>", "solana", "solana")
-    .option("--wallet-id <id>", "Named wallet id (examples: agent, mining, vault)")
+    .option("--wallet-id <id>", "Named wallet id (example: wallet-1)")
     .option("--wallet-name <value>", "Friendly wallet display name (for UI/skills/plugins)")
-    .addOption(new Option("--role <role>", "Legacy compatibility role").hideHelp())
     .option(
       "--import-file <absolute-path>",
       "Owner-only Solana keypair JSON for local-signer-import; secret is passed by file descriptor, never argv/env",
@@ -338,7 +280,6 @@ export function registerWalletCommands(program: Command) {
           chain: resolvePublicWalletSetupChain(opts.chain),
           walletId: typeof opts.walletId === "string" ? opts.walletId : undefined,
           walletName: typeof opts.walletName === "string" ? opts.walletName : undefined,
-          role: typeof opts.role === "string" ? opts.role : undefined,
           apiKey: typeof opts.apiKey === "string" ? opts.apiKey : undefined,
           rpcUrl: typeof opts.rpcUrl === "string" ? opts.rpcUrl : undefined,
           rpcProfileId: typeof opts.rpcProfile === "string" ? opts.rpcProfile : undefined,
@@ -429,24 +370,6 @@ export function registerWalletCommands(program: Command) {
       });
     });
 
-  wallet
-    .command("role set <wallet-id> <role>", { hidden: true })
-    .description(
-      "Set Default Agent wallet fallback or initialize a missing Agent/Vault purpose. Existing purpose stays permanent.",
-    )
-    .option("--primary", "Make this the Default Agent wallet fallback", false)
-    .option("--json", "Print JSON output", false)
-    .action(async (walletId, role, opts) => {
-      await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletRoleSetCommand(defaultRuntime, {
-          walletId: String(walletId),
-          role: String(role),
-          primary: Boolean(opts.primary),
-          json: Boolean(opts.json),
-        });
-      });
-    });
-
   const provider = wallet
     .command("provider")
     .description("Configure hosted wallet provider credentials (stored encrypted locally)");
@@ -479,24 +402,6 @@ export function registerWalletCommands(program: Command) {
     });
 
   const policy = wallet.command("policy").description("Wallet policy presets and controls");
-
-  policy
-    .command("activate-role-baseline")
-    .description("Explicitly migrate one existing deny-all signer wallet to its role baseline")
-    .requiredOption("--wallet-id <id>", "Registered signer-owned wallet id")
-    .requiredOption("--role <role>", "Immutable signer role: agent|mining|vault")
-    .requiredOption("--confirm", "Confirm activation after reviewing the selected role")
-    .option("--json", "Print JSON output", false)
-    .action(async (opts) => {
-      await runCommandWithRuntime(defaultRuntime, async () => {
-        await walletPolicyActivateRoleBaselineCommand(defaultRuntime, {
-          walletId: String(opts.walletId),
-          role: String(opts.role),
-          confirm: Boolean(opts.confirm),
-          json: Boolean(opts.json),
-        });
-      });
-    });
 
   policy
     .command("profile <name>")

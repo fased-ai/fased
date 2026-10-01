@@ -37,7 +37,8 @@ jobs:
       run_macos_runtime: ${{ steps.scope.outputs.run_macos_runtime }}
       run_macos_app: ${{ steps.scope.outputs.run_macos_app }}
       run_ui: ${{ steps.scope.outputs.run_ui }}
-      run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
+      # The protected-base classifier may use its previous UI lane name until this PR lands.
+      run_ui_wen: ${{ steps.scope.outputs.run_ui_wen == 'true' || steps.scope.outputs.run_ui_mining == 'true' }}
       run_skills: ${{ steps.scope.outputs.run_skills }}
     steps:
       - name: Checkout proposed tree
@@ -243,7 +244,7 @@ jobs:
           --maxWorkers=1
 
       - name: Install Chromium for selected UI browser tests
-        if: needs.classify.outputs.run_ui_mining == 'true' || (needs.classify.outputs.run_ui == 'true' && needs.classify.outputs.changed_ui_browser_tests == 'true')
+        if: needs.classify.outputs.run_ui_wen == 'true' || (needs.classify.outputs.run_ui == 'true' && needs.classify.outputs.changed_ui_browser_tests == 'true')
         run: pnpm --dir ui exec playwright install chromium
 
       - name: Run selected Control UI tests
@@ -253,8 +254,8 @@ jobs:
         run: node scripts/ci-run-changed-tests.mjs ui
 
       - name: Run Mining UI tests
-        if: needs.classify.outputs.run_ui_mining == 'true'
-        run: pnpm test:ui:mining
+        if: needs.classify.outputs.run_ui_wen == 'true'
+        run: pnpm test:ui:wen
 
       - name: Setup Python for skill tests
         if: needs.classify.outputs.run_skills == 'true'
@@ -388,6 +389,12 @@ jobs:
           src/wallet/providers/local-socket-signer-adapter.integration.test.ts
           src/wizard/onboarding.wallet.test.ts
           --pool=forks --maxWorkers=1
+      - name: Select Xcode 26.1
+        if: needs.classify.outputs.run_macos_app == 'true'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.1.app
+          xcodebuild -version
+          swift --version
       - name: Run macOS application checks
         if: needs.classify.outputs.run_macos_app == 'true'
         run: |
@@ -397,7 +404,63 @@ jobs:
           swiftformat --lint apps/shared/FasedAgentKit/Sources --config .swiftformat
           swiftformat --lint Swabble/Sources --config .swiftformat
           swift build --package-path apps/macos --configuration release
-          swift test --package-path apps/macos
+          (
+            (
+              timer_pid=""
+              sample_pid=""
+              trap 'kill "$timer_pid" "$sample_pid" 2>/dev/null || true' EXIT
+              trap 'exit 0' TERM INT
+              diagnostic_pid="$(sh -c 'echo "$PPID"')"
+              sleep 180 &
+              timer_pid=$!
+              wait "$timer_pid" || exit 0
+              timer_pid=""
+              diagnostics_dir="$RUNNER_TEMP/fased-macos-stall"
+              mkdir -p "$diagnostics_dir"
+              ps -axo pid=,ppid=,comm= > "$diagnostics_dir/processes.txt"
+              cat "$diagnostics_dir/processes.txt"
+              native_pids="$(awk -v root="$$" -v skip="$diagnostic_pid" '
+                { parent[$1]=$2; order[NR]=$1 }
+                function under(pid, target, depth) {
+                  for (depth=0; depth<1000; depth++) {
+                    if (pid == target) return 1
+                    if (!(pid in parent)) return 0
+                    pid=parent[pid]
+                  }
+                  return 0
+                }
+                END {
+                  for (i=1; i<=NR; i++) {
+                    pid=order[i]
+                    if (pid != root && under(pid, root) && !under(pid, skip)) print pid
+                  }
+                }
+              ' "$diagnostics_dir/processes.txt")"
+              while read -r native_pid; do
+                if [ -z "$native_pid" ] || ! kill -0 "$native_pid" 2>/dev/null; then continue; fi
+                expected_parent="$(awk -v pid="$native_pid" '$1 == pid { print $2 }' "$diagnostics_dir/processes.txt")"
+                current_parent="$(ps -p "$native_pid" -o ppid= | tr -d ' ' || true)"
+                if [ "$current_parent" != "$expected_parent" ]; then continue; fi
+                sample_file="$diagnostics_dir/process-$native_pid.sample.txt"
+                /usr/bin/sample "$native_pid" 5 -file "$sample_file" &
+                sample_pid=$!
+                wait "$sample_pid" || true
+                sample_pid=""
+                if [ -f "$sample_file" ]; then cat "$sample_file"; fi
+              done < <(printf '%s\n' "$native_pids")
+            ) &
+            sampler_pid=$!
+            stop_sampler() {
+              kill "$sampler_pid" 2>/dev/null || true
+              wait "$sampler_pid" 2>/dev/null || true
+            }
+            trap stop_sampler EXIT
+            swift_test_status=0
+            swift test --package-path apps/macos || swift_test_status=$?
+            stop_sampler
+            trap - EXIT
+            exit "$swift_test_status"
+          )
           swift test --package-path apps/shared/FasedAgentKit
           swift test --package-path Swabble
 

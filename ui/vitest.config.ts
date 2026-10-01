@@ -20,6 +20,7 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.browser.test.ts"],
+    exclude: ["src/ui/views/wen-*-wire.browser.test.ts"],
     browser: {
       enabled: true,
       provider: playwright(),

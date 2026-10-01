@@ -631,16 +631,11 @@ function shortcutsForConfigSection(section: string | null): FriendlyShortcut[] {
           tab: "wallet",
           detail: "Review balances, approvals, signer policy, passkeys, and wallet health.",
         },
-        {
-          label: "Mining",
-          tab: "mining",
-          detail:
-            "Review the retained historical SAT mining wallet and recovery operations. New WEN positions use owner-authorized wallets.",
-        },
+
         {
           label: "Network",
           tab: "federation",
-          detail: "Review Fased Network and bond wallet status.",
+          detail: "Review Fased Network connectivity and enrollment.",
         },
       ];
     case "federation":

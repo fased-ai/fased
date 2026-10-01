@@ -69,13 +69,6 @@ For the focused model-to-agent flow, see
 
 Use onboarding for machine and security setup:
 
-- Local or Hosting profile
-- Gateway mode, port, auth, and token
-- workspace and service startup
-- local signer wallet setup when selected
-- optional singleton Mining wallet setup
-- Hosting profile Tailscale and host hardening
-
 Onboarding is not the normal place to manage every model provider, skill,
 extension, hook, channel, service, or scheduled task.
 
@@ -94,40 +87,6 @@ fased dashboard
 ```
 
 Then use the browser pages for product setup:
-
-<CardGroup cols={2}>
-  <Card title="/agents">
-    Create or select an Agent and attach model, skills, services, chat apps,
-    saved context, tasks, tools, sessions, and wallet controls.
-  </Card>
-  <Card title="/extensions">
-    Review runtime plugins, source trust, dependencies, scanner warnings, and advanced extension setup.
-  </Card>
-  <Card title="/usage">
-    Review local model usage by provider, model, Agent, session, task, chat app, and source.
-  </Card>
-  <Card title="/notifications">
-    Configure notification routing and recent in-app/external delivery.
-  </Card>
-  <Card title="/wallet">
-    Review wallet controls, approvals, balances, custody, and signer health.
-  </Card>
-  <Card title="/mining">
-    Operate SAT mining readiness, capital, commit, recovery, and history.
-  </Card>
-  <Card title="/federation">
-    Operate Fased Network status, routing, and marketplace-facing identity.
-  </Card>
-  <Card title="/marketplace">
-    Review Fased Network offers, requests, purchases, and disputes.
-  </Card>
-  <Card title="/memory">
-    Read memory diagnostics across Agents. Enable session-memory from `Agent > Memory`.
-  </Card>
-  <Card title="/config">
-    Advanced Config only. Use this when a field is not exposed in a friendly page yet.
-  </Card>
-</CardGroup>
 
 <Note>
 Dashboard is a launch/status widget board. It is not the setup wizard. Start
@@ -151,11 +110,6 @@ It can have:
 
 Examples:
 
-- Researcher
-- Support
-- Mining Operator
-- Operations Reviewer
-
 Channels and scheduled tasks should route to a configured Agent. In the UI,
 Channels means chat app connections such as Telegram, Discord, and WhatsApp.
 Subagents are different: they are internal runtime workers used during a task,
@@ -164,13 +118,6 @@ not normal chat routing targets.
 `Agent > Tasks` is the selected Agent's saved-work control surface. Create a
 **Task** for scheduled work first. Add Triggers, Workflows, Graphs, Programs,
 or Templates only when the run needs that structure.
-
-Run history can include scheduled runs plus records mirrored from webhooks,
-chat apps, subagents/ACP, CLI/system runs, media generation, wallet approvals,
-Marketplace, mining, and workflows. It is audit data, not the primary task list.
-Use the owning page for the actual domain operation: Wallets for signing,
-Marketplace for orders/disputes, Mining for mining control, Channels for chat
-routes/delivery, and Services/Media for connector setup.
 
 ## Skills, Extensions, Channels, Services
 
@@ -203,16 +150,6 @@ Agent memory archive control lives in `Agent > Memory`.
 
 Skill setup is intentionally split by responsibility but exposed in one Agent
 surface:
-
-- **Agent > Skills**: create workspace skills, review plugin-catalog installs, save
-  skill config, fix dependencies, edit skill files, and allow/deny skills for
-  that Agent.
-- **Agent > Tools**: allow or deny tools exposed by core code, services,
-  channels, or extensions.
-- **Agent > Services**: connect API credentials a skill/tool depends on.
-- **Wallet > Skill Grants tab**: grant narrow Agent-wallet actions for reviewed
-  wallet-capable skills. Mining and Vault wallets stay outside generic skill
-  grants.
 
 `Agent > Channels` exposes installed channels and official add-ons in the same
 order as onboarding. Telegram, WhatsApp, Discord, Slack, Feishu, and Google Chat show an **Install**
@@ -257,10 +194,6 @@ Use it when:
 - you need raw JSON mode
 - you need validation, diff, reload, save, or apply controls
 - support or docs asks you to change a specific config field
-
-Do not use Advanced Config as the normal first-run setup path. Prefer
-Agents, Extensions, Wallets, Mining, Fased Network, Marketplace, Usage,
-Notifications, Logs, and Debug first.
 
 ## CLI
 

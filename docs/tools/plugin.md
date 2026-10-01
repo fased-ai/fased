@@ -105,10 +105,6 @@ Restart the Gateway after changing runtime plugin state.
 Channel plugins put account config under `channels.<id>`, not
 `plugins.entries.<id>.config`, because Channels owns account setup and routing.
 
-Agent tools registered by plugins still require Agent tool policy. Skills
-shipped by plugins still require Agent skill access. Wallet, mining,
-marketplace, and node actions keep their own approval gates.
-
 ## Manifest Requirement
 
 Every plugin must ship `fased.plugin.json` in the plugin root. The manifest lets
@@ -155,13 +151,6 @@ source directory has a package manifest.
 ## Safety
 
 Plugins run in the Gateway process. Treat them as trusted code.
-
-- Install plugins only from sources you trust.
-- Prefer `plugins.allow` allowlists for non-bundled plugins.
-- Keep plugin dependency installs pinned and reviewed.
-- Do not use a plugin to bypass Agent tool policy, wallet approvals, mining
-  controls, marketplace authority, or channel access policy.
-- Missing or invalid manifests should block config validation.
 
 ## Developer References
 

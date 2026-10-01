@@ -1,10 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FasedAgentConfig } from "../config/config.js";
-import { tryResolveSatRuntimeIds } from "../config/sat-runtime-ids.js";
 import { assertValidSolanaAddress } from "./solana-address.js";
 import { serializeWalletState, writeWalletStateFileAtomically } from "./wallet-atomic-state.js";
-import { readWalletProviderRegistry, resolveWalletUserRole } from "./wallet-provider-registry.js";
+import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 import {
   ensureWalletStateDir,
   resolveWalletRuntimeConfig,
@@ -12,8 +11,8 @@ import {
 } from "./wallet-runtime-config.js";
 
 export type WalletRolePolicyProfile = {
-  role: "mining" | "agent" | "vault";
-  label: "Mining" | "Agent" | "Vault";
+  role: "agent";
+  label: "Wallet";
   summary: string;
   defaults: {
     capsEnabled: boolean;
@@ -32,7 +31,6 @@ export type WalletPolicyPresetId =
   | "read-only"
   | "manual-only"
   | "small-agent-spend"
-  | "mining-only"
   | "skill-limited"
   | "trading-experimental";
 
@@ -97,7 +95,7 @@ type WalletUsageLedger = {
 type StoredWalletPolicyRecord = {
   version: 1;
   walletId: string;
-  role: "mining" | "agent" | "vault";
+  role: "agent";
   updatedAt: string;
   capsEnabled?: boolean;
   skillsEnabled?: boolean;
@@ -117,11 +115,6 @@ type WalletPolicyState = {
   wallets: Record<string, StoredWalletPolicyRecord>;
 };
 
-const SOLANA_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
-const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const SOLANA_TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
-const SOLANA_ADDRESS_LOOKUP_TABLE_PROGRAM_ID = "AddressLookupTab1e1111111111111111111111111";
 const DEFAULT_POLICY_CAPS = {
   solana: {
     maxPerTx: "1000000000",
@@ -297,21 +290,6 @@ function normalizeAddressList(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
-function miningPolicyProgramAllowlist(env: NodeJS.ProcessEnv): string[] {
-  const ids = tryResolveSatRuntimeIds(env);
-  return normalizeAddressList([
-    ids?.programId ?? "",
-    ids?.mintAddress ?? "",
-    SOLANA_SYSTEM_PROGRAM_ID,
-    SOLANA_TOKEN_PROGRAM_ID,
-    SOLANA_TOKEN_2022_PROGRAM_ID,
-    SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID,
-    String(env.FASED_SAT_ENABLE_ALT_V0 ?? "").trim() === "1"
-      ? SOLANA_ADDRESS_LOOKUP_TABLE_PROGRAM_ID
-      : "",
-  ]);
-}
-
 function isWalletHandle(value: string): boolean {
   return /^@wallet:[a-zA-Z0-9_-]+$/.test(value.trim());
 }
@@ -428,7 +406,7 @@ function normalizeRecurringTransferPolicy(raw: unknown): WalletRecurringTransfer
 function buildRecurringTransferPolicyFromPatch(params: {
   existing?: WalletRecurringTransferPolicy;
   patch: WalletRecurringTransferPolicyPatch;
-  role: "mining" | "agent" | "vault";
+  role: "agent";
 }): WalletRecurringTransferPolicy {
   if (params.role !== "agent") {
     throw new Error("generic recurring transfer policy requires an Agent wallet");
@@ -489,11 +467,6 @@ function buildRecurringTransferPolicyFromPatch(params: {
   };
 }
 
-function resolveConfiguredMiningWalletId(cfg: FasedAgentConfig | undefined): string | undefined {
-  const value = cfg?.plugins?.entries?.["sat-mining"]?.config?.walletId;
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function resolveEffectiveWalletId(params: {
   walletId?: string;
   cfg?: FasedAgentConfig;
@@ -505,45 +478,20 @@ function resolveEffectiveWalletId(params: {
   }
   const env = params.env ?? process.env;
   const registry = readWalletProviderRegistry(env);
-  const configuredMiningWalletId = resolveConfiguredMiningWalletId(params.cfg);
   return (
     registry.defaultWalletId?.trim() ||
-    configuredMiningWalletId ||
     registry.wallets.find((entry) => entry.providerId === "local-socket-signer")?.id ||
     registry.wallets[0]?.id ||
     undefined
   );
 }
 
-export function resolveWalletRoleForId(params: {
+export function resolveWalletRoleForId(_params: {
   walletId?: string;
   cfg?: FasedAgentConfig;
   env?: NodeJS.ProcessEnv;
-}): "mining" | "agent" | "vault" {
-  const env = params.env ?? process.env;
-  const registry = readWalletProviderRegistry(env);
-  const walletId = resolveEffectiveWalletId(params);
-  const configuredMiningWalletId = resolveConfiguredMiningWalletId(params.cfg);
-  if (walletId && configuredMiningWalletId && walletId === configuredMiningWalletId) {
-    return "mining";
-  }
-  const registryWallet = walletId
-    ? registry.wallets.find((entry) => entry.id === walletId)
-    : undefined;
-  const storedPurpose = resolveWalletUserRole(registryWallet);
-  if (walletId && storedPurpose === "mining") {
-    return "mining";
-  }
-  if (walletId && storedPurpose === "vault") {
-    return "vault";
-  }
-  if (walletId && storedPurpose === "agent") {
-    return "agent";
-  }
-  if (walletId && registry.defaultWalletId && walletId === registry.defaultWalletId) {
-    return "agent";
-  }
-  return "vault";
+}): "agent" {
+  return "agent";
 }
 
 function normalizeStoredWalletPolicyRecord(raw: unknown): StoredWalletPolicyRecord | null {
@@ -551,8 +499,7 @@ function normalizeStoredWalletPolicyRecord(raw: unknown): StoredWalletPolicyReco
     return null;
   }
   const value = raw as Record<string, unknown>;
-  const role =
-    value.role === "mining" || value.role === "agent" || value.role === "vault" ? value.role : null;
+  const role = value.role === "agent" ? value.role : null;
   if (
     value.version !== 1 ||
     typeof value.walletId !== "string" ||
@@ -681,7 +628,7 @@ function buildResolvedPolicyFromDefaults(
 }
 
 function buildResolvedPolicyFromPreset(params: {
-  role: "mining" | "agent" | "vault";
+  role: "agent";
   preset: WalletPolicyPresetId;
   env?: NodeJS.ProcessEnv;
 }): ResolvedWalletRuntimeConfig["policy"] {
@@ -720,19 +667,6 @@ function buildResolvedPolicyFromPreset(params: {
             maxPerTx: 100_000_000n,
             maxDaily: 500_000_000n,
           },
-        },
-      };
-    case "mining-only":
-      return {
-        ...recommended,
-        capsEnabled: false,
-        directSigning: params.role === "mining",
-        skillsEnabled: false,
-        solana: {
-          ...recommended.solana,
-          allowPrograms: params.role === "mining" ? miningPolicyProgramAllowlist(env) : [],
-          caps: { maxPerTx: 0n, maxDaily: 0n },
-          tokenCaps: {},
         },
       };
     case "skill-limited":
@@ -788,20 +722,15 @@ function normalizeTokenCapsRecord(
 
 function buildResolvedPolicyFromStoredRecord(
   record: StoredWalletPolicyRecord,
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): ResolvedWalletRuntimeConfig["policy"] {
-  const miningAllowPrograms =
-    record.role === "mining"
-      ? normalizeAddressList(
-          resolveWalletRolePolicyProfile("mining", env).defaults.solana.allowPrograms,
-        )
-      : normalizeAddressList(record.solana.allowPrograms.map((value) => value));
+  const allowPrograms = normalizeAddressList(record.solana.allowPrograms.map((value) => value));
   return {
     capsEnabled: record.capsEnabled === true,
-    directSigning: record.role === "vault" ? false : record.directSigning,
+    directSigning: record.directSigning,
     skillsEnabled: record.role === "agent" && record.skillsEnabled === true,
     solana: {
-      allowPrograms: miningAllowPrograms,
+      allowPrograms: allowPrograms,
       caps: {
         maxPerTx: parseValue(record.solana.maxPerTx),
         maxDaily: parseValue(record.solana.maxDaily),
@@ -840,7 +769,7 @@ function cloneWalletConfigWithPolicy(
 
 function buildStoredPolicyRecord(params: {
   walletId: string;
-  role: "mining" | "agent" | "vault";
+  role: "agent";
   policy: ResolvedWalletRuntimeConfig["policy"];
   recurringTransfer?: WalletRecurringTransferPolicy;
   updatedAt?: string;
@@ -908,7 +837,7 @@ export function applyWalletPolicyConfig(params: {
 
 export type PreparedWalletPolicyConfigUpdate = {
   walletId: string;
-  role: "mining" | "agent" | "vault";
+  role: "agent";
   config: ResolvedWalletRuntimeConfig;
   expectedRecordJson: string;
   nextRecord: StoredWalletPolicyRecord;
@@ -939,9 +868,7 @@ export function prepareWalletPolicyConfigUpdate(params: {
   });
   const state = readWalletPolicyState(env);
   const existingRecord = state.wallets[walletId];
-  if (role === "vault" && params.patch.directSigning === true) {
-    throw new Error("Vault wallets are manual-only; automation cannot be enabled");
-  }
+
   if (role !== "agent" && params.patch.skillsEnabled === true) {
     throw new Error("Skill wallet access can only be enabled for Agent wallets");
   }
@@ -1019,7 +946,7 @@ export function commitWalletPolicyConfigUpdate(
   env: NodeJS.ProcessEnv = process.env,
 ): {
   walletId: string;
-  role: "mining" | "agent" | "vault";
+  role: "agent";
   config: ResolvedWalletRuntimeConfig;
 } {
   const state = readWalletPolicyState(env);
@@ -1043,7 +970,7 @@ export function upsertWalletPolicyConfig(params: {
   patch: WalletScopedPolicyPatch;
 }): {
   walletId: string;
-  role: "mining" | "agent" | "vault";
+  role: "agent";
   config: ResolvedWalletRuntimeConfig;
 } {
   const env = params.env ?? process.env;
@@ -1051,63 +978,24 @@ export function upsertWalletPolicyConfig(params: {
 }
 
 export function resolveWalletRolePolicyProfile(
-  role: "mining" | "agent" | "vault",
-  env: NodeJS.ProcessEnv = process.env,
+  role: "agent",
+  _env: NodeJS.ProcessEnv = process.env,
 ): WalletRolePolicyProfile {
-  switch (role) {
-    case "mining":
-      return {
-        role,
-        label: "Mining",
-        summary:
-          "SAT mining wallet. It is reserved for mining operations and SAT sweep, not generic agent payments or federation bond.",
-        defaults: {
-          capsEnabled: false,
-          directSigning: true,
-          skillsEnabled: false,
-          solana: {
-            maxPerTx: "0",
-            maxDaily: "0",
-            allowPrograms: miningPolicyProgramAllowlist(env),
-          },
-        },
-      };
-    case "agent":
-      return {
-        role,
-        label: "Agent",
-        summary:
-          "Hot Agent wallet for reviewed payments, Fased Network payment evidence, and approved skill actions. Keep explicit caps and narrow token / contract routes.",
-        defaults: {
-          capsEnabled: true,
-          directSigning: false,
-          skillsEnabled: false,
-          solana: {
-            maxPerTx: DEFAULT_POLICY_CAPS.solana.maxPerTx,
-            maxDaily: DEFAULT_POLICY_CAPS.solana.maxDaily,
-            allowPrograms: [],
-          },
-        },
-      };
-    case "vault":
-    default:
-      return {
-        role: "vault",
-        label: "Vault",
-        summary:
-          "Manual-first Vault wallet for storage and federation bond assignment. No background agent execution by default; reviewed sends require signer-owned WebAuthn authorization.",
-        defaults: {
-          capsEnabled: true,
-          directSigning: false,
-          skillsEnabled: false,
-          solana: {
-            maxPerTx: DEFAULT_POLICY_CAPS.solana.maxPerTx,
-            maxDaily: DEFAULT_POLICY_CAPS.solana.maxDaily,
-            allowPrograms: [],
-          },
-        },
-      };
-  }
+  return {
+    role,
+    label: "Wallet",
+    summary: "Ordinary wallet with explicit spending caps and reviewed signing policies.",
+    defaults: {
+      capsEnabled: true,
+      directSigning: false,
+      skillsEnabled: false,
+      solana: {
+        maxPerTx: DEFAULT_POLICY_CAPS.solana.maxPerTx,
+        maxDaily: DEFAULT_POLICY_CAPS.solana.maxDaily,
+        allowPrograms: [],
+      },
+    },
+  };
 }
 
 export function isWalletToolAllowed(params: {

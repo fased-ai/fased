@@ -11,10 +11,8 @@ import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
   resolveSessionFilePath,
-  resolveStorePath,
   ensureSessionTranscriptHeader,
 } from "../../config/sessions.js";
-import { executeMiningChatCommand, parseMiningChatCommand } from "../../mining/chat-command.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 import {
@@ -607,45 +605,6 @@ function broadcastChatError(params: {
   params.context.agentRunSeq.delete(params.runId);
 }
 
-function appendAndBroadcastChatAssistantText(params: {
-  context: GatewayRequestContext;
-  sessionKey: string;
-  rawSessionKey: string;
-  sessionId: string;
-  storePath: string | undefined;
-  sessionFile?: string;
-  agentId: string;
-  runId: string;
-  text: string;
-}) {
-  const appended = appendAssistantTranscriptMessage({
-    message: params.text,
-    sessionId: params.sessionId,
-    storePath: params.storePath,
-    sessionFile: params.sessionFile,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    createIfMissing: true,
-  });
-  if (!appended.ok) {
-    params.context.logGateway.warn(
-      `webchat transcript append failed: ${appended.error ?? "unknown error"}`,
-    );
-  }
-  broadcastChatFinal({
-    context: params.context,
-    runId: params.runId,
-    sessionKey: params.rawSessionKey,
-    message: appended.message ?? {
-      role: "assistant",
-      content: [{ type: "text", text: params.text }],
-      timestamp: Date.now(),
-      stopReason: "stop",
-      usage: { input: 0, output: 0, totalTokens: 0 },
-    },
-  });
-}
-
 export const chatHandlers: GatewayRequestHandlers = {
   "chat.history": async ({ params, respond, context }) => {
     if (!validateChatHistoryParams(params)) {
@@ -903,53 +862,6 @@ export const chatHandlers: GatewayRequestHandlers = {
         cached: true,
         runId: clientRunId,
       });
-      return;
-    }
-
-    const miningCommand =
-      normalizedAttachments.length === 0 ? parseMiningChatCommand(parsedMessage) : null;
-    if (miningCommand) {
-      respond(true, { runId: clientRunId, status: "started" as const }, undefined, {
-        runId: clientRunId,
-      });
-      void executeMiningChatCommand({ cfg, command: miningCommand })
-        .then(({ replyText }) => {
-          appendAndBroadcastChatAssistantText({
-            context,
-            sessionKey,
-            rawSessionKey,
-            sessionId: entry?.sessionId ?? clientRunId,
-            storePath: resolveStorePath(cfg.session?.store, { agentId }),
-            sessionFile: entry?.sessionFile,
-            agentId,
-            runId: clientRunId,
-            text: replyText,
-          });
-          context.dedupe.set(`chat:${clientRunId}`, {
-            ts: Date.now(),
-            ok: true,
-            payload: { runId: clientRunId, status: "ok" as const },
-          });
-        })
-        .catch((err) => {
-          const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
-          context.dedupe.set(`chat:${clientRunId}`, {
-            ts: Date.now(),
-            ok: false,
-            payload: {
-              runId: clientRunId,
-              status: "error" as const,
-              summary: String(err),
-            },
-            error,
-          });
-          broadcastChatError({
-            context,
-            runId: clientRunId,
-            sessionKey: rawSessionKey,
-            errorMessage: String(err),
-          });
-        });
       return;
     }
 

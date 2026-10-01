@@ -78,7 +78,7 @@ Skills 从多个位置加载：
 常见流程：
 
 - 在 **Agent > Skills** 中搜索插件目录。
-- 打开 review modal，检查 registry、archive scan、`SKILL.md`、权限、install plan、wallet/mining 风险。
+- 打开 review modal，检查 registry、archive scan、`SKILL.md`、权限、install plan、wallet 风险。
 - 选择安装目标：共享 library（`~/.fased/skills`）或选定 Agent 工作区。
 - 安装后修复 readiness blocker：依赖、API key/env、config path 或 OS。
 - 允许该 Agent 使用该 skill。
@@ -91,16 +91,7 @@ CLI 仍可用于高级流程：
 - `fased skills marketplace update <skill-slug> --approve-permission-change`
 - `clawhub sync --all`
 
-Fased 会记录插件来源、archive scan、请求权限和更新审查。安装 skill 不会自动授予 Agent、工具、钱包、Mining 或任务权限。
-
 ## 安全注意事项
-
-- 将第三方 Skills 视为**不受信任的代码**。启用前请阅读它们。
-- 对于不受信任的输入和高风险工具，优先使用沙箱隔离运行。参见[沙箱隔离](/gateway/sandboxing)。
-- `skills.entries.*.env` 和 `skills.entries.*.apiKey` 为该智能体轮次将秘密注入到**宿主机**进程中（而非沙箱）。将秘密保持在提示词和日志之外。
-- dependency install 是外部包信任边界。运行 npm/go/uv/brew/download 前，应查看包管理器、确切命令、pin/integrity 状态和 PATH 目标。命令退出 0 不代表 ready；Gateway 必须能看到所需二进制。
-- wallet/mining 权限永远不会因为安装 skill 自动授予。普通 wallet skill 只能使用显式允许的 Agent-role wallet；Mining 和 Vault 钱包不提供给通用 skills。
-- 有关更广泛的威胁模型和检查清单，参见[安全概览](/security)和[Gateway 安全性](/gateway/security)。
 
 ## 格式（AgentSkills + Pi 兼容）
 

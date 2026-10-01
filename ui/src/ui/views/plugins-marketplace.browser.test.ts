@@ -29,11 +29,11 @@ describe("plugins marketplace view helpers", () => {
   it("separates built-ins and hides inactive legacy federation without hiding enabled installations", () => {
     const entries = [
       { id: "memory-core", loaded: true },
-      { id: "sat-mining", loaded: true },
+      { id: "wen", loaded: true },
       { id: "fased-federation", enabled: false, loaded: false },
       { id: "device-pair", enabled: false },
     ] as PluginMarketplaceEntry[];
-    expect(optionalModuleEntries(entries).map((entry) => entry.id)).toEqual(["device-pair"]);
+    expect(optionalModuleEntries(entries).map((entry) => entry.id)).toEqual([]);
     expect(
       optionalModuleEntries([{ id: "fased-federation", enabled: true } as PluginMarketplaceEntry]),
     ).toHaveLength(1);
@@ -118,7 +118,7 @@ describe("plugins marketplace view helpers", () => {
     expect(text).not.toContain("status only");
   });
 
-  it("sorts active extensions above inactive entries", () => {
+  it("shows active extensions without unrelated inactive catalog entries", () => {
     const container = document.createElement("div");
     const baseEntry: Omit<PluginMarketplaceEntry, "id" | "name" | "status" | "loaded" | "enabled"> =
       {
@@ -200,7 +200,7 @@ describe("plugins marketplace view helpers", () => {
     );
 
     const rows = Array.from(container.querySelectorAll("details.extensions-plugin"));
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(normalizeText(rows[0])).toContain("Active Plugin");
   });
 

@@ -4,9 +4,7 @@ import type {
   WalletSkillGrantDraft,
   WalletSkillGrantRow,
 } from "../controllers/wallet-skill-grants.ts";
-import type { FederationBondStatus } from "../federation-api.ts";
 import { icons } from "../icons.ts";
-import type { SatMinerProfile, SatMiningReadiness, SatMiningRuntimeStatus } from "../mining-api.ts";
 import { taskLedgerAnchorId } from "../task-ledger-source-route.ts";
 import type {
   WalletApprovalFilter,
@@ -82,7 +80,6 @@ export type WalletViewProps = {
   skillGrantRows: WalletSkillGrantRow[];
   skillGrantDraft: WalletSkillGrantDraft;
   skillGrantBusy: boolean;
-  federationBond?: FederationBondStatus | null;
   onNavigate?: (tab: "federation") => void;
   rpcChain: "solana";
   policyCapsEnabled?: boolean;
@@ -140,7 +137,7 @@ export type WalletViewProps = {
   onWalletBalanceWalletChange?: (walletId: string) => void;
   onPolicyPanelChange?: (panel: WalletPolicyPanel) => void;
   onApprovalsFilterChange: (filter: WalletApprovalFilter) => void;
-  onAttachWalletStandardVault?: () => void;
+  onAttachWalletStandard?: () => void;
   onCreateNameChange?: (next: string) => void;
   onCreateRpcUrlChange?: (next: string) => void;
   onCreateRpcProfileIdChange?: (next: string) => void;
@@ -167,9 +164,6 @@ export type WalletViewProps = {
   onEnrollPasskey: () => void;
   onDeletePasskey?: (credentialId: string) => void;
   onApplyRecommendedPolicy?: () => void;
-  onMiningSatSweepChange?: (
-    patch: Partial<NonNullable<SatMinerProfile["automation"]["satSweep"]>>,
-  ) => void;
   onPatchSettings: (
     patch: WalletSettingsPatch,
     opts?: { requireExecutionApproval?: boolean },
@@ -212,9 +206,6 @@ export type WalletViewProps = {
   onSkillGrantSave: () => void;
   onSkillGrantClear: (skillId: string) => void;
   onCreateSendRequest: () => void;
-  miningProfile: SatMinerProfile | null;
-  miningReadiness: SatMiningReadiness | null;
-  miningStatus: SatMiningRuntimeStatus | null;
 };
 
 export type OperatorWalletRoleSummary = {
@@ -228,11 +219,7 @@ export type OperatorWalletRoleSummary = {
 export type OperatorWalletRoles = {
   admin: OperatorWalletRoleSummary;
   agent: OperatorWalletRoleSummary;
-  mining: OperatorWalletRoleSummary;
-  bond: OperatorWalletRoleSummary;
   sharedWalletWarning: string | null;
-  miningWalletId: string | null;
-  bondWalletId: string | null;
 };
 
 type DisplayedWalletRole = WalletUserRole;
@@ -240,7 +227,6 @@ export type WalletPolicyPanel = "caps" | "schedule" | "automation" | "skills" | 
 
 const WALLET_ACTIVITY_PAGE_SIZE = 8;
 const SOL_DECIMALS = 9n;
-const SAT_DECIMALS = 11n;
 
 export function describeAdminControlShortcut(
   props: Pick<WalletViewProps, "status" | "settingsBusy" | "passkeyBusy">,
@@ -274,7 +260,7 @@ export function describeAdminControlShortcut(
     return {
       summary: "Setup incomplete",
       detail:
-        "Account passkey mode is enabled but no device is enrolled. Wallet creation, Agent automation, and Mining automation are unaffected.",
+        "Account passkey mode is enabled but no device is enrolled. Wallet creation, Agent automation are unaffected.",
       enableVisible: false,
       enableLabel: "Passkey approval enabled",
       enableDisabled: true,
@@ -286,54 +272,13 @@ export function describeAdminControlShortcut(
   return {
     summary: "Enabled",
     detail:
-      "Optional Control UI account passkey is enabled. Agent and Mining autonomous signer policies remain independent.",
+      "Optional Control UI account passkey is enabled. Autonomous signer policies remain independent.",
     enableVisible: false,
     enableLabel: "Passkey approval ready",
     enableDisabled: true,
     enrollVisible: false,
     enrollLabel: props.passkeyBusy ? "Adding passkey..." : "Add passkey",
     enrollDisabled: props.settingsBusy || props.passkeyBusy,
-  };
-}
-
-export function describeVaultSignerApproval(
-  status: Pick<WalletStatus, "nativeSignerApproval"> | null | undefined,
-): {
-  summary: string;
-  detail: string;
-  setupCommand: string | null;
-} {
-  const approval = status?.nativeSignerApproval;
-  if (!approval) {
-    return {
-      summary: "Status unavailable",
-      detail:
-        "Signer-owned Vault approval readiness is unavailable. Vault remains manual and receive-only until signer health is restored and an exact manual policy is acknowledged.",
-      setupCommand: null,
-    };
-  }
-  if (!approval.configured) {
-    return {
-      summary: "Not configured",
-      detail:
-        "This signer has no WebAuthn origin configured. Vault creation and receiving still work, but native Vault review cannot be enabled yet.",
-      setupCommand: null,
-    };
-  }
-  if (!approval.ready || approval.credentialCount <= 0) {
-    return {
-      summary: "Not enrolled",
-      detail:
-        "No signer-owned approval device is enrolled. Run the native signer-owner ceremony from the host terminal; ordinary Gateway JavaScript cannot enroll it.",
-      setupCommand:
-        "Local: ~/.fased/bin/fased-signer-enroll · Managed Local/Hosting: sudo ~/.fased/bin/fased-signer-owner webauthn-enroll",
-    };
-  }
-  return {
-    summary: `Ready · ${approval.credentialCount} device${approval.credentialCount === 1 ? "" : "s"}`,
-    detail:
-      "An approval device is ready. Sending still requires an acknowledged manual policy for this wallet and operation.",
-    setupCommand: null,
   };
 }
 
@@ -389,19 +334,6 @@ export function describeWalletAutomationPolicySummary(
   };
 }
 
-export function resolveActiveMiningWalletId(
-  props: Pick<WalletViewProps, "miningProfile" | "miningReadiness" | "miningStatus">,
-): string | null {
-  return (
-    String(
-      props.miningProfile?.walletId ||
-        props.miningStatus?.walletId ||
-        props.miningReadiness?.selectedWalletId ||
-        "",
-    ).trim() || null
-  );
-}
-
 export function hasWalletBalanceValue(value: string | undefined): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -443,29 +375,7 @@ function findNamedWallet(
 function resolveWalletMetadataRole(
   wallet: WalletViewProps["namedWallets"][number] | undefined,
 ): WalletUserRole | undefined {
-  const roleRaw =
-    typeof wallet?.metadata?.purpose === "string"
-      ? wallet.metadata.purpose
-      : typeof wallet?.metadata?.role === "string"
-        ? wallet.metadata.role
-        : "";
-  const role = roleRaw.toLowerCase();
-  if (role === "agent") {
-    return "agent";
-  }
-  if (role === "vault") {
-    return "vault";
-  }
-  if (role === "mining") {
-    return "mining";
-  }
-  if (role === "profile") {
-    return "profile";
-  }
-  if (role === "strategy") {
-    return "strategy";
-  }
-  return undefined;
+  return wallet ? "agent" : undefined;
 }
 
 function isAgentWallet(
@@ -483,16 +393,7 @@ function isAgentWallet(
 }
 
 export function resolveOperatorWalletRoles(
-  props: Pick<
-    WalletViewProps,
-    | "status"
-    | "namedWallets"
-    | "defaultWalletId"
-    | "federationBond"
-    | "miningProfile"
-    | "miningReadiness"
-    | "miningStatus"
-  >,
+  props: Pick<WalletViewProps, "status" | "namedWallets" | "defaultWalletId">,
 ): OperatorWalletRoles {
   const approvalMode = props.status?.approvalAuth?.mode ?? "none";
   const approvalReady = props.status?.approvalAuth?.ready ?? false;
@@ -503,17 +404,6 @@ export function resolveOperatorWalletRoles(
   );
   const defaultAgentWallet =
     defaultWallet && isAgentWallet(defaultWallet, defaultWalletId) ? defaultWallet : undefined;
-  const miningWalletId =
-    String(
-      props.miningProfile?.walletId ||
-        props.miningStatus?.walletId ||
-        props.miningReadiness?.selectedWalletId ||
-        "",
-    ).trim() || null;
-  const miningWallet = findNamedWallet(props.namedWallets, miningWalletId);
-  const bondWalletId = String(props.federationBond?.walletId ?? "").trim() || null;
-  const bondWallet = findNamedWallet(props.namedWallets, bondWalletId);
-
   const admin: OperatorWalletRoleSummary = props.status
     ? approvalMode === "webauthn" && approvalReady
       ? {
@@ -583,91 +473,16 @@ export function resolveOperatorWalletRoles(
             tone: "warn",
           };
 
-  const mining: OperatorWalletRoleSummary = miningWallet
-    ? {
-        title: "Legacy SAT Mining",
-        summary: miningWallet.name,
-        detail:
-          "This dedicated @wallet:mining wallet retains historical SAT cycle recovery. New WEN campaigns use owner-authorized positions and do not require it.",
-        tone: "success",
-        walletId: miningWallet.id,
-      }
-    : miningWalletId
-      ? {
-          title: "Legacy SAT Mining",
-          summary: miningWalletId,
-          detail:
-            "Historical SAT recovery points at @wallet:mining, but that wallet is not visible in the current wallet list. Refresh legacy mining and wallet state before recovery.",
-          tone: "warn",
-          walletId: miningWalletId,
-        }
-      : {
-          title: "Legacy SAT Mining",
-          summary: "Not configured",
-          detail:
-            "WEN does not require a Mining wallet. This dedicated role belongs to the legacy SAT cycle runtime and recovery; use an owner-authorized wallet for new WEN positions.",
-          tone: "neutral",
-        };
-
-  const bond: OperatorWalletRoleSummary = bondWallet
-    ? {
-        title: "Fased Network Bond",
-        summary: bondWallet.name,
-        detail:
-          props.federationBond?.status === "active"
-            ? `This wallet currently holds the active SAT bond for Fased Network. Tier ${props.federationBond?.tier ?? "none"} · quota ${props.federationBond?.quotaBand ?? "standard"}.`
-            : "This wallet is configured for Fased Network bond. Use the Fased Network page to open, increase, unlock, or re-prove the SAT bond.",
-        tone:
-          props.federationBond?.status === "active"
-            ? "success"
-            : props.federationBond?.status === "unlocking"
-              ? "warn"
-              : "neutral",
-        walletId: bondWallet.id,
-      }
-    : bondWalletId
-      ? {
-          title: "Fased Network Bond",
-          summary: bondWalletId,
-          detail:
-            "A Fased Network bond Vault is configured but not visible in the current wallet list. Refresh wallet state or repair the local wallet registry before changing bond posture.",
-          tone: "warn",
-          walletId: bondWalletId,
-        }
-      : {
-          title: "Fased Network Bond",
-          summary: "Not set",
-          detail:
-            "Select a Vault wallet on Fased Network before longer-lived bond capital if you want bonded network access.",
-          tone: "neutral",
-        };
-
-  const sharedWalletWarning =
-    miningWallet && agentWallets.some((wallet) => wallet.id === miningWallet.id)
-      ? "Agent and Mining wallets must stay separate. This singleton mining wallet is also marked Agent; use a dedicated Agent wallet and clear the Agent default before wallet work."
-      : null;
   return {
     admin,
     agent,
-    mining,
-    bond,
-    sharedWalletWarning,
-    miningWalletId,
-    bondWalletId,
+    sharedWalletWarning: null,
   };
 }
 
 export function describeWalletRoleBadges(
   walletId: string,
-  props: Pick<
-    WalletViewProps,
-    | "defaultWalletId"
-    | "federationBond"
-    | "miningProfile"
-    | "miningReadiness"
-    | "miningStatus"
-    | "namedWallets"
-  >,
+  props: Pick<WalletViewProps, "defaultWalletId" | "namedWallets">,
 ): Array<{ label: string; tone: "success" | "warn" | "neutral" }> {
   void walletId;
   void props;
@@ -678,22 +493,6 @@ function renderWalletRuntimeStatusIcons(params: {
   role: DisplayedWalletRole;
   automationEnabled?: boolean;
 }) {
-  const { role } = params;
-  if (role === "mining") {
-    return nothing;
-  }
-  if (role === "vault") {
-    return html`
-      <span
-        class="wallet-status-icon"
-        data-state="vault-manual"
-        title="Manual approval is required. Background automation is not permitted."
-        aria-label="Manual approval"
-      >
-        ${icons.hand}
-      </span>
-    `;
-  }
   if (params.automationEnabled === undefined) {
     return nothing;
   }
@@ -723,22 +522,6 @@ function renderWalletPasskeyChip(summary: string, detail: string) {
   `;
 }
 
-function renderWalletSweepChip(profile: SatMinerProfile | null | undefined) {
-  const enabled = Boolean(profile?.automation?.satSweep?.enabled);
-  if (!enabled) {
-    return nothing;
-  }
-  return html`
-    <span
-      class="wallet-status-icon"
-      data-role="sweep-on"
-      title="Sweep enabled"
-    >
-      ${icons.arrowDown}
-    </span>
-  `;
-}
-
 function renderWalletActivePolicyIcons(params: {
   walletId: string;
   role: DisplayedWalletRole;
@@ -760,13 +543,7 @@ function renderWalletActivePolicyIcons(params: {
             ? { dataRole: "policy-on", title: "Recurring send active", icon: icons.send }
             : null,
         ]
-      : params.role === "vault"
-        ? [
-            params.props.policyCapsEnabled
-              ? { dataRole: "policy-on", title: "Spending limits active", icon: icons.shield }
-              : null,
-          ]
-        : [];
+      : [];
   return entries
     .filter((entry): entry is NonNullable<(typeof entries)[number]> => entry !== null)
     .map(
@@ -780,79 +557,37 @@ function renderWalletActivePolicyIcons(params: {
 
 export function describeAgentDefaultAction(
   walletId: string,
-  props: Pick<
-    WalletViewProps,
-    | "defaultWalletId"
-    | "settingsBusy"
-    | "miningProfile"
-    | "miningReadiness"
-    | "miningStatus"
-    | "namedWallets"
-  >,
+  props: Pick<WalletViewProps, "defaultWalletId" | "settingsBusy" | "namedWallets">,
 ): { label: string; disabled: boolean; title: string } {
   const isDefaultWallet = walletId === String(props.defaultWalletId ?? "").trim();
-  const conflictsWithMining = !isDefaultWallet && walletId === resolveActiveMiningWalletId(props);
   const wallet = findNamedWallet(props.namedWallets, walletId);
   const metadataRole = resolveWalletMetadataRole(wallet);
   const purposeLocked = Boolean(metadataRole && metadataRole !== "agent");
   return {
     label: isDefaultWallet ? "Clear fallback" : "Set fallback",
-    disabled: props.settingsBusy || conflictsWithMining || purposeLocked,
-    title: conflictsWithMining
-      ? "Agent and Mining wallets must stay separate. Create a dedicated Agent wallet instead."
-      : purposeLocked
-        ? "Wallet purpose is permanent. Create a new Agent wallet instead of changing this wallet."
-        : isDefaultWallet
-          ? "Clear this optional Default Agent wallet fallback. Existing Agent roles and assignments stay unchanged."
-          : "Use this as the optional Default Agent wallet fallback after explicit, skill, and Agent assignments.",
+    disabled: props.settingsBusy || purposeLocked,
+    title: purposeLocked
+      ? "Wallet purpose is permanent. Create a new Agent wallet instead of changing this wallet."
+      : isDefaultWallet
+        ? "Clear this optional Default Agent wallet fallback. Existing Agent roles and assignments stay unchanged."
+        : "Use this as the optional Default Agent wallet fallback after explicit, skill, and Agent assignments.",
   };
 }
 
 function resolveDisplayedWalletRole(
-  walletId: string,
-  props: Pick<
-    WalletViewProps,
-    "defaultWalletId" | "miningProfile" | "miningReadiness" | "miningStatus" | "namedWallets"
-  >,
+  _walletId: string,
+  _props: Pick<WalletViewProps, "defaultWalletId" | "namedWallets">,
 ): DisplayedWalletRole {
-  if (walletId === resolveActiveMiningWalletId(props)) {
-    return "mining";
-  }
-  const wallet = findNamedWallet(props.namedWallets, walletId);
-  const metadataRole = resolveWalletMetadataRole(wallet);
-  if (metadataRole === "mining") {
-    return "mining";
-  }
-  if (metadataRole === "profile" || metadataRole === "strategy") {
-    return metadataRole;
-  }
-  if (isAgentWallet(wallet, props.defaultWalletId)) {
-    return "agent";
-  }
-  return "vault";
+  return "agent";
 }
 
-function walletRoleRank(role: DisplayedWalletRole): number {
-  switch (role) {
-    case "mining":
-      return 0;
-    case "vault":
-      return 1;
-    case "profile":
-      return 2;
-    case "strategy":
-      return 3;
-    case "agent":
-      return 4;
-  }
+function walletRoleRank(_role: DisplayedWalletRole): number {
+  return 1;
 }
 
 export function orderWalletsForDisplay(
   wallets: WalletViewProps["namedWallets"],
-  props: Pick<
-    WalletViewProps,
-    "defaultWalletId" | "miningProfile" | "miningReadiness" | "miningStatus" | "namedWallets"
-  >,
+  props: Pick<WalletViewProps, "defaultWalletId" | "namedWallets">,
 ): WalletViewProps["namedWallets"] {
   const defaultWalletId = String(props.defaultWalletId ?? "").trim();
   return wallets.toSorted((a, b) => {
@@ -872,34 +607,6 @@ export function orderWalletsForDisplay(
     }
     return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
   });
-}
-
-function formatSatInputValue(raw: string | number | bigint | null | undefined): string {
-  const value = String(raw ?? "").trim();
-  if (!value) {
-    return "0";
-  }
-  try {
-    const units = BigInt(value);
-    const scale = 100_000_000_000n;
-    const whole = units / scale;
-    const fraction = (units % scale).toString().padStart(11, "0").replace(/0+$/, "").slice(0, 6);
-    return fraction ? `${whole}.${fraction}` : `${whole}`;
-  } catch {
-    return "0";
-  }
-}
-
-function parseSatInputToRaw(value: string): string {
-  const normalized = String(value ?? "").trim();
-  if (!normalized || !/^\d+(\.\d{0,11})?$/.test(normalized)) {
-    return "0";
-  }
-  const [wholePart, fractionPart = ""] = normalized.split(".");
-  return (
-    BigInt(wholePart || "0") * 100_000_000_000n +
-    BigInt((fractionPart + "00000000000").slice(0, 11) || "0")
-  ).toString();
 }
 
 function toHumanAmount(raw: string, chain: "solana", options: { hideUnit?: boolean } = {}): string {
@@ -1328,29 +1035,6 @@ function renderWalletSignerSemanticIntent(request: WalletSendApprovalRequest) {
     add("Mint", intent.mint);
     add("Destination", intent.destination);
     add("Amount", intent.amount);
-  } else if (intentType === "solana.vaultBondAction") {
-    const context = walletSignerIntentRecord(intent.context);
-    add("Cluster", intent.cluster);
-    add("Vault action", intent.action);
-    add("Program", intent.programId);
-    add("Target authority", context?.targetAuthority);
-    add("Dispute authority", context?.disputeAuthority);
-    add("Interval start cycle", context?.intervalStartCycleId);
-    add("Registry page", context?.registryPageIndex);
-    add("Miner authorities", context?.minerAuthorities);
-    add("Front cycle IDs", context?.frontCycleIds);
-    add("Back cycle IDs", context?.backCycleIds);
-  } else if (intentType === "federation.bondChallenge") {
-    const federation = walletSignerIntentRecord(intent.federation);
-    add("Challenge ID", federation?.challengeId);
-    add("Bond ID", federation?.bondId);
-    add("Bond tier", federation?.tier);
-    add("Bond amount", federation?.amountRaw);
-    add("Federation handle", federation?.handle);
-    add("Node ID", federation?.nodeId);
-    add("Token ID", federation?.tokenId);
-    add("Federation origin", federation?.federationOrigin);
-    add("Challenge expiry", federation?.expiresAt);
   }
   return html`
     <div class="wallet-approval-diff" style="margin-top: 6px;">
@@ -1390,43 +1074,6 @@ function formatWalletApprovalTime(value: string): string {
   }).format(date);
 }
 
-function trimTrailingZeros(value: string): string {
-  return value.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
-}
-
-function formatCompactTokenAmount(raw: string | null | undefined, unit: "SOL" | "SAT"): string {
-  const value = String(raw ?? "").trim();
-  if (!value) {
-    return "0";
-  }
-  try {
-    const decimals = unit === "SOL" ? SOL_DECIMALS : SAT_DECIMALS;
-    const amount = Number(value) / 10 ** Number(decimals);
-    if (!Number.isFinite(amount)) {
-      return "0";
-    }
-    const abs = Math.abs(amount);
-    if (unit === "SAT") {
-      if (abs >= 1000) {
-        return trimTrailingZeros(amount.toFixed(1));
-      }
-      if (abs >= 1) {
-        return trimTrailingZeros(amount.toFixed(2));
-      }
-      return trimTrailingZeros(amount.toFixed(3));
-    }
-    if (abs >= 1) {
-      return trimTrailingZeros(amount.toFixed(2));
-    }
-    if (abs >= 0.01) {
-      return trimTrailingZeros(amount.toFixed(2));
-    }
-    return abs > 0 ? "<0.01" : "0";
-  } catch {
-    return value;
-  }
-}
-
 function stripUnitSuffix(value: string | null | undefined, unit: "SOL" | "SAT"): string {
   const text = String(value ?? "").trim();
   if (!text) {
@@ -1436,37 +1083,16 @@ function stripUnitSuffix(value: string | null | undefined, unit: "SOL" | "SAT"):
   return text.replace(suffix, "").trim() || "0";
 }
 
-function resolveMiningWalletId(
-  props: Pick<WalletViewProps, "miningProfile" | "miningReadiness" | "miningStatus">,
-): string {
-  return String(
-    props.miningProfile?.walletId ??
-      props.miningStatus?.walletId ??
-      props.miningReadiness?.selectedWalletId ??
-      "",
-  ).trim();
-}
-
 function resolveWalletSolBalanceDisplay(
   wallet: WalletViewProps["namedWallets"][number],
-  props: Pick<WalletViewProps, "balancesLoading" | "miningReadiness" | "miningStatus">,
-  isMiningWallet: boolean,
+  props: Pick<WalletViewProps, "balancesLoading">,
 ): string {
   if (typeof wallet.balances?.solana === "string" && wallet.balances.solana.trim()) {
     return formatRoundedAssetAmountForUi(
       stripUnitSuffix(toHumanAmount(wallet.balances.solana, "solana"), "SOL"),
     );
   }
-  if (isMiningWallet) {
-    const miningDisplay = String(props.miningReadiness?.balances.solBalanceDisplay ?? "").trim();
-    if (miningDisplay) {
-      return formatRoundedAssetAmountForUi(stripUnitSuffix(miningDisplay, "SOL"));
-    }
-    const statusLamports = String(props.miningStatus?.currentSolBalanceLamports ?? "").trim();
-    if (statusLamports) {
-      return formatRoundedAssetAmountForUi(formatCompactTokenAmount(statusLamports, "SOL"));
-    }
-  }
+
   if (wallet.addresses?.solana) {
     return props.balancesLoading ? "Loading" : "Unavailable";
   }
@@ -1514,16 +1140,12 @@ function resolveWalletDetailAssetEntries(
 
 function buildWalletAssetOptions(
   wallet: WalletViewProps["namedWallets"][number] | undefined,
-  props: Pick<
-    WalletViewProps,
-    "balances" | "balancesLoading" | "miningProfile" | "miningReadiness" | "miningStatus"
-  >,
+  props: Pick<WalletViewProps, "balances" | "balancesLoading">,
 ): WalletResolvedAssetOption[] {
   if (!wallet) {
     return [];
   }
   const options: WalletResolvedAssetOption[] = [];
-  const isMiningWallet = resolveMiningWalletId(props) === wallet.id;
   const solanaAssets = resolveWalletDetailAssetEntries(wallet, props.balances);
   if (solanaAssets.length > 0) {
     for (const asset of solanaAssets) {
@@ -1552,7 +1174,7 @@ function buildWalletAssetOptions(
       chain: "solana",
       symbol: "SOL",
       name: "Solana",
-      amountDisplay: resolveWalletSolBalanceDisplay(wallet, props, isMiningWallet),
+      amountDisplay: resolveWalletSolBalanceDisplay(wallet, props),
       amountRaw: wallet.balances?.solana,
       isNative: true,
       address: wallet.addresses?.solana,
@@ -1726,7 +1348,7 @@ function renderWalletCapsPanel(params: {
   props: WalletViewProps;
   settings: WalletSettings;
   policyDisplay: WalletStatus["policyDisplay"] | undefined;
-  cardRole: "agent" | "vault" | "mining";
+  cardRole: "agent";
   selectedWalletId: string;
   cardWalletCanSpendSolana: boolean;
   selectedWalletTokens: WalletResolvedAssetOption[];
@@ -1784,7 +1406,6 @@ function renderWalletCapsPanel(params: {
           <option value="read-only">Read-only</option>
           <option value="manual-only">Manual only</option>
           <option value="small-agent-spend">Small Agent spend</option>
-          <option value="mining-only">Mining only</option>
           <option value="skill-limited">Skill limited</option>
           <option value="trading-experimental">Advanced wallet actions</option>
           <option value="recommended">Role recommended</option>
@@ -1910,9 +1531,7 @@ function renderWalletCapsPanel(params: {
           `,
         )}
       </div>
-      ${
-        cardRole !== "mining"
-          ? html`
+      ${html`
               <details class="wallet-advanced-box" style="margin-top: 12px;">
                 <summary>Add asset</summary>
                 <div class="wallet-spend-limit-row" style="margin-top: 10px;">
@@ -2050,9 +1669,7 @@ function renderWalletCapsPanel(params: {
                   </button>
                 </div>
               </details>
-            `
-          : nothing
-      }
+            `}
       ${
         cardRole === "agent"
           ? html`
@@ -2111,15 +1728,7 @@ function renderWalletAssetLogo(
 
 function resolveSelectedWalletAsset(
   wallet: WalletViewProps["namedWallets"][number] | undefined,
-  props: Pick<
-    WalletViewProps,
-    | "balances"
-    | "balancesLoading"
-    | "miningProfile"
-    | "miningReadiness"
-    | "miningStatus"
-    | "sendCreateForm"
-  >,
+  props: Pick<WalletViewProps, "balances" | "balancesLoading" | "sendCreateForm">,
 ): { selected?: WalletResolvedAssetOption; options: WalletResolvedAssetOption[] } {
   const options = buildWalletAssetOptions(wallet, props);
   if (options.length === 0) {
@@ -2463,8 +2072,7 @@ function renderWalletAccessPanel(props: WalletViewProps) {
         </div>
         <div class="wallet-security-note" style="margin-top: 10px;">
           This is optional account security for the browser Control UI. It is not requested during
-          installation or wallet creation and does not gate Agent or Mining automation. A Vault
-          approval device is a separate signer-owned feature configured only for Vault review.
+          installation or wallet creation and does not gate wallet automation. Wallet signing uses its signer-owned approval policy.
         </div>
         ${
           !adminControlShortcut.enableVisible && !adminControlShortcut.enrollVisible
@@ -2620,23 +2228,8 @@ export function renderWallet(props: WalletViewProps) {
   const canEditPolicy = status?.capabilities?.canEditPolicy ?? true;
   const canSend = status?.capabilities?.canSend ?? true;
   const policyDisplay = status?.policyDisplay;
-  const selectedWallet = findNamedWallet(props.namedWallets, props.walletDetailsWalletId);
   const displayedWallets = orderWalletsForDisplay(props.namedWallets, props);
-  const miningSatSweep = {
-    enabled: false,
-    mode: "all" as const,
-    percentage: 100,
-    minRaw: "1",
-    keepRaw: "0",
-    ...props.miningProfile?.automation?.satSweep,
-  };
-  const miningSweepDestinationWalletOptions = props.namedWallets.filter(
-    (wallet) => wallet.id !== selectedWallet?.id && Boolean(wallet.addresses?.solana),
-  );
-  const miningSweepDestinationMode =
-    miningSatSweep.destinationAddress || !miningSatSweep.destinationWalletId
-      ? "external"
-      : "wallet";
+
   const expandedWalletId = String(props.expandedWalletId ?? "").trim();
   const expandedPanel = props.expandedPanel ?? "";
   const routeHash =
@@ -3181,16 +2774,7 @@ export function renderWallet(props: WalletViewProps) {
         color: var(--warn);
       }
       .wallet-status-icon[data-state="agent-auto-on"],
-      .wallet-status-icon[data-state="vault-split-locked"] {
-        color: var(--ok);
-      }
       .wallet-status-icon[data-state="agent-auto-off"],
-      .wallet-status-icon[data-state="vault-manual"] {
-        color: var(--muted);
-      }
-      .wallet-status-icon[data-state="vault-split-unlocked"] {
-        color: var(--warn);
-      }
       .wallet-card__wallet-icon {
         width: 18px;
         height: 18px;
@@ -3966,8 +3550,8 @@ export function renderWallet(props: WalletViewProps) {
                   <span class="wallet-main-tabs__spacer"></span>
                   <button
                     class="btn small"
-                    ?disabled=${props.settingsBusy || !props.onAttachWalletStandardVault}
-                    @click=${props.onAttachWalletStandardVault}
+                    ?disabled=${props.settingsBusy || !props.onAttachWalletStandard}
+                    @click=${props.onAttachWalletStandard}
                     title="Connect a compatible Solana wallet. Each transaction requires approval in that wallet."
                   >
                     Connect wallet
@@ -4061,12 +3645,7 @@ export function renderWallet(props: WalletViewProps) {
           }
           <div class="wallet-grid">
             ${displayedWallets.map((wallet) => {
-              const isMiningWallet = resolveMiningWalletId(props) === wallet.id;
-              const solBalanceDisplay = resolveWalletSolBalanceDisplay(
-                wallet,
-                props,
-                isMiningWallet,
-              );
+              const solBalanceDisplay = resolveWalletSolBalanceDisplay(wallet, props);
               const activeBalanceWalletId = String(props.balanceWalletId ?? "").trim();
               const balanceSelected = wallet.id === expandedWalletId && expandedPanel === "balance";
               const securitySelected =
@@ -4086,7 +3665,7 @@ export function renderWallet(props: WalletViewProps) {
               const nativeLabel = "SOL" as const;
               const nativeValue = solBalanceDisplay;
               const cardRole = resolveDisplayedWalletRole(wallet.id, props);
-              const vaultSignerApproval = describeVaultSignerApproval(status);
+
               const cardAutomationEnabled =
                 cardRole === "agent" && wallet.id === props.walletDetailsWalletId && settings
                   ? settings.policy.directSigning
@@ -4103,42 +3682,33 @@ export function renderWallet(props: WalletViewProps) {
               const cardWalletChains = allowedWalletSendChains(wallet);
               const cardWalletCanSpendSolana = cardWalletChains.includes("solana");
               const policyTabs: Array<{ id: WalletPolicyPanel; label: string; title: string }> =
-                cardRole === "mining"
+                cardRole === "agent"
                   ? [
                       {
-                        id: "sweep",
-                        label: "Sweep",
-                        title: "Mining-only sweep after SAT claims.",
+                        id: "caps",
+                        label: "Limits",
+                        title:
+                          "Limits used by chat, scheduled sends, swaps, and approved automation.",
+                      },
+                      {
+                        id: "schedule",
+                        label: "Scheduled send",
+                        title:
+                          "One Agent-wallet recurring send policy shared by chat and Wallet UI.",
+                      },
+                      {
+                        id: "automation",
+                        label: "Automation",
+                        title: "Stop or resume background wallet execution for this Agent wallet.",
                       },
                     ]
-                  : cardRole === "agent"
-                    ? [
-                        {
-                          id: "caps",
-                          label: "Limits",
-                          title:
-                            "Limits used by chat, scheduled sends, swaps, and approved automation.",
-                        },
-                        {
-                          id: "schedule",
-                          label: "Scheduled send",
-                          title:
-                            "One Agent-wallet recurring send policy shared by chat and Wallet UI.",
-                        },
-                        {
-                          id: "automation",
-                          label: "Automation",
-                          title:
-                            "Stop or resume background wallet execution for this Agent wallet.",
-                        },
-                      ]
-                    : [
-                        {
-                          id: "caps",
-                          label: "Send limits",
-                          title: "Vault guardrails for reviewed Wallet UI sends only.",
-                        },
-                      ];
+                  : [
+                      {
+                        id: "caps",
+                        label: "Send limits",
+                        title: "Spending limits for reviewed wallet sends.",
+                      },
+                    ];
               const activePolicyPanel =
                 props.policyPanel && policyTabs.some((tab) => tab.id === props.policyPanel)
                   ? props.policyPanel
@@ -4168,7 +3738,7 @@ export function renderWallet(props: WalletViewProps) {
 	                        <div class="wallet-card__title">${wallet.name}</div>
                         ${walletPurposeLabels(wallet.metadata).map((label) => html`<span class="badge">${label}</span>`)}
 
-	                        ${cardRole === "mining" ? renderWalletSweepChip(props.miningProfile) : nothing}
+	                        ${nothing}
 		                        ${renderWalletActivePolicyIcons({
                               walletId: wallet.id,
                               role: cardRole,
@@ -4490,11 +4060,7 @@ export function renderWallet(props: WalletViewProps) {
                                         cardSignerReadiness?.policyReady === false
                                           ? html`
                                               <div>
-                                                ${
-                                                  cardRole === "mining"
-                                                    ? "Mining activates automatically when the signed SAT runtime manifest is live."
-                                                    : "Run Fased Update to finish this wallet automatically."
-                                                }
+                                                ${"Run Fased Update to finish this wallet automatically."}
                                               </div>
                                             `
                                           : nothing
@@ -4510,262 +4076,14 @@ export function renderWallet(props: WalletViewProps) {
                                   `
                                 : nothing
                             }
-                            ${
-                              cardRole === "vault" && wallet.providerId === "local-socket-signer"
-                                ? html`
-                                    <details class="wallet-advanced-box">
-                                      <summary>Optional Vault approval device · ${vaultSignerApproval.summary}</summary>
-                                      <div>${vaultSignerApproval.detail}</div>
-                                      <div>This optional device adds a signer-owned approval step for Vault sends.</div>
-                                    </details>
-                                  `
-                                : wallet.providerId === "wallet-standard"
-                                  ? html`
-                                      <details style="margin-top: 12px;">
-                                        <summary>Advanced</summary>
-                                        <div class="wallet-security-note" style="margin-top: 10px;">
-                                          Removing this wallet deletes only its Fased registration.
-                                          The browser wallet and its funds are unchanged.
-                                        </div>
-                                        <div class="row" style="margin-top: 10px;">
-                                          <button
-                                            class="btn small danger"
-                                            ?disabled=${props.settingsBusy || !props.onRemoveWallet}
-                                            @click=${() => props.onRemoveWallet?.(wallet.id)}
-                                          >
-                                            Remove wallet
-                                          </button>
-                                        </div>
-                                      </details>
-                                    `
-                                  : nothing
-                            }
-                            ${
-                              cardRole === "mining"
-                                ? activePolicyPanel === "sweep"
-                                  ? html`
-	                                    <div class="field">
-	                                      <div class="wallet-card-security__grid">
-	                                        <label class="field">
-	                                          <span>Status</span>
-	                                          <select
-                                            ?disabled=${props.settingsBusy || !props.onMiningSatSweepChange}
-                                            @change=${(event: Event) =>
-                                              props.onMiningSatSweepChange?.({
-                                                enabled:
-                                                  (event.currentTarget as HTMLSelectElement)
-                                                    .value === "enabled",
-                                              })}
-                                          >
-                                            <option
-                                              value="disabled"
-                                              ?selected=${!miningSatSweep.enabled}
-                                            >
-                                              Off
-                                            </option>
-                                            <option
-                                              value="enabled"
-                                              ?selected=${miningSatSweep.enabled}
-                                            >
-                                              On
-                                            </option>
-                                          </select>
-                                        </label>
-                                        <label class="field">
-                                          <span>Destination</span>
-                                          <select
-                                            ?disabled=${
-                                              props.settingsBusy ||
-                                              !miningSatSweep.enabled ||
-                                              !props.onMiningSatSweepChange
-                                            }
-                                            @change=${(event: Event) => {
-                                              const value = (
-                                                event.currentTarget as HTMLSelectElement
-                                              ).value;
-                                              props.onMiningSatSweepChange?.(
-                                                value === "__external__"
-                                                  ? {
-                                                      destinationWalletId: undefined,
-                                                      destinationAddress:
-                                                        miningSatSweep.destinationAddress ?? "",
-                                                    }
-                                                  : {
-                                                      destinationWalletId: value || undefined,
-                                                      destinationAddress: undefined,
-                                                    },
-                                              );
-                                            }}
-                                          >
-                                            <option
-                                              value="__external__"
-                                              ?selected=${miningSweepDestinationMode === "external"}
-                                            >
-                                              External
-                                            </option>
-                                            ${miningSweepDestinationWalletOptions.map(
-                                              (targetWallet) => html`
-                                                <option
-                                                  value=${targetWallet.id}
-                                                  ?selected=${
-                                                    miningSatSweep.destinationWalletId ===
-                                                    targetWallet.id
-                                                  }
-                                                >
-                                                  ${targetWallet.name}
-                                                </option>
-                                              `,
-                                            )}
-                                          </select>
-                                        </label>
-                                        ${
-                                          miningSweepDestinationMode === "external"
-                                            ? html`
-                                                <label class="field">
-                                                  <span>Address</span>
-                                                  <input
-                                                    type="text"
-                                                    .value=${miningSatSweep.destinationAddress ?? ""}
-                                                    ?disabled=${
-                                                      props.settingsBusy ||
-                                                      !miningSatSweep.enabled ||
-                                                      !props.onMiningSatSweepChange
-                                                    }
-                                                    @change=${(event: Event) =>
-                                                      props.onMiningSatSweepChange?.({
-                                                        destinationAddress:
-                                                          (
-                                                            event.currentTarget as HTMLInputElement
-                                                          ).value.trim() || undefined,
-                                                        destinationWalletId: undefined,
-                                                      })}
-                                                    placeholder="Solana address"
-                                                  />
-                                                </label>
-                                              `
-                                            : nothing
-                                        }
-                                        ${
-                                          miningSatSweep.mode === "percentage"
-                                            ? html`
-                                                <label class="field">
-                                                  <span>Percent</span>
-                                                  <input
-                                                    type="number"
-                                                    min="1"
-                                                    max="100"
-                                                    step="1"
-                                                    .value=${String(
-                                                      miningSatSweep.percentage ?? 100,
-                                                    )}
-                                                    ?disabled=${
-                                                      props.settingsBusy ||
-                                                      !miningSatSweep.enabled ||
-                                                      !props.onMiningSatSweepChange
-                                                    }
-                                                    @change=${(event: Event) =>
-                                                      props.onMiningSatSweepChange?.({
-                                                        percentage: Math.max(
-                                                          1,
-                                                          Math.min(
-                                                            100,
-                                                            Number(
-                                                              (
-                                                                event.currentTarget as HTMLInputElement
-                                                              ).value,
-                                                            ) || 100,
-                                                          ),
-                                                        ),
-                                                      })}
-                                                  />
-                                                </label>
-                                              `
-                                            : nothing
-                                        }
-                                        <label class="field">
-                                          <span>Amount</span>
-                                          <select
-                                            ?disabled=${
-                                              props.settingsBusy ||
-                                              !miningSatSweep.enabled ||
-                                              !props.onMiningSatSweepChange
-                                            }
-                                            @change=${(event: Event) =>
-                                              props.onMiningSatSweepChange?.({
-                                                mode:
-                                                  (event.currentTarget as HTMLSelectElement)
-                                                    .value === "percentage"
-                                                    ? "percentage"
-                                                    : "all",
-                                              })}
-                                          >
-                                            <option
-                                              value="all"
-                                              ?selected=${miningSatSweep.mode !== "percentage"}
-                                            >
-                                              All
-                                            </option>
-                                            <option
-                                              value="percentage"
-                                              ?selected=${miningSatSweep.mode === "percentage"}
-                                            >
-                                              %
-                                            </option>
-                                          </select>
-                                        </label>
-                                        <label class="field">
-                                          <span>Minimum SAT</span>
-                                          <input
-                                            type="text"
-                                            inputmode="decimal"
-                                            .value=${formatSatInputValue(
-                                              miningSatSweep.minRaw ?? "1",
-                                            )}
-                                            ?disabled=${
-                                              props.settingsBusy ||
-                                              !miningSatSweep.enabled ||
-                                              !props.onMiningSatSweepChange
-                                            }
-                                            @change=${(event: Event) =>
-                                              props.onMiningSatSweepChange?.({
-                                                minRaw: parseSatInputToRaw(
-                                                  (event.currentTarget as HTMLInputElement).value,
-                                                ),
-                                              })}
-                                            placeholder="1"
-                                          />
-                                        </label>
-                                        <label class="field">
-                                          <span>Keep SAT</span>
-                                          <input
-                                            type="text"
-                                            inputmode="decimal"
-                                            .value=${formatSatInputValue(
-                                              miningSatSweep.keepRaw ?? "0",
-                                            )}
-                                            ?disabled=${
-                                              props.settingsBusy ||
-                                              !miningSatSweep.enabled ||
-                                              !props.onMiningSatSweepChange
-                                            }
-                                            @change=${(event: Event) =>
-                                              props.onMiningSatSweepChange?.({
-                                                keepRaw: parseSatInputToRaw(
-                                                  (event.currentTarget as HTMLInputElement).value,
-                                                ),
-                                              })}
-                                            placeholder="0"
-                                          />
-                                        </label>
-                                      </div>
-                                    </div>
-                                  `
-                                  : nothing
-                                : html`
+
+                            ${wallet.providerId === "wallet-standard" ? html`<details style="margin-top:12px"><summary>Advanced</summary><div class="wallet-security-note">Removing this wallet deletes only its Fased registration. The browser wallet and its funds are unchanged.</div><button class="btn small danger" ?disabled=${props.settingsBusy || !props.onRemoveWallet} @click=${() => props.onRemoveWallet?.(wallet.id)}>Remove wallet</button></details>` : nothing}
+
+                            ${html`
                                     ${
                                       settings &&
                                       activePolicyPanel === "caps" &&
-                                      (cardRole === "agent" || cardRole === "vault")
+                                      cardRole === "agent"
                                         ? renderWalletCapsPanel({
                                             props,
                                             settings,
@@ -4806,7 +4124,7 @@ export function renderWallet(props: WalletViewProps) {
                                                 <label class="field">
                                                   <span>Destination</span>
                                                   <input
-                                                    placeholder="@wallet:vault or Solana address"
+                                                    placeholder="@wallet:wallet or Solana address"
                                                     .value=${props.recurringTransferDestination}
                                                     ?disabled=${props.settingsBusy || !canEditPolicy}
                                                     @input=${(event: Event) =>
@@ -5081,22 +4399,13 @@ export function renderWallet(props: WalletViewProps) {
 	                                          `
                                         : nothing
                                     }
-                                  `
-                            }
+                                  `}
                             ${
                               wallet.providerId === "local-socket-signer"
                                 ? html`
                                     <details style="margin-top: 12px;">
                                       <summary>Advanced</summary>
-                                      ${
-                                        cardRole === "mining"
-                                          ? html`
-                                              <div class="wallet-security-note" style="margin-top: 10px">
-                                                Mining cannot be deleted or archived while attached. Use <code>fased onboard</code> → Manage
-                                                wallet → Retire and replace Mining wallet.
-                                              </div>
-                                            `
-                                          : html`
+                                      ${html`
                                             <div class="wallet-security-note" style="margin-top: 10px;">
                                               Archiving disables signer use and removes this wallet from Fased. It does not move funds.
                                             </div>
@@ -5109,8 +4418,7 @@ export function renderWallet(props: WalletViewProps) {
                                                 Archive wallet
                                               </button>
                                             </div>
-                                          `
-                                      }
+                                          `}
                                     </details>
                                   `
                                 : nothing
@@ -5138,7 +4446,7 @@ export function renderWallet(props: WalletViewProps) {
               <div class="card-title wallet-title-with-help">
                 <span>Wallet Approvals</span>
                 ${renderWalletHelp(
-                  "Reviewed sends, Vault actions, and federation signatures appear here. The signer executes only the exact prepared operation; Vault review may require its separately configured approval device.",
+                  "Reviewed wallet operations appear here. The signer executes only the exact prepared operation.",
                 )}
               </div>
               <div class="card-sub">Pending and recent reviewed wallet operations.</div>
@@ -5643,7 +4951,7 @@ function renderSendModal(props: WalletViewProps) {
               <label class="field wallet-send-field">
                 <span>Destination</span>
                 <input
-                  placeholder="@wallet:vault or Solana address"
+                  placeholder="@wallet:wallet or Solana address"
                   .value=${props.sendCreateForm.to ?? ""}
                   ?disabled=${props.sendCreateBusy || !canSend}
                   @input=${(event: Event) =>

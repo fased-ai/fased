@@ -49,6 +49,7 @@ const createRegistry = (channels: PluginRegistry["channels"]): PluginRegistry =>
   typedHooks: [],
   channels,
   providers: [],
+  runtimeProviders: {},
   webSearchProviders: [],
   imageGenerationProviders: [],
   videoGenerationProviders: [],

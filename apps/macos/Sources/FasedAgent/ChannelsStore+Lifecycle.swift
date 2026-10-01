@@ -1,5 +1,5 @@
-import Foundation
 import FasedAgentProtocol
+import Foundation
 
 extension ChannelsStore {
     func start() {

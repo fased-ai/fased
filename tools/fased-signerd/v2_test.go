@@ -131,18 +131,22 @@ func TestSignerV2PolicyIsDeterministicAndFailClosed(t *testing.T) {
 	}
 }
 
-func TestSignerV2VaultCannotBypassReviewedWebAuthnWithDirectExecute(t *testing.T) {
+func TestSignerV2ReadOnlyWalletCannotDirectExecute(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	destination := solana.NewWallet().PublicKey().String()
 	policyInput := testSignerPolicyV2("vault-direct-denied", destination, 10, 100)
-	policyInput.Role = "vault"
+	policyInput.Role = "agent"
+	policyInput.ApprovalMode = "read-only"
+	policyInput.Operations = nil
+	policyInput.Programs = nil
+	policyInput.Assets = nil
 	wallet, policy, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
 		WalletID:        "vault-direct-denied",
 		ExpectedVersion: 0,
 		Policy:          policyInput,
 	})
 	if err != nil {
-		t.Fatalf("install Vault policy: %v", err)
+		t.Fatalf("install read-only policy: %v", err)
 	}
 	service := &signerServiceV2{store: store, keys: keys}
 	_, err = service.execute(signerExecuteRequestV2{
@@ -151,15 +155,15 @@ func TestSignerV2VaultCannotBypassReviewedWebAuthnWithDirectExecute(t *testing.T
 		Intent:         signerIntentV2{Type: intentSolanaNativeTransfer, Destination: destination, Lamports: "1"},
 		intentWalletID: wallet.WalletID,
 	})
-	if err == nil || !strings.Contains(err.Error(), "review.prepare") || !strings.Contains(err.Error(), "WebAuthn") {
-		t.Fatalf("Vault direct execute was not rejected by the reviewed authorization boundary: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "operations are empty") {
+		t.Fatalf("Read-only direct execute was not rejected by the reviewed authorization boundary: %v", err)
 	}
 	if _, getErr := store.getOperation("vault-direct-request"); !errors.Is(getErr, errSignerOperationNotFoundV2) {
-		t.Fatalf("Vault direct execute mutated durable operation state: %v", getErr)
+		t.Fatalf("Read-only direct execute mutated durable operation state: %v", getErr)
 	}
 	usage, usageErr := store.dailyUsage(wallet.WalletID, "solana:native", store.now())
 	if usageErr != nil || usage.Sign() != 0 {
-		t.Fatalf("Vault direct execute reserved spend: usage=%v err=%v", usage, usageErr)
+		t.Fatalf("Read-only direct execute reserved spend: usage=%v err=%v", usage, usageErr)
 	}
 }
 
@@ -169,7 +173,7 @@ func TestSignerV2ApplicationSocketCreatesOnlyExplicitlyLockedWallet(t *testing.T
 	lockedBody, err := json.Marshal(signerWalletCreateRequestV2{
 		ExpectedVersion: 0,
 		Policy: signerPolicyV2{
-			Role: "mining", Operations: []string{}, Programs: []string{}, Assets: []signerPolicyAssetV2{},
+			Role: "agent", Operations: []string{}, Programs: []string{}, Assets: []signerPolicyAssetV2{},
 		},
 	})
 	if err != nil {

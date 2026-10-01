@@ -6,7 +6,8 @@ import SwiftUI
 struct AnthropicAuthControls: View {
     let connectionMode: AppState.ConnectionMode
 
-    @State private var oauthStatus: FasedAgentOAuthStore.AnthropicOAuthStatus = FasedAgentOAuthStore.anthropicOAuthStatus()
+    @State private var oauthStatus: FasedAgentOAuthStore.AnthropicOAuthStatus = FasedAgentOAuthStore
+        .anthropicOAuthStatus()
     @State private var pkce: AnthropicOAuth.PKCE?
     @State private var code: String = ""
     @State private var busy = false

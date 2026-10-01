@@ -287,13 +287,6 @@ application version:
 ~/.fased/plugin.lock.json
 ```
 
-`fased update` resolves the signed target without npm registry metadata,
-verifies checksums and archive paths, stages and health-checks the candidate,
-switches `current` atomically, verifies Gateway identity and plugins, and rolls
-back automatically on failure. Configuration, credentials, wallets, signer
-state, mining data, sessions, and memory remain under the state directory and
-are never part of the release swap.
-
 ## Legacy hosted updater repair
 
 Older hosted releases may have no root controller or a root controller that
@@ -318,12 +311,6 @@ existing installation, verifies the immutable release manifest, offline
 attestation bundles, application, dependency, and signer digests, then selects
 the internal repair path. It performs controller, signer, application, service,
 and state convergence transactionally and skips onboarding.
-
-The repair keeps the existing `/home/app/fased` checkout and persistent
-`/home/app/.fased` state. It refreshes the managed runtime, replaces a legacy
-app-managed user service with the supported root-managed service, restarts the
-Gateway, and skips onboarding. Wallets, mining state, credentials, sessions,
-plugins, and configuration are not reset.
 
 For Tailscale Serve, repair also keeps the Gateway on loopback, trusts only the
 loopback proxy ranges, and removes the obsolete `allowInsecureAuth`
@@ -356,17 +343,6 @@ run `--repair-hosting`. A recognized pre-handoff Local/WSL installation uses
 the normal documented Local installer once, then returns to `fased update`.
 
 ### One-time pre-v2 Local wallet migration
-
-If `fased update` reports a pre-v2 Local wallet, it stops **before** stopping a
-process or replacing a file. This is intentional: the updater and Gateway must
-not read an old wallet passphrase. First make an offline backup and record the
-public address. Run the exact tagged Local repair later on this page if the old
-CLI lacks the native signer admin path; it leaves legacy wallet material
-untouched. Put the old passphrase in a separate owner-only file, run
-`fased-signerd admin wallet import-legacy` with the wallet's permanent Agent,
-Mining, or Vault role, and compare the returned
-public address with the address recorded before migration. Then finalize the
-non-secret config/registry conversion:
 
 ```bash
 fased wallet finalize-legacy-migration --wallet-id agent
@@ -446,13 +422,6 @@ Use the
 only when policy requires authenticating `install.sh` before its first shell
 executes.
 
-An immutable old binary cannot execute updater logic that was introduced in a
-newer release. That one-time bootstrap is therefore unavoidable for a small set
-of broken historical builds. It preserves configuration, credentials, wallets,
-signer state, mining state, sessions, memory, and installed plugin records.
-After the bootstrap installs the stable external updater, later application
-versions cannot strand the update command inside an old release directory.
-
 The bootstrap is complete only when `fased --version`, the Doctor header, and
 the Gateway runtime agree, `RPC probe: ok` is reported, and plugin doctor is
 clean. A CLI version alone is not sufficient proof because a legacy service can
@@ -483,10 +452,6 @@ fased dashboard
 ```
 
 ## SAT runtime IDs during update
-
-Pre-launch updates keep Satcoin runtime IDs empty unless you explicitly set a
-test network. After official mainnet launch proof is published, use **Mining >
-Sync** to verify the signed manifest and write:
 
 ```text
 config/sat-runtime.env

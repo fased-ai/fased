@@ -78,8 +78,8 @@ func TestSignerRecoveryPackageRoundTripAndAuthenticationV1(t *testing.T) {
 	}
 }
 
-func TestSignerRecoveryRoundTripReexportAndRawExportForEverySolanaRoleV1(t *testing.T) {
-	roles := []string{"agent", "vault", "mining", "profile", "strategy"}
+func TestSignerRecoveryRoundTripReexportAndRawExportForOrdinaryWalletV1(t *testing.T) {
+	roles := []string{"agent"}
 	for _, role := range roles {
 		t.Run(role, func(t *testing.T) {
 			_, keys := openTestSignerV2(t)
@@ -188,7 +188,7 @@ func TestSignerRecoveryRoundTripReexportAndRawExportForEverySolanaRoleV1(t *test
 
 func TestSignerRecoveryRejectsTamperingAndRoleChangeV1(t *testing.T) {
 	_, keys := openTestSignerV2(t)
-	policy, err := lockedSignerAdminPolicy("mining", "mining")
+	policy, err := lockedSignerAdminPolicy("mining", "agent")
 	if err != nil {
 		t.Fatal(err)
 	}

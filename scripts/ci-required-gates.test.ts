@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { assertApplicableGates } from "./ci-required-gates.mjs";
 
@@ -5,6 +6,23 @@ const alwaysGreen = {
   "change scope": "success",
   secrets: "success", // pragma: allowlist secret
 };
+
+describe("protected-base WEN UI transition", () => {
+  it("keeps the previous protected invocation attached to the current WEN suite", () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as {
+      scripts: Record<string, string>;
+    };
+    const workflow = readFileSync(new URL("../.github/workflows/pr.yml", import.meta.url), "utf8");
+    expect(manifest.scripts["test:ui:mining"]).toBe("pnpm test:ui:wen");
+    expect(manifest.scripts["test:ui:wen"]).toContain("vitest.campaign-wire.config.ts");
+    expect(workflow).toContain(
+      "steps.scope.outputs.run_ui_wen == 'true' || steps.scope.outputs.run_ui_mining == 'true'",
+    );
+    expect(workflow).toContain("run: pnpm test:ui:wen");
+  });
+});
 
 describe("required CI gate aggregation", () => {
   it("accepts documentation-only changes without product jobs", () => {

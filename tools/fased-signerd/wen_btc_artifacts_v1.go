@@ -313,7 +313,7 @@ func (a signerWENBTCArtifactsV1) validateTerms(now uint64) error {
 
 // Independently derives all acceptance accounts; never takes a client key list.
 // Returns unsigned source instruction only, not an admitted/signable transaction.
-func (a signerWENBTCArtifactsV1) acceptanceInstruction(now uint64) ([]byte, []signerSATAccountV2, error) {
+func (a signerWENBTCArtifactsV1) acceptanceInstruction(now uint64) ([]byte, []signerTypedAccountV2, error) {
 	if err := a.validateTerms(now); err != nil {
 		return nil, nil, err
 	}
@@ -321,7 +321,7 @@ func (a signerWENBTCArtifactsV1) acceptanceInstruction(now uint64) ([]byte, []si
 }
 
 // Wire-only helper mirrors the Rust builder; execution must use the time-checked wrapper.
-func (a signerWENBTCArtifactsV1) acceptanceInstructionForEpoch(epoch uint64) ([]byte, []signerSATAccountV2, error) {
+func (a signerWENBTCArtifactsV1) acceptanceInstructionForEpoch(epoch uint64) ([]byte, []signerTypedAccountV2, error) {
 	if err := a.validateTerms(0); err != nil {
 		return nil, nil, err
 	}
@@ -361,13 +361,13 @@ func (a signerWENBTCArtifactsV1) acceptanceInstructionForEpoch(epoch uint64) ([]
 	}
 	writable := map[int]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 9: true, 10: true, 11: true, 12: true, 14: true, 16: true}
 	seen := map[solana.PublicKey]bool{}
-	accounts := make([]signerSATAccountV2, len(keys))
+	accounts := make([]signerTypedAccountV2, len(keys))
 	for i, key := range keys {
 		if seen[key] {
 			return nil, nil, fmt.Errorf("acceptance account alias at %d", i)
 		}
 		seen[key] = true
-		accounts[i] = signerSATAccountV2{Pubkey: key.String(), IsSigner: i == 0, IsWritable: writable[i]}
+		accounts[i] = signerTypedAccountV2{Pubkey: key.String(), IsSigner: i == 0, IsWritable: writable[i]}
 	}
 	data := append([]byte{111}, a.offer[:]...)
 	data = append(data, a.policy[:]...)

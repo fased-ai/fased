@@ -201,7 +201,7 @@ describe("Agent profile generations", () => {
   it("accepts reviewed creation payloads but rejects creation-time financial authority", async () => {
     const env = testEnv();
     const initialPayloads = buildTemplateProfilePayloads({
-      templateId: "mining-operator",
+      templateId: "private-operator",
       displayName: "Wally",
     });
     const state = await ensureAgentProfileState({
@@ -210,7 +210,7 @@ describe("Agent profile generations", () => {
       initialPayloads,
       env,
     });
-    expect(readActiveAgentProfile(state, "strategy").capabilityPacks).toContain("miner");
+    expect(readActiveAgentProfile(state, "strategy").capabilityPacks).toEqual([]);
     expect(readActiveAgentProfile(state, "capitalPolicy").mode).toBe("deny-all");
 
     await expect(

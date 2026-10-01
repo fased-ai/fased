@@ -308,7 +308,6 @@ public struct Snapshot: Codable, Sendable {
     public let statedir: String?
     public let sessiondefaults: [String: AnyCodable]?
     public let authmode: AnyCodable?
-    public let updateavailable: [String: AnyCodable]?
 
     public init(
         presence: [PresenceEntry],
@@ -318,8 +317,7 @@ public struct Snapshot: Codable, Sendable {
         configpath: String?,
         statedir: String?,
         sessiondefaults: [String: AnyCodable]?,
-        authmode: AnyCodable?,
-        updateavailable: [String: AnyCodable]?)
+        authmode: AnyCodable?)
     {
         self.presence = presence
         self.health = health
@@ -329,7 +327,6 @@ public struct Snapshot: Codable, Sendable {
         self.statedir = statedir
         self.sessiondefaults = sessiondefaults
         self.authmode = authmode
-        self.updateavailable = updateavailable
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -341,7 +338,6 @@ public struct Snapshot: Codable, Sendable {
         case statedir = "stateDir"
         case sessiondefaults = "sessionDefaults"
         case authmode = "authMode"
-        case updateavailable = "updateAvailable"
     }
 }
 
@@ -1395,6 +1391,8 @@ public struct SessionsCompactParams: Codable, Sendable {
     }
 }
 
+public typealias SessionCompactionCheckpointReason = String
+
 public struct SessionCompactionTranscriptReference: Codable, Sendable {
     public let sessionid: String
     public let sessionfile: String?
@@ -1732,6 +1730,12 @@ public struct ConfigSchemaResponse: Codable, Sendable {
         case generatedat = "generatedAt"
     }
 }
+
+public typealias CommandSource = String
+
+public typealias CommandScope = String
+
+public typealias CommandCategory = String
 
 public struct CommandArgChoice: Codable, Sendable {
     public let value: String
@@ -2307,19 +2311,22 @@ public struct AgentsCreateParams: Codable, Sendable {
     public let model: String?
     public let emoji: String?
     public let avatar: String?
+    public let personatemplateid: AnyCodable?
 
     public init(
         name: String,
         workspace: String,
         model: String?,
         emoji: String?,
-        avatar: String?)
+        avatar: String?,
+        personatemplateid: AnyCodable?)
     {
         self.name = name
         self.workspace = workspace
         self.model = model
         self.emoji = emoji
         self.avatar = avatar
+        self.personatemplateid = personatemplateid
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2328,6 +2335,7 @@ public struct AgentsCreateParams: Codable, Sendable {
         case model
         case emoji
         case avatar
+        case personatemplateid = "personaTemplateId"
     }
 }
 
@@ -2337,19 +2345,22 @@ public struct AgentsCreateResult: Codable, Sendable {
     public let name: String
     public let workspace: String
     public let model: String?
+    public let personatemplateid: AnyCodable
 
     public init(
         ok: Bool,
         agentid: String,
         name: String,
         workspace: String,
-        model: String?)
+        model: String?,
+        personatemplateid: AnyCodable)
     {
         self.ok = ok
         self.agentid = agentid
         self.name = name
         self.workspace = workspace
         self.model = model
+        self.personatemplateid = personatemplateid
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2358,6 +2369,7 @@ public struct AgentsCreateResult: Codable, Sendable {
         case name
         case workspace
         case model
+        case personatemplateid = "personaTemplateId"
     }
 }
 
@@ -2716,6 +2728,8 @@ public struct ModelChoice: Codable, Sendable {
         case metadata
     }
 }
+
+public typealias ModelsAuthStoreMode = String
 
 public struct ModelsAuthStoreParams: Codable, Sendable {
     public let profileid: String
@@ -3285,6 +3299,12 @@ public struct ModelsListResult: Codable, Sendable {
     }
 }
 
+public typealias PluginMarketplaceAction = String
+
+public typealias PluginMarketplaceMutationAction = String
+
+public typealias PluginMarketplaceAdminRpcActionMethod = String
+
 public struct PluginMarketplaceAdminRpcActionGrantStatus: Codable, Sendable {
     public let method: PluginMarketplaceAdminRpcActionMethod
     public let granted: Bool
@@ -3482,6 +3502,8 @@ public struct PluginMarketplaceInstallRecord: Codable, Sendable {
         case verificationhasprovenance = "verificationHasProvenance"
     }
 }
+
+public typealias PluginMarketplaceInstallChoice = String
 
 public struct PluginMarketplaceInstallOptions: Codable, Sendable {
     public let npmspec: String?
@@ -4302,6 +4324,8 @@ public struct ToolsEffectiveParams: Codable, Sendable {
         case agentid = "agentId"
     }
 }
+
+public typealias ToolEffectiveSource = String
 
 public struct ToolEffectiveEntry: Codable, Sendable {
     public let id: String

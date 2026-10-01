@@ -25,12 +25,6 @@ Use this template when drafting a GitHub release for `fased X.Y.Z`.
 
 ## Operator Impact
 
-- Onboarding / install changes:
-- Hosting-mode changes:
-- Wallet / signer changes:
-- Federation changes:
-- Mining changes:
-
 ## Breaking Or Risky Changes
 
 - Breaking config changes:

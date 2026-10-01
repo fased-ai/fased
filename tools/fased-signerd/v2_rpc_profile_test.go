@@ -13,10 +13,7 @@ import (
 func TestSignerRPCProfileIsReusableGenesisBoundAndSecretFreeInSummaries(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	for _, walletID := range []string{"profile", "strategy_solana"} {
-		role := "profile"
-		if walletID == "strategy_solana" {
-			role = "strategy"
-		}
+		role := "agent"
 		if _, _, err := keys.CreateWithRoleBaseline(
 			walletID,
 			0,

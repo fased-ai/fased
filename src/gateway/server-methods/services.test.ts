@@ -145,19 +145,17 @@ describe("services.webSearch.test handler", () => {
     const config = { plugins: { entries: { telegram: { enabled: true } } } };
     const report = { entries: [{ id: "telegram", state: "installed" }], summary: { total: 1 } };
     mocks.loadConfig.mockReturnValue({});
-    mocks.loadCapabilityCatalog.mockReturnValue([
-      { id: "sat-mining", label: "SAT Mining", delivery: "core" },
-    ]);
+    mocks.loadCapabilityCatalog.mockReturnValue([{ id: "wen", label: "WEN", delivery: "core" }]);
     mocks.installCapabilityComponent.mockResolvedValue({
       config,
-      entry: { id: "sat-mining", label: "SAT Mining", delivery: "core", restartRequired: true },
-      pluginId: "sat-mining",
+      entry: { id: "wen", label: "WEN", delivery: "core", restartRequired: true },
+      pluginId: "wen",
       slotWarnings: [],
     });
     mocks.buildCapabilityReadinessReport.mockReturnValue(report);
     const respond = vi.fn();
     await servicesHandlers["services.component.install"]({
-      params: { id: "sat-mining" },
+      params: { id: "wen" },
       respond: respond as never,
       context: {} as never,
       frame: {} as never,
@@ -168,7 +166,7 @@ describe("services.webSearch.test handler", () => {
     expect(mocks.writeConfigFile).toHaveBeenCalledWith(config);
     expect(respond.mock.calls[0]?.[0]).toBe(true);
     expect(respond.mock.calls[0]?.[1]).toMatchObject({
-      id: "sat-mining",
+      id: "wen",
       restartRequired: true,
       report,
     });

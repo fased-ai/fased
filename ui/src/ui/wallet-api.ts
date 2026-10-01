@@ -8,7 +8,7 @@ export type WalletProviderId =
   | "wallet-standard"
   | "privy";
 
-export type WalletUserRole = "agent" | "mining" | "vault" | "profile" | "strategy";
+export type WalletUserRole = "agent";
 
 export type WalletStatus = {
   capabilities?: {
@@ -251,7 +251,7 @@ export type WalletSendApprovalRequest = {
     signerDestination?: string;
     signerPolicyOperation?: string;
     signerRequiredPrograms?: string[];
-    signerRequiredRole?: "agent" | "mining" | "vault";
+    signerRequiredRole?: "agent";
     signerNonce?: string;
     signerIssuedAt?: string;
     signerReviewExpiresAt?: string;
@@ -275,7 +275,7 @@ export type WalletPolicySimulationCheck = {
 export type WalletApprovalDiff = {
   fromWalletId?: string;
   fromWalletName?: string;
-  fromRole: "mining" | "agent" | "vault";
+  fromRole: "agent";
   to?: string;
   chain: "solana";
   token?: string;
@@ -413,7 +413,7 @@ export type WalletSettings = {
   signerPolicy?: {
     state: "locked" | "acknowledged" | "unavailable";
     walletId: string;
-    role?: WalletUserRole | "keeper";
+    role?: WalletUserRole;
     version?: number;
     hash?: string;
     operations?: string[];
@@ -618,7 +618,6 @@ export type WalletSettingsPatch = {
     | "read-only"
     | "manual-only"
     | "small-agent-spend"
-    | "mining-only"
     | "skill-limited"
     | "trading-experimental";
   providerId?: WalletProviderId;
@@ -1293,7 +1292,6 @@ export async function createWalletNamedWallet(input: {
   name?: string;
   walletId?: string;
   providerId?: WalletProviderId;
-  role?: WalletUserRole;
   chain?: "solana";
   rpcUrl?: string;
   rpcProfileId?: string;
@@ -1325,7 +1323,6 @@ export async function createStandardWalletNamedWallet(
 export async function updateWalletNamedWallet(
   input: {
     walletId: string;
-    role?: WalletUserRole;
     rpcUrl?: string;
   },
   approvalToken?: string,

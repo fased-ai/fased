@@ -16,8 +16,6 @@ x-i18n:
 
 # 使用 Fased 构建主权个人 Agent
 
-Fased 不只是消息网关。它是一个可自托管的个人 Agent 运行时，可以运行在你的机器或 VPS 上，然后按需扩展渠道、钱包、Fased Network 和 SAT mining。
-
 这篇指南是从“能启动”走到“像我的 Agent 一样工作”的实用路径。
 
 ## ⚠️ 安全第一
@@ -47,22 +45,7 @@ Fased 不只是消息网关。它是一个可自托管的个人 Agent 运行时�
 
 把产品看成几层：
 
-```mermaid
-flowchart TB
-    A["Channels or Control UI"] --> B["Gateway"]
-    B --> C["Agent runtime + workspace"]
-    C --> D["Tools and plugins"]
-    C --> E["Wallet policy"]
-    C --> F["Fased Network"]
-    C --> G["SAT mining"]
-```
-
 最安全的扩展顺序是：
-
-1. 先让运行时稳定
-2. 连接一个可信渠道
-3. 调整工作区和身份
-4. 只有需要时再添加钱包、Fased Network 或 mining
 
 ## 5 分钟快速开始
 
@@ -121,9 +104,6 @@ Fased onboarding 现在有两个真实操作员 profile：
 所以 profile 选择不只是安全默认值。
 
 ## SAT runtime ids
-
-预发布版本不会内置可用的 SAT mainnet ids。官方 mainnet proof 发布后，
-请在 Mining 页面点击 **Sync**，验证已签名 manifest 后再写入本地文件：
 
 - `config/sat-runtime.env`
 
@@ -189,18 +169,7 @@ fased setup
 
 建议顺序：
 
-1. 基础运行时可信后再配置 wallet policy
-2. 主机和远程访问稳定后再启用 Fased Network
-3. 钱包选择、funding 和操作员意图明确后再启用 SAT mining
-
 相关文档：
-
-- [Operator glossary](/start/operator-glossary)
-- [Wallet](/plugins/crypto/wallet-page)
-- [Fased Network guide](/start/federation)
-- [Mining](/plugins/crypto/mining-page)
-- [Advanced SAT mining](/plugins/crypto/mining-advanced)
-- [Remote access](/gateway/remote)
 
 ## 自托管钱包路径
 
@@ -214,10 +183,6 @@ fased setup
 - automation 前强制执行 runtime policy
 
 实用角色拆分：
-
-- 普通发送使用 primary wallet
-- SAT 只使用 mining wallet
-- 之后的 payments 或 treasury 使用单独 wallet
 
 除非你接受更大的影响范围，否则不要一个钱包做所有事情。
 
@@ -233,13 +198,3 @@ fased health --json
 日志默认位于 `/tmp/fased/`，也可以在 Control UI 的 **Logs** 查看。高级诊断在 **Advanced > Debug** 和 **Advanced > Nodes**。
 
 ## 下一步
-
-- Chat/WebChat：[Chat 和 WebChat](/web/webchat)
-- Control UI：[Control UI](/web/control-ui)
-- Gateway 运维：[Gateway runbook](/gateway)
-- 定时任务：[Tasks / cron jobs](/automation/cron-jobs)
-- Wallet：[Wallet](/plugins/crypto/wallet-page)
-- Mining：[Mining](/plugins/crypto/mining-page)
-- Fased Network：[Fased Network](/start/federation)
-- Remote access：[Remote access](/gateway/remote)
-- Security：[Security](/security)

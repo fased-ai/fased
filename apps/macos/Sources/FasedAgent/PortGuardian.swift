@@ -108,7 +108,9 @@ actor PortGuardian {
         }
 
         var offenders: [ReportListener] {
-            if case let .interference(_, offenders) = self.status { return offenders }
+            if case let .interference(_, offenders) = self.status {
+                return offenders
+            }
             return []
         }
 
@@ -293,7 +295,9 @@ actor PortGuardian {
             mode == .remote && port == GatewayEnvironment.gatewayPort() && tunnelHealthy == false
         let reportListeners = listeners.map { listener in
             var expected = okPredicate(listener)
-            if tunnelUnhealthy, expected { expected = false }
+            if tunnelUnhealthy, expected {
+                expected = false
+            }
             return ReportListener(
                 pid: listener.pid,
                 command: listener.command,
@@ -347,7 +351,9 @@ actor PortGuardian {
 
     private func kill(_ pid: Int32) async -> Bool {
         let term = await ShellExecutor.run(command: ["kill", "-TERM", "\(pid)"], cwd: nil, env: nil, timeout: 2)
-        if term.ok { return true }
+        if term.ok {
+            return true
+        }
         let sigkill = await ShellExecutor.run(command: ["kill", "-KILL", "\(pid)"], cwd: nil, env: nil, timeout: 2)
         return sigkill.ok
     }
@@ -358,13 +364,19 @@ actor PortGuardian {
         switch mode {
         case .remote:
             // Remote mode expects an SSH tunnel for the gateway WebSocket port.
-            if port == GatewayEnvironment.gatewayPort() { return cmd.contains("ssh") }
+            if port == GatewayEnvironment.gatewayPort() {
+                return cmd.contains("ssh")
+            }
             return false
         case .local:
             // The gateway daemon may listen as `fased` or as its runtime (`node`, `bun`, etc).
-            if full.contains("gateway-daemon") { return true }
+            if full.contains("gateway-daemon") {
+                return true
+            }
             // If args are unavailable, treat a CLI listener as expected.
-            if cmd.contains("fased"), full == cmd { return true }
+            if cmd.contains("fased"), full == cmd {
+                return true
+            }
             return false
         case .unconfigured:
             return false

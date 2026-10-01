@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-func wenAcquisitionFixture(t *testing.T) (signerWENBTCArtifactsV1, solana.PublicKey, signerWENBTCRouteV1, []byte, []signerSATAccountV2) {
+func wenAcquisitionFixture(t *testing.T) (signerWENBTCArtifactsV1, solana.PublicKey, signerWENBTCRouteV1, []byte, []signerTypedAccountV2) {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/wen-btc-source-vectors.json")
 	if err != nil {
@@ -26,7 +26,7 @@ func wenAcquisitionFixture(t *testing.T) (signerWENBTCArtifactsV1, solana.Public
 			Opcode     int
 			ProgramID  string
 			DataBase64 string
-			Keys       []signerSATAccountV2
+			Keys       []signerTypedAccountV2
 		}
 	}
 	if err = json.Unmarshal(raw, &f); err != nil {
@@ -50,7 +50,7 @@ func wenAcquisitionFixture(t *testing.T) (signerWENBTCArtifactsV1, solana.Public
 			a.numbers[i] = binary.LittleEndian.Uint64(a.offer[328+8*i:])
 		}
 		n := int(d[465])
-		route := signerWENBTCRouteV1{Program: solana.MustPublicKeyFromBase58(v.Keys[len(v.Keys)-1].Pubkey), Data: append([]byte(nil), d[466+n:]...), Accounts: append([]signerSATAccountV2(nil), v.Keys[8:8+n]...)}
+		route := signerWENBTCRouteV1{Program: solana.MustPublicKeyFromBase58(v.Keys[len(v.Keys)-1].Pubkey), Data: append([]byte(nil), d[466+n:]...), Accounts: append([]signerTypedAccountV2(nil), v.Keys[8:8+n]...)}
 		for i := range route.Accounts {
 			route.Accounts[i].IsSigner = d[466+i]&1 != 0
 			route.Accounts[i].IsWritable = d[466+i]&2 != 0

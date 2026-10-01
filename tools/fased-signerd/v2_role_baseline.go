@@ -3,13 +3,8 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -17,17 +12,9 @@ import (
 
 const signerRoleBaselineVersionV1 = uint64(1)
 
-const signerSATMainnetManifestPublicKeyV1 = "F-Kv6SBcZHvs1LQ0LNHwYQ6VuKidpkv1nkgRqggn1kk" // pragma: allowlist secret
-
 const (
-	roleBaselineNativeMaxPerTxV1     = "1000000000"
-	roleBaselineNativeMaxDailyV1     = "5000000000"
-	roleBaselineMiningActionsPerTxV1 = "64"
-	roleBaselineMiningActionsDailyV1 = "4096"
-	roleBaselineSATMaxPerTxV1        = "1000000000000"
-	roleBaselineSATMaxDailyV1        = "5000000000000"
-	roleBaselineKeeperMaxPerTxV1     = "500000"
-	roleBaselineKeeperMaxDailyV1     = "50000000"
+	roleBaselineNativeMaxPerTxV1 = "1000000000"
+	roleBaselineNativeMaxDailyV1 = "5000000000"
 )
 
 type signerRoleBaselineRequestV1 struct {
@@ -36,116 +23,7 @@ type signerRoleBaselineRequestV1 struct {
 	Role         string `json:"role"`
 }
 
-type signerRoleBaselineActivationRequestV1 struct {
-	ExpectedVersion uint64                      `json:"expectedPolicyVersion"`
-	Baseline        signerRoleBaselineRequestV1 `json:"baseline"`
-}
-
-type signerRoleBaselineRuntimeV1 struct {
-	SATProgramID     string
-	SATBondProgramID string
-	SATMintAddress   string
-	SATMintProgramID string
-	Verified         bool
-	VerificationErr  string
-}
-
-type signerSATRuntimeManifestV1 struct {
-	Schema  string `json:"schema"`
-	Network string `json:"network"`
-	Status  string `json:"status"`
-	SAT     struct {
-		Mint          string `json:"mint"`
-		ProgramID     string `json:"programId"`
-		MintProgramID string `json:"mintProgramId"`
-		BondProgramID string `json:"bondProgramId"`
-	} `json:"sat"`
-}
-
-func readSignerSATRuntimeArtifactV1(path string, maxBytes int64) ([]byte, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil, errors.New("artifact path is missing")
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > maxBytes {
-		return nil, errors.New("artifact must be a bounded regular file")
-	}
-	return os.ReadFile(path)
-}
-
-func trustedSignerSATManifestKeysV1() []ed25519.PublicKey {
-	encoded := []string{signerSATMainnetManifestPublicKeyV1}
-	if value := strings.TrimSpace(os.Getenv("FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY")); value != "" {
-		encoded = append(encoded, value)
-	}
-	for _, value := range strings.Split(os.Getenv("FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEYS"), ",") {
-		if value = strings.TrimSpace(value); value != "" {
-			encoded = append(encoded, value)
-		}
-	}
-	keys := make([]ed25519.PublicKey, 0, len(encoded))
-	for _, value := range encoded {
-		decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(value, "="))
-		if err == nil && len(decoded) == ed25519.PublicKeySize {
-			keys = append(keys, ed25519.PublicKey(decoded))
-		}
-	}
-	return keys
-}
-
-func verifySignerRoleBaselineRuntimeV1(runtime signerRoleBaselineRuntimeV1) error {
-	manifestRaw, err := readSignerSATRuntimeArtifactV1(os.Getenv("FASED_SAT_RUNTIME_MANIFEST_PATH"), 128*1024)
-	if err != nil {
-		return fmt.Errorf("read signed SAT runtime manifest: %w", err)
-	}
-	expectedHash := strings.ToLower(strings.TrimSpace(os.Getenv("FASED_SAT_RUNTIME_MANIFEST_SHA256")))
-	if len(expectedHash) != sha256.Size*2 {
-		return errors.New("signed SAT runtime manifest SHA-256 is missing or invalid")
-	}
-	if _, err := hex.DecodeString(expectedHash); err != nil {
-		return errors.New("signed SAT runtime manifest SHA-256 is invalid")
-	}
-	digest := sha256.Sum256(manifestRaw)
-	if hex.EncodeToString(digest[:]) != expectedHash {
-		return errors.New("signed SAT runtime manifest SHA-256 mismatch")
-	}
-	signatureRaw, err := readSignerSATRuntimeArtifactV1(os.Getenv("FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH"), 4096)
-	if err != nil {
-		return fmt.Errorf("read signed SAT runtime manifest signature: %w", err)
-	}
-	signature, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(signatureRaw)))
-	if err != nil || len(signature) != ed25519.SignatureSize {
-		return errors.New("signed SAT runtime manifest signature is invalid")
-	}
-	verified := false
-	for _, key := range trustedSignerSATManifestKeysV1() {
-		if ed25519.Verify(key, manifestRaw, signature) {
-			verified = true
-			break
-		}
-	}
-	if !verified {
-		return errors.New("signed SAT runtime manifest signature is not trusted")
-	}
-	var manifest signerSATRuntimeManifestV1
-	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
-		return errors.New("signed SAT runtime manifest JSON is invalid")
-	}
-	if manifest.Schema != "sat-mainnet-addresses.v1" || manifest.Network != "mainnet-beta" || manifest.Status != "live" {
-		return errors.New("signed SAT runtime manifest is not a live mainnet manifest")
-	}
-	if strings.TrimSpace(manifest.SAT.ProgramID) != runtime.SATProgramID ||
-		strings.TrimSpace(manifest.SAT.BondProgramID) != runtime.SATBondProgramID ||
-		strings.TrimSpace(manifest.SAT.Mint) != runtime.SATMintAddress ||
-		strings.TrimSpace(manifest.SAT.MintProgramID) != runtime.SATMintProgramID {
-		return errors.New("signed SAT runtime manifest does not match the configured runtime IDs")
-	}
-	return nil
-}
+type signerRoleBaselineRuntimeV1 struct{}
 
 type signerWalletReadinessV2 struct {
 	WalletID        string `json:"walletId"`
@@ -165,21 +43,7 @@ type signerWalletReadinessV2 struct {
 }
 
 func signerRoleBaselineRuntimeFromEnvV1() signerRoleBaselineRuntimeV1 {
-	runtime := signerRoleBaselineRuntimeV1{
-		SATProgramID:     strings.TrimSpace(os.Getenv("FASED_SAT_PROGRAM_ID")),
-		SATBondProgramID: strings.TrimSpace(os.Getenv("FASED_SAT_BOND_PROGRAM_ID")),
-		SATMintAddress:   strings.TrimSpace(os.Getenv("FASED_SAT_MINT_ADDRESS")),
-		SATMintProgramID: strings.TrimSpace(os.Getenv("FASED_SAT_MINT_PROGRAM_ID")),
-	}
-	if runtime.SATProgramID == "" && runtime.SATBondProgramID == "" && runtime.SATMintAddress == "" && runtime.SATMintProgramID == "" {
-		return runtime
-	}
-	if err := verifySignerRoleBaselineRuntimeV1(runtime); err != nil {
-		runtime.VerificationErr = err.Error()
-		return runtime
-	}
-	runtime.Verified = true
-	return runtime
+	return signerRoleBaselineRuntimeV1{}
 }
 
 func normalizeRoleBaselineRequestV1(input signerRoleBaselineRequestV1) (signerRoleBaselineRequestV1, error) {
@@ -195,10 +59,10 @@ func normalizeRoleBaselineRequestV1(input signerRoleBaselineRequestV1) (signerRo
 		)
 	}
 	switch input.Role {
-	case "agent", "mining", "vault", "profile", "strategy", "keeper":
+	case "agent":
 		return input, nil
 	default:
-		return signerRoleBaselineRequestV1{}, errors.New("role baseline must be agent, mining, vault, profile, strategy, or keeper")
+		return signerRoleBaselineRequestV1{}, errors.New("wallet baseline must use the ordinary discriminator agent")
 	}
 }
 
@@ -247,97 +111,6 @@ func compileSignerRoleBaselineV1(
 				ReviewedDestinations: true,
 			},
 		},
-	}
-	if request.Role == "profile" || request.Role == "strategy" {
-		policy.Operations = nil
-		policy.Programs = nil
-		policy.Assets = nil
-		return normalizeSignerPolicyV2(policy)
-	}
-	if request.Role == "keeper" {
-		if !runtime.Verified {
-			return signerPolicyV2{}, errors.New("Keeper fee-payer baseline requires the verified release-bound SAT runtime")
-		}
-		programID, programErr := normalizePublicKeyV2(runtime.SATProgramID, "signed SAT runtime program ID")
-		if programErr != nil {
-			return signerPolicyV2{}, errors.New("Keeper fee-payer baseline contains an invalid release-bound SAT runtime")
-		}
-		policy.TypedSATPrograms = true
-		policy.Operations = policy.Operations[:0]
-		policy.Programs = []string{programID}
-		policy.Assets = []signerPolicyAssetV2{{
-			Asset: "solana:native", Destinations: []string{walletPublicKey},
-			MaxPerTx: roleBaselineKeeperMaxPerTxV1, MaxDaily: roleBaselineKeeperMaxDailyV1,
-			ReviewedDestinations: true,
-		}}
-		for _, action := range sortedKeeperFeePayerActionsV2() {
-			policy.Operations = append(policy.Operations, "satKeeperFee."+action+"@"+programID)
-		}
-		return normalizeSignerPolicyV2(policy)
-	}
-
-	if request.Role == "mining" {
-		if !runtime.Verified {
-			// A pre-launch Mining wallet must still be a usable, migrated wallet. Its
-			// baseline permits only ordinary reviewed transfers until a verified SAT
-			// runtime is available; it never guesses or accepts unsigned SAT IDs.
-			return normalizeSignerPolicyV2(policy)
-		}
-		programID, programErr := normalizePublicKeyV2(runtime.SATProgramID, "signed SAT runtime program ID")
-		mint, mintErr := normalizePublicKeyV2(runtime.SATMintAddress, "signed SAT runtime mint")
-		mintProgramID, mintProgramErr := normalizePublicKeyV2(runtime.SATMintProgramID, "signed SAT runtime mint program ID")
-		if programErr != nil || mintErr != nil || mintProgramErr != nil || strings.TrimSpace(runtime.SATBondProgramID) == "" {
-			return signerPolicyV2{}, errors.New(
-				"Mining role baseline requires the complete release-bound SAT runtime manifest (program, bond program, mint, and mint program)",
-			)
-		}
-		bondProgramID, bondProgramErr := normalizePublicKeyV2(runtime.SATBondProgramID, "signed SAT runtime bond program ID")
-		if bondProgramErr != nil {
-			return signerPolicyV2{}, errors.New("Mining role baseline contains an invalid release-bound SAT runtime manifest")
-		}
-		policy.TypedSATPrograms = true
-		policy.Programs = append(
-			policy.Programs,
-			programID,
-			bondProgramID,
-			mintProgramID,
-			satAddressLookupTableProgramIDV2.String(),
-		)
-		for _, action := range sortedSATActionsV2() {
-			codec := signerSATCodecsV2[action]
-			if codec.Family == satFamilyMain {
-				policy.Operations = append(policy.Operations, "sat."+action+"@"+programID)
-			}
-		}
-		for _, action := range []string{"create", "extend", "deactivate", "close"} {
-			policy.Operations = append(
-				policy.Operations,
-				"satLookup."+action+"@"+satAddressLookupTableProgramIDV2.String(),
-			)
-		}
-		policy.Assets[0].TypedSATDestinations = true
-		policy.Assets = append(policy.Assets,
-			signerPolicyAssetV2{
-				Asset: "sat:action", Destinations: []string{walletPublicKey, programID, satAddressLookupTableProgramIDV2.String()},
-				MaxPerTx: roleBaselineMiningActionsPerTxV1, MaxDaily: roleBaselineMiningActionsDailyV1,
-				TypedSATDestinations: true,
-			},
-			signerPolicyAssetV2{
-				Asset: "sat:capital:lamports", Destinations: []string{programID},
-				MaxPerTx: roleBaselineNativeMaxPerTxV1, MaxDaily: roleBaselineNativeMaxDailyV1,
-				TypedSATDestinations: true,
-			},
-			signerPolicyAssetV2{
-				Asset: "sat:mint:" + mint, Destinations: []string{walletPublicKey, programID},
-				MaxPerTx: roleBaselineMiningActionsPerTxV1, MaxDaily: roleBaselineMiningActionsDailyV1,
-				TypedSATDestinations: true,
-			},
-			signerPolicyAssetV2{
-				Asset: "solana:spl:" + mint, Destinations: []string{walletPublicKey},
-				MaxPerTx: roleBaselineSATMaxPerTxV1, MaxDaily: roleBaselineSATMaxDailyV1,
-				ReviewedDestinations: true, TypedSATDestinations: true,
-			},
-		)
 	}
 
 	return normalizeSignerPolicyV2(policy)
@@ -420,38 +193,6 @@ func (m *signerKeyManagerV2) ImportLegacyWithRoleBaseline(
 	return record, stored, nil
 }
 
-func (s *signerStoreV2) activateRoleBaselineV1(
-	walletID string,
-	expectedVersion uint64,
-	request signerRoleBaselineRequestV1,
-	walletPublicKey string,
-	runtime signerRoleBaselineRuntimeV1,
-) (signerPolicyV2, error) {
-	current, err := s.getPolicy(walletID)
-	if err != nil {
-		return signerPolicyV2{}, err
-	}
-	if current.Version != expectedVersion {
-		return signerPolicyV2{}, fmt.Errorf(
-			"signer policy version conflict: expected %d, current %d",
-			expectedVersion,
-			current.Version,
-		)
-	}
-	if current.BaselineVersion != 0 || len(current.Operations) != 0 || len(current.Programs) != 0 || len(current.Assets) != 0 {
-		return signerPolicyV2{}, errors.New("role baseline activation is permitted only for an existing explicit deny-all wallet")
-	}
-	if request.Role != "" && strings.ToLower(strings.TrimSpace(request.Role)) != current.Role {
-		return signerPolicyV2{}, errors.New("role baseline activation cannot change the immutable wallet role")
-	}
-	request.Role = current.Role
-	candidate, err := compileSignerRoleBaselineV1(walletID, walletPublicKey, request, runtime)
-	if err != nil {
-		return signerPolicyV2{}, err
-	}
-	return s.putPolicy(candidate, expectedVersion)
-}
-
 func (s *signerServiceV2) walletReadinessV2(walletID string) (signerWalletReadinessV2, error) {
 	wallet, err := s.keys.PublicRecord(walletID)
 	if err != nil {
@@ -472,23 +213,10 @@ func (s *signerServiceV2) walletReadinessV2(walletID string) (signerWalletReadin
 	}
 	policyReady := policy.BaselineVersion == signerRoleBaselineVersionV1 &&
 		((len(policy.Operations) > 0 && len(policy.Programs) > 0 && len(policy.Assets) > 0) ||
-			((policy.ApprovalMode == "read-only" || policy.Role == "profile" || policy.Role == "strategy") && len(policy.Operations) == 0 && len(policy.Programs) == 0 && len(policy.Assets) == 0))
+			((policy.ApprovalMode == "read-only") && len(policy.Operations) == 0 && len(policy.Programs) == 0 && len(policy.Assets) == 0))
 	operationLane := "blocked"
 	if policyReady {
-		switch policy.Role {
-		case "agent":
-			operationLane = "agent-reviewed-and-autonomous"
-		case "mining":
-			if policy.TypedSATPrograms {
-				operationLane = "mining-typed-sat"
-			} else {
-				operationLane = "mining-reviewed-only"
-			}
-		case "vault":
-			operationLane = "vault-reviewed-only"
-		case "keeper":
-			operationLane = "keeper-fee-payer-only"
-		}
+		operationLane = "reviewed-and-autonomous"
 	}
 	if policy.ApprovalMode == "read-only" && policyReady {
 		operationLane = "read-only"

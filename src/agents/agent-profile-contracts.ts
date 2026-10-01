@@ -27,7 +27,6 @@ export const ResearchProfileSchema = z
   .strict();
 
 export const AGENT_CAPABILITY_PACK_IDS = [
-  "miner",
   "scout",
   "analyst",
   "risk-officer",
@@ -42,7 +41,6 @@ export const AgentCapabilityPackIdSchema = z.enum(AGENT_CAPABILITY_PACK_IDS);
 export const StrategyProfileSchema = z
   .object({
     schema: z.literal("fased.agent.strategy-profile.v1"),
-    miningAllocationMethod: ShortText,
     watchlists: BoundedShortList,
     hypotheses: BoundedShortList,
     entryExitRules: BoundedShortList,

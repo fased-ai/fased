@@ -80,7 +80,6 @@ import {
 import {
   callDebugAdminRpcControl,
   callDebugAcpxPushTest,
-  callDebugSatProtocolMaintenance,
   loadDebug,
   callDebugMethod,
   updateDebugAcpxBridgeConfig,
@@ -159,7 +158,6 @@ import {
 } from "./controllers/skills.ts";
 import { loadUsage } from "./controllers/usage.ts";
 import { icons } from "./icons.ts";
-import type { SatMainnetSyncStatus } from "./mining-api.ts";
 import {
   normalizeBasePath,
   pathForTab,
@@ -204,7 +202,6 @@ const ADVANCED_TABS: Array<{ tab: Tab; label: string; icon: unknown }> = [
   { tab: "notifications", label: "Notifications", icon: icons.bell },
   { tab: "usage", label: "Usage", icon: icons.barChart },
   { tab: "logs", label: "Logs", icon: icons.scrollText },
-  { tab: "marketplace", label: "Legacy marketplace", icon: icons.store },
   { tab: "debug", label: "Debug", icon: icons.bug },
   { tab: "nodes", label: "Nodes", icon: icons.monitor },
 ];
@@ -215,8 +212,6 @@ const CONTENT_HEADERLESS_TABS = new Set<Tab>([
   "debug",
   "federation",
   "logs",
-  "marketplace",
-  "mining",
   "nodes",
   "notifications",
   "skills",
@@ -225,23 +220,13 @@ const CONTENT_HEADERLESS_TABS = new Set<Tab>([
   "wen",
 ]);
 const AVATAR_HTTP_RE = /^https?:\/\//i;
-type LazyTabViewKey =
-  | "config"
-  | "providers"
-  | "federation"
-  | "legacyFederation"
-  | "wallet"
-  | "wen"
-  | "mining"
-  | "usage";
+type LazyTabViewKey = "config" | "providers" | "federation" | "wallet" | "wen" | "usage";
 type LazyTabViewModules = {
   config: typeof import("./views/config.ts");
   providers: typeof import("./views/providers.ts");
   federation: typeof import("./views/network.ts");
-  legacyFederation: typeof import("./views/federation.ts");
   wallet: typeof import("./views/wallet.ts");
   wen: typeof import("./views/wen.ts");
-  mining: typeof import("./views/mining.ts");
   usage: typeof import("./app-render-usage-tab.ts");
 };
 
@@ -249,10 +234,8 @@ const lazyTabViewLoaders: { [K in LazyTabViewKey]: () => Promise<LazyTabViewModu
   config: () => import("./views/config.ts"),
   providers: () => import("./views/providers.ts"),
   federation: () => import("./views/network.ts"),
-  legacyFederation: () => import("./views/federation.ts"),
   wallet: () => import("./views/wallet.ts"),
   wen: () => import("./views/wen.ts"),
-  mining: () => import("./views/mining.ts"),
   usage: () => import("./app-render-usage-tab.ts"),
 };
 const lazyTabViewCache: Partial<LazyTabViewModules> = {};
@@ -609,16 +592,6 @@ function switchChatSessionForTaskEdit(state: AppViewState, sessionKey: string) {
   void refreshChatAvatar(state);
 }
 
-function setRouteHash(hash?: string) {
-  if (typeof window === "undefined" || !hash) {
-    return;
-  }
-  window.location.hash = hash;
-  window.requestAnimationFrame(() => {
-    document.getElementById(hash)?.scrollIntoView({ block: "center" });
-  });
-}
-
 function openTaskRunTranscript(state: AppViewState, sessionKey: string, hash?: string) {
   const next = sessionKey.trim();
   if (!next) {
@@ -655,14 +628,7 @@ export function openTaskLedgerSourceSurface(state: AppViewState, task: TaskRecor
   if (route.agentsPanel) {
     state.agentsPanel = route.agentsPanel;
   }
-  if (route.miningActivityFilter) {
-    state.miningActivityFilter = route.miningActivityFilter;
-  }
-  if (route.miningActivityWindow) {
-    state.miningActivityWindow = route.miningActivityWindow;
-  }
-  state.setTab(route.tab);
-  setRouteHash(route.hash);
+
   if (route.loadChannels) {
     void loadChannels(state, false);
   }
@@ -716,12 +682,6 @@ function openAgentTaskEditor(state: AppViewState, job: CronJob) {
 function openGlobalTaskCreate(state: AppViewState) {
   const defaultAgentId = state.agentsList?.defaultId ?? state.agentsList?.mainKey ?? "main";
   openAgentTaskCreate(state, defaultAgentId);
-}
-
-function openMiningAomStrategyTask(state: AppViewState) {
-  const defaultAgentId = state.agentsList?.defaultId ?? state.agentsList?.mainKey ?? "main";
-  openAgentTaskCreate(state, defaultAgentId);
-  patchAgentTaskForm(state, buildCronTaskTemplatePatch("aom-strategy"));
 }
 
 function closeAgentTaskDialog(state: AppViewState) {
@@ -2753,60 +2713,6 @@ function renderAdvancedRouteTabs(state: AppViewState) {
   `;
 }
 
-function describeTopbarMainnetSyncState(sync: SatMainnetSyncStatus | null): {
-  tone: "neutral" | "success" | "warn" | "danger";
-  detail: string;
-} {
-  if (!sync) {
-    return {
-      tone: "neutral",
-      detail: "Check official SAT mainnet manifest.",
-    };
-  }
-  if (sync.state === "synced") {
-    return {
-      tone: "success",
-      detail: sync.message,
-    };
-  }
-  if (sync.state === "available") {
-    return {
-      tone: "warn",
-      detail: sync.message,
-    };
-  }
-  if (sync.state === "not_live") {
-    return {
-      tone: "neutral",
-      detail: sync.message,
-    };
-  }
-  return {
-    tone: "danger",
-    detail: sync.error || sync.message || "SAT mainnet manifest verification failed.",
-  };
-}
-
-function renderMiningTopbarSync(state: AppViewState) {
-  if (state.tab !== "mining") {
-    return nothing;
-  }
-  const sync = describeTopbarMainnetSyncState(state.miningMainnetSync);
-  return html`
-    <button
-      class="btn small topbar-mining-sync"
-      data-tone=${sync.tone}
-      ?disabled=${state.miningMainnetSyncBusy}
-      @click=${() => state.handleMiningMainnetSync()}
-      title=${sync.detail}
-      aria-label=${`SAT mainnet sync: ${sync.detail}`}
-    >
-      <span class="topbar-mining-sync__dot" aria-hidden="true"></span>
-      <span>${state.miningMainnetSyncBusy ? "Syncing" : "Sync"}</span>
-    </button>
-  `;
-}
-
 async function storeProviderApiKeyFromProviders(
   state: AppViewState,
   params: {
@@ -2906,13 +2812,9 @@ export function renderApp(state: AppViewState) {
     state.tab === "providers" || (state.tab === "agents" && state.agentsPanel === "providers")
       ? getLazyTabView(state, "providers")
       : null;
-  const federationView =
-    state.tab === "federation" || state.tab === "marketplace"
-      ? getLazyTabView(state, state.tab === "marketplace" ? "legacyFederation" : "federation")
-      : null;
+  const federationView = state.tab === "federation" ? getLazyTabView(state, "federation") : null;
   const walletView = state.tab === "wallet" ? getLazyTabView(state, "wallet") : null;
   const wenView = state.tab === "wen" ? getLazyTabView(state, "wen") : null;
-  const miningView = state.tab === "mining" ? getLazyTabView(state, "mining") : null;
   const usageView = state.tab === "usage" ? getLazyTabView(state, "usage") : null;
   const savedToken = state.settings.token.trim();
   const hasValidSessionToken = savedToken.length > 20 && !savedToken.startsWith("tok_");
@@ -2920,7 +2822,6 @@ export function renderApp(state: AppViewState) {
     state.tab !== "overview" &&
     state.tab !== "usage" &&
     state.tab !== "wen" &&
-    state.tab !== "mining" &&
     state.tab !== "notifications" &&
     !isChat;
   // Keep the dashboard visible during reconnects when we already have a session token.
@@ -2933,6 +2834,9 @@ export function renderApp(state: AppViewState) {
   const healthLabel = state.connected ? "Live" : gatewayRestarting ? "Restarting" : "Offline";
 
   const loadVisibleAgentTools = (agentId: string) => {
+    if (state.agentsPanel !== "tools") {
+      return;
+    }
     const normalizedAgentId = agentId.trim();
     if (!normalizedAgentId) {
       resetToolsEffectiveState(state);
@@ -3037,7 +2941,6 @@ export function renderApp(state: AppViewState) {
       <header class="topbar">
         <div class="topbar-left">
           <div class="topbar-page-title">${titleForTab(state.tab)}</div>
-          ${renderMiningTopbarSync(state)}
         </div>
         <div class="topbar-status">
           ${isChat ? html`<div class="topbar-chat-controls">${renderChatControls(state)}</div>` : nothing}
@@ -3159,21 +3062,7 @@ export function renderApp(state: AppViewState) {
         </div>
         <div class="nav-list">
           ${TAB_GROUPS.flatMap((group) => group.tabs)
-            .filter(
-              (tab) =>
-                !(state.federationManagedMode && tab === "federation") &&
-                (tab !== "mining" ||
-                  state.tab === "mining" ||
-                  Boolean(state.miningAttachedWalletId) ||
-                  Boolean(state.miningProfile?.walletId) ||
-                  Boolean(state.miningStatus?.walletId) ||
-                  state.walletNamedWallets.some(
-                    (wallet) =>
-                      wallet.id === "mining" ||
-                      wallet.metadata?.role === "mining" ||
-                      wallet.metadata?.purpose === "mining",
-                  )),
-            )
+            .filter((tab) => !(state.federationManagedMode && tab === "federation"))
             .map((tab) => renderTab(state, tab))}
         </div>
       </aside>
@@ -3283,11 +3172,6 @@ export function renderApp(state: AppViewState) {
                 walletStatus: state.walletStatus,
                 walletNamedWallets: state.walletNamedWallets,
                 defaultWalletId: state.walletDefaultWalletId,
-                miningAttachedWalletId: state.miningAttachedWalletId,
-                miningProfile: state.miningProfile,
-                miningReadiness: state.miningReadiness,
-                miningStatus: state.miningStatus,
-                miningHistory: state.miningHistory,
                 modelCatalogStatus: state.debugModelCatalogStatus,
                 pluginsMarketplace: state.debugPluginsMarketplace,
                 memoryInventory: state.memoryInventory,
@@ -3324,7 +3208,6 @@ export function renderApp(state: AppViewState) {
                 },
                 onOpenAdminControl: () => state.handleOperatorReadinessOpenAdminControl(),
                 onOpenTaskPayment: () => state.handleOperatorReadinessOpenTaskPayment(),
-                onOpenMining: () => state.handleOperatorReadinessOpenMining(),
                 onOpenFederationReview: () => state.handleOperatorReadinessOpenFederationReview(),
                 onDashboardLayoutChange: (next) => state.setDashboardLayout(next),
                 onDashboardWidgetDrawerOpen: (next) => state.setDashboardWidgetDrawerOpen(next),
@@ -3869,12 +3752,6 @@ export function renderApp(state: AppViewState) {
                   namedWallets: state.walletNamedWallets,
                   defaultWalletId: state.walletDefaultWalletId,
                 },
-                mining: {
-                  attachedWalletId: state.miningAttachedWalletId,
-                  profile: state.miningProfile,
-                  readiness: state.miningReadiness,
-                  status: state.miningStatus,
-                },
                 federation: {
                   token: state.federationToken,
                   status: state.federationStatus,
@@ -3935,9 +3812,6 @@ export function renderApp(state: AppViewState) {
                   state.agentSkillsAgentId = null;
                   void loadAgentIdentity(state, agentId);
                   loadVisibleAgentTools(agentId);
-                  if (!state.usageResult && !state.usageLoading) {
-                    void loadUsage(state);
-                  }
                   if (state.agentsPanel === "files") {
                     void loadAgentFiles(state, agentId);
                   }
@@ -5215,440 +5089,25 @@ export function renderApp(state: AppViewState) {
         }
 
         ${
-          state.tab === "federation" || state.tab === "marketplace"
+          state.tab === "federation"
             ? federationView
               ? federationView.renderFederation({
-                  view: state.tab === "marketplace" ? "marketplace" : "federation",
                   loading: state.federationLoading,
                   error: state.federationError,
                   message: state.federationMessage,
+                  token: state.federationToken,
+                  status: state.federationStatus,
                   directory: state.federationDirectory,
                   handle: state.federationHandle,
                   nodeEndpoint: state.federationNodeEndpoint,
-                  token: state.federationToken,
-                  status: state.federationStatus,
-                  managedMode: state.federationManagedMode,
-                  adminToken: state.federationAdminToken,
-                  reviewReason: state.federationReviewReason,
-                  reviewBusyHandle: state.federationReviewBusyHandle,
-                  bondWalletIdDraft: state.federationBondWalletIdDraft,
-                  bondAmountDraft: state.federationBondAmountDraft,
-                  bondTierDraft: state.federationBondTierDraft,
-                  bondAutoSubmitProof: state.federationBondAutoSubmitProof,
-                  bondActionBusy: state.federationBondActionBusy,
-                  bondBusyAction: state.federationBondBusyAction,
-                  feeOpsLoading: state.federationOperatorEconomyLoading,
-                  feeOpsError: state.federationOperatorEconomyError,
-                  feeCollectionStatus: state.federationOperatorEconomyCollectionStatus,
-                  feeObjects: state.federationOperatorEconomyFeeObjects,
-                  feeBucketJournal: state.federationOperatorEconomyBucketJournal,
-                  feeBucketBalances: state.federationOperatorEconomyBucketBalances,
-                  feeReconciliationReports: state.federationOperatorEconomyReconciliationReports,
-                  feeAutoDecisions: state.federationOperatorEconomyAutoFeeDecisions,
-                  feeShowcase: state.federationOperatorEconomyShowcase,
-                  localOffers: state.federationLocalOffers,
-                  localRequests: state.federationLocalRequests,
-                  localOrders: state.federationLocalOrders,
-                  localOffersLoading: state.federationLocalOffersLoading,
-                  localRequestsLoading: state.federationLocalRequestsLoading,
-                  localOrdersLoading: state.federationLocalOrdersLoading,
-                  localOffersError: state.federationLocalOffersError,
-                  localRequestsError: state.federationLocalRequestsError,
-                  localOrdersError: state.federationLocalOrdersError,
-                  localOffersMessage: state.federationLocalOffersMessage,
-                  localOfferBusy: state.federationLocalOfferBusy,
-                  localOrderBusy: state.federationLocalOrderBusy,
-                  localOfferDraftOpen: state.federationLocalOfferDraftOpen,
-                  localListingDraftKind: state.federationLocalListingDraftKind,
-                  localOfferEditingId: state.federationLocalOfferEditingId,
-                  localRequestEditingId: state.federationLocalRequestEditingId,
-                  localOfferEnabledDraft: state.federationLocalOfferEnabledDraft,
-                  localOfferTitleDraft: state.federationLocalOfferTitleDraft,
-                  localOfferSummaryDraft: state.federationLocalOfferSummaryDraft,
-                  localOfferServiceKindDraft: state.federationLocalOfferServiceKindDraft,
-                  localOfferInputShapeDraft: state.federationLocalOfferInputShapeDraft,
-                  localOfferDeliveryShapeDraft: state.federationLocalOfferDeliveryShapeDraft,
-                  localOfferCapabilitiesDraft: state.federationLocalOfferCapabilitiesDraft,
-                  localOfferPriceAmountDraft: state.federationLocalOfferPriceAmountDraft,
-                  localOfferPricingModelDraft: state.federationLocalOfferPricingModelDraft,
-                  localOfferPriceUnitDraft: state.federationLocalOfferPriceUnitDraft,
-                  localOfferCurrencyDraft: state.federationLocalOfferCurrencyDraft,
-                  localOfferFulfillmentModeDraft: state.federationLocalOfferFulfillmentModeDraft,
-                  localOfferAcceptedAssetsDraft: state.federationLocalOfferAcceptedAssetsDraft,
-                  localOfferPaymentRailsDraft: state.federationLocalOfferPaymentRailsDraft,
-                  offersLoading: state.federationOffersLoading,
-                  offersError: state.federationOffersError,
-                  offersHint: state.federationOffersHint,
-                  offers: state.federationOffers,
-                  offersQuery: state.federationOffersQuery,
-                  offersServiceKindFilter: state.federationOffersServiceKindFilter,
-                  marketplaceSection: state.federationMarketplaceSection,
-                  marketplaceKindFilter: state.federationMarketplaceKindFilter,
-                  marketplaceTrustFilter: state.federationMarketplaceTrustFilter,
-                  marketplaceStatusFilter: state.federationMarketplaceStatusFilter,
-                  marketplaceDateFromFilter: state.federationMarketplaceDateFromFilter,
-                  marketplaceDateToFilter: state.federationMarketplaceDateToFilter,
-                  marketplaceSort: state.federationMarketplaceSort,
-                  selectedOfferId: state.federationSelectedOfferId,
-                  marketplaceIndexLoading: state.federationMarketplaceIndexLoading,
-                  marketplaceIndexPublishing: state.federationMarketplaceIndexPublishing,
-                  marketplaceIndexError: state.federationMarketplaceIndexError,
-                  marketplaceIndexMessage: state.federationMarketplaceIndexMessage,
-                  marketplaceIndexPreview: state.federationMarketplaceIndexPreview,
-                  marketplaceIndexEntries: state.federationMarketplaceIndexEntries,
-                  marketplaceIndexSelectedEntryId: state.federationMarketplaceIndexSelectedEntryId,
-                  marketplaceIndexDetailTab: state.federationMarketplaceIndexDetailTab,
-                  marketplaceFeedbackOrderId: state.federationMarketplaceFeedbackOrderId,
-                  marketplaceSellerProfileHandle: state.federationMarketplaceSellerProfileHandle,
-                  marketplaceSellerProfileTab: state.federationMarketplaceSellerProfileTab,
-                  marketplaceSellerProfileLoading: state.federationMarketplaceSellerProfileLoading,
-                  marketplaceSellerProfileError: state.federationMarketplaceSellerProfileError,
-                  marketplaceSellerProfileEntries: state.federationMarketplaceSellerProfileEntries,
-                  marketplaceSellerProfileReviews: state.federationMarketplaceSellerProfileReviews,
-                  marketplaceSellerProfileDisputes:
-                    state.federationMarketplaceSellerProfileDisputes,
-                  marketplaceSellerProfileNotaryRecords:
-                    state.federationMarketplaceSellerProfileNotaryRecords,
-                  offerReviewsLoading: state.federationOfferReviewsLoading,
-                  offerReviewsError: state.federationOfferReviewsError,
-                  offerReviews: state.federationOfferReviews,
-                  offerDisputesLoading: state.federationOfferDisputesLoading,
-                  offerDisputesError: state.federationOfferDisputesError,
-                  offerDisputes: state.federationOfferDisputes,
-                  offerFeedbackBusy: state.federationOfferFeedbackBusy,
-                  offerFeedbackError: state.federationOfferFeedbackError,
-                  offerFeedbackMessage: state.federationOfferFeedbackMessage,
-                  offerFeedbackTab: state.federationOfferFeedbackTab,
-                  escrowBusyOrderId: state.federationEscrowBusyOrderId,
-                  escrowError: state.federationEscrowError,
-                  escrowMessage: state.federationEscrowMessage,
-                  marketplaceOrderDeliveryDraftOrderId:
-                    state.federationMarketplaceOrderDeliveryDraftOrderId,
-                  marketplaceOrderDeliveryKindDraft:
-                    state.federationMarketplaceOrderDeliveryKindDraft,
-                  marketplaceOrderDeliveryWebhookUrlDraft:
-                    state.federationMarketplaceOrderDeliveryWebhookUrlDraft,
-                  marketplaceOrderDeliveryBusyOrderId:
-                    state.federationMarketplaceOrderDeliveryBusyOrderId,
-                  marketplaceOrderDeliveryError: state.federationMarketplaceOrderDeliveryError,
-                  marketplaceOrderDeliveryMessage: state.federationMarketplaceOrderDeliveryMessage,
-                  marketplaceManualOrderBusyId: state.federationMarketplaceManualOrderBusyId,
-                  marketplaceManualOrderError: state.federationMarketplaceManualOrderError,
-                  marketplaceManualOrderMessage: state.federationMarketplaceManualOrderMessage,
-                  marketplaceCapabilityOrderBusyId:
-                    state.federationMarketplaceCapabilityOrderBusyId,
-                  marketplaceCapabilityOrderError: state.federationMarketplaceCapabilityOrderError,
-                  marketplaceCapabilityOrderMessage:
-                    state.federationMarketplaceCapabilityOrderMessage,
-                  summarizeSourceText: state.federationSummarizeSourceText,
-                  summarizeStyle: state.federationSummarizeStyle,
-                  summarizeMaxSentences: state.federationSummarizeMaxSentences,
-                  summarizeBusy: state.federationSummarizeBusy,
-                  summarizeError: state.federationSummarizeError,
-                  paidSummarizeBusy: state.federationPaidSummarizeBusy,
-                  paidSummarizeError: state.federationPaidSummarizeError,
-                  summarizeResult: state.federationSummarizeResult,
-                  paidQuoteAmountDraft: state.federationPaidQuoteAmountDraft,
-                  paidQuoteAssetDecimalsDraft: state.federationPaidQuoteAssetDecimalsDraft,
-                  paidQuoteCurrencyDraft: state.federationPaidQuoteCurrencyDraft,
-                  paidQuoteChainDraft: state.federationPaidQuoteChainDraft,
-                  paidQuoteAssetKindDraft: state.federationPaidQuoteAssetKindDraft,
-                  paidQuoteAssetAddressDraft: state.federationPaidQuoteAssetAddressDraft,
-                  paidQuotePayeeAddressDraft: state.federationPaidQuotePayeeAddressDraft,
-                  paidQuoteExpiresMinutesDraft: state.federationPaidQuoteExpiresMinutesDraft,
-                  reviewRatingDraft: state.federationReviewRatingDraft,
-                  reviewOutcomeDraft: state.federationReviewOutcomeDraft,
-                  reviewPaymentStatusDraft: state.federationReviewPaymentStatusDraft,
-                  reviewInvoiceIdDraft: state.federationReviewInvoiceIdDraft,
-                  reviewReceiptIdDraft: state.federationReviewReceiptIdDraft,
-                  reviewSummaryDraft: state.federationReviewSummaryDraft,
-                  disputeReasonCodeDraft: state.federationDisputeReasonCodeDraft,
-                  disputePaymentStatusDraft: state.federationDisputePaymentStatusDraft,
-                  disputeInvoiceIdDraft: state.federationDisputeInvoiceIdDraft,
-                  disputeReceiptIdDraft: state.federationDisputeReceiptIdDraft,
-                  disputeSummaryDraft: state.federationDisputeSummaryDraft,
-                  operatorDisputesLoading: state.federationOperatorDisputesLoading,
-                  operatorDisputesError: state.federationOperatorDisputesError,
-                  operatorDisputes: state.federationOperatorDisputes,
-                  operatorDisputeProviderFilter: state.federationOperatorDisputeProviderFilter,
-                  operatorDisputeOfferIdFilter: state.federationOperatorDisputeOfferIdFilter,
-                  operatorDisputeStatusFilter: state.federationOperatorDisputeStatusFilter,
-                  operatorDisputePaymentStatusFilter:
-                    state.federationOperatorDisputePaymentStatusFilter,
-                  operatorSelectedCaseId: state.federationOperatorSelectedCaseId,
-                  operatorDisputeReviewStatusDraft:
-                    state.federationOperatorDisputeReviewStatusDraft,
-                  operatorDisputeResolutionDraft: state.federationOperatorDisputeResolutionDraft,
-                  operatorDisputeReviewBusy: state.federationOperatorDisputeReviewBusy,
-                  operatorDisputeReviewError: state.federationOperatorDisputeReviewError,
-                  operatorDisputeReviewMessage: state.federationOperatorDisputeReviewMessage,
-                  disputeNotaryRecordsLoading: state.federationDisputeNotaryRecordsLoading,
-                  disputeNotaryRecordsError: state.federationDisputeNotaryRecordsError,
-                  disputeNotaryRecords: state.federationDisputeNotaryRecords,
-                  disputeNotaryOpinionDraft: state.federationDisputeNotaryOpinionDraft,
-                  disputeNotaryConfidenceDraft: state.federationDisputeNotaryConfidenceDraft,
-                  disputeNotaryRecommendedResolutionDraft:
-                    state.federationDisputeNotaryRecommendedResolutionDraft,
-                  disputeNotarySummaryDraft: state.federationDisputeNotarySummaryDraft,
-                  disputeNotaryBusy: state.federationDisputeNotaryBusy,
-                  disputeNotaryError: state.federationDisputeNotaryError,
-                  disputeNotaryMessage: state.federationDisputeNotaryMessage,
-                  walletStatus: state.walletStatus,
-                  walletNamedWallets: state.walletNamedWallets,
-                  defaultWalletId: state.walletDefaultWalletId,
-                  miningAttachedWalletId: state.miningAttachedWalletId,
-                  miningProfile: state.miningProfile,
-                  miningReadiness: state.miningReadiness,
-                  miningStatus: state.miningStatus,
-                  onOpenAdminControl: () => state.handleOperatorReadinessOpenAdminControl(),
-                  onOpenTaskPayment: () => state.handleOperatorReadinessOpenTaskPayment(),
-                  onOpenMining: () => state.handleOperatorReadinessOpenMining(),
-                  onOpenFederationReview: () => state.handleOperatorReadinessOpenFederationReview(),
-                  onHandleChange: (next) => (state.federationHandle = next),
-                  onNodeEndpointChange: (next) => (state.federationNodeEndpoint = next),
-                  onAdminTokenChange: (next) => (state.federationAdminToken = next),
-                  onReviewReasonChange: (next) => (state.federationReviewReason = next),
-                  onRefreshLocalOffers: () => state.handleFederationLoadLocalOffers(),
-                  onStartLocalOfferDraft: (offerId) =>
-                    state.handleFederationStartLocalOfferDraft(offerId),
-                  onStartLocalRequestDraft: (requestId) =>
-                    state.handleFederationStartLocalRequestDraft(requestId),
-                  onCancelLocalOfferDraft: () => state.handleFederationCancelLocalOfferDraft(),
-                  onLocalListingDraftKindChange: (next) => {
-                    if (next === "request") {
-                      state.handleFederationStartLocalRequestDraft();
-                    } else {
-                      state.handleFederationStartLocalOfferDraft();
-                    }
-                  },
-                  onLocalOfferEnabledDraftChange: (next) =>
-                    (state.federationLocalOfferEnabledDraft = next),
-                  onLocalOfferTitleDraftChange: (next) =>
-                    (state.federationLocalOfferTitleDraft = next),
-                  onLocalOfferSummaryDraftChange: (next) =>
-                    (state.federationLocalOfferSummaryDraft = next),
-                  onLocalOfferServiceKindDraftChange: (next) =>
-                    state.handleFederationApplyMarketplaceServiceKind(next),
-                  onLocalOfferInputShapeDraftChange: (next) =>
-                    (state.federationLocalOfferInputShapeDraft = next),
-                  onLocalOfferDeliveryShapeDraftChange: (next) =>
-                    (state.federationLocalOfferDeliveryShapeDraft = next),
-                  onLocalOfferCapabilitiesDraftChange: (next) =>
-                    (state.federationLocalOfferCapabilitiesDraft = next),
-                  onLocalOfferPriceAmountDraftChange: (next) =>
-                    (state.federationLocalOfferPriceAmountDraft = next),
-                  onLocalOfferPricingModelDraftChange: (next) =>
-                    (state.federationLocalOfferPricingModelDraft = next),
-                  onLocalOfferPriceUnitDraftChange: (next) =>
-                    (state.federationLocalOfferPriceUnitDraft = next),
-                  onLocalOfferCurrencyDraftChange: (next) =>
-                    (state.federationLocalOfferCurrencyDraft = next),
-                  onLocalOfferFulfillmentModeDraftChange: (next) =>
-                    (state.federationLocalOfferFulfillmentModeDraft = next),
-                  onLocalOfferAcceptedAssetsDraftChange: (next) =>
-                    (state.federationLocalOfferAcceptedAssetsDraft = next),
-                  onLocalOfferPaymentRailsDraftChange: (next) =>
-                    (state.federationLocalOfferPaymentRailsDraft = next),
-                  onSaveLocalOffer: () => state.handleFederationSaveLocalOffer(),
-                  onToggleLocalOffer: (offerId) => state.handleFederationToggleLocalOffer(offerId),
-                  onDeleteLocalOffer: (offerId) => state.handleFederationDeleteLocalOffer(offerId),
-                  onToggleLocalRequest: (requestId) =>
-                    state.handleFederationToggleLocalRequest(requestId),
-                  onDeleteLocalRequest: (requestId) =>
-                    state.handleFederationDeleteLocalRequest(requestId),
-                  onCreateOrderFromSelectedOffer: () =>
-                    state.handleFederationCreateOrderFromSelectedOffer(),
-                  onCreateOrderFromMarketplaceIndexEntry: (entryId) =>
-                    state.handleFederationCreateOrderFromMarketplaceIndexEntry(entryId),
-                  onCreateOrderFromLocalRequest: (requestId) =>
-                    state.handleFederationCreateOrderFromLocalRequest(requestId),
-                  onDeleteLocalOrder: (orderId) => state.handleFederationDeleteLocalOrder(orderId),
-                  onOffersQueryChange: (next) => (state.federationOffersQuery = next),
-                  onOffersServiceKindFilterChange: (next) => {
-                    state.federationOffersServiceKindFilter = next;
-                    void state.handleFederationLoadOffers();
-                  },
-                  onMarketplaceSectionChange: (next) => {
-                    state.federationMarketplaceSection = next;
-                    if (next === "listings" || next === "purchases" || next === "sales") {
-                      void state.handleFederationLoadLocalOffers();
-                    }
-                  },
-                  onMarketplaceKindFilterChange: (next) => {
-                    state.federationMarketplaceKindFilter = next;
-                  },
-                  onMarketplaceTrustFilterChange: (next) => {
-                    state.federationMarketplaceTrustFilter = next;
-                    void state.handleFederationLoadMarketplaceIndex();
-                  },
-                  onMarketplaceStatusFilterChange: (next) => {
-                    state.federationMarketplaceStatusFilter = next;
-                  },
-                  onMarketplaceDateFromFilterChange: (next) => {
-                    state.federationMarketplaceDateFromFilter = next;
-                  },
-                  onMarketplaceDateToFilterChange: (next) => {
-                    state.federationMarketplaceDateToFilter = next;
-                  },
-                  onMarketplaceSortChange: (next) => {
-                    state.federationMarketplaceSort = next;
-                  },
-                  onLoadMarketplaceIndex: () => state.handleFederationLoadMarketplaceIndex(),
-                  onPreviewMarketplaceIndex: () => state.handleFederationPreviewMarketplaceIndex(),
-                  onPublishMarketplaceIndex: () => state.handleFederationPublishMarketplaceIndex(),
-                  onMarketplaceIndexDetailTabChange: (next) => {
-                    state.federationMarketplaceIndexDetailTab = next;
-                  },
-                  onSelectMarketplaceIndexEntry: (entryId) => {
-                    state.federationMarketplaceIndexSelectedEntryId = entryId;
-                    state.federationMarketplaceFeedbackOrderId = "";
-                    state.federationMarketplaceIndexDetailTab = "overview";
-                  },
-                  onOpenMarketplaceSellerProfile: (handle) =>
-                    state.handleFederationOpenMarketplaceSellerProfile(handle),
-                  onMarketplaceSellerProfileTabChange: (next) => {
-                    state.federationMarketplaceSellerProfileTab = next;
-                  },
-                  onCloseMarketplaceSellerProfile: () => {
-                    state.federationMarketplaceSellerProfileHandle = "";
-                    state.federationMarketplaceSellerProfileError = null;
-                    state.federationMarketplaceSellerProfileTab = "summary";
-                  },
-                  onSelectOffer: (offerId) => {
-                    state.handleFederationSelectOffer(offerId);
-                    void state.handleFederationLoadOfferReputation();
-                  },
-                  onLoadOfferReputation: () => state.handleFederationLoadOfferReputation(),
-                  onSummarizeSourceTextChange: (next) =>
-                    (state.federationSummarizeSourceText = next),
-                  onSummarizeStyleChange: (next) => (state.federationSummarizeStyle = next),
-                  onSummarizeMaxSentencesChange: (next) =>
-                    (state.federationSummarizeMaxSentences = next),
-                  onMarketplaceOrderDeliveryDraftChange: (orderId, kind, webhookUrl) => {
-                    state.federationMarketplaceOrderDeliveryDraftOrderId = orderId;
-                    state.federationMarketplaceOrderDeliveryKindDraft = kind;
-                    state.federationMarketplaceOrderDeliveryWebhookUrlDraft = webhookUrl ?? "";
-                    state.federationMarketplaceOrderDeliveryError = null;
-                    state.federationMarketplaceOrderDeliveryMessage = null;
-                  },
-                  onSaveMarketplaceOrderDeliveryTarget: (orderId) =>
-                    state.handleFederationSaveMarketplaceOrderDeliveryTarget(orderId),
-                  onPayMarketplaceManualOrder: (orderId) =>
-                    state.handleFederationPayMarketplaceManualOrder(orderId),
-                  onDeliverMarketplaceManualOrder: (orderId) =>
-                    state.handleFederationDeliverMarketplaceManualOrder(orderId),
-                  onRunMarketplaceCapabilityOrder: (orderId) =>
-                    state.handleFederationRunMarketplaceCapabilityOrder(orderId),
-                  onPaidQuoteAmountDraftChange: (next) =>
-                    (state.federationPaidQuoteAmountDraft = next),
-                  onPaidQuoteAssetDecimalsDraftChange: (next) =>
-                    (state.federationPaidQuoteAssetDecimalsDraft = next),
-                  onPaidQuoteCurrencyDraftChange: (next) =>
-                    (state.federationPaidQuoteCurrencyDraft = next),
-                  onPaidQuoteChainDraftChange: (next) =>
-                    (state.federationPaidQuoteChainDraft = next),
-                  onPaidQuoteAssetKindDraftChange: (next) =>
-                    (state.federationPaidQuoteAssetKindDraft = next),
-                  onPaidQuoteAssetAddressDraftChange: (next) =>
-                    (state.federationPaidQuoteAssetAddressDraft = next),
-                  onPaidQuotePayeeAddressDraftChange: (next) =>
-                    (state.federationPaidQuotePayeeAddressDraft = next),
-                  onPaidQuoteExpiresMinutesDraftChange: (next) =>
-                    (state.federationPaidQuoteExpiresMinutesDraft = next),
-                  onReviewRatingDraftChange: (next) => (state.federationReviewRatingDraft = next),
-                  onReviewOutcomeDraftChange: (next) => (state.federationReviewOutcomeDraft = next),
-                  onReviewPaymentStatusDraftChange: (next) =>
-                    (state.federationReviewPaymentStatusDraft = next),
-                  onReviewInvoiceIdDraftChange: (next) =>
-                    (state.federationReviewInvoiceIdDraft = next),
-                  onReviewReceiptIdDraftChange: (next) =>
-                    (state.federationReviewReceiptIdDraft = next),
-                  onReviewSummaryDraftChange: (next) => (state.federationReviewSummaryDraft = next),
-                  onDisputeReasonCodeDraftChange: (next) =>
-                    (state.federationDisputeReasonCodeDraft = next),
-                  onDisputePaymentStatusDraftChange: (next) =>
-                    (state.federationDisputePaymentStatusDraft = next),
-                  onDisputeInvoiceIdDraftChange: (next) =>
-                    (state.federationDisputeInvoiceIdDraft = next),
-                  onDisputeReceiptIdDraftChange: (next) =>
-                    (state.federationDisputeReceiptIdDraft = next),
-                  onDisputeSummaryDraftChange: (next) =>
-                    (state.federationDisputeSummaryDraft = next),
-                  onOperatorDisputeProviderFilterChange: (next) =>
-                    (state.federationOperatorDisputeProviderFilter = next),
-                  onOperatorDisputeOfferIdFilterChange: (next) =>
-                    (state.federationOperatorDisputeOfferIdFilter = next),
-                  onOperatorDisputeStatusFilterChange: (next) =>
-                    (state.federationOperatorDisputeStatusFilter = next),
-                  onOperatorDisputePaymentStatusFilterChange: (next) =>
-                    (state.federationOperatorDisputePaymentStatusFilter = next),
-                  onOperatorSelectedCaseIdChange: (next) =>
-                    (state.federationOperatorSelectedCaseId = next),
-                  onOperatorDisputeReviewStatusDraftChange: (next) =>
-                    (state.federationOperatorDisputeReviewStatusDraft = next),
-                  onOperatorDisputeResolutionDraftChange: (next) =>
-                    (state.federationOperatorDisputeResolutionDraft = next),
-                  onDisputeNotaryOpinionDraftChange: (next) =>
-                    (state.federationDisputeNotaryOpinionDraft = next),
-                  onDisputeNotaryConfidenceDraftChange: (next) =>
-                    (state.federationDisputeNotaryConfidenceDraft = next),
-                  onDisputeNotaryRecommendedResolutionDraftChange: (next) =>
-                    (state.federationDisputeNotaryRecommendedResolutionDraft = next),
-                  onDisputeNotarySummaryDraftChange: (next) =>
-                    (state.federationDisputeNotarySummaryDraft = next),
-                  onRegister: () => state.handleFederationRegister(),
-                  onAttest: () => state.handleFederationAttest(),
+                  onRefresh: () => state.handleFederationLoad(),
                   onRenew: () => state.handleFederationRenew(),
                   onRevoke: () => state.handleFederationRevoke(),
-                  onSetBondWallet: () => state.handleFederationSetBondWallet(),
-                  onClearBondWallet: () => state.handleFederationClearBondWallet(),
-                  onBondWalletIdDraftChange: (next) => (state.federationBondWalletIdDraft = next),
-                  onBondAmountDraftChange: (next) => (state.federationBondAmountDraft = next),
-                  onBondTierDraftChange: (next) => (state.federationBondTierDraft = next),
-                  onBondAutoSubmitProofChange: (next) =>
-                    (state.federationBondAutoSubmitProof = next),
-                  onOpenBond: () => state.handleFederationOpenBond(),
-                  onIncreaseBond: () => state.handleFederationIncreaseBond(),
-                  onRequestBondUnlock: () => state.handleFederationRequestBondUnlock(),
-                  onCancelBondUnlock: () => state.handleFederationCancelBondUnlock(),
-                  onFinalizeBondUnlock: () => state.handleFederationFinalizeBondUnlock(),
-                  onSubmitBondProof: () => state.handleFederationSubmitBondProof(),
-                  onInitBondStaking: () => state.handleFederationInitBondStaking(),
-                  onSyncBondStaking: () => state.handleFederationSyncBondStaking(),
-                  onClaimBondStaking: () => state.handleFederationClaimBondStaking(),
-                  onReview: (handle, status) => state.handleFederationReview(handle, status),
-                  onRefresh: () => state.handleFederationLoad(),
-                  onRefreshOperatorEconomy: () => state.handleFederationLoadOperatorEconomy(),
-                  onRefreshOffers: () => state.handleFederationLoadOffers(),
-                  onRunContentSummarize: () => state.handleFederationRunContentSummarize(),
-                  onRunPaidContentSummarize: () => state.handleFederationRunPaidContentSummarize(),
-                  onRunPaidContentSummarizeOrder: (orderId) =>
-                    state.handleFederationRunPaidContentSummarizeOrder(orderId),
-                  onFundMarketplaceEscrowOrder: (orderId) =>
-                    state.handleFederationFundMarketplaceEscrowOrder(orderId),
-                  onReleaseMarketplaceEscrowOrder: (orderId) =>
-                    state.handleFederationReleaseMarketplaceEscrowOrder(orderId),
-                  onRefundMarketplaceEscrowOrder: (orderId) =>
-                    state.handleFederationRefundMarketplaceEscrowOrder(orderId),
-                  onCancelMarketplaceEscrowOrder: (orderId) =>
-                    state.handleFederationCancelMarketplaceEscrowOrder(orderId),
-                  onOpenMarketplaceIndexOrderFeedback: (orderId, tab) =>
-                    state.handleFederationOpenMarketplaceIndexOrderFeedback(orderId, tab),
-                  onPublishReview: () => state.handleFederationPublishReview(),
-                  onPublishDispute: () => state.handleFederationPublishDispute(),
-                  onOfferFeedbackTabChange: (next) =>
-                    state.handleFederationOfferFeedbackTabChange(next),
-                  onLoadOperatorDisputes: () => state.handleFederationLoadOperatorDisputes(),
-                  onReviewDispute: () => state.handleFederationReviewDispute(),
-                  onLoadDisputeNotaryAttestations: () =>
-                    state.handleFederationLoadDisputeNotaryAttestations(),
-                  onPublishDisputeNotaryAttestation: () =>
-                    state.handleFederationPublishDisputeNotaryAttestation(),
+                  onRegister: () => state.handleFederationRegister(),
+                  onHandleChange: (value) => (state.federationHandle = value),
+                  onNodeEndpointChange: (value) => (state.federationNodeEndpoint = value),
                 })
-              : renderLazyTabPlaceholder(
-                  state.tab === "marketplace" ? "Marketplace" : "Fased Network",
-                  lazyTabViewErrors.federation,
-                )
+              : renderLazyTabPlaceholder("Fased Network", lazyTabViewErrors.federation)
             : nothing
         }
 
@@ -5704,7 +5163,6 @@ export function renderApp(state: AppViewState) {
                   skillGrantRows: state.walletSkillGrantRows,
                   skillGrantDraft: state.walletSkillGrantDraft,
                   skillGrantBusy: state.walletSkillGrantBusy,
-                  federationBond: state.federationStatus?.bond ?? null,
                   onNavigate: (tab) => state.setTab(tab),
                   rpcChain: "solana",
                   policySolMaxPerTx: state.walletPolicySolMaxPerTx,
@@ -5764,7 +5222,7 @@ export function renderApp(state: AppViewState) {
                     void state.handleWalletBalanceWalletChange(walletId),
                   onPolicyPanelChange: (panel) => state.handleWalletPolicyPanelChange(panel),
                   onApprovalsFilterChange: (filter) => state.handleWalletSetApprovalsFilter(filter),
-                  onAttachWalletStandardVault: () => state.handleWalletAttachStandardVault(),
+                  onAttachWalletStandard: () => state.handleWalletAttachStandard(),
                   onCreateNameChange: (next) => (state.walletCreateName = next),
                   onCreateRpcUrlChange: (next) => (state.walletCreateRpcUrl = next),
                   onCreateRpcProfileIdChange: (next) => (state.walletCreateRpcProfileId = next),
@@ -5800,7 +5258,6 @@ export function renderApp(state: AppViewState) {
                   onEnrollPasskey: () => state.handleWalletEnrollPasskey(),
                   onDeletePasskey: (credentialId) => state.handleWalletDeletePasskey(credentialId),
                   onApplyRecommendedPolicy: () => state.handleWalletApplyRecommendedPolicy(),
-                  onMiningSatSweepChange: (patch) => state.handleMiningSatSweepChange(patch),
                   onPatchSettings: (patch, opts) => state.handleWalletPatchSettings(patch, opts),
                   onActivityPageChange: (page) => (state.walletActivityPage = page),
                   onRpcChainChange: (next) => (state.walletRpcChain = next),
@@ -5818,9 +5275,6 @@ export function renderApp(state: AppViewState) {
                   onSkillGrantSave: () => state.handleWalletSkillGrantSave(),
                   onSkillGrantClear: (skillId) => state.handleWalletSkillGrantClear(skillId),
                   onCreateSendRequest: () => state.handleWalletCreateSendRequest(),
-                  miningProfile: state.miningProfile,
-                  miningReadiness: state.miningReadiness,
-                  miningStatus: state.miningStatus,
                 })
               : renderLazyTabPlaceholder("Wallet", lazyTabViewErrors.wallet)
             : nothing
@@ -5840,129 +5294,6 @@ export function renderApp(state: AppViewState) {
             : nothing
         }
 
-        ${
-          state.tab === "mining"
-            ? miningView
-              ? miningView.renderMining({
-                  loading: state.miningLoading,
-                  saving: state.miningSaving,
-                  actionBusy: state.miningActionBusy,
-                  capitalActionBusy: state.miningCapitalActionBusy,
-                  pendingAction: state.miningPendingAction,
-                  nowMs: state.miningNowMs,
-                  error: state.miningError,
-                  message: state.miningMessage,
-                  notifications: state.miningNotifications,
-                  wallets: state.miningWallets,
-                  defaultWalletId: state.walletDefaultWalletId,
-                  attachedWalletId: state.miningAttachedWalletId,
-                  profile: state.miningProfile,
-                  savedProfiles: state.miningSavedProfiles,
-                  selectedSavedProfileId: state.miningSelectedSavedProfileId,
-                  saveProfileName: state.miningSaveProfileName,
-                  readiness: state.miningReadiness,
-                  status: state.miningStatus,
-                  mainnetSync: state.miningMainnetSync,
-                  mainnetSyncBusy: state.miningMainnetSyncBusy,
-                  historyLoading: state.miningHistoryLoading,
-                  historyError: state.miningHistoryError,
-                  history: state.miningHistory,
-                  recovery: state.miningRecovery,
-                  recoveryDisputeAuthority: state.miningRecoveryDisputeAuthority,
-                  recoveryTargetAuthority: state.miningRecoveryTargetAuthority,
-                  recoveryEpochId: state.miningRecoveryEpochId,
-                  recoveryMicroRoundId: state.miningRecoveryMicroRoundId,
-                  recoveryStatusFlag: state.miningRecoveryStatusFlag,
-                  recoveryBoardRoot: state.miningRecoveryBoardRoot,
-                  recoveryScoreRoot: state.miningRecoveryScoreRoot,
-                  recoveryCoordinationRoot: state.miningRecoveryCoordinationRoot,
-                  recoveryDraftRestored: state.miningRecoveryDraftRestored,
-                  recoveryDraftUpdatedAt: state.miningRecoveryDraftUpdatedAt,
-                  recoveryDraftSavedHint: state.miningRecoveryDraftSavedHint,
-                  confirmClearHistory: state.miningConfirmClearHistory,
-                  recentActionsPage: state.miningRecentActionsPage,
-                  historyModalOpen: state.miningHistoryModalOpen,
-                  activityFilter: state.miningActivityFilter,
-                  activityWindow: state.miningActivityWindow,
-                  plannerWindow: state.miningPlannerWindow,
-                  chartMetric: state.miningChartMetric,
-                  onRefresh: () => state.handleMiningLoad({ forceFresh: true }),
-                  onHistoryOpen: () => state.handleMiningOpenHistoryModal(),
-                  onHistoryClose: () => state.handleMiningCloseHistoryModal(),
-                  onDismissNotification: (id) => state.dismissMiningNotification(id),
-                  onSaveLocalProfile: () => state.handleMiningSaveLocalProfile(),
-                  onLoadSavedProfile: () => state.handleMiningLoadSavedProfile(),
-                  onDeleteSavedProfile: () => state.handleMiningDeleteSavedProfile(),
-                  onExportSupportBundle: () => state.handleMiningExportSupportBundle(),
-                  onStart: () => state.handleMiningStart(),
-                  onStop: () => state.handleMiningStop(),
-                  onMainnetSync: () => state.handleMiningMainnetSync(),
-                  onTopUpReserve: () => state.handleMiningTopUpReserve(),
-                  onDepositCapital: () => state.handleMiningDepositCapital(),
-                  onWithdrawCapital: () => state.handleMiningWithdrawCapital(),
-                  onUpdateCommit: (lamports) => state.handleMiningUpdateCommit(lamports),
-                  onRecentActionsPageChange: (page) =>
-                    state.handleMiningRecentActionsPageChange(page),
-                  onActivityFilterChange: (filter) =>
-                    state.handleMiningActivityFilterChange(filter),
-                  onActivityWindowChange: (window) =>
-                    state.handleMiningActivityWindowChange(window),
-                  onSelectedSavedProfileChange: (id) =>
-                    state.handleMiningSelectedSavedProfileChange(id),
-                  onSaveProfileNameChange: (value) =>
-                    state.handleMiningSaveProfileNameChange(value),
-                  onStrategyPresetChange: (preset) =>
-                    state.handleMiningStrategyPresetChange(preset),
-                  onStrategyExecutionChange: (execution) =>
-                    state.handleMiningStrategyExecutionChange(execution),
-                  onCycleCadenceChange: (cadence) => state.handleMiningCycleCadenceChange(cadence),
-                  onOpenAomStrategyTask: () => openMiningAomStrategyTask(state),
-                  onStrategyModeChange: (mode) => state.handleMiningStrategyModeChange(mode),
-                  onSkillConfigChange: (patch) => state.handleMiningSkillConfigChange(patch),
-                  onRiskModeChange: (riskMode) => state.handleMiningRiskModeChange(riskMode),
-                  onCommitLamportsChange: (lamports) =>
-                    state.handleMiningCommitLamportsChange(lamports),
-                  onReserveLamportsChange: (lamports) =>
-                    state.handleMiningReserveLamportsChange(lamports),
-                  capitalDepositDraft: state.miningCapitalDepositDraft,
-                  capitalWithdrawDraft: state.miningCapitalWithdrawDraft,
-                  onCapitalDepositDraftChange: (value) =>
-                    state.handleMiningCapitalDepositDraftChange(value),
-                  onCapitalWithdrawDraftChange: (value) =>
-                    state.handleMiningCapitalWithdrawDraftChange(value),
-                  onPayoutChange: (payout) => state.handleMiningPayoutChange(payout),
-                  onAutomationChange: (patch) => state.handleMiningAutomationChange(patch),
-                  onSatSweepChange: (patch) => state.handleMiningSatSweepChange(patch),
-                  onRecoveryDisputeAuthorityChange: (value) =>
-                    state.handleMiningRecoveryDisputeAuthorityChange(value),
-                  onRecoveryTargetAuthorityChange: (value) =>
-                    state.handleMiningRecoveryTargetAuthorityChange(value),
-                  onRecoveryEpochIdChange: (value) =>
-                    state.handleMiningRecoveryEpochIdChange(value),
-                  onRecoveryMicroRoundIdChange: (value) =>
-                    state.handleMiningRecoveryMicroRoundIdChange(value),
-                  onRecoveryStatusFlagChange: (value) =>
-                    state.handleMiningRecoveryStatusFlagChange(value),
-                  onRecoveryBoardRootChange: (value) =>
-                    state.handleMiningRecoveryBoardRootChange(value),
-                  onRecoveryScoreRootChange: (value) =>
-                    state.handleMiningRecoveryScoreRootChange(value),
-                  onRecoveryCoordinationRootChange: (value) =>
-                    state.handleMiningRecoveryCoordinationRootChange(value),
-                  onRetryClaim: () => state.handleMiningRetryClaim(),
-                  onResolveDispute: () => state.handleMiningResolveDispute(),
-                  onRepublishRoots: () => state.handleMiningRepublishRoots(),
-                  onClearHistory: () => state.handleMiningClearHistory(),
-                  onConfirmClearHistory: () => state.handleMiningConfirmClearHistory(),
-                  onCancelClearHistory: () => state.handleMiningCancelClearHistory(),
-                  onPlannerWindowChange: (window) => state.handleMiningPlannerWindowChange(window),
-                  onChartMetricChange: (metric) => (state.miningChartMetric = metric),
-                  onResetRecoveryDraft: () => state.handleMiningResetRecoveryDraft(),
-                  onResetToSelectedCandidate: () => state.handleMiningResetToSelectedCandidate(),
-                })
-              : renderLazyTabPlaceholder("Mining", lazyTabViewErrors.mining)
-            : nothing
-        }
 
         ${
           state.tab === "debug"
@@ -6009,17 +5340,6 @@ export function renderApp(state: AppViewState) {
                 acpxPushTestAuditHistory: state.debugAcpxPushTestAuditHistory,
                 acpxPushTestResult: state.debugAcpxPushTestResult,
                 acpxPushTestError: state.debugAcpxPushTestError,
-                satProtocolMaintenanceBusy: state.debugSatProtocolMaintenanceBusy,
-                satProtocolMaintenanceResult: state.debugSatProtocolMaintenanceResult,
-                satProtocolMaintenanceError: state.debugSatProtocolMaintenanceError,
-                feeOpsLoading: state.federationOperatorEconomyLoading,
-                feeOpsError: state.federationOperatorEconomyError,
-                feeCollectionStatus: state.federationOperatorEconomyCollectionStatus,
-                feeObjects: state.federationOperatorEconomyFeeObjects,
-                feeBucketJournal: state.federationOperatorEconomyBucketJournal,
-                feeBucketBalances: state.federationOperatorEconomyBucketBalances,
-                feeReconciliationReports: state.federationOperatorEconomyReconciliationReports,
-                feeAutoDecisions: state.federationOperatorEconomyAutoFeeDecisions,
                 onCallMethodChange: (next) => (state.debugCallMethod = next),
                 onCallParamsChange: (next) => (state.debugCallParams = next),
                 onAdminChatSessionKeyChange: (next) => (state.debugAdminChatSessionKey = next),
@@ -6030,17 +5350,12 @@ export function renderApp(state: AppViewState) {
                 onAdminWebAccountIdChange: (next) => (state.debugAdminWebAccountId = next),
                 onAcpxBridgeConfigAction: (action) => updateDebugAcpxBridgeConfig(state, action),
                 onAcpxPushTestAction: (action) => callDebugAcpxPushTest(state, action),
-                onSatProtocolMaintenance: () => callDebugSatProtocolMaintenance(state),
                 onConfigPatch: (path, value) => updateConfigFormValue(state, path, value),
                 onConfigSave: () => saveConfig(state),
                 onConfigReload: () => loadConfig(state),
                 onTaskLedgerMaintenance: (opts) => void state.runTaskLedgerMaintenance(opts),
                 onRefresh: async () => {
-                  await Promise.all([
-                    loadDebug(state),
-                    state.loadTaskLedger({ quiet: true }),
-                    state.handleFederationLoadOperatorEconomy(),
-                  ]);
+                  await Promise.all([loadDebug(state), state.loadTaskLedger({ quiet: true })]);
                 },
                 onCall: () => callDebugMethod(state),
                 onAdminRpcAction: (action) => callDebugAdminRpcControl(state, action),

@@ -33,7 +33,7 @@ func bondPurchaseFixtureV2(t *testing.T) (wenBondPurchasePinsV2, wenBondAccountV
 		return k
 	}
 	keys := []solana.PublicKey{solana.TokenProgramID, derive(router, "authority", []byte{0}), derive(b.Program, "wen-btc-swap-v1", q.Key[:]), derive(b.Program, "wen-bond-swap-cash-v1", q.Key[:]), {11}, {12}, derive(b.Program, "wen-bond-swap-btc-v1", q.Key[:]), usdc, btc, router, router, derive(router, "__event_authority"), router, {13}}
-	route := signerWENBTCRouteV1{Program: router, Data: make([]byte, 36), Accounts: make([]signerSATAccountV2, len(keys))}
+	route := signerWENBTCRouteV1{Program: router, Data: make([]byte, 36), Accounts: make([]signerTypedAccountV2, len(keys))}
 	tag := sha256.Sum256([]byte("global:shared_accounts_route"))
 	copy(route.Data, tag[:8])
 	binary.LittleEndian.PutUint32(route.Data[9:], 1)
@@ -41,7 +41,7 @@ func bondPurchaseFixtureV2(t *testing.T) (wenBondPurchasePinsV2, wenBondAccountV
 	binary.LittleEndian.PutUint64(route.Data[17:], 180000000)
 	binary.LittleEndian.PutUint64(route.Data[25:], 400000)
 	for i, k := range keys {
-		route.Accounts[i] = signerSATAccountV2{Pubkey: k.String(), IsSigner: i == 2, IsWritable: i >= 3 && i <= 6}
+		route.Accounts[i] = signerTypedAccountV2{Pubkey: k.String(), IsSigner: i == 2, IsWritable: i >= 3 && i <= 6}
 	}
 	return p, q, n, route
 }

@@ -39,7 +39,7 @@ describe("capability catalog", () => {
     const entries = loadCapabilityCatalog();
     expect(entries).toHaveLength(22);
     expect(new Set(entries.map((entry) => entry.id)).size).toBe(entries.length);
-    expect(entries.find((entry) => entry.id === "sat-mining")?.delivery).toBe("core");
+    expect(entries.find((entry) => entry.id === "wen")?.delivery).toBe("core");
     expect(entries.find((entry) => entry.id === "telegram")?.packageName).toBe("@fased/telegram");
     expect(entries.find((entry) => entry.id === "googlechat")?.packageName).toBe(
       "@fased/googlechat",
@@ -92,7 +92,7 @@ describe("capability catalog", () => {
       config: {} as FasedAgentConfig,
       pluginReport: report([
         plugin({
-          id: "sat-mining",
+          id: "wen",
           status: "error",
           loaded: false,
           enabled: true,
@@ -100,7 +100,7 @@ describe("capability catalog", () => {
         }),
       ]),
     });
-    expect(capabilities.entries.find((entry) => entry.id === "sat-mining")?.state).toBe("error");
+    expect(capabilities.entries.find((entry) => entry.id === "wen")?.state).toBe("error");
     expect(capabilities.summary.errors).toBe(1);
   });
 
@@ -109,7 +109,7 @@ describe("capability catalog", () => {
       config: {} as FasedAgentConfig,
       pluginReport: report([
         plugin({
-          id: "sat-mining",
+          id: "wen",
           origin: "bundled",
           status: "disabled",
           loaded: false,
@@ -120,7 +120,7 @@ describe("capability catalog", () => {
         }),
       ]),
     });
-    expect(capabilities.entries.find((entry) => entry.id === "sat-mining")?.state).toBe("included");
+    expect(capabilities.entries.find((entry) => entry.id === "wen")?.state).toBe("included");
     expect(capabilities.summary.errors).toBe(0);
   });
 

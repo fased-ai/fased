@@ -77,7 +77,6 @@ const VALID_SOURCES = new Set<TaskSource | "all">([
   "media",
   "wallet",
   "marketplace",
-  "mining",
   "all",
 ]);
 
@@ -85,7 +84,7 @@ const VALID_NOTIFY_POLICIES = new Set<TaskNotifyPolicy>(["silent", "done_only", 
 
 const VALID_FLOW_STATUSES = new Set([...VALID_STATUSES, "waiting"]);
 
-const VIEW_ONLY_LEDGER_SOURCES = new Set<TaskSource>(["wallet", "marketplace", "mining"]);
+const VIEW_ONLY_LEDGER_SOURCES = new Set<TaskSource>(["wallet", "marketplace"]);
 
 async function liveCronDefinitionIds(storePath: string): Promise<Set<string>> {
   const store = await loadCronStore(storePath);

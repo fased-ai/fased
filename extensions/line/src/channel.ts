@@ -3,7 +3,6 @@ import {
   buildTokenChannelStatusSummary,
   DEFAULT_ACCOUNT_ID,
   LineConfigSchema,
-  processLineMessage,
   resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy,
   type ChannelPlugin,
@@ -13,6 +12,7 @@ import {
   type LineChannelData,
   type ResolvedLineAccount,
 } from "fased/plugin-sdk";
+import { processLineMessage } from "fased/plugin-sdk/line";
 import { getLineRuntime } from "./runtime.js";
 
 // LINE channel metadata

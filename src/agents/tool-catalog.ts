@@ -10,7 +10,7 @@ import {
   UPDATE_PLAN_TOOL_DISPLAY_SUMMARY,
 } from "./tool-description-presets.js";
 
-export type ToolProfileId = "minimal" | "coding" | "messaging" | "full";
+export type ToolProfileId = "wen" | "minimal" | "coding" | "messaging" | "full";
 
 type ToolProfilePolicy = {
   allow?: string[];
@@ -130,7 +130,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "memory_search",
     description: "Semantic search",
     sectionId: "memory",
-    profiles: ["coding"],
+    profiles: ["wen", "coding"],
     includeInFasedGroup: true,
   },
   {
@@ -138,7 +138,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "memory_get",
     description: "Read memory files",
     sectionId: "memory",
-    profiles: ["coding"],
+    profiles: ["wen", "coding"],
     includeInFasedGroup: true,
   },
   {
@@ -194,7 +194,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "session_status",
     description: SESSION_STATUS_TOOL_DISPLAY_SUMMARY,
     sectionId: "sessions",
-    profiles: ["minimal", "coding", "messaging"],
+    profiles: ["wen", "minimal", "coding", "messaging"],
     includeInFasedGroup: true,
   },
   {
@@ -266,7 +266,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "update_plan",
     description: UPDATE_PLAN_TOOL_DISPLAY_SUMMARY,
     sectionId: "agents",
-    profiles: ["coding"],
+    profiles: ["wen", "coding"],
     includeInFasedGroup: true,
   },
   {
@@ -322,6 +322,11 @@ function listCoreToolIdsForProfile(profile: ToolProfileId): string[] {
 }
 
 const CORE_TOOL_PROFILES: Record<ToolProfileId, ToolProfilePolicy> = {
+  // These plugin tools only read verified facts and prepare an owner-reviewed handoff.
+  // Financial signing authority remains in the independent wallet policy.
+  wen: {
+    allow: [...listCoreToolIdsForProfile("wen"), "wen_economy_facts", "wen_acquisition_request"],
+  },
   minimal: {
     allow: listCoreToolIdsForProfile("minimal"),
   },
@@ -354,6 +359,7 @@ function buildCoreToolGroupMap() {
 export const CORE_TOOL_GROUPS = buildCoreToolGroupMap();
 
 export const PROFILE_OPTIONS = [
+  { id: "wen", label: "WEN strategy" },
   { id: "minimal", label: "Minimal" },
   { id: "coding", label: "Coding" },
   { id: "messaging", label: "Messaging" },

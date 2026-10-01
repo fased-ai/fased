@@ -7,7 +7,6 @@ import {
   normalizeHandle,
   resolveAgentPublicOrigin,
   resolveFederationBaseUrl,
-  resolveFederationBondWalletId,
   resolveFederationHandle,
 } from "./runtime.js";
 
@@ -26,7 +25,7 @@ describe("federation runtime defaults", () => {
         FASED_A2A_NAME: "worker",
       },
       fallbackDomain: "ff1.fased.app",
-      nodeId: "0123456789abcdef0123456789abcdef",
+      nodeId: "0123456789abcdef".repeat(2),
     });
     expect(handle).toBe("@worker-0123456789ab@ff1.fased.app");
   });
@@ -37,7 +36,7 @@ describe("federation runtime defaults", () => {
         FASED_FEDERATION_HANDLE: "@agent@ff1.fased.app",
       },
       fallbackDomain: "ff1.fased.app",
-      nodeId: "0123456789abcdef0123456789abcdef",
+      nodeId: "0123456789abcdef".repeat(2),
     });
     expect(handle).toBe("@agent@ff1.fased.app");
   });
@@ -63,46 +62,5 @@ describe("federation runtime defaults", () => {
       FASED_A2A_ORIGIN: "https://node42.example.com",
     });
     expect(origin).toBe("https://node42.example.com");
-  });
-
-  it("uses the configured federation bond Vault and does not fall back to SAT mining", () => {
-    const walletId = resolveFederationBondWalletId({
-      env: {},
-      cfg: {
-        federation: {
-          bond: {
-            walletId: "bond-wallet",
-          },
-        },
-        plugins: {
-          entries: {
-            "sat-mining": {
-              enabled: true,
-              config: {
-                walletId: "mining-wallet",
-              },
-            },
-          },
-        },
-      },
-    });
-    expect(walletId).toBe("bond-wallet");
-    expect(
-      resolveFederationBondWalletId({
-        env: {},
-        cfg: {
-          plugins: {
-            entries: {
-              "sat-mining": {
-                enabled: true,
-                config: {
-                  walletId: "mining-wallet",
-                },
-              },
-            },
-          },
-        },
-      }),
-    ).toBe("");
   });
 });

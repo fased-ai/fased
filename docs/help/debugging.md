@@ -1,5 +1,5 @@
 ---
-summary: "Debugging workflows for runtime, wallet, mining, Fased Network, and raw model streams."
+summary: "Debugging workflows for runtime, wallet, Fased Network, and raw model streams."
 read_when:
   - You need to inspect raw model output for reasoning leakage
   - You want to run the Gateway in watch mode while iterating
@@ -48,54 +48,16 @@ Examples:
 
 ## Wallet, SAT, and Fased Network debugging
 
-When the problem is Wallet, Mining, or Fased Network, start with snapshots before
-you click around in the UI.
-
-```bash
-fased wallet status --json
-fased wallet signer doctor --json
-fased mining readiness --wallet mining
-fased mining status --json
-fased federation status --json
-fased federation bond-wallet status --json
-fased logs --follow
-```
-
 Read those outputs in this order:
 
-1. wallet provider, custody, and policy status
-2. signer health and socket reachability
-3. mining readiness blockers
-4. live mining capital, commit, cycle, and gap state
-5. Fased Network token, trust, hosted, and route state
-6. bond-wallet assignment
-
 Practical reading:
-
-- if signer doctor fails, fix signer first
-- if mining readiness fails, do not treat the problem as a Fased Network issue yet
-- if Fased Network is orange after unlock, check bond state before chasing route bugs
-- if the bond Vault is wrong, fix the assignment before topping up or proving
 
 Use the full operator guides when you need the product meaning behind those
 states:
 
-- [Wallet](/plugins/crypto/wallet-page)
-- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
-- [Mining](/plugins/crypto/mining-page)
-- [Fased Network](/start/federation)
-- [Bond operator](/start/bond-operator-economy)
-
 ## Capture evidence before changing state
 
 For wallet and SAT bugs, the best report usually includes:
-
-- `fased status --all`
-- `fased wallet status --json`
-- `fased wallet signer doctor --json`
-- `fased mining status --json`
-- `fased federation status --json`
-- the exact UI action that failed
 
 That gives you a before-state snapshot before retries, unlock changes, or manual
 recoveries mutate the situation.

@@ -1788,8 +1788,8 @@ function capabilityConnectTab(entry: CapabilityReadinessReport["entries"][number
   if (entry.id === "solana-wallets") {
     return "wallet";
   }
-  if (entry.id === "sat-mining") {
-    return "mining";
+  if (entry.id === "wen") {
+    return "wen";
   }
   if (entry.id === "fased-network") {
     return "federation";

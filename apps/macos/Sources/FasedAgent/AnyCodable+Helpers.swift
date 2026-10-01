@@ -1,5 +1,5 @@
-import Foundation
 import FasedAgentKit
+import Foundation
 
 // Prefer the FasedAgentKit wrapper to keep gateway request payloads consistent.
 typealias AnyCodable = FasedAgentKit.AnyCodable

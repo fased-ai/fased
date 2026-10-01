@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
 
-const CORE_PLUGIN_IDS = ["memory-core", "sat-mining"] as const;
+const CORE_PLUGIN_IDS = ["memory-core", "wen"] as const;
 
 function rewriteCorePackageImports(
   source: string,
@@ -18,8 +18,8 @@ function rewriteCorePackageImports(
     ? relativePluginSdkDir
     : `./${relativePluginSdkDir}`;
   return source
-    .replaceAll('"fased/plugin-sdk/sat-runtime"', `"${pluginSdkSpecifier}/sat-runtime.js"`)
-    .replaceAll("'fased/plugin-sdk/sat-runtime'", `'${pluginSdkSpecifier}/sat-runtime.js'`)
+    .replaceAll('"fased/plugin-sdk/wen-runtime"', `"${pluginSdkSpecifier}/wen-runtime.js"`)
+    .replaceAll("'fased/plugin-sdk/wen-runtime'", `'${pluginSdkSpecifier}/wen-runtime.js'`)
     .replaceAll('"fased/plugin-sdk"', `"${pluginSdkSpecifier}/index.js"`)
     .replaceAll("'fased/plugin-sdk'", `'${pluginSdkSpecifier}/index.js'`);
 }

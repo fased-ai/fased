@@ -147,14 +147,6 @@ binary into that user's home or a custom prefix but the gateway cannot see it on
 `PATH`, the install is reported as incomplete until you update the gateway
 environment and restart.
 
-Dependency installers are an external package trust boundary. Before running
-`npm`, `go`, `uv`, `brew`, or direct download installers, **Agent > Skills** shows
-whether the installer is exact-version pinned and whether the source has
-`integrity`, `sha256`, or `shasum` metadata. Fased warns instead of silently
-trusting `latest`, ranges, unpinned Homebrew formulas, or archives without a
-hash. The install is still separate from skill access: it does not grant Agent
-tools, wallet access, mining access, or task autonomy.
-
 ### Create a template skill in the UI
 
 Use this path when you want to write a new skill from a starter template:
@@ -176,10 +168,6 @@ Use this path when you want to write a new skill from a starter template:
 7. Open the new skill from **Agent > Skills** and edit `SKILL.md`.
 8. Allow the skill on the Agent from the skill detail **Agent access** section
    or from the row toggle.
-
-The template is only starter text. It does not grant tools, service credentials,
-wallet access, mining access, or task autonomy. Configure those separately in
-**Services**, **Agent > Tools**, **Wallets > Skill Grants**, and **Agent > Skills**.
 
 Status words in the UI are intentionally separate:
 
@@ -272,19 +260,6 @@ fased skills wallet grant reviewed-wallet-skill \
 This writes `skills.entries.reviewed-wallet-skill.config.walletActions` and, when
 `--registry` is provided, adds the registry to
 `skills.marketplace.allowRegistries`.
-
-Wallet grants are always explicit Agent-wallet grants. A skill must be granted
-the specific Agent wallet ids it may use, such as `agent` or `agent-2`.
-Skills cannot use Mining wallets or Vault wallets for generic wallet actions.
-Installed plugin-catalog skills are also checked against
-`<workspace>/skills/<skill>/.clawhub/origin.json`; wallet actions are rejected
-unless the recorded registry is allowlisted.
-
-Mining is a separate runtime surface. Mining skills may teach the Agent how to
-read mining status or call mining tools when those tools are explicitly allowed,
-but generic marketplace skills do not gain custody over the mining wallet. SAT
-mining wallet actions stay behind the mining tool policy, runtime approvals, and
-the dedicated mining wallet path.
 
 Plugin-catalog installs record the wallet permissions, requested tool access, and
 install metadata requested by the skill. Updates that add or change risky wallet

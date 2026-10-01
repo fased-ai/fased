@@ -87,10 +87,6 @@ It starts a real Gateway/Control UI test instance and verifies:
 - approval/resume continues the same workflow record
 - domain authority stays outside the workflow layer
 
-This is the focused smoke for task/workflow run history. It does not replace the
-domain pages: Wallets, Marketplace, Mining, Channels, and Media/Files remain the
-authority surfaces for their own policies and runtime controls.
-
 ## Docker Smoke
 
 Docker checks are slower and require Docker/Podman-compatible host support. Use
@@ -161,37 +157,9 @@ pnpm docs:check-links
 
 Before public launch docs are final, manually review:
 
-- install paths: local, Docker/Podman, VPS, Tailscale
-- Agent-first setup: Models, Channels, Skills, Tools, Memory, Tasks, Services
-- wallet funding and Wallet > Skill Grants
-- SAT mining start/stop/readiness
-- Dashboard, Usage, Logs, Advanced > Debug/Nodes
-- screenshots for beginner-critical flows
-
 ## Manual Product Smoke
 
 Use a fresh temporary Agent and verify:
-
-1. Onboarding creates or reuses a gateway token and opens an auth-ready Control
-   UI URL.
-2. Agent > Models signs in or accepts a provider key and saves primary/fallback
-   model refs.
-3. Chat sends one model-backed reply and Usage records provider/model tokens.
-4. Agent > Skills creates a local skill, enables it for the Agent, and Chat
-   shows the skill was loaded.
-5. Agent > Memory enables session archive, `/new` or `/reset` writes an archive
-   when there is content, and diagnostics show the selected Agent's roots.
-6. Agent > Channels routes a test Telegram/Discord/other channel account to the
-   selected Agent.
-7. Agent > Tasks creates a scheduled task inheriting the Agent model/skills
-   policy, creates a webhook trigger, opens source-specific run-history records, and
-   previews or runs a run-history-backed workflow template.
-8. Wallet page shows role separation and Wallet > Skill Grants does not grant
-   mining/vault roles to generic skills.
-9. Mining page reads status without starting mining, then start/stop works only
-   with the configured mining wallet and approvals.
-10. Advanced > Debug remains operator-only and does not duplicate normal setup
-    flows.
 
 ## Release Notes
 

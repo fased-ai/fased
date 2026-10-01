@@ -76,7 +76,7 @@ func wenBondPurchaseStoredBindingV2(r signerReviewV2, p signerPolicyV2) (signerR
 		r.TransactionDigest != "sha256:"+wenHashV1(a.Binding.Message) || r.StateDigest != a.Binding.Snapshot.StateSHA256 || r.StateSlot != a.Binding.Snapshot.Slot ||
 		r.Asset != a.cashAsset() || r.Amount != strconv.FormatUint(debit, 10) || r.Destination != a.Pins.Bond.Sale.String() || r.PolicyOperation != wenBondPurchaseOperationV2 ||
 		!reflect.DeepEqual(r.RequiredPrograms, a.requiredPrograms()) || r.Nonce == "" || r.IssuedAt == "" || r.ExpiresAt == "" ||
-		r.Transaction != nil || r.VaultReference != nil || r.MessageBase64 != "" {
+		r.Transaction != nil || r.MessageBase64 != "" {
 		return signerReviewBindingV2{}, bad
 	}
 	return signerReviewBindingV2{RequestID: r.RequestID, WalletID: r.WalletID, WalletPublicKey: r.WalletPublicKey, Role: p.Role,

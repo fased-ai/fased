@@ -1,5 +1,5 @@
 ---
-summary: "CLI onboarding wizard for host/security, workspace, gateway, wallet, and mining setup."
+summary: "CLI onboarding wizard for host/security, workspace, gateway, wallet setup."
 read_when:
   - Running or configuring the onboarding wizard
   - Setting up a new machine
@@ -14,14 +14,6 @@ The onboarding wizard configures one of two setup profiles:
 - **Local** for Linux x86_64/arm64 with systemd, Ubuntu WSL2 x86_64, or native
   macOS x86_64/arm64 with launchd. Native Windows remains deferred.
 - **VPS Hosting** for an always-on server with Tailscale-first access.
-
-It configures the machine first: host profile, workspace, Gateway,
-local signer wallet state, optional singleton Mining wallet setup, and hosting
-security when Hosting is selected. Model providers, skills, extensions,
-chat apps, services, hooks, saved context, tasks, and Agent assembly continue in
-the Control UI.
-Before choosing Local or Hosting, read the
-[First-run Setup Matrix](/start/setup-matrix).
 
 ```bash
 fased onboard
@@ -98,26 +90,6 @@ The wizard starts with **QuickStart** (defaults) vs **Advanced** (full control).
 ## What the wizard configures
 
 **Local mode (default)** walks you through these steps in this order:
-
-1. **QuickStart or Manual** — choose defaults or full control.
-2. **Setup profile** — choose Local or Hosting. Local is for this machine and
-   does not harden a VPS. Hosting is for a VPS or always-on server and requires
-   Tailscale.
-3. **Existing config** — update settings or repair auth/sessions if this
-   machine was already configured.
-4. **Workspace** — location for agent files (default `~/.fased/workspace`) and
-   bootstrap files.
-5. **Gateway** — how the Control UI, CLI, WebChat, and channels connect. Choose
-   port, bind address, and auth mode. Local setup keeps Tailscale out of the
-   basic path; Hosting requires Tailscale through host security.
-6. **Fased Network** — optional federation/managed routing setup.
-7. **Signer and Wallet** — policy-bound sends, receipts, mining, Marketplace,
-   and reviewed wallet-connected workflows. Wallet setup is not required for
-   normal chat.
-8. **Workspace bootstrap** — writes config and creates workspace/session state.
-9. **Hosting security** — applied only for the Hosting profile.
-10. **Daemon, health, and Control UI** — service startup, health checks, and
-    final dashboard/TUI choice.
 
 For Hosting, the wizard checks Tailscale before it applies SSH/firewall
 hardening. If Tailscale is missing, it tries to install it. If the host is not
@@ -269,21 +241,6 @@ Model/API setup has moved to `Agent > Models` for normal users. Existing
 non-interactive provider flags still work for scripted installs, but first-run
 interactive onboarding does not ask you to choose every provider anymore.
 
-<Note>
-Re-running the wizard does **not** wipe durable instance setup.
-If an existing config is present, choose **Review settings** or **Repair sign-in**.
-Review settings starts from the existing config and keeps wallets, Tailscale
-account/device access, gateway port assumptions, mining/bond state, and firewall
-state unless you explicitly edit those sections.
-Repair sign-in clears only selected auth/session state. It keeps `fased.json`,
-gateway token/password, gateway settings, wallet assignments, SAT mining,
-Fased Network, plugins, Tailscale, firewall state, and wallet data.
-CLI `fased onboard --reset` uses the same scoped repair flow and defaults to
-`auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
-Use the explicit admin command `fased reset --scope ...` only when you intentionally want destructive config/state reset.
-If the config is invalid or contains legacy keys, the wizard asks you to run `fased doctor` first.
-</Note>
-
 **Remote mode** only configures the local client to connect to a Gateway elsewhere.
 It does **not** install or change anything on the remote host.
 Remote only connects to an existing gateway. Run Local or Hosting onboarding on
@@ -295,35 +252,13 @@ Onboarding gets Fased online. It is not the whole setup path.
 
 After onboarding, you usually continue into one of these:
 
-- `/agents` in the Control UI for the Agent Setup checklist
-- `Agent > Models` to add a model API key or sign in and choose model refs
-- `Agent > Skills` to create, review, configure, edit, and allow abilities
-- `Agent > Channels` to connect Telegram, Discord, WhatsApp, and other app messages
-- `Agent > Services` to connect web/search, Gmail, Calendar, GitHub, browser/media, and APIs
-- `Agent > Memory` and `Agent > Tasks` to archive sessions and schedule work
-- [Dashboard](/web/dashboard) for normal day-to-day use
-- [Build with Fased](/start/fased) for the full Agent setup path
-- [Wallet](/plugins/crypto/wallet-page) for wallet policy and wallet runtime
-- [Mining](/plugins/crypto/mining-page) for SAT operator setup
-
 ## Wallet roles during onboarding
 
 The wallet setup path can assign wallet purpose directly during onboarding.
 
 The practical split is:
 
-- `agent` purpose for user-facing Agent wallets
-- one optional Default Agent wallet for fallback when no stronger selector exists
-- `mining` purpose for SAT participation
-- `vault` purpose for manual-first storage or warm reserve
-- Fased Network bond uses a selected Vault wallet
-
 Chain type is separate from the name/id. Use `Agent` / `agent`, not `Agent SOL`; Wallet shows Solana separately.
-
-When you create a wallet, the wizard lets you pick Agent, Mining, or Vault, then
-choose the display name before creation. The permanent `walletId` is generated
-from the selected purpose, not from the display name. The display name is fixed
-after creation; create a new wallet if you need a different permanent label.
 
 Only Agent and Vault can have multiple wallets:
 
@@ -337,10 +272,6 @@ and so on when those ids are already used. CLI wallet setup can also create
 extra Agent or Vault wallets, but you must pass the intended `--wallet-id`
 yourself.
 
-Mining is one active configured wallet, normally `@wallet:mining`. To replace
-it, stop mining, clear pending work and funds, then use the guarded
-**Archive/remove from Fased** action before creating the new one.
-
 Wallets are persistent machine state. Wizard repair never deletes them. Archive
 one wallet at a time after saving recovery material and typing the exact id.
 Fased first durably tightens a native signer policy to deny-all, then detaches
@@ -350,16 +281,6 @@ persistent machine access; repair does not remove it, so log out or remove the
 device in Tailscale only when you intentionally want to cut access.
 
 Important distinction:
-
-- mining wallet is the active SAT working wallet
-- a Vault wallet can be assigned on Fased Network as the SAT lock-and-proof wallet
-- Agent wallets are for reviewed sends, receipts, and explicitly granted wallet-connected workflows
-- multiple Agent wallets are allowed, but risky actions should use explicit handles like `@wallet:agent`
-- display name is only a label; handle is always `@wallet:<walletId>`
-- wallet purpose is treated as permanent after creation; if you want a different
-  purpose, create a new wallet instead of repurposing the old one
-
-Only a Vault wallet should be selected for Fased Network bond. Agent and Mining wallets are rejected for bond authority.
 
 ## Add another agent
 

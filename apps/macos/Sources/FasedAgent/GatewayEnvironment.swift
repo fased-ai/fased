@@ -1,5 +1,5 @@
-import Foundation
 import FasedAgentIPC
+import Foundation
 import OSLog
 
 /// Lightweight SemVer helper (major.minor.patch only) for gateway compatibility checks.
@@ -13,8 +13,12 @@ struct Semver: Comparable, CustomStringConvertible, Sendable {
     }
 
     static func < (lhs: Semver, rhs: Semver) -> Bool {
-        if lhs.major != rhs.major { return lhs.major < rhs.major }
-        if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+        if lhs.major != rhs.major {
+            return lhs.major < rhs.major
+        }
+        if lhs.minor != rhs.minor {
+            return lhs.minor < rhs.minor
+        }
         return lhs.patch < rhs.patch
     }
 
@@ -76,7 +80,9 @@ enum GatewayEnvironment {
     static func gatewayPort() -> Int {
         if let raw = ProcessInfo.processInfo.environment["FASED_GATEWAY_PORT"] {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let parsed = Int(trimmed), parsed > 0 { return parsed }
+            if let parsed = Int(trimmed), parsed > 0 {
+                return parsed
+            }
         }
         if let configPort = FasedAgentConfigFile.gatewayPort(), configPort > 0 {
             return configPort

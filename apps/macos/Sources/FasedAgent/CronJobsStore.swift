@@ -1,7 +1,7 @@
-import Foundation
-import Observation
 import FasedAgentKit
 import FasedAgentProtocol
+import Foundation
+import Observation
 import OSLog
 
 @MainActor
@@ -148,7 +148,9 @@ final class CronJobsStore {
             guard let self else { return }
             let stream = await GatewayConnection.shared.subscribe()
             for await push in stream {
-                if Task.isCancelled { return }
+                if Task.isCancelled {
+                    return
+                }
                 await MainActor.run { [weak self] in
                     self?.handle(push: push)
                 }

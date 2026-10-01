@@ -36,7 +36,7 @@ function normalizeAgentIdFromRequester(requestedBy: string): string | undefined 
   if (value === "control-ui") {
     return "main";
   }
-  if (["agent", "owner", "operator", "sat-mining"].includes(value)) {
+  if (["agent", "owner", "operator"].includes(value)) {
     return undefined;
   }
   if (/^[a-zA-Z0-9_-]+$/.test(value)) {

@@ -2,27 +2,18 @@ import type { FasedAgentApp } from "./app.ts";
 import { loadDebug } from "./controllers/debug.ts";
 import { refreshFederationStatus } from "./controllers/federation.ts";
 import { loadLogs } from "./controllers/logs.ts";
-import { refreshMiningRuntime } from "./controllers/mining.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 
-const miningPollCounts = new WeakMap<object, number>();
-const MINING_STATUS_POLL_MS = 10_000;
-const MINING_READINESS_POLL_EVERY = 2;
-const MINING_RECOVERY_POLL_EVERY = 4;
-const MINING_HISTORY_POLL_EVERY = 3;
 const FEDERATION_STATUS_POLL_MS = 10_000;
 
 type PollingHost = {
   nodesPollInterval: number | null;
   logsPollInterval: number | null;
   debugPollInterval: number | null;
-  miningPollInterval: number | null;
-  miningClockInterval: number | null;
   federationPollInterval: number | null;
   miningNowMs: number;
   tab: string;
   federationLoading?: boolean;
-  federationBondActionBusy?: boolean;
   miningLoading?: boolean;
   miningSaving?: boolean;
   miningActionBusy?: boolean;
@@ -94,7 +85,7 @@ export function startFederationPolling(host: PollingHost) {
     if (host.tab !== "federation" && host.tab !== "marketplace") {
       return;
     }
-    if (host.federationLoading || host.federationBondActionBusy) {
+    if (host.federationLoading) {
       return;
     }
     void refreshFederationStatus(host as unknown as FasedAgentApp, { quiet: true });
@@ -107,58 +98,4 @@ export function stopFederationPolling(host: PollingHost) {
   }
   clearInterval(host.federationPollInterval);
   host.federationPollInterval = null;
-}
-
-export function startMiningPolling(host: PollingHost) {
-  if (host.miningPollInterval != null) {
-    if (host.miningClockInterval == null) {
-      host.miningNowMs = Date.now();
-      host.miningClockInterval = window.setInterval(() => {
-        if (host.tab === "mining") {
-          host.miningNowMs = Date.now();
-        }
-      }, 1000);
-    }
-    return;
-  }
-  host.miningNowMs = Date.now();
-  host.miningPollInterval = window.setInterval(() => {
-    if (host.tab !== "mining") {
-      return;
-    }
-    if (host.miningLoading || host.miningSaving || host.miningActionBusy) {
-      return;
-    }
-    const pollCount = (miningPollCounts.get(host as object) ?? 0) + 1;
-    miningPollCounts.set(host as object, pollCount);
-    void refreshMiningRuntime(host as unknown as FasedAgentApp, {
-      includeHistory: pollCount % MINING_HISTORY_POLL_EVERY === 0,
-      includeRecovery: pollCount % MINING_RECOVERY_POLL_EVERY === 0,
-      includeReadiness: pollCount % MINING_READINESS_POLL_EVERY === 0,
-    });
-  }, MINING_STATUS_POLL_MS);
-  if (host.miningClockInterval == null) {
-    host.miningClockInterval = window.setInterval(() => {
-      if (host.tab === "mining") {
-        host.miningNowMs = Date.now();
-      }
-    }, 1000);
-  }
-}
-
-export function stopMiningPolling(host: PollingHost) {
-  if (host.miningPollInterval == null) {
-    if (host.miningClockInterval != null) {
-      clearInterval(host.miningClockInterval);
-      host.miningClockInterval = null;
-    }
-    return;
-  }
-  clearInterval(host.miningPollInterval);
-  host.miningPollInterval = null;
-  miningPollCounts.delete(host as object);
-  if (host.miningClockInterval != null) {
-    clearInterval(host.miningClockInterval);
-    host.miningClockInterval = null;
-  }
 }

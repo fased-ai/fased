@@ -100,27 +100,6 @@ function renderDebugForTest(
 }
 
 describe("renderDebug", () => {
-  it("renders SAT protocol maintenance as an advanced operator action", async () => {
-    vi.stubGlobal("localStorage", {
-      getItem: () => null,
-      setItem: () => undefined,
-      removeItem: () => undefined,
-    });
-    vi.stubGlobal("navigator", { language: "en-US" });
-    const { renderDebug } = await import("./debug.ts");
-    const text = normalizeRenderedText(
-      flattenTemplateText(
-        renderDebugForTest(renderDebug, {
-          onSatProtocolMaintenance: () => undefined,
-        }),
-      ),
-    );
-
-    expect(text).toContain("SAT Protocol Maintenance");
-    expect(text).toContain("Run maintenance once");
-    expect(text).toContain("does not start mining");
-  });
-
   it("renders task audit categories and maintenance status in Debug", async () => {
     vi.stubGlobal("localStorage", {
       getItem: () => null,
@@ -187,7 +166,8 @@ describe("renderDebug", () => {
     );
 
     expect(text).toContain("Task Audit");
-    expect(text).toContain("Run maintenance");
+    expect(text).toContain("Mark stale lost");
+    expect(text).not.toContain("SAT Protocol Maintenance");
     expect(text).toContain("Task maintenance updated 1 record; 4 warnings remain.");
     expect(text).toContain("Stale running work");
     expect(text).toContain("Delivery state");
@@ -197,7 +177,7 @@ describe("renderDebug", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders operator economy fee ops surfaces as read-only internal data", async () => {
+  it("renders retained operator diagnostics without retired fee economy", async () => {
     vi.stubGlobal("localStorage", {
       getItem: () => null,
       setItem: () => undefined,
@@ -464,98 +444,6 @@ describe("renderDebug", () => {
         callParams: "{}",
         callResult: null,
         callError: null,
-        feeOpsLoading: false,
-        feeOpsError: null,
-        feeCollectionStatus: [
-          {
-            lane: "marketplace",
-            enabled: false,
-            reason:
-              "fee collection is disabled until the multi-day measurement history threshold is met",
-            thresholds: {
-              historyDays: 14,
-              marketplaceRuns: 30,
-              disputeNotaryCases: 10,
-              settlementVerifierCases: 10,
-              routingRuns: 30,
-            },
-            observed: {
-              historyDaysObserved: 3,
-              marketplaceRunsObserved: 3,
-              disputeNotaryCasesObserved: 1,
-              settlementVerifierCasesObserved: 1,
-              routingRunsObserved: 0,
-            },
-          },
-        ],
-        feeObjects: [
-          {
-            feeId: "mock-fee-debug-1",
-            schema: "https://fased.ai/schemas/operator-economy/fee-object-v0.json",
-            lane: "marketplace",
-            status: "collected",
-            policyVersion: "oe-fees-v0",
-            amount: "1.5",
-            asset: {
-              chain: "solana",
-              symbol: "USDC",
-              kind: "spl-token",
-            },
-            allocationPlan: [{ bucket: "federation_ops_reserve", amount: "1.5" }],
-            reviewState: "approved",
-            body: {},
-            createdAt: "2026-04-20T00:00:00.000Z",
-            updatedAt: "2026-04-20T00:05:00.000Z",
-          },
-        ],
-        feeBucketJournal: [
-          {
-            journalId: "mock-fee-debug-1::allocation::0",
-            feeId: "mock-fee-debug-1",
-            bucket: "federation_ops_reserve",
-            asset: {
-              chain: "solana",
-              symbol: "USDC",
-              kind: "spl-token",
-            },
-            amount: "1.5",
-            direction: "credit",
-            entryType: "allocation",
-            policyVersion: "oe-fees-v0",
-            createdAt: "2026-04-20T00:05:00.000Z",
-          },
-        ],
-        feeBucketBalances: [
-          {
-            bucket: "federation_ops_reserve",
-            asset: {
-              chain: "solana",
-              symbol: "USDC",
-              kind: "spl-token",
-            },
-            credited: "1.5",
-            debited: "0",
-            heldBalance: "1.5",
-          },
-        ],
-        feeReconciliationReports: [
-          {
-            reportId: "mock-reconcile-debug-1",
-            periodStart: "2026-04-19T00:00:00.000Z",
-            periodEnd: "2026-04-20T00:00:00.000Z",
-            bucket: "federation_ops_reserve",
-            asset: {
-              chain: "solana",
-              symbol: "USDC",
-              kind: "spl-token",
-            },
-            expectedBalance: "1.5",
-            observedBalance: "1.5",
-            variance: "0",
-            reviewState: "clean",
-            reviewedBy: ["fc"],
-          },
-        ],
         onCallMethodChange: () => undefined,
         onCallParamsChange: () => undefined,
         onRefresh: () => undefined,
@@ -569,7 +457,6 @@ describe("renderDebug", () => {
     expect(text).toContain("Not generic exposure");
     expect(text).toContain("Manual RPC");
     expect(text).toContain("Expert path");
-    expect(text).toContain("Network Fee Ops");
     expect(text).toContain("Provider Catalog");
     expect(text).toContain("openrouter");
     expect(text).toContain("provider-index");
@@ -603,10 +490,6 @@ describe("renderDebug", () => {
     expect(text).toContain("Execute 1 supported repairs");
     expect(text).toContain("operator.admin");
     expect(text).not.toContain("/tmp/fased-memory-debug/workspace/memory/session.md");
-    expect(text).toContain("collection is disabled");
-    expect(text).toContain("history 3/14d");
-    expect(text).toContain("mock-fee-debug-1");
-    expect(text).toContain("mock-reconcile-debug-1");
     vi.unstubAllGlobals();
   });
 

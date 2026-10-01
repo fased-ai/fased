@@ -20,7 +20,7 @@ export type WalletPolicySimulationCheck = {
 export type WalletApprovalDiff = {
   fromWalletId?: string;
   fromWalletName?: string;
-  fromRole: "mining" | "agent" | "vault";
+  fromRole: "agent";
   to?: string;
   chain: WalletChain;
   token?: string;

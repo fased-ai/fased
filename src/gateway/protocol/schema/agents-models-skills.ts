@@ -254,11 +254,7 @@ export const AgentsCreateParamsSchema = Type.Object(
     emoji: Type.Optional(Type.String()),
     avatar: Type.Optional(Type.String()),
     personaTemplateId: Type.Optional(
-      Type.Union([
-        Type.Literal("private-operator"),
-        Type.Literal("mining-operator"),
-        Type.Literal("market-researcher"),
-      ]),
+      Type.Union([Type.Literal("private-operator"), Type.Literal("market-researcher")]),
     ),
   },
   { additionalProperties: false },
@@ -273,7 +269,6 @@ export const AgentsCreateResultSchema = Type.Object(
     model: Type.Optional(NonEmptyString),
     personaTemplateId: Type.Union([
       Type.Literal("private-operator"),
-      Type.Literal("mining-operator"),
       Type.Literal("market-researcher"),
     ]),
   },

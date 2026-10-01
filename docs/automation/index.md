@@ -10,27 +10,6 @@ title: "Automation"
 
 Automation is how Fased does work when you are not actively typing in Chat.
 
-Use **Agent > Tasks** for saved work. Use domain pages for domain control:
-Wallets approve and sign, Mining controls mining, Marketplace handles orders,
-and Channels owns delivery routes.
-
-```mermaid
-flowchart TD
-  UI["Agent UI"] --> Task["Task"]
-  Chat["Chat or channel"] --> Task
-  Webhook["Webhook trigger"] --> Trigger["Trigger"]
-  Trigger --> Task
-  Task --> Run["Run history"]
-  Task --> Channel["Optional delivery"]
-  Workflow["Workflow or Graph"] --> Run
-  Domain["Wallet / Mining / Marketplace"] --> Run
-
-  classDef primary fill:#1f2937,stroke:#ff8a65,color:#ffffff
-  classDef secondary fill:#101827,stroke:#38bdf8,color:#ffffff
-  class UI,Task,Run primary
-  class Chat,Webhook,Trigger,Channel,Workflow,Domain secondary
-```
-
 ## Choose the right surface
 
 <Columns>
@@ -89,11 +68,6 @@ Saved definitions are reusable setup:
 - **Program**: standing order that proposes work for review
 - **Template**: starter preset for a saved definition
 
-Run history is what happened after something ran. It can record scheduled runs,
-webhook fires, channel-triggered work, helper Agents, workflow nodes, wallet
-approval mirrors, marketplace order records, mining events, media jobs, and
-CLI/system actions.
-
 Saved definitions and run history are separate. Editing a definition changes
 future runs; old run records stay as audit history.
 
@@ -109,31 +83,16 @@ heartbeat wake.
 Create a **Workflow** for a short review or approval sequence. Use **Graph**
 only when that sequence needs branches.
 
-Use **Programs** for standing instructions that propose work for review.
-Authority stays in the owning surface: Wallets, Marketplace, Mining, tools, and
-services keep their own approval paths.
-
 ## Task templates
 
 Fased ships starter Task templates for recurring work:
-
-**Mining strategy review**
-
-Review mining status, history, and strategy settings while funding, withdraw,
-wallet send, start/stop, and bond controls stay unchanged.
-
-**Mining status report**
 
 Report running/stopped state, current cycle, wallet SOL/SAT, capital, locked
 capital, claimable SAT, and blockers.
 
 **Strategy A/B review**
 
-Compare mining strategy modes while active commit settings stay unchanged.
-
 **Wallet reserve watch**
-
-Watch Agent, Vault, and Mining wallet fee reserves.
 
 **Staking rewards watch**
 
@@ -163,13 +122,6 @@ Graph workflows are the branching version of the same idea. The visual builder
 edits the same graph JSON the runtime executes.
 
 Workflows and graphs:
-
-- write run history
-- can pause on approval
-- can link to source records
-- keep script execution outside the workflow builder
-- keep wallet, marketplace, mining, tool, and service authority in their owning
-  surfaces
 
 ## Programs
 

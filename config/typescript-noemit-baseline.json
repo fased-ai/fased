@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "command": "pnpm exec tsc --noEmit --pretty false",
   "typescript": "5.9.3",
-  "totalErrors": 234,
+  "totalErrors": 188,
   "errors": [
     {
       "file": "extensions/acpx/src/mcp-status-server.ts",
@@ -20,78 +20,6 @@
       "file": "extensions/lobster/index.ts",
       "code": "TS7006",
       "message": "Parameter 'ctx' implicitly has an 'any' type.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS18046",
-      "message": "'params' is of type 'unknown'.",
-      "count": 31
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS18047",
-      "message": "'cycle' is possibly 'null'.",
-      "count": 4
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ disputeAuthority: string; targetAuthority: string; epochId: number; microRoundId: number; statusFlag: number; }'.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ epochId: number; }'.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ epochId: number; bucketRoot: string; scoreRoot: string; coordinationRoot: string; }'.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ epochId: number; microRoundId: number; validatorAuthority: string; }'.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ targetAuthority?: string | undefined; epochId: number; microRoundId: number; decisionFlag: number; reasonCode: number; bucketRoot: string; scoreRoot: string; coordinationRoot: string; evidenceHash: string; }'.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ targetAuthority?: string | undefined; epochId: number; microRoundId: number; reasonCode: number; evidenceHash: string; targetRoot: string; }'.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ validatorAuthority: string; epochId: number; microRoundId: number; reasonCode?: number | undefined; decisionFlag?: number | undefined; requireNonzeroSlashPenalty?: boolean | undefined; sortBy?: SatListSortField | undefined; sortOrder?: \"asc\" | ... 1 more ... | undefined; }'.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ validatorAuthority: string; epochId: number; microRoundId: number; reasonCode?: number | undefined; requireNonzeroSlashPenalty?: boolean | undefined; sortBy?: SatListSortField | undefined; sortOrder?: \"asc\" | ... 1 more ... | undefined; }'.",
-      "count": 1
-    },
-    {
-      "file": "extensions/sat-mining/index.ts",
-      "code": "TS2345",
-      "message": "Argument of type 'unknown' is not assignable to parameter of type '{ validatorAuthority: string; targetAuthority: string; epochId: number; microRoundId: number; }'.",
-      "count": 2
-    },
-    {
-      "file": "extensions/sat-mining/src/rpc-read.test.ts",
-      "code": "TS2345",
-      "message": "Argument of type '{ primaryUrl: string; }' is not assignable to parameter of type 'SatReadRpcConfig'.",
       "count": 1
     },
     {

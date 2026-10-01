@@ -308,8 +308,8 @@ enum ExecApprovalsStore {
             agents: file.agents)
     }
 
-    static func loadFile() -> ExecApprovalsFile {
-        let url = self.fileURL()
+    static func loadFile(at explicitURL: URL? = nil) -> ExecApprovalsFile {
+        let url = explicitURL ?? self.fileURL()
         guard FileManager().fileExists(atPath: url.path) else {
             return ExecApprovalsFile(version: 1, socket: nil, defaults: nil, agents: [:])
         }
@@ -326,12 +326,12 @@ enum ExecApprovalsStore {
         }
     }
 
-    static func saveFile(_ file: ExecApprovalsFile) {
+    static func saveFile(_ file: ExecApprovalsFile, at explicitURL: URL? = nil) {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(file)
-            let url = self.fileURL()
+            let url = explicitURL ?? self.fileURL()
             try FileManager().createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
@@ -342,25 +342,29 @@ enum ExecApprovalsStore {
         }
     }
 
-    static func ensureFile() -> ExecApprovalsFile {
-        let url = self.fileURL()
+    static func ensureFile(at explicitURL: URL? = nil) -> ExecApprovalsFile {
+        let url = explicitURL ?? self.fileURL()
         let existed = FileManager().fileExists(atPath: url.path)
-        let loaded = self.loadFile()
+        let loaded = self.loadFile(at: url)
         let loadedHash = self.hashFile(loaded)
 
         var file = self.normalizeIncoming(loaded)
-        if file.socket == nil { file.socket = ExecApprovalsSocketConfig(path: nil, token: nil) }
+        if file.socket == nil {
+            file.socket = ExecApprovalsSocketConfig(path: nil, token: nil)
+        }
         let path = file.socket?.path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if path.isEmpty {
-            file.socket?.path = self.socketPath()
+            file.socket?.path = url.deletingLastPathComponent().appendingPathComponent("exec-approvals.sock").path
         }
         let token = file.socket?.token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if token.isEmpty {
             file.socket?.token = self.generateToken()
         }
-        if file.agents == nil { file.agents = [:] }
+        if file.agents == nil {
+            file.agents = [:]
+        }
         if !existed || loadedHash != self.hashFile(file) {
-            self.saveFile(file)
+            self.saveFile(file, at: url)
         }
         return file
     }
@@ -450,7 +454,9 @@ enum ExecApprovalsStore {
             var agents = file.agents ?? [:]
             var entry = agents[key] ?? ExecApprovalsAgent()
             var allowlist = entry.allowlist ?? []
-            if allowlist.contains(where: { $0.pattern == normalizedPattern }) { return }
+            if allowlist.contains(where: { $0.pattern == normalizedPattern }) {
+                return
+            }
             allowlist.append(ExecAllowlistEntry(
                 pattern: normalizedPattern,
                 lastUsedAt: Date().timeIntervalSince1970 * 1000))
@@ -719,8 +725,12 @@ enum ExecApprovalHelpers {
         allowlistMatch: ExecAllowlistEntry?,
         skillAllow: Bool) -> Bool
     {
-        if ask == .always { return true }
-        if ask == .onMiss, security == .allowlist, allowlistMatch == nil, !skillAllow { return true }
+        if ask == .always {
+            return true
+        }
+        if ask == .onMiss, security == .allowlist, allowlistMatch == nil, !skillAllow {
+            return true
+        }
         return false
     }
 
@@ -748,7 +758,9 @@ struct ExecEventPayload: Codable, Sendable {
     static func truncateOutput(_ raw: String, maxChars: Int = 20000) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        if trimmed.count <= maxChars { return trimmed }
+        if trimmed.count <= maxChars {
+            return trimmed
+        }
         let suffix = trimmed.suffix(maxChars)
         return "... (truncated) \(suffix)"
     }
@@ -775,7 +787,9 @@ actor SkillBinsCache {
             for skill in report.skills {
                 for bin in skill.requirements.bins {
                     let trimmed = bin.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty { next.insert(trimmed) }
+                    if !trimmed.isEmpty {
+                        next.insert(trimmed)
+                    }
                 }
             }
             self.bins = next

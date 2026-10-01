@@ -59,7 +59,7 @@ user-owned control socket and are lower assurance:
 "$HOME/.fased/bin/fased-signerd" admin wallet create \
   --control-socket "$HOME/.fased/wallet/local-signer-control.sock" \
   --wallet-id agent \
-  --locked-role agent
+
 ```
 
 Native Windows PowerShell is not a supported signer environment because the
@@ -78,11 +78,11 @@ sudo -u fased-signer -- /opt/fased/signer/fased-signerd admin \
   wallet create \
   --control-socket /run/fased-signerd/control.sock \
   --wallet-id agent \
-  --locked-role agent
+
 ```
 
 Allowed locked roles are `agent`, `mining`, and `vault`. To create with a
-reviewed policy instead, replace `--locked-role` with an absolute
+reviewed policy instead, supply an absolute
 `--policy-file` path. Policy JSON is strict; unknown fields fail.
 
 Example deny-all policy file:
@@ -117,7 +117,6 @@ sudo /bin/sh -c 'exec sudo -u fased-signer -- \
   /opt/fased/signer/fased-signerd admin wallet import \
   --control-socket /run/fased-signerd/control.sock \
   --wallet-id agent \
-  --locked-role agent \
   < /root/offline-agent-keypair.json'
 ```
 

@@ -12,13 +12,6 @@ import {
 import type { FederationStatus, FederationToken } from "../federation-api.ts";
 import type { GatewayHelloOk } from "../gateway.ts";
 import { icons, type IconName } from "../icons.ts";
-import type {
-  SatMinerProfile,
-  SatMiningHistory,
-  SatMiningHistoryPoint,
-  SatMiningReadiness,
-  SatMiningRuntimeStatus,
-} from "../mining-api.ts";
 import { pathForTab, type Tab } from "../navigation.ts";
 import type { UiSettings } from "../storage.ts";
 import type {
@@ -61,11 +54,6 @@ export type OverviewProps = {
   walletStatus?: WalletStatus | null;
   walletNamedWallets?: WalletNamedWallet[];
   defaultWalletId?: string | null;
-  miningAttachedWalletId?: string | null;
-  miningProfile?: SatMinerProfile | null;
-  miningReadiness?: SatMiningReadiness | null;
-  miningStatus?: SatMiningRuntimeStatus | null;
-  miningHistory?: SatMiningHistory | null;
   modelCatalogStatus?: ModelsCatalogStatusResult | null;
   pluginsMarketplace?: PluginsMarketplaceListResult | null;
   memoryInventory?: DoctorMemoryInventoryPayload | null;
@@ -91,7 +79,6 @@ export type OverviewProps = {
   onOpenAgentSessions?: () => void;
   onOpenAdminControl?: () => void;
   onOpenTaskPayment?: () => void;
-  onOpenMining?: () => void;
   onOpenFederationReview?: () => void;
   onDashboardLayoutChange: (next: DashboardLayout) => void;
   onDashboardWidgetDrawerOpen: (next: boolean) => void;
@@ -110,19 +97,6 @@ function dashboardAgentSummary(agentsList: AgentsListResult | null | undefined) 
   };
 }
 
-function formatDashboardTokens(tokens: number): string {
-  if (!Number.isFinite(tokens) || tokens <= 0) {
-    return "0";
-  }
-  if (tokens >= 1_000_000) {
-    return `${(tokens / 1_000_000).toFixed(1)}M`;
-  }
-  if (tokens >= 1_000) {
-    return `${(tokens / 1_000).toFixed(1)}K`;
-  }
-  return String(Math.round(tokens));
-}
-
 function dashboardTaskSummary(props: OverviewProps) {
   const count = props.cronEnabled ? (props.cronJobs ?? 0) : 0;
   return {
@@ -130,70 +104,10 @@ function dashboardTaskSummary(props: OverviewProps) {
   };
 }
 
-function dashboardUsageSummary(props: OverviewProps) {
-  const daily = dashboardUsageDaily(props.usageResult);
-  const totalTokens =
-    daily.length > 0
-      ? daily.reduce((sum, day) => sum + day.tokens, 0)
-      : (props.usageResult?.totals.totalTokens ?? 0);
-  return {
-    value: props.usageLoading && !props.usageResult ? "..." : formatDashboardTokens(totalTokens),
-  };
-}
-
-function dashboardUsageDaily(result: SessionsUsageResult | null | undefined) {
-  const daily = result?.aggregates.daily ?? [];
-  return daily.slice(-7).map((day) => ({
-    date: day.date,
-    tokens: Number.isFinite(day.tokens) ? Math.max(0, day.tokens) : 0,
-    messages: Number.isFinite(day.messages) ? Math.max(0, day.messages) : 0,
-    toolCalls: Number.isFinite(day.toolCalls) ? Math.max(0, day.toolCalls) : 0,
-  }));
-}
-
-type DashboardWalletRole = "agent" | "mining" | "vault";
-
-type DashboardWalletRoleSummary = {
-  role: DashboardWalletRole;
-  title: string;
-  count: number;
-  sol: number;
-  help: string;
-};
-
-type DashboardMiningStatus = {
-  label: "Started" | "Ready" | "Stopped" | "Blocked";
-  tone: "neutral" | "success" | "warn" | "danger";
-};
-
 type DashboardFederationStatus = {
   label: "Active" | "Token" | "Expired" | "Invalid" | "Not joined";
   tone: "neutral" | "success" | "warn" | "danger";
 };
-
-function normalizeDashboardWalletRole(value: unknown): DashboardWalletRole | null {
-  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return raw === "agent" || raw === "mining" || raw === "vault" ? raw : null;
-}
-
-function resolveDashboardWalletRole(
-  wallet: WalletNamedWallet,
-  props: Pick<OverviewProps, "defaultWalletId" | "miningAttachedWalletId">,
-): DashboardWalletRole {
-  const metadataRole =
-    normalizeDashboardWalletRole(wallet.metadata?.purpose) ??
-    normalizeDashboardWalletRole(wallet.metadata?.role);
-  if (metadataRole === "mining" || wallet.id === String(props.miningAttachedWalletId ?? "")) {
-    return "mining";
-  }
-  if (metadataRole === "vault") {
-    return "vault";
-  }
-  if (metadataRole === "agent" || wallet.id === String(props.defaultWalletId ?? "")) {
-    return "agent";
-  }
-  return "agent";
-}
 
 function readDashboardNumericAmount(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -253,90 +167,6 @@ function formatDashboardBalance(value: number): string {
   return "<0.01";
 }
 
-function dashboardRawAmountToNumber(raw: string | null | undefined, decimals: number): number {
-  const value = String(raw ?? "").trim();
-  if (!value) {
-    return 0;
-  }
-  try {
-    return Number(BigInt(value)) / 10 ** decimals;
-  } catch {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-}
-
-function formatDashboardMiningAmount(
-  raw: string | null | undefined,
-  decimals: number,
-  unit: "SOL" | "SAT",
-): string {
-  const value = dashboardRawAmountToNumber(raw, decimals);
-  if (!Number.isFinite(value) || value <= 0) {
-    return "0";
-  }
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  }
-  if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
-  }
-  if (unit === "SOL") {
-    if (value >= 1) {
-      return value.toFixed(3).replace(/\.?0+$/, "");
-    }
-    if (value >= 0.01) {
-      return value.toFixed(3).replace(/\.?0+$/, "");
-    }
-    return "<0.01";
-  }
-  if (value >= 1) {
-    return value.toFixed(2).replace(/\.?0+$/, "");
-  }
-  if (value >= 0.01) {
-    return value.toFixed(3).replace(/\.?0+$/, "");
-  }
-  return "<0.01";
-}
-
-function hasPositiveDashboardRawAmount(raw: string | null | undefined): boolean {
-  const value = String(raw ?? "").trim();
-  if (!value) {
-    return false;
-  }
-  try {
-    return BigInt(value) > 0n;
-  } catch {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) && parsed > 0;
-  }
-}
-
-function firstPositiveDashboardRawAmount(...values: Array<string | null | undefined>): string {
-  for (const value of values) {
-    if (hasPositiveDashboardRawAmount(value)) {
-      return String(value);
-    }
-  }
-  return String(values.find((value) => String(value ?? "").trim().length > 0) ?? "0");
-}
-
-function dashboardMiningStatus(props: OverviewProps): DashboardMiningStatus {
-  if (props.miningStatus?.blocked) {
-    return { label: "Blocked", tone: "danger" };
-  }
-  if (
-    (props.miningStatus?.running || props.miningStatus?.enabledWanted) &&
-    !props.miningStatus?.drainOnly
-  ) {
-    return { label: "Started", tone: "success" };
-  }
-  if (props.miningReadiness?.ok || props.miningProfile?.walletId || props.miningStatus) {
-    return { label: "Ready", tone: "success" };
-  }
-  return { label: "Stopped", tone: "neutral" };
-}
-
 function dashboardFederationToken(props: OverviewProps): FederationToken | null {
   return props.federationStatus?.token ?? props.federationToken ?? null;
 }
@@ -371,8 +201,7 @@ function dashboardFederationUrlPath(props: OverviewProps): {
   copyValue?: string;
 } {
   const token = dashboardFederationToken(props);
-  const publicUrl =
-    token?.publicUrl?.trim() ?? props.federationStatus?.hostedProbe?.publicUrl?.trim() ?? "";
+  const publicUrl = token?.publicUrl?.trim() ?? "";
   if (publicUrl) {
     try {
       const url = new URL(publicUrl);
@@ -384,159 +213,6 @@ function dashboardFederationUrlPath(props: OverviewProps): {
     }
   }
   return { value: "Not joined" };
-}
-
-function dashboardFederationBondRaw(props: OverviewProps): string {
-  const token = dashboardFederationToken(props);
-  return props.federationStatus?.bond?.amountRaw ?? token?.bondAmountRaw ?? "0";
-}
-
-function dashboardFederationClaimRaw(props: OverviewProps): string {
-  const position = props.federationStatus?.bond?.staking?.position;
-  return position?.estimatedClaimableRewardRaw ?? position?.claimableRewardRaw ?? "0";
-}
-
-function dashboardMiningSatRaw(props: OverviewProps): string {
-  return firstPositiveDashboardRawAmount(
-    props.miningStatus?.currentSatBalanceRaw,
-    props.miningReadiness?.balances.satBalanceRaw,
-  );
-}
-
-function dashboardMiningCapitalFundedRaw(props: OverviewProps): string {
-  return firstPositiveDashboardRawAmount(
-    props.miningStatus?.currentCapitalFundedLamports,
-    props.miningReadiness?.balances.minerCapitalFundedLamports,
-    props.miningStatus?.currentCapitalLockedLamports,
-    props.miningReadiness?.balances.minerCapitalLockedLamports,
-  );
-}
-
-function dashboardMiningCapitalLockedRaw(props: OverviewProps): string {
-  return firstPositiveDashboardRawAmount(
-    props.miningStatus?.currentCapitalLockedLamports,
-    props.miningReadiness?.balances.minerCapitalLockedLamports,
-  );
-}
-
-function dashboardMiningCapitalDetail(props: OverviewProps): string | undefined {
-  const locked = dashboardMiningCapitalLockedRaw(props);
-  if (!hasPositiveDashboardRawAmount(locked)) {
-    return undefined;
-  }
-  return `${formatDashboardMiningAmount(locked, 9, "SOL")} locked`;
-}
-
-function dashboardMiningHistoryPoints(
-  history: SatMiningHistory | null | undefined,
-): SatMiningHistoryPoint[] {
-  const points = history?.outcomes?.length ? history.outcomes : (history?.activityOutcomes ?? []);
-  return points.slice(-14);
-}
-
-function renderMiningSatHistory(history: SatMiningHistory | null | undefined) {
-  const points = dashboardMiningHistoryPoints(history);
-  const values = points.map((point) => dashboardRawAmountToNumber(point.totalSatEarnedRaw, 11));
-  const max = Math.max(...values, 0);
-  return html`
-    <div class="dashboard-mining-history">
-      <div class="dashboard-mining-history__head">
-        <span>7d SAT</span>
-        <span>${points.length ? `${points.length} cycles` : "No history"}</span>
-      </div>
-      <div class="dashboard-mining-bars" aria-label="7 day SAT mining history">
-        ${
-          points.length
-            ? points.map((point, index) => {
-                const value = values[index] ?? 0;
-                const height = max > 0 ? Math.max(8, Math.round((value / max) * 100)) : 8;
-                return html`
-                  <span
-                    class="dashboard-mining-bars__bar"
-                    data-tooltip=${`7d cycle ${point.cycleId}: ${formatDashboardBalance(value)} SAT`}
-                    style=${`height:${height}%`}
-                  ></span>
-                `;
-              })
-            : html`
-                <span class="dashboard-mining-bars__empty"></span>
-              `
-        }
-      </div>
-    </div>
-  `;
-}
-
-function renderUsageHistory(result: SessionsUsageResult | null | undefined) {
-  const points = dashboardUsageDaily(result);
-  const max = Math.max(...points.map((point) => point.tokens), 0);
-  return html`
-    <div class="dashboard-usage-history">
-      <div class="dashboard-usage-history__head">
-        <span>7d tokens</span>
-        <span>${points.length ? `${points.length} days` : "No usage"}</span>
-      </div>
-      <div class="dashboard-usage-bars" aria-label="7 day token usage">
-        ${
-          points.length
-            ? points.map((point) => {
-                const height = max > 0 ? Math.max(8, Math.round((point.tokens / max) * 100)) : 8;
-                return html`
-                  <span
-                    class="dashboard-usage-bars__bar"
-                    data-tooltip=${`7d ${point.date}: ${formatDashboardTokens(point.tokens)} tokens`}
-                    style=${`height:${height}%`}
-                  ></span>
-                `;
-              })
-            : html`
-                <span class="dashboard-usage-bars__empty"></span>
-              `
-        }
-      </div>
-    </div>
-  `;
-}
-
-function dashboardWalletRoleSummary(props: OverviewProps): DashboardWalletRoleSummary[] {
-  const statusWallets = new Map(
-    (props.walletStatus?.wallets ?? []).map((wallet) => [wallet.id, wallet]),
-  );
-  const namedWallets = props.walletNamedWallets ?? [];
-  const wallets = namedWallets.length > 0 ? namedWallets : (props.walletStatus?.wallets ?? []);
-  const summaries: Record<DashboardWalletRole, DashboardWalletRoleSummary> = {
-    agent: {
-      role: "agent",
-      title: "Agent",
-      count: 0,
-      sol: 0,
-      help: "Agent wallets are regular wallets available to Agents only when wallet policy and grants allow them.",
-    },
-    mining: {
-      role: "mining",
-      title: "Mining",
-      count: 0,
-      sol: 0,
-      help: "Mining wallets are retained for historical SAT cycle recovery. New WEN positions do not require a dedicated Mining wallet.",
-    },
-    vault: {
-      role: "vault",
-      title: "Vault",
-      count: 0,
-      sol: 0,
-      help: "Vault wallets are protected storage. They are not available to skills or mining automation.",
-    },
-  };
-  for (const wallet of wallets) {
-    const mergedWallet = {
-      ...wallet,
-      balances: wallet.balances ?? statusWallets.get(wallet.id)?.balances,
-    } as WalletNamedWallet;
-    const role = resolveDashboardWalletRole(mergedWallet, props);
-    summaries[role].count += 1;
-    summaries[role].sol += readDashboardSolBalance(mergedWallet);
-  }
-  return [summaries.agent, summaries.mining, summaries.vault];
 }
 
 type DashboardWidgetDefinition = {
@@ -563,13 +239,6 @@ const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     summary: "Configured Agent workspaces on this node.",
   },
   {
-    id: "usage",
-    title: "Usage",
-    source: "sessions.usage",
-    icon: "barChart",
-    summary: "Total recorded model usage across all Agents.",
-  },
-  {
     id: "wallet",
     title: "Wallet",
     source: "wallet.status",
@@ -581,7 +250,7 @@ const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     title: "Network",
     source: "federation.status",
     icon: "globe",
-    summary: "Directory, attestation, marketplace, and join state.",
+    summary: "Agent discovery and collaboration.",
   },
 ];
 
@@ -590,9 +259,7 @@ const DASHBOARD_DRAG_MIME = "application/x-fased-dashboard-widget";
 const SUMMARY_DASHBOARD_WIDGETS = new Set<DashboardWidgetId>([
   "wen",
   "agents",
-  "usage",
   "wallet",
-  "mining",
   "network",
 ]);
 
@@ -602,7 +269,7 @@ function readDashboardDrag(event: DragEvent): DashboardWidgetId | null {
     event.dataTransfer?.getData("text/plain") ||
     "";
   const value = raw.trim() as DashboardWidgetId;
-  return DASHBOARD_WIDGETS_BY_ID.has(value) ? value : null;
+  return value !== "usage" && DASHBOARD_WIDGETS_BY_ID.has(value) ? value : null;
 }
 
 function renderLinkedSummaryCard(
@@ -652,39 +319,31 @@ function renderLinkedSummaryCard(
 }
 
 function buildDashboardContext(props: OverviewProps) {
-  const agents = dashboardAgentSummary(props.agentsList);
-  const tasks = dashboardTaskSummary(props);
-  const usage = dashboardUsageSummary(props);
-  const wallets = dashboardWalletRoleSummary(props);
-  const miningStatus = dashboardMiningStatus(props);
-  const miningSatcoin = formatDashboardMiningAmount(dashboardMiningSatRaw(props), 11, "SAT");
-  const miningCapital = formatDashboardMiningAmount(
-    dashboardMiningCapitalFundedRaw(props),
-    9,
-    "SOL",
+  const statusWallets = new Map(
+    (props.walletStatus?.wallets ?? []).map((wallet) => [wallet.id, wallet]),
   );
-  const miningCapitalDetail = dashboardMiningCapitalDetail(props);
-  const federationStatus = dashboardFederationStatus(props);
-  const federationUrl = dashboardFederationUrlPath(props);
-  const federationBond = formatDashboardMiningAmount(dashboardFederationBondRaw(props), 11, "SAT");
-  const federationClaim = formatDashboardMiningAmount(
-    dashboardFederationClaimRaw(props),
-    11,
-    "SAT",
-  );
+  const wallets = props.walletNamedWallets?.length
+    ? props.walletNamedWallets
+    : (props.walletStatus?.wallets ?? []);
   return {
-    agents,
-    federationBond,
-    federationClaim,
-    federationStatus,
-    federationUrl,
-    miningCapital,
-    miningCapitalDetail,
-    miningSatcoin,
-    miningStatus,
-    tasks,
-    usage,
-    wallets,
+    agents: dashboardAgentSummary(props.agentsList),
+    tasks: dashboardTaskSummary(props),
+    wallets: [
+      {
+        count: wallets.length,
+        sol: wallets.reduce(
+          (total, wallet) =>
+            total +
+            readDashboardSolBalance({
+              ...wallet,
+              balances: wallet.balances ?? statusWallets.get(wallet.id)?.balances,
+            } as WalletNamedWallet),
+          0,
+        ),
+      },
+    ],
+    federationStatus: dashboardFederationStatus(props),
+    federationUrl: dashboardFederationUrlPath(props),
   };
 }
 
@@ -751,16 +410,6 @@ function renderWidgetBody(
           })}
         </div>
       `;
-    case "usage":
-      return html`
-        ${renderLinkedSummaryCard(props, {
-          tab: "usage",
-          title: "Tokens",
-          value: context.usage.value,
-          help: "7d model tokens from the local usage ledger across chats, tasks, channels, and system runs.",
-        })}
-        ${renderUsageHistory(props.usageResult)}
-      `;
     case "wen":
       return html`${renderLinkedSummaryCard(props, {
         tab: "wen",
@@ -779,25 +428,6 @@ function renderWidgetBody(
           help: "Manage wallets, permissions, budgets and approval modes.",
         })}
       </div>`;
-    case "mining":
-      return html`
-        <div class="dashboard-summary-grid dashboard-summary-grid--mining">
-          ${renderLinkedSummaryCard(props, {
-            tab: "mining",
-            title: "SAT",
-            value: context.miningSatcoin,
-            help: "SAT balance of the retained historical Mining wallet. New WEN positions use their owner-authorized wallet.",
-          })}
-          ${renderLinkedSummaryCard(props, {
-            tab: "mining",
-            title: "Capital",
-            value: context.miningCapital,
-            detail: context.miningCapitalDetail,
-            help: "Total SOL funded in miner capital. Locked capital is shown underneath when cycles are pending or live.",
-          })}
-        </div>
-        ${renderMiningSatHistory(props.miningHistory)}
-      `;
     case "network":
       return renderDashboardNetworkCard(props);
     default:
@@ -810,6 +440,9 @@ function renderDashboardWidget(
   widgetId: DashboardWidgetId,
   context: ReturnType<typeof buildDashboardContext>,
 ) {
+  if (widgetId === "usage") {
+    return nothing;
+  }
   const definition = DASHBOARD_WIDGETS_BY_ID.get(widgetId);
   if (!definition) {
     return nothing;
@@ -848,18 +481,6 @@ function renderDashboardWidget(
               <span class="dashboard-widget__title-block">
                 <span class="dashboard-widget__title">${widgetTitle}</span>
               </span>
-              ${
-                widgetId === "mining"
-                  ? html`
-                    <span
-                      class="dashboard-status-dot"
-                      data-tone=${context.miningStatus.tone}
-                      title=${context.miningStatus.label}
-                      aria-label=${context.miningStatus.label}
-                    ></span>
-                  `
-                  : nothing
-              }
               ${
                 widgetId === "network"
                   ? html`
@@ -958,7 +579,7 @@ function renderDashboardDrawer(props: OverviewProps) {
               </button>
             </header>
             <div class="dashboard-drawer__list">
-              ${DASHBOARD_WIDGETS.map((widget) => {
+              ${DASHBOARD_WIDGETS.filter((widget) => widget.id !== "usage").map((widget) => {
                 const enabled = active.has(widget.id);
                 return html`
                   <div class="dashboard-drawer__item">

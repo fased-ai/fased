@@ -445,12 +445,7 @@ export type FederationMarketplaceConfig = {
   };
 };
 
-export type FederationBondConfig = {
-  walletId?: string;
-};
-
 export type FederationConfig = {
   offers?: FederationOffersConfig;
   marketplace?: FederationMarketplaceConfig;
-  bond?: FederationBondConfig;
 };

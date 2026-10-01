@@ -13,7 +13,7 @@ import (
 type signerWENBTCRouteV1 struct {
 	Program  solana.PublicKey
 	Data     []byte
-	Accounts []signerSATAccountV2
+	Accounts []signerTypedAccountV2
 }
 
 // Only immutable artifact loading is shared with acceptance. Acquisition must
@@ -32,7 +32,7 @@ func loadWENBTCAcquisitionV1(root string, pins signerWENBTCPinsV1, intent signer
 	return a, nil
 }
 
-func (a signerWENBTCArtifactsV1) acquisitionInstruction(payer solana.PublicKey, route signerWENBTCRouteV1, now uint64) ([]byte, []signerSATAccountV2, error) {
+func (a signerWENBTCArtifactsV1) acquisitionInstruction(payer solana.PublicKey, route signerWENBTCRouteV1, now uint64) ([]byte, []signerTypedAccountV2, error) {
 	bad := errors.New("WEN BTC acquisition route mismatch")
 	if err := a.validateTerms(0); err != nil {
 		return nil, nil, err
@@ -146,15 +146,15 @@ func (a signerWENBTCArtifactsV1) acquisitionInstruction(payer solana.PublicKey, 
 			return nil, nil, bad
 		}
 	}
-	keys := make([]signerSATAccountV2, 0, len(r)+9)
+	keys := make([]signerTypedAccountV2, 0, len(r)+9)
 	for i, k := range order {
-		keys = append(keys, signerSATAccountV2{Pubkey: k.String(), IsSigner: i == 0, IsWritable: i < 5})
+		keys = append(keys, signerTypedAccountV2{Pubkey: k.String(), IsSigner: i == 0, IsWritable: i < 5})
 	}
 	for _, m := range r {
 		m.IsSigner = false
 		keys = append(keys, m)
 	}
-	keys = append(keys, signerSATAccountV2{Pubkey: jup.String()})
+	keys = append(keys, signerTypedAccountV2{Pubkey: jup.String()})
 	data := append([]byte{112}, a.offer[:]...)
 	data = append(data, byte(len(r)))
 	for _, m := range r {

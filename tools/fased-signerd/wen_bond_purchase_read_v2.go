@@ -475,7 +475,7 @@ func cloneWENBondPurchasePolicyV2(p wenBondPurchaseReadPolicyV2) wenBondPurchase
 	p.Router = copyPin(p.Router)
 	p.Oracle = copyPin(p.Oracle)
 	p.Route.Data = append([]byte(nil), p.Route.Data...)
-	p.Route.Accounts = append([]signerSATAccountV2(nil), p.Route.Accounts...)
+	p.Route.Accounts = append([]signerTypedAccountV2(nil), p.Route.Accounts...)
 	p.LookupPins = append([]wenBondLookupPinV2(nil), p.LookupPins...)
 	return p
 }

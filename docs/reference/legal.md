@@ -72,4 +72,4 @@ external routing, or unattended operation, separate these clearly:
 - live and approved
 
 That distinction matters more for Fased than for a generic chat tool because the repo
-already includes wallet, mining, Fased Network, and operator trust surfaces.
+already includes wallet, Fased Network, and operator trust surfaces.

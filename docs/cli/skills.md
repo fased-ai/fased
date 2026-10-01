@@ -74,11 +74,6 @@ fased skills wallet grant reviewed-wallet-skill \
   --cron
 ```
 
-The command writes `skills.entries.<skill-id>.config.walletActions`. If
-`--registry` is provided, it also adds that registry to
-`skills.marketplace.allowRegistries`. Wallet grants are Agent-wallet-only;
-Mining and Vault wallets remain unavailable to skills.
-
 Use `--dry-run --json` first when you want to review the exact config patch
 without writing it:
 

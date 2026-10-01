@@ -78,7 +78,11 @@ export async function approveWenMarketWithOwnerConfirmation(
   signal.throwIfAborted();
   bindOwnerMarketApproval(approval, review, proofId);
   try {
-    const response = await transport.journey({ requestId: identity.requestId, action: "execute" });
+    const response = await transport.journey({
+      requestId: identity.requestId,
+      action: "execute",
+      proof: { proofId },
+    });
     signal.throwIfAborted();
     return readWenCampaignJourneyResult(response, identity);
   } catch {

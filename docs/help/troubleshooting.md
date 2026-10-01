@@ -12,15 +12,6 @@ If you only have 2 minutes, use this page as a triage front door.
 
 Browser triage:
 
-1. Check the top-bar health dot.
-2. Open **Logs** and filter for the failing subsystem.
-3. Open the focused owner page: **Agent > Channels**, **Agent > Services**,
-   **Agent > Skills**, **Agent > Tools**, **Agent > Memory**, Wallets, Mining,
-   Fased Network, or Marketplace.
-4. Use **Advanced > Debug** only for raw status snapshots, plugin runtime
-   diagnostics, Memory Doctor repair preview, and raw RPC checks.
-5. Use **Advanced > Nodes** only for paired device/runtime diagnostics.
-
 ## First 60 seconds
 
 Run this exact ladder in order:
@@ -45,54 +36,9 @@ Good output in one line:
 - `fased channels status --probe` → channels report `connected` or `ready`.
 - `fased logs --follow` → steady activity, no repeating fatal errors.
 
-If Wallet, Mining, or Fased Network broke, run this ladder next:
-
-```bash
-fased wallet status --json
-fased wallet signer doctor --json
-fased mining wallets
-fased mining readiness --wallet mining
-fased mining status
-fased federation status
-fased federation bond-wallet status
-```
-
 Good output in one line:
 
-- `fased wallet status --json` → provider, RPC, custody, and policy look healthy.
-- `fased wallet signer doctor --json` → local signer is reachable and ready to
-  sign.
-- `fased mining wallets` → the intended mining wallet is visible to the runtime.
-- `fased mining readiness --wallet mining` → no signer, RPC, capital, or wallet
-  mismatch blocker.
-- `fased mining status` → live SAT state is readable and not stuck on obvious gaps.
-- `fased federation status` → Fased Network state and public route picture make
-  sense.
-- `fased federation bond-wallet status` → the bond assignment points at the wallet you expect.
-
 ## Decision tree
-
-```mermaid
-flowchart TD
-  A[Something is not working] --> B{What breaks first}
-  B --> C[No replies]
-  B --> D[Dashboard or Control UI will not connect]
-  B --> E[Gateway will not start or service not running]
-  B --> F[Channel connects but messages do not flow]
-  B --> G[Tasks or heartbeat did not fire or did not deliver]
-  B --> H[Node is paired but a node-backed tool fails]
-  B --> I[Browser tool fails]
-  B --> J[Wallet Mining Fased Network or bond state is wrong]
-
-  C --> C1[/No replies section/]
-  D --> D1[/Control UI section/]
-  E --> E1[/Gateway section/]
-  F --> F1[/Channel flow section/]
-  G --> G1[/Automation section/]
-  H --> H1[/Node tools section/]
-  I --> I1[/Browser section/]
-  J --> J1[/Wallet Mining Fased Network section/]
-```
 
 <AccordionGroup>
   <Accordion title="No replies">
@@ -213,51 +159,6 @@ flowchart TD
 
     - [Gateway troubleshooting](/gateway/troubleshooting#channel-connected-messages-not-flowing)
     - [/channels/troubleshooting](/channels/troubleshooting)
-
-  </Accordion>
-
-  <Accordion title="Wallet, Mining, Fased Network, or bond state is wrong">
-    ```bash
-    fased wallet status --json
-    fased wallet signer doctor --json
-    fased mining wallets
-    fased mining readiness --wallet mining
-    fased mining status
-    fased federation status
-    fased federation bond-wallet status
-    ```
-
-    Good output looks like:
-
-    - wallet provider, custody, and policy status all read healthy
-    - signer doctor says the self-hosted signer is reachable
-    - mining readiness passes for the wallet you actually want to use
-    - mining status shows capital, commit, and cycle state without blocker notes
-    - Fased Network status shows the expected handle, network state, and public
-      route picture
-    - `fased federation bond-wallet status` shows the intended bond Vault
-
-    Common signatures:
-
-    - signer unhealthy or socket missing → fix the local signer before debugging
-      mining or Fased Network
-    - wallet not listed in `fased mining wallets` → wrong role or wrong wallet selection
-    - readiness fails on SOL, capital, or commit → fund the wallet, deposit
-      capital, or set commit first
-    - Fased Network orange after unlock request → full bond unlock cooldown is
-      active until cancel or withdraw
-    - bond Vault mismatch → Fased Network is reading a different Vault wallet
-      than the one you funded
-
-    Deep pages:
-
-    - [/plugins/crypto/wallet-page](/plugins/crypto/wallet-page)
-    - [/plugins/crypto/wallet-self-hosted](/plugins/crypto/wallet-self-hosted)
-    - [/plugins/crypto/mining-page](/plugins/crypto/mining-page)
-    - [/start/federation](/start/federation)
-    - [/start/bond-operator-economy](/start/bond-operator-economy)
-    - [/cli/mining](/cli/mining)
-    - [/cli/federation](/cli/federation)
 
   </Accordion>
 

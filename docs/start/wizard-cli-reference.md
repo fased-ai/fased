@@ -17,17 +17,6 @@ Local/Hosting/Remote decision, see [First-run Setup Matrix](/start/setup-matrix)
 
 Local mode (default) walks you through:
 
-- QuickStart or Manual flow selection
-- Local or Hosting setup profile
-- Existing config update or auth/session repair
-- Workspace location and bootstrap files
-- Gateway settings (port, bind, auth)
-- Fased Network / federation setup when selected
-- Native signer and wallet setup
-- Optional singleton Mining wallet setup
-- Hosting security when the Hosting profile is selected
-- Daemon install, health check, and Control UI/TUI finalization
-
 Normal model providers, channels, skills, services, hooks, memory activation,
 tasks, and Agent assembly continue in the Control UI after onboarding.
 Non-interactive provider flags remain available for scripted installs.
@@ -36,82 +25,6 @@ Remote mode configures this machine to connect to a gateway elsewhere.
 It does not install or modify anything on the remote host.
 
 ## Local flow details
-
-<Steps>
-  <Step title="QuickStart or Manual">
-    - QuickStart applies conservative defaults for a first local Gateway.
-    - Manual exposes the full sequence.
-  </Step>
-  <Step title="Setup profile">
-    - Local is for this laptop, desktop, or dev box.
-    - Local on a VPS means no SSH/firewall hardening.
-    - Hosting is for a VPS or always-on server and requires Tailscale.
-    - Hosting on personal Linux changes SSH/firewall behavior.
-  </Step>
-  <Step title="Existing config detection">
-    - If `~/.fased/fased.json` exists, choose Review settings or Repair sign-in.
-    - Review settings starts from the existing config and updates explicit setup
-      sections. It preserves wallet keystores, Tailscale account/device access,
-      gateway port assumptions, mining/bond state, and firewall state unless
-      you edit those sections.
-    - Re-running the wizard does not wipe durable instance setup.
-    - Repair sign-in clears only selected auth/session state.
-    - Repair keeps `fased.json`, gateway token/password, gateway settings,
-      wallet assignments, SAT mining, Fased Network, plugins, Tailscale, and
-      firewall state.
-    - CLI `fased onboard --reset` defaults to `auth+sessions`; use `--reset-scope sessions|auth|auth+sessions`.
-    - If config is invalid or contains legacy keys, the wizard stops and asks you to run `fased doctor` before continuing.
-    - Repair uses `trash` and offers scopes:
-      - Sessions only
-      - Auth only
-      - Auth + sessions
-    - Destructive config/state reset is an explicit admin action. Use
-      `fased reset --scope ...` only when you intentionally want to remove
-      config/state.
-  </Step>
-  <Step title="Workspace">
-    - Default `~/.fased/workspace` (configurable).
-    - Seeds workspace files needed for first-run bootstrap ritual.
-    - Workspace layout: [Agent workspace](/concepts/agent-workspace).
-  </Step>
-  <Step title="Gateway">
-    - The connection point for Control UI, CLI, WebChat, channels, and remote clients.
-    - Prompts for port, bind, and auth mode.
-    - Recommended: keep token auth enabled even for loopback so local WS clients must authenticate.
-    - Disable auth only if you fully trust every local process.
-    - Non-loopback binds still require auth.
-    - Local Tailscale is hidden from the basic path. Hosting requires Tailscale.
-  </Step>
-  <Step title="Fased Network">
-    - Optional federation, managed route, and public network setup.
-    - Fased Network is not required for local chat.
-  </Step>
-  <Step title="Signer and wallet">
-    - Wallets are for policy-bound actions, not required for chat.
-    - Agent, Mining, and Vault roles stay separate.
-  </Step>
-  <Step title="Control UI setup">
-    - On local and Tailscale-hosted starts, the wizard opens an auth-ready
-      Control UI link. The browser exchanges the token for a session and strips
-      the token from the URL.
-    - `/agents`: create or select the Agent workspace.
-    - `Agent > Models`: add model API keys or sign in and choose model refs.
-    - `Agent > Skills`: create, review, install, configure, edit, and allow skills.
-    - `Agent > Channels`: connect apps and route them to Agents.
-    - `Agent > Services`: connect Gmail, Calendar, GitHub, web/search, browser/media, and APIs.
-    - `Agent > Memory` and `Agent > Tasks`: enable archives and schedules when needed.
-  </Step>
-  <Step title="Hosting security">
-    - Runs only for the Hosting profile.
-    - Applies Tailscale-first admin access and host hardening where supported.
-  </Step>
-  <Step title="Finish">
-    - Daemon install: LaunchAgent on macOS or systemd user unit on Linux/WSL2.
-    - Health check: starts gateway if needed and runs `fased health`.
-    - Control UI/TUI final prompt and readiness summary.
-    - Summary and next steps, including iOS, Android, and macOS app options.
-  </Step>
-</Steps>
 
 <Note>
 If no GUI is detected, the wizard prints SSH port-forward instructions for the
@@ -289,18 +202,6 @@ to the gateway host.
 ## Outputs and internals
 
 Typical fields in `~/.fased/fased.json`:
-
-- `agents.defaults.workspace`
-- `gateway.*` (mode, bind, auth, tailscale)
-- `session.dmScope` (local onboarding defaults this to `per-channel-peer` when unset; existing explicit values are preserved)
-- wallet runtime/provider/env fields when local signer setup is enabled
-- `plugins.entries.sat-mining.config.walletId` when the singleton Mining wallet is configured
-- `models.providers` / `agents.defaults.model` only when explicit non-interactive provider flags are used
-- `wizard.lastRunAt`
-- `wizard.lastRunVersion`
-- `wizard.lastRunCommit`
-- `wizard.lastRunCommand`
-- `wizard.lastRunMode`
 
 `fased agents add` writes `agents.list[]` and optional `bindings`.
 

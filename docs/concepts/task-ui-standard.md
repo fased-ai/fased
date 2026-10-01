@@ -7,15 +7,6 @@ Agent > Tasks is the saved-work control surface. It should default to saved Task
 Trigger, Workflow, Graph, and Program definitions for the selected Agent. Run
 history is audit data and should not fill an empty task list.
 
-Domain pages still own domain control: Wallets approves/signs, Marketplace owns
-order/review actions, Mining owns start/stop and cycle actions, Channels owns
-routes/delivery, and media/service pages own their runtime setup.
-
-For wallet, marketplace, and mining records, Agent > Tasks is view-only. It can
-open the source page and start a review workflow, but the gateway rejects direct
-retry/resume/control calls from Tasks so the authority surface remains Wallets,
-Marketplace, or Mining.
-
 ## Layout
 
 - Use a compact top strip for live counts, next wake time, refresh, and Create task.
@@ -27,21 +18,6 @@ Marketplace, or Mining.
 - Key rows by task id so live refresh updates the row without collapsing expanded details or moving controls.
 
 ## Actions
-
-- Create task opens the shared task modal.
-- Edit opens the same modal with the task loaded.
-- Run, Pause/Resume, Open chat/run, and Delete stay on the row action rail as icon buttons with clear hover text.
-- Use one open action per row. Prefer the latest run transcript when it exists; otherwise open the task session.
-- Domain-owned activity rows use source-specific open actions instead of pretending
-  Tasks owns the operation: open Wallet approval, Marketplace order/review,
-  Mining cycle/action, Channel session/delivery, Media handoff, or Webhook
-  payload/replay when that action is safe.
-- Wallet, marketplace, and mining rows are source-owned mirror records. Show
-  review/open actions only; do not show direct approve, reject, retry, resume, or
-  cancel controls from Agent Tasks.
-- Workflow rows that were started from another activity record must show the source
-  task and provide **Open source task** back to the original row/domain anchor.
-- Delete should be a plain task action, not a browser confirm flow unless the operation is destructive beyond the task itself.
 
 ## Policy Presets
 
@@ -57,14 +33,6 @@ Marketplace, or Mining.
   "stop after success".
 
 ## Filtering
-
-- Task lists should provide search, status, and date ordering.
-- Agent > Tasks should provide filters for saved definitions first. Source
-  filters for cron, webhook, subagent, channel, CLI, media, wallet, marketplace,
-  and mining apply to run history, not the primary saved-definition count.
-- Default sort is newest updated first.
-- Agent Tasks must filter to the selected Agent.
-- Task overview/admin views may include all Agents but must still use the same row and modal design.
 
 ## Data Freshness
 

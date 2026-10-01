@@ -13,13 +13,6 @@ Onboarding is the step that turns a raw install into a usable Fased setup.
 
 It handles:
 
-- workspace initialization
-- gateway mode and service install
-- local signer wallet setup when selected
-- optional singleton Mining wallet setup
-- Hosting profile Tailscale and host hardening
-- the base config the rest of the product depends on
-
 <Info>
 Before choosing Local or Hosting, read the
 [First-run Setup Matrix](/start/setup-matrix). The wrong setup profile can
@@ -100,10 +93,6 @@ server.
 
 Use this when:
 
-- the runtime will live on a VPS
-- you want durable remote operation
-- you expect to use Fased Network, hosted reachability, wallets, or SAT mining more seriously
-
 This is the path that matters for operator use, not just chat convenience.
 
 <Warning>
@@ -127,12 +116,6 @@ machine first if the Gateway does not already exist.
 ## What Onboarding Should Produce
 
 After onboarding, you should have:
-
-- a working Fased identity
-- a persisted config
-- a running gateway or a valid remote-gateway connection
-- a clear next step toward Agent setup, Wallet, Mining, Fased Network, Usage,
-  Notifications, or Advanced diagnostics in the Control UI
 
 The Control UI should continue setup from `/agents`, which acts as the single
 Agent Setup checklist. Dashboard is for launch/status, not for duplicating every

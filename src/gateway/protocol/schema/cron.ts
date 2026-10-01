@@ -537,7 +537,6 @@ const CronTaskGraphRepairPlanSchema = Type.Object(
       Type.Literal("web_fetch"),
       Type.Literal("gateway"),
       Type.Literal("wallet"),
-      Type.Literal("mining"),
       Type.Literal("offers"),
     ]),
     reason: NonEmptyString,

@@ -299,14 +299,12 @@ describe("managed component pack identity", () => {
     expect(artifactBuilder).not.toContain("Hosted sat-mining plugin did not load");
     expect(artifactBuilder).toContain("FASED_PLUGIN_LOCK_PATH: smokePluginLockPath");
     expect(artifactBuilder).toContain("FASED_PLUGIN_DATA_ROOT: smokePluginDataRoot");
-    for (const miningRpcFile of ["rpc-read.ts", "rpc-read-service.ts"]) {
-      const miningRpcSource = await fs.readFile(
-        path.join(process.cwd(), "extensions", "sat-mining", "src", miningRpcFile),
-        "utf8",
-      );
-      expect(miningRpcSource).not.toContain('from "fased/plugin-sdk"');
-      expect(miningRpcSource).toContain('from "fased/plugin-sdk/sat-runtime"');
-    }
+    const wenSource = await fs.readFile(
+      path.join(process.cwd(), "extensions", "wen", "index.ts"),
+      "utf8",
+    );
+    expect(wenSource).not.toContain('from "fased/plugin-sdk/sat-runtime"');
+    expect(wenSource).not.toContain("src/mining");
   });
 
   it("derives speech implementation paths for exclusion from the base artifact", async () => {

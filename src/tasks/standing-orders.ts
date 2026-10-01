@@ -315,7 +315,7 @@ export function proposeStandingOrder(raw: unknown): {
       proposalKind: order.proposalKind,
       approvalRequired: true,
       authority: "proposal-only",
-      forbiddenGrants: ["wallet", "tools", "mining"],
+      forbiddenGrants: ["wallet", "tools"],
     },
   });
   const updatedOrder = ephemeralStore

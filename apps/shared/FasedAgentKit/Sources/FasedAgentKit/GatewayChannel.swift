@@ -465,8 +465,8 @@ public actor GatewayChannelActor {
         } else if let tick = ok.policy["tickIntervalMs"]?.value as? Int {
             self.tickIntervalMs = Double(tick)
         }
-        if let auth = ok.auth,
-           let deviceToken = auth["deviceToken"]?.value as? String {
+        let auth = ok.auth
+        if let deviceToken = auth["deviceToken"]?.value as? String {
             let authRole = auth["role"]?.value as? String ?? role
             let scopes = (auth["scopes"]?.value as? [ProtoAnyCodable])?
                 .compactMap { $0.value as? String } ?? []
@@ -555,6 +555,7 @@ public actor GatewayChannelActor {
             operation: { [weak self] in
                 guard let self else { throw ConnectChallengeError.timeout }
                 while true {
+                    try Task.checkCancellation()
                     let msg = try await task.receive()
                     guard let data = self.decodeMessageData(msg) else { continue }
                     guard let frame = try? self.decoder.decode(GatewayFrame.self, from: data) else { continue }
@@ -577,6 +578,7 @@ public actor GatewayChannelActor {
                 userInfo: [NSLocalizedDescriptionKey: "connect failed (no response)"])
         }
         while true {
+            try Task.checkCancellation()
             let msg = try await task.receive()
             guard let data = self.decodeMessageData(msg) else { continue }
             guard let frame = try? self.decoder.decode(GatewayFrame.self, from: data) else {

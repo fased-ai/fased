@@ -47,6 +47,10 @@ function renderAgentHelp(text: string, label = "Help") {
   `;
 }
 
+function agentToolSourceLabel(id: string) {
+  return id;
+}
+
 function renderToolBadges(section: AgentToolSection, tool: AgentToolEntry) {
   const source = tool.source ?? section.source;
   const pluginId = tool.pluginId ?? section.pluginId;
@@ -76,7 +80,7 @@ function renderEffectiveToolBadge(tool: {
 }) {
   if (tool.source === "plugin") {
     return tool.pluginId
-      ? t("agentTools.connectedSource", { id: tool.pluginId })
+      ? t("agentTools.connectedSource", { id: agentToolSourceLabel(tool.pluginId) })
       : t("agentTools.connected");
   }
   if (tool.source === "channel") {
@@ -429,7 +433,7 @@ export function renderAgentTools(params: {
                   <span class="agent-pill">${sectionEnabledCount}/${section.tools.length}</span>
                   ${
                     section.source === "plugin" && section.pluginId
-                      ? html`<span class="agent-pill">plugin:${section.pluginId}</span>`
+                      ? html`<span class="agent-pill">${`plugin:${section.pluginId}`}</span>`
                       : nothing
                   }
                 </span>

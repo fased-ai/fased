@@ -1,4 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -78,6 +79,51 @@ describe("lean CI and release workflow contracts", () => {
       "needs.classify.outputs.run_macos_runtime == 'true'",
     );
   });
+
+  it.each([0, 23])(
+    "samples unnamed CI descendants without changing foreground exit %s",
+    async (exitCode) => {
+      const value = await workflow(".github/workflows/pr.yml");
+      const run =
+        value.jobs?.["macos-owned"]?.steps?.find(
+          (step) => step.name === "Run macOS application checks",
+        )?.run ?? "";
+      const start = run.indexOf("\n(\n", run.indexOf("swift build "));
+      const end = run.indexOf("\nswift test --package-path apps/shared");
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      const scratch = await mkdtemp("/tmp/fased-ci-descendants-");
+      try {
+        const samplePath = resolve(scratch, "sample");
+        await writeFile(samplePath, '#!/bin/bash\nprintf "SAMPLED:%s\\n" "$1"\n', { mode: 0o755 });
+        const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+        const native = `bash -c 'IFS= read -r value; [ "$value" = foreground ] || exit 91; printf "NATIVE:%s\\n" "$$"; sleep 0.5; exit ${exitCode}'`;
+        const program = run
+          .slice(start + 1, end)
+          .replace("sleep 180 &", "sleep 0.05 &")
+          .replace("/usr/bin/sample", quote(samplePath))
+          .replace("swift test --package-path apps/macos", () => native)
+          .replace("sampler_pid=$!", 'sampler_pid=$!\nprintf "SAMPLER:%s\\n" "$sampler_pid"');
+        const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", program], {
+          encoding: "utf8",
+          input: "foreground\n",
+          timeout: 5000,
+          env: { ...process.env, RUNNER_TEMP: scratch },
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(exitCode);
+        const nativePid = result.stdout.match(/NATIVE:(\d+)/u)?.[1];
+        const samplerPid = result.stdout.match(/SAMPLER:(\d+)/u)?.[1];
+        const sampled = [...result.stdout.matchAll(/SAMPLED:(\d+)/gu)].map((match) => match[1]);
+        expect(nativePid).toBeDefined();
+        expect(sampled).toContain(nativePid);
+        expect(sampled).not.toContain(samplerPid);
+        expect(sampled).not.toContain(String(process.pid));
+      } finally {
+        await rm(scratch, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("runs broad diagnostics weekly or manually, never as a protected PR gate", async () => {
     const value = await workflow(".github/workflows/ci.yml");

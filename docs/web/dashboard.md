@@ -20,7 +20,7 @@ for compatibility). It is a compact widget board, not a setup wizard.
 
 What the dashboard is for:
 
-- see high-level Agent, task, session, usage, wallet, mining, and Fased Network state
+- see high-level Agent, task, session, usage, wallet, and Fased Network state
 - keep fast status widgets visible without opening each full control page
 - open the top-bar Widgets drawer to add, remove, or reset widgets
 - drag widgets by their header to reorder the saved board
@@ -30,12 +30,6 @@ What the dashboard is for:
 
 Detailed setup and operation stay on focused pages:
 
-- Agents: model choices, skills, chat apps, services, tools, saved context, tasks, and sessions
-- Wallets: wallet roles, balances, approvals, passkeys, and security policy
-- Mining: SAT mining controls, capital, live cycle, history, and recovery
-- Usage: local model usage history by provider, model, Agent, session, task, and source
-- Advanced: raw config, Debug, and Nodes tabs for admin diagnostics
-
 Key references:
 
 - [Control UI](/web/control-ui) for usage and UI capabilities.
@@ -44,10 +38,6 @@ Key references:
 
 Authentication is enforced at the WebSocket handshake via `connect.params.auth`
 (token or password). See `gateway.auth` in [Gateway configuration](/gateway/configuration).
-
-Security note: the Control UI is an **admin surface** (chat, config, wallet controls, mining, exec approvals).
-Do not expose it publicly. The UI stores the token in `localStorage` after first load.
-Prefer localhost, Tailscale Serve, or an SSH tunnel.
 
 ## Fast path (recommended)
 
@@ -67,12 +57,6 @@ Prefer localhost, Tailscale Serve, or an SSH tunnel.
 ## Dashboard widgets
 
 Default widgets are intentionally high-signal:
-
-- **Agents**: total Agents, tasks, and sessions across Agents.
-- **Usage**: seven-day token usage from local usage history.
-- **Wallets**: SOL totals grouped by Agent, Mining, and Vault wallet roles.
-- **Mining**: live mining status, mining wallet balance, locked capital, and seven-day SAT history.
-- **Fased Network**: compact node identity and operator status.
 
 Gateway access and low-level presence details are not normal dashboard widgets.
 Use the top-bar health dot for live/offline status and the Advanced Debug/Nodes

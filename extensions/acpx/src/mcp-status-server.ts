@@ -22,7 +22,7 @@ import {
   type GatewayClient,
   type GatewayRequestContext,
 } from "fased/plugin-sdk";
-import { loadConfig } from "fased/plugin-sdk/sat-runtime";
+import { loadConfig } from "fased/plugin-sdk/config";
 import { z } from "zod";
 import type { ResolvedAcpxMcpBridgeConfig } from "./config.js";
 import {

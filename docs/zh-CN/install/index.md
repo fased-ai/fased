@@ -48,10 +48,6 @@ PowerShell 中管理 VPS；只有在 Windows 本机运行 Fased Local 时才需�
 
 ## 安装后
 
-1. 在 **Agent > Models** 连接模型。
-2. 在 **Chat** 发送测试消息。
-3. 需要时再添加 channel、wallet、skill 或 Mining。
-
 ```bash
 fased health
 fased dashboard

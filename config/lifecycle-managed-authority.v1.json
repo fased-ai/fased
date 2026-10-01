@@ -545,13 +545,7 @@
       "boundary": "application",
       "profiles": ["*"],
       "owner": "unprivileged-application",
-      "implementation": [
-        "src/gateway",
-        "src/agents",
-        "src/tasks",
-        "src/mining",
-        "src/commands/wallet.ts"
-      ],
+      "implementation": ["src/gateway", "src/agents", "src/tasks", "src/commands/wallet.ts"],
       "evidence": [],
       "status": "separate"
     }

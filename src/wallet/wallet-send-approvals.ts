@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FasedAgentConfig } from "../config/config.js";
 import { loadConfig } from "../config/config.js";
-import { tryResolveSatRuntimeIds } from "../config/sat-runtime-ids.js";
 import type { WalletProviderId } from "../config/types.wallet.js";
 import { publishFederationSettlementEvidence } from "../federation/settlement-evidence.js";
 import { acquireFileLock, withFileLock } from "../infra/file-lock.js";
@@ -31,7 +30,6 @@ import {
   buildWalletProviderCapabilityMatrix,
   providerSupportsChainOperation,
 } from "./wallet-provider-capabilities.js";
-import { readWalletProviderRegistry } from "./wallet-provider-registry.js";
 import {
   createWalletProviderAdapter,
   resolveWalletProviderId,
@@ -64,35 +62,6 @@ export type WalletSendApprovalStatus =
   | "executed"
   | "failed"
   | "expired";
-
-// This is only a request for exact owner confirmation. The signer independently
-// enforces the pinned program, verified Devnet genesis, policy and device state.
-export function isDevnetCapitalOwnerConfirmation(
-  review: Pick<WalletProviderJupiterReviewV2, "intentType" | "requiredRole" | "semanticIntent">,
-): boolean {
-  return (
-    review.intentType === "solana.agentCapitalAction" &&
-    review.semanticIntent.type === "solana.agentCapitalAction" &&
-    review.semanticIntent.cluster === "devnet" &&
-    review.semanticIntent.programId === "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz" && // pragma: allowlist secret -- public program ID
-    ((review.requiredRole === "profile" &&
-      [
-        "initialize_capital_offer",
-        "cancel_capital_offer",
-        "succeed_empty_capital_offer",
-        "activate_capital_offer",
-        "record_vault_result",
-      ].includes(review.semanticIntent.action ?? "")) ||
-      (review.requiredRole === "vault" &&
-        [
-          "deposit_capital_offer_generation",
-          "claim_vault_sat",
-          "request_vault_exit",
-          "finalize_vault_exit",
-          "refund_cancelled_position",
-        ].includes(review.semanticIntent.action ?? "")))
-  );
-}
 
 export type WalletSendApprovalPayload = {
   chain: "solana";
@@ -148,7 +117,7 @@ export type WalletSendApprovalPayload = {
   signerDestination?: string;
   signerPolicyOperation?: string;
   signerRequiredPrograms?: string[];
-  signerRequiredRole?: "agent" | "mining" | "vault" | "profile" | "strategy";
+  signerRequiredRole?: "agent";
   signerNonce?: string;
   signerIssuedAt?: string;
   signerReviewExpiresAt?: string;
@@ -161,20 +130,6 @@ export type WalletSettlementContext = {
   taskId: string;
   invoiceId?: string;
   senderHandle?: string;
-};
-
-export type SatMiningSweepAuthorization = {
-  kind: "sat-auto-sweep-v1";
-  occurrenceId: string;
-  walletId: string;
-  destination: string;
-  mint: string;
-  sourceBalanceRaw: string;
-  amountRaw: string;
-  keepRaw: string;
-  minRaw: string;
-  mode: "all" | "percentage";
-  percentage: number;
 };
 
 export type WalletSendApprovalRequest = {
@@ -313,7 +268,7 @@ export function signerReviewBindingMatchesWalletApprovalPayload(
 export function bindSignerReviewToWalletApprovalPayload(params: {
   payload: WalletSendApprovalPayload;
   review: WalletProviderJupiterReviewV2;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
 }): WalletSendApprovalPayload {
   const { review, role } = params;
   if (
@@ -414,216 +369,6 @@ const APPROVAL_EXECUTION_LOCK_OPTIONS = {
   },
   stale: 30_000,
 } as const;
-
-function isReviewedMiningNativeSolanaSend(params: {
-  cfg: FasedAgentConfig;
-  env: NodeJS.ProcessEnv;
-  walletId?: string;
-  requestedBy?: string;
-  sendPath?: WalletSendPath;
-  payload: Pick<WalletSendApprovalPayload, "chain" | "program">;
-}): boolean {
-  if (params.payload.chain !== "solana" || String(params.payload.program ?? "").trim()) {
-    return false;
-  }
-  const reviewedByOperator =
-    params.sendPath === "reviewed" || String(params.requestedBy ?? "").trim() === "control-ui";
-  if (!reviewedByOperator) {
-    return false;
-  }
-  return (
-    resolveWalletRoleForId({
-      walletId: params.walletId,
-      cfg: params.cfg,
-      env: params.env,
-    }) === "mining"
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function parseUnsignedInteger(value: unknown): bigint | null {
-  const text = typeof value === "string" ? value.trim() : "";
-  if (!/^\d+$/u.test(text)) {
-    return null;
-  }
-  try {
-    return BigInt(text);
-  } catch {
-    return null;
-  }
-}
-
-function resolveConfiguredSatSweepDestination(params: {
-  cfg: FasedAgentConfig;
-  walletId: string;
-  env: NodeJS.ProcessEnv;
-}): string | null {
-  const rawConfig = params.cfg.plugins?.entries?.["sat-mining"]?.config;
-  if (!isRecord(rawConfig) || !isRecord(rawConfig.automation)) {
-    return null;
-  }
-  const rawSweep = rawConfig.automation.satSweep;
-  if (!isRecord(rawSweep) || rawSweep.enabled !== true) {
-    return null;
-  }
-  const explicitAddress =
-    typeof rawSweep.destinationAddress === "string" ? rawSweep.destinationAddress.trim() : "";
-  const registry = readWalletProviderRegistry(params.env);
-  const source = registry.wallets.find((wallet) => wallet.id === params.walletId);
-  if (explicitAddress) {
-    return explicitAddress !== source?.addresses?.solana?.trim() ? explicitAddress : null;
-  }
-  const destinationWalletId =
-    typeof rawSweep.destinationWalletId === "string" ? rawSweep.destinationWalletId.trim() : "";
-  if (!destinationWalletId || destinationWalletId === params.walletId) {
-    return null;
-  }
-  return (
-    registry.wallets
-      .find((wallet) => wallet.id === destinationWalletId)
-      ?.addresses?.solana?.trim() || null
-  );
-}
-
-function validateSatMiningTokenSweep(params: {
-  cfg: FasedAgentConfig;
-  env: NodeJS.ProcessEnv;
-  walletId?: string;
-  requestedBy?: string;
-  sendPath?: WalletSendPath;
-  executionIntentId?: string;
-  authorization?: SatMiningSweepAuthorization;
-  payload: Pick<
-    WalletSendApprovalPayload,
-    "actionKind" | "amount" | "chain" | "contract" | "program" | "to"
-  >;
-}): { ok: true } | { ok: false; message: string } {
-  if (params.payload.chain !== "solana") {
-    return { ok: false, message: "SAT sweep must be a typed Solana transfer" };
-  }
-  if (params.payload.actionKind && params.payload.actionKind !== "send") {
-    return { ok: false, message: "SAT sweep cannot use a generic signing action" };
-  }
-  if (params.payload.contract?.trim()) {
-    return { ok: false, message: "SAT sweep cannot include a contract override" };
-  }
-  const walletId = params.walletId?.trim() || "";
-  if (
-    !walletId ||
-    resolveWalletRoleForId({ walletId, cfg: params.cfg, env: params.env }) !== "mining"
-  ) {
-    return { ok: false, message: "SAT sweep requires the configured Mining wallet" };
-  }
-  if (
-    params.sendPath !== "automation" ||
-    String(params.requestedBy ?? "").trim() !== "sat-mining:auto-sweep"
-  ) {
-    return { ok: false, message: "Mining wallet automation is limited to the SAT sweep worker" };
-  }
-  const authorization = params.authorization;
-  if (!authorization || authorization.kind !== "sat-auto-sweep-v1") {
-    return { ok: false, message: "SAT sweep requires an exact typed sweep authorization" };
-  }
-  const occurrenceId = authorization.occurrenceId.trim();
-  const expectedExecutionIntentId = `sat-auto-sweep:${walletId}:${occurrenceId}`;
-  if (
-    !occurrenceId ||
-    params.executionIntentId?.trim() !== expectedExecutionIntentId ||
-    authorization.walletId.trim() !== walletId
-  ) {
-    return { ok: false, message: "SAT sweep occurrence identity does not match the Mining wallet" };
-  }
-  const ids = tryResolveSatRuntimeIds(params.env);
-  const rawConfig = params.cfg.plugins?.entries?.["sat-mining"]?.config;
-  const rawTokenConfig =
-    isRecord(rawConfig) && isRecord(rawConfig.tokenConfig) ? rawConfig.tokenConfig : null;
-  const configuredMint =
-    (rawTokenConfig && typeof rawTokenConfig.mintAddress === "string"
-      ? rawTokenConfig.mintAddress.trim()
-      : "") ||
-    ids?.mintAddress ||
-    "";
-  const program = String(params.payload.program ?? "").trim();
-  if (
-    !program ||
-    !configuredMint ||
-    program !== configuredMint ||
-    authorization.mint.trim() !== configuredMint
-  ) {
-    return {
-      ok: false,
-      message: "Mining wallet automation can transfer only the configured SAT mint",
-    };
-  }
-  const destination = resolveConfiguredSatSweepDestination({
-    cfg: params.cfg,
-    walletId,
-    env: params.env,
-  });
-  if (
-    !destination ||
-    params.payload.to?.trim() !== destination ||
-    authorization.destination.trim() !== destination
-  ) {
-    return {
-      ok: false,
-      message: "SAT sweep destination does not match the configured destination",
-    };
-  }
-  const sourceBalance = parseUnsignedInteger(authorization.sourceBalanceRaw);
-  const keepRaw = parseUnsignedInteger(authorization.keepRaw);
-  const minRaw = parseUnsignedInteger(authorization.minRaw);
-  const amountRaw = parseUnsignedInteger(authorization.amountRaw);
-  if (
-    sourceBalance === null ||
-    keepRaw === null ||
-    minRaw === null ||
-    amountRaw === null ||
-    !Number.isFinite(authorization.percentage)
-  ) {
-    return { ok: false, message: "SAT sweep authorization contains invalid raw amounts" };
-  }
-  const rawSweep =
-    isRecord(rawConfig) && isRecord(rawConfig.automation) && isRecord(rawConfig.automation.satSweep)
-      ? rawConfig.automation.satSweep
-      : null;
-  const configuredMode = rawSweep?.mode === "percentage" ? "percentage" : "all";
-  const configuredPercentage =
-    typeof rawSweep?.percentage === "number" && Number.isFinite(rawSweep.percentage)
-      ? Math.max(0, Math.min(100, rawSweep.percentage))
-      : 100;
-  const configuredKeep = parseUnsignedInteger(
-    typeof rawSweep?.keepRaw === "string" && rawSweep.keepRaw.trim() ? rawSweep.keepRaw : "0",
-  );
-  const configuredMin = parseUnsignedInteger(
-    typeof rawSweep?.minRaw === "string" && rawSweep.minRaw.trim() ? rawSweep.minRaw : "1",
-  );
-  if (
-    authorization.mode !== configuredMode ||
-    authorization.percentage !== configuredPercentage ||
-    keepRaw !== configuredKeep ||
-    minRaw !== configuredMin
-  ) {
-    return { ok: false, message: "SAT sweep authorization does not match the active sweep policy" };
-  }
-  const spendable = sourceBalance > keepRaw ? sourceBalance - keepRaw : 0n;
-  const expectedAmount =
-    configuredMode === "percentage"
-      ? (spendable * BigInt(Math.round(configuredPercentage * 10_000))) / 1_000_000n
-      : spendable;
-  if (
-    expectedAmount <= 0n ||
-    expectedAmount < minRaw ||
-    amountRaw !== expectedAmount ||
-    params.payload.amount?.trim() !== expectedAmount.toString()
-  ) {
-    return { ok: false, message: "SAT sweep amount does not match the exact computed occurrence" };
-  }
-  return { ok: true };
-}
 
 type WalletSendExecutionResult =
   | {
@@ -1541,7 +1286,7 @@ export function createWalletSendApprovalRequest(params: {
 
 export function createSignerReviewApprovalRequest(params: {
   review: WalletProviderJupiterReviewV2;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
   walletId?: string;
   requestedBy?: string;
   walletName?: string;
@@ -1595,7 +1340,6 @@ export async function createOrExecuteWalletSend(params: {
   payload: WalletSendApprovalPayload;
   requestedBy?: string;
   executionIntentId?: string;
-  satSweepAuthorization?: SatMiningSweepAuthorization;
   config: ResolvedWalletRuntimeConfig;
   runtimeConfig?: FasedAgentConfig;
   sendPath?: WalletSendPath;
@@ -1646,48 +1390,6 @@ export async function createOrExecuteWalletSend(params: {
     cfg,
     env,
   });
-  const satSweepValidation = validateSatMiningTokenSweep({
-    cfg,
-    env,
-    walletId: params.payload.walletId,
-    requestedBy,
-    sendPath: params.sendPath,
-    executionIntentId,
-    authorization: params.satSweepAuthorization,
-    payload: params.payload,
-  });
-  if (resolvedMode === "autonomous" && walletRole === "mining" && !satSweepValidation.ok) {
-    const message = satSweepValidation.message;
-    if (settlementRequestId) {
-      upsertSettlementLinkForPayload({
-        requestId: settlementRequestId,
-        payload: settlementPayload,
-        settlementContext: params.settlementContext,
-        mode: resolvedMode,
-        status: "failed",
-        reason: message,
-        env,
-      });
-    }
-    return {
-      ok: false,
-      code: "wallet_role_not_allowed",
-      message,
-      requestId: settlementRequestId,
-    };
-  }
-  if (
-    resolvedMode === "autonomous" &&
-    requestedBy.startsWith("sat-mining") &&
-    !satSweepValidation.ok
-  ) {
-    return {
-      ok: false,
-      code: "wallet_role_not_allowed",
-      message: satSweepValidation.message,
-      requestId: settlementRequestId,
-    };
-  }
   const providerResolution = resolveSendProviderForPayload({
     cfg,
     wallet: params.config,
@@ -1716,15 +1418,7 @@ export async function createOrExecuteWalletSend(params: {
   const selectedProviderId = providerResolution.providerId;
   const provider = providerResolution.provider;
   settlementPayload.providerId = selectedProviderId;
-  const skipNativeSolanaCaps = isReviewedMiningNativeSolanaSend({
-    cfg,
-    env,
-    walletId: params.payload.walletId,
-    requestedBy,
-    sendPath: params.sendPath,
-    payload: params.payload,
-  });
-  const skipSatMiningTokenCapRequirement = satSweepValidation.ok;
+
   if (resolvedMode === "autonomous" && selectedProviderId !== "local-socket-signer") {
     const message =
       "Autonomous wallet execution is restricted to local-socket-signer in the current self-hosted runtime";
@@ -1753,9 +1447,7 @@ export async function createOrExecuteWalletSend(params: {
     mode: resolvedMode,
     source: requestedBy,
     requireDirectSigning: resolvedMode === "autonomous",
-    skipNativeSolanaCaps,
-    requireSolanaTokenCap:
-      Boolean(params.payload.program?.trim()) && !skipSatMiningTokenCapRequirement,
+    requireSolanaTokenCap: Boolean(params.payload.program?.trim()),
     env,
   });
   if (!simulation.ok) {
@@ -1949,7 +1641,6 @@ export async function createOrExecuteWalletSend(params: {
     sendPath: "automation",
     payload: settlementPayload,
     settlementContext: params.settlementContext,
-    satSweepAuthorization: params.satSweepAuthorization,
   });
   let begun: Awaited<ReturnType<typeof beginWalletSendExecution>>;
   try {
@@ -2043,7 +1734,6 @@ export async function createOrExecuteWalletSend(params: {
         program: params.payload.program,
         walletId: params.payload.walletId,
         env,
-        skipNativeSolanaCaps,
       });
       if (!daily.ok) {
         current = await updateWalletSendExecution({
@@ -2609,13 +2299,7 @@ export async function approveWalletSendRequest(params: {
     env,
     walletId: request.payload.walletId,
   });
-  const skipNativeSolanaCaps = isReviewedMiningNativeSolanaSend({
-    cfg,
-    env,
-    walletId: request.payload.walletId,
-    requestedBy: request.requestedBy,
-    payload: request.payload,
-  });
+
   const signerReviewId = request.payload.signerReviewId?.trim();
   const isSignerOwnedReview =
     selectedProviderId === "local-socket-signer" && Boolean(signerReviewId);
@@ -2628,7 +2312,6 @@ export async function approveWalletSendRequest(params: {
       mode: "manual",
       source: request.requestedBy,
       requireDirectSigning: false,
-      skipNativeSolanaCaps,
       requireSolanaTokenCap: Boolean(request.payload.program?.trim()),
       env,
     });
@@ -2739,8 +2422,7 @@ export async function approveWalletSendRequest(params: {
         storedReview.state === "prepared" &&
         !params.reviewAuthorization &&
         (storedReview.intentType === "solana.nativeTransfer" ||
-          storedReview.intentType === "solana.splTransferChecked" ||
-          isDevnetCapitalOwnerConfirmation(storedReview))
+          storedReview.intentType === "solana.splTransferChecked")
           ? { type: "control-ui", proof: { proofId: storedReview.nonce } }
           : undefined;
       if (
@@ -2862,55 +2544,6 @@ export async function approveWalletSendRequest(params: {
           request,
         };
       }
-      let signerCompletionWarning: string | undefined;
-      if (executed.review.intentType === "federation.bondChallenge") {
-        if (!executed.signatureBase64) {
-          const message =
-            "federation signer review completed without its exact signature artifact; reconcile before retrying";
-          const unknownRequest = await markWalletSendRequestBroadcastUnknown({
-            requestId: request.id,
-            txHash: operation.signature,
-            reason: message,
-            actor: params.actor,
-            env,
-          });
-          return {
-            ok: false as const,
-            code: "wallet_signer_review_mismatch",
-            message,
-            request: unknownRequest,
-          };
-        }
-        try {
-          const federation = await import("../federation/auto-connect.js");
-          const proof = await federation.persistFederationBondProofFromSignerReview({
-            review: executed.review,
-            signatureBase64: executed.signatureBase64,
-            walletId: request.payload.walletId?.trim() || executed.review.walletId,
-            env,
-          });
-          try {
-            await federation.submitFederationBondProof({ env, proof });
-          } catch (error) {
-            signerCompletionWarning = `signature completed; federation proof submission remains pending: ${normalizeErrorMessage(error)}`;
-          }
-        } catch (error) {
-          const message = `signature completed but its federation proof could not be persisted safely: ${normalizeErrorMessage(error)}`;
-          const unknownRequest = await markWalletSendRequestBroadcastUnknown({
-            requestId: request.id,
-            txHash: operation.signature,
-            reason: message,
-            actor: params.actor,
-            env,
-          });
-          return {
-            ok: false as const,
-            code: "wallet_signer_review_failed",
-            message,
-            request: unknownRequest,
-          };
-        }
-      }
       request.status = "approved";
       request.approvedBy = params.actor?.trim() || "operator";
       request.decisionAt = new Date().toISOString();
@@ -2932,7 +2565,6 @@ export async function approveWalletSendRequest(params: {
       request.status = "executed";
       request.result = {
         txHash: operation.signature,
-        ...(signerCompletionWarning ? { error: signerCompletionWarning } : {}),
       };
       appendWalletAuditEntry({
         action: "send_executed",
@@ -2948,7 +2580,6 @@ export async function approveWalletSendRequest(params: {
             invoiceId: settlementLink?.invoiceId,
             senderHandle: settlementLink?.senderHandle,
           }),
-          ...(signerCompletionWarning ? { warning: signerCompletionWarning } : {}),
         },
         env,
       });
@@ -3025,7 +2656,6 @@ export async function approveWalletSendRequest(params: {
           program: request.payload.program,
           walletId: request.payload.walletId,
           env,
-          skipNativeSolanaCaps,
         });
     if (!daily.ok) {
       request.status = "failed";

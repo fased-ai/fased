@@ -1,6 +1,6 @@
+import FasedAgentProtocol
 import Foundation
 import Observation
-import FasedAgentProtocol
 
 struct ChannelsStatusSnapshot: Codable {
     struct WhatsAppSelf: Codable {

@@ -42,8 +42,8 @@ await fs.writeFile(
     },
     cron: { enabled: false },
     plugins: {
-      allow: ["device-pair", "memory-core", "sat-mining"],
-      entries: { "sat-mining": { enabled: true } },
+      allow: ["device-pair", "memory-core", "wen"],
+      entries: { wen: { enabled: true } },
     },
   }),
 );
@@ -146,7 +146,7 @@ try {
       const receipt = JSON.parse(await fs.readFile(state + "/plugin-readiness.json", "utf8"));
       assert.equal(receipt.generationId, fixtureContentHash);
       assert.equal(receipt.type, "fased-plugin-readiness");
-      for (const id of ["memory-core", "sat-mining"]) {
+      for (const id of ["memory-core", "wen"]) {
         assert.equal(
           receipt.entries.find((entry) => entry.id === id)?.status,
           "loaded",

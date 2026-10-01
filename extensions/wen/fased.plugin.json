@@ -1,0 +1,10 @@
+{
+  "id": "wen",
+  "name": "WEN Engine",
+  "description": "WEN economy reads and policy-controlled operations.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

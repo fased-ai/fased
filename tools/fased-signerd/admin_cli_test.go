@@ -201,44 +201,24 @@ func decodeSignerAdminTestBody(t *testing.T, req request, out any) {
 	}
 }
 
-func TestSignerAdminKeeperFeePayerUsesParentMiningBindingAndControlSocket(t *testing.T) {
-	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"miningWalletId":"mining","feePayerWalletId":"sat_kfp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","feePayerPublicKey":"public","policyHash":"sha256:test","maxPerTransactionLamports":"500000","maxDailyLamports":"50000000","state":"ready"}`))
-	if err := runSignerAdminCLI([]string{
-		"keeper", "ensure-fee-payer", "--control-socket", server.path, "--wallet-id", "mining",
-	}, strings.NewReader(""), io.Discard, nil); err != nil {
-		t.Fatalf("ensure keeper fee payer: %v", err)
-	}
-	req := waitSignerAdminTestServer(t, server)
-	if req.Op != "v2.keeperFeePayer.ensure" || req.WalletID != "mining" || string(req.Request) != "{}" {
-		t.Fatalf("unexpected keeper fee-payer envelope: %#v", req)
-	}
-
-	if err := runSignerAdminCLI([]string{
-		"keeper", "fee-payer-status", "--operator-socket", "/tmp/operator.sock", "--wallet-id", "mining",
-	}, strings.NewReader(""), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "control socket") {
-		t.Fatalf("keeper fee-payer management accepted operator authority: %v", err)
-	}
-}
-
-func TestSignerAdminWalletCreateLockedPolicy(t *testing.T) {
-	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"wallet":{"walletId":"mining","publicKey":"public"},"policy":{"walletId":"mining","role":"mining","version":1,"operations":[],"programs":[],"assets":[],"hash":"sha256:test"}}`))
+func TestSignerAdminWalletCreateDefaultBaseline(t *testing.T) {
+	server := startSignerAdminTestServer(t, signerAdminTestSuccess(t, `{"wallet":{"walletId":"agent","publicKey":"public"},"policy":{"walletId":"agent","role":"agent","version":1,"operations":[],"programs":[],"assets":[],"hash":"sha256:test"}}`))
 	var stdout bytes.Buffer
 	err := runSignerAdminCLI([]string{
 		"wallet", "create",
 		"--control-socket", server.path,
-		"--wallet-id", "mining",
-		"--locked-role", "mining",
+		"--wallet-id", "agent",
 	}, strings.NewReader("unused"), &stdout, nil)
 	if err != nil {
 		t.Fatalf("run signer admin wallet create: %v", err)
 	}
 	req := waitSignerAdminTestServer(t, server)
-	if req.Op != "v2.wallet.create" || req.WalletID != "mining" {
+	if req.Op != "v2.wallet.create" || req.WalletID != "agent" {
 		t.Fatalf("unexpected wallet create envelope: %#v", req)
 	}
 	var body signerWalletCreateRequestV2
 	decodeSignerAdminTestBody(t, req, &body)
-	if body.ExpectedVersion != 0 || body.Policy.Role != "mining" || body.Policy.WalletID != "mining" {
+	if body.ExpectedVersion != 0 || body.Baseline == nil || body.Baseline.Role != "agent" || body.Baseline.Version != 1 {
 		t.Fatalf("unexpected locked create body: %#v", body)
 	}
 	if len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
@@ -329,7 +309,7 @@ func TestSignerAdminWalletImportStagesOnlyStdinInExclusiveSignerFile(t *testing.
 	})
 	var stdout bytes.Buffer
 	err = runSignerAdminCLI([]string{
-		"wallet", "import", "--control-socket", server.path, "--wallet-id", "agent", "--locked-role", "agent",
+		"wallet", "import", "--control-socket", server.path, "--wallet-id", "agent",
 	}, bytes.NewReader(input), &stdout, nil)
 	if err != nil {
 		t.Fatalf("run signer admin wallet import: %v", err)
@@ -375,7 +355,7 @@ func TestSignerAdminOperatorImportTransfersTypedSecretWithoutStagingPath(t *test
 	))
 	var stdout bytes.Buffer
 	if err := runSignerAdminCLI([]string{
-		"wallet", "import", "--operator-socket", server.path, "--wallet-id", "agent", "--baseline-role", "agent",
+		"wallet", "import", "--operator-socket", server.path, "--wallet-id", "agent",
 	}, bytes.NewReader(input), &stdout, nil); err != nil {
 		t.Fatalf("run operator wallet import: %v", err)
 	}
@@ -523,12 +503,12 @@ func TestSignerAdminOperatorImportRejectsArbitraryPolicyAndAmbiguousAuthority(t 
 	server := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{}`))
 	if err := runSignerAdminCLI([]string{
 		"wallet", "import", "--operator-socket", server.path, "--wallet-id", "agent", "--locked-role", "agent",
-	}, strings.NewReader("[]"), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "requires --baseline-role") {
+	}, strings.NewReader("[]"), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "invalid or unknown signer admin flag") {
 		t.Fatalf("operator import accepted a caller-defined policy lane: %v", err)
 	}
 	if err := runSignerAdminCLI([]string{
 		"wallet", "import", "--operator-socket", server.path, "--control-socket", server.path,
-		"--wallet-id", "agent", "--baseline-role", "agent",
+		"--wallet-id", "agent",
 	}, strings.NewReader("[]"), io.Discard, nil); err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("operator import accepted ambiguous socket authority: %v", err)
 	}
@@ -539,7 +519,7 @@ func TestSignerAdminOperatorCreateAndPrimaryRPCUseFixedSchemas(t *testing.T) {
 		`{"wallet":{"walletId":"vault","publicKey":"public"},"policy":{"walletId":"vault","role":"vault","version":1,"baselineVersion":1}}`,
 	))
 	if err := runSignerAdminCLI([]string{
-		"wallet", "create", "--operator-socket", createServer.path, "--wallet-id", "vault", "--baseline-role", "vault", "--allow-existing",
+		"wallet", "create", "--operator-socket", createServer.path, "--wallet-id", "vault", "--allow-existing",
 	}, strings.NewReader(""), io.Discard, nil); err != nil {
 		t.Fatalf("operator wallet create failed: %v", err)
 	}
@@ -553,7 +533,7 @@ func TestSignerAdminOperatorCreateAndPrimaryRPCUseFixedSchemas(t *testing.T) {
 	}
 	var createBody signerOperatorWalletCreateRequestV1
 	decodeSignerAdminTestBody(t, createReq, &createBody)
-	if createReq.Operator == nil || createReq.Op != "v2.wallet.create" || createBody.Baseline.Role != "vault" || !createBody.AllowExisting {
+	if createReq.Operator == nil || createReq.Op != "v2.wallet.create" || createBody.Baseline.Role != "agent" || !createBody.AllowExisting {
 		t.Fatalf("operator create escaped its fixed role-baseline schema: req=%#v body=%#v", createReq, createBody)
 	}
 
@@ -576,23 +556,6 @@ func TestSignerAdminOperatorCreateAndPrimaryRPCUseFixedSchemas(t *testing.T) {
 		if strings.Contains(value, "operator-secret") {
 			t.Fatal("operator RPC credential leaked into authority metadata")
 		}
-	}
-
-	policyServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t,
-		`{"walletId":"agent","role":"agent","version":2,"baselineVersion":1,"operations":["solana.nativeTransfer"],"programs":["11111111111111111111111111111111"],"assets":[{"asset":"solana:native"}],"hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-	))
-	if err := runSignerAdminCLI([]string{
-		"policy", "activate-baseline", "--operator-socket", policyServer.path,
-		"--wallet-id", "agent", "--expected-version", "1", "--baseline-role", "agent",
-	}, strings.NewReader(""), io.Discard, nil); err != nil {
-		t.Fatalf("operator role-baseline activation failed: %v", err)
-	}
-	policyReq := waitSignerAdminTestServer(t, policyServer)
-	var policyBody signerOperatorPolicyActivateBaselineRequestV1
-	decodeSignerAdminTestBody(t, policyReq, &policyBody)
-	if policyReq.Operator == nil || policyReq.Op != "v2.policy.activateBaseline" ||
-		policyBody.ExpectedVersion != 1 || policyBody.Baseline.Role != "agent" || policyBody.Baseline.Version != 1 {
-		t.Fatalf("operator policy activation escaped its fixed schema: req=%#v body=%#v", policyReq, policyBody)
 	}
 
 	rejectServer := startSignerAdminTestServerMode(t, 0o660, signerAdminTestSuccess(t, `{}`))
@@ -623,7 +586,7 @@ func TestSignerAdminWalletImportCleansStagedFileOnRejection(t *testing.T) {
 		return json.Marshal(signerAdminResponse{OK: false, Error: "signer wallet already exists"})
 	})
 	err = runSignerAdminCLI([]string{
-		"wallet", "import", "--control-socket", server.path, "--wallet-id", "agent", "--locked-role", "agent",
+		"wallet", "import", "--control-socket", server.path, "--wallet-id", "agent",
 	}, bytes.NewReader(input), io.Discard, nil)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected signer rejection, got %v", err)
@@ -647,7 +610,7 @@ func TestSignerAdminWalletImportLegacySendsOnlyOwnerFilePaths(t *testing.T) {
 		"wallet", "import-legacy",
 		"--control-socket", server.path,
 		"--wallet-id", "agent",
-		"--locked-role", "agent",
+
 		"--keystore-path", keystorePath,
 		"--passphrase-path", passphrasePath,
 	}, strings.NewReader("stdin-must-not-be-read"), &stdout, nil)
@@ -663,7 +626,7 @@ func TestSignerAdminWalletImportLegacySendsOnlyOwnerFilePaths(t *testing.T) {
 	if body.Path != keystorePath || body.PassphrasePath != passphrasePath {
 		t.Fatalf("legacy import paths changed: %#v", body)
 	}
-	if body.Policy.Role != "agent" || len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
+	if body.Baseline == nil || body.Baseline.Role != "agent" || len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
 		t.Fatalf("legacy import policy must remain explicit deny-all: %#v", body.Policy)
 	}
 	if strings.Contains(stdout.String(), keystorePath) || strings.Contains(stdout.String(), passphrasePath) {
@@ -680,7 +643,7 @@ func TestSignerAdminWalletImportLegacySupportsRoleBaseline(t *testing.T) {
 		"wallet", "import-legacy",
 		"--control-socket", server.path,
 		"--wallet-id", "agent",
-		"--baseline-role", "agent",
+
 		"--keystore-path", keystorePath,
 		"--passphrase-path", passphrasePath,
 	}, strings.NewReader("stdin-must-not-be-read"), io.Discard, nil)
@@ -1106,20 +1069,16 @@ func TestSignerAdminWalletSuccessorRotationTypedCommands(t *testing.T) {
 					"--expected-source-wallet-version", "3", "--expected-source-policy-version", "8",
 					"--expected-successor-wallet-version", "1", "--expected-successor-policy-version", "1",
 					"--expected-rotation-version", "1",
-					"--expected-successor-network-version", "2",
-					"--expected-successor-network-hash", "hmac-sha256:" + strings.Repeat("b", 64),
 				}
 			},
 			op: "v2.wallet.rotation.commit", body: true,
-			stdin: `{"recoveryPackageHash":"sha256:` + strings.Repeat("c", 64) + `","safetyEvidence":{"version":1,"walletId":"agent","publicKey":"` + sourcePublicKey + `","observedAt":"2026-07-20T12:00:00Z","newJobsStopped":true,"workersDrained":true,"clearingDrained":true,"submissionsReconciled":true,"pendingCommits":0,"pendingReveals":0,"pendingSettlements":0,"pendingClaims":0,"pendingCleanup":0,"pendingAltMutations":0,"solBalanceLamports":"1","satBalanceRaw":"2","runtimeStateHash":"sha256:` + strings.Repeat("d", 64) + `","submissionLedgerHash":"sha256:` + strings.Repeat("e", 64) + `"}}`,
 			check: func(t *testing.T, req request) {
 				var body signerWalletRotationCommitRequestV2
 				decodeSignerAdminTestBody(t, req, &body)
 				if body.RotationID != rotationID || body.SuccessorWalletID != "agent_2026" ||
 					body.ExpectedSourcePublicKey != sourcePublicKey || body.ExpectedSuccessorPublicKey != successorPublicKey ||
 					body.ExpectedSourceWalletVersion != 3 || body.ExpectedSourcePolicyVersion != 8 ||
-					body.ExpectedSuccessorWalletVersion != 1 || body.ExpectedSuccessorPolicyVersion != 1 || body.ExpectedRotationVersion != 1 ||
-					body.ExpectedSuccessorNetworkVersion != 2 || body.RecoveryPackageHash == "" || body.SafetyEvidence == nil {
+					body.ExpectedSuccessorWalletVersion != 1 || body.ExpectedSuccessorPolicyVersion != 1 || body.ExpectedRotationVersion != 1 {
 					t.Fatalf("unexpected rotation commit body: %#v", body)
 				}
 			},

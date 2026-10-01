@@ -1,11 +1,9 @@
-import Darwin
 import Testing
 @testable import FasedAgentDiscovery
 
 @Suite
 struct WideAreaGatewayDiscoveryTests {
-    @Test func discoversBeaconFromTailnetDnsSdFallback() {
-        setenv("FASED_WIDE_AREA_DOMAIN", "fased.internal", 1)
+    @Test func discoversBeaconFromTailnetDnsSdFallback() throws {
         let statusJson = """
         {
           "Self": { "TailscaleIPs": ["100.69.232.64"] },
@@ -33,13 +31,14 @@ struct WideAreaGatewayDiscoveryTests {
                     return "\"displayName=Peter\\226\\128\\153s Mac Studio (FasedAgent)\" \"gatewayPort=18789\" \"tailnetDns=peters-mac-studio-1.sheep-coho.ts.net\" \"cliPath=/Users/steipete/fased/src/entry.ts\""
                 }
                 return ""
-            })
+            },
+            wideAreaDomain: { "fased.internal." })
 
         let beacons = WideAreaGatewayDiscovery.discover(
             timeoutSeconds: 2.0,
             context: context)
 
-        #expect(beacons.count == 1)
+        try #require(beacons.count == 1)
         let beacon = beacons[0]
         let expectedDisplay = "Peter\u{2019}s Mac Studio (FasedAgent)"
         #expect(beacon.displayName == expectedDisplay)

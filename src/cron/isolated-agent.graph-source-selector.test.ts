@@ -205,17 +205,6 @@ describe("task graph source selector", () => {
     expect(
       __testing.inferGraphToolAction({
         job: makeJob(),
-        nodeId: SOURCE_REPAIR_NODE_IDS.mining,
-        message: "Check mining status after weak source quality",
-      }),
-    ).toEqual({
-      toolName: "mining",
-      input: { action: "status" },
-    });
-
-    expect(
-      __testing.inferGraphToolAction({
-        job: makeJob(),
         nodeId: SOURCE_REPAIR_NODE_IDS.offers,
         message: "Check offers in the marketplace after weak source quality",
       }),

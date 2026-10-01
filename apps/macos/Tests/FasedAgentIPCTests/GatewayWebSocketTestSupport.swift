@@ -2,7 +2,7 @@ import FasedAgentKit
 import Foundation
 
 extension WebSocketTasking {
-    // Keep unit-test doubles resilient to protocol additions.
+    /// Keep unit-test doubles resilient to protocol additions.
     func sendPing(pongReceiveHandler: @escaping @Sendable (Error?) -> Void) {
         pongReceiveHandler(nil)
     }
@@ -25,6 +25,15 @@ enum GatewayWebSocketTestSupport {
         return obj["id"] as? String
     }
 
+    static func connectChallengeData(nonce: String = "fixture-nonce") -> Data {
+        let frame: [String: Any] = [
+            "type": "event",
+            "event": "connect.challenge",
+            "payload": ["nonce": nonce],
+        ]
+        return try! JSONSerialization.data(withJSONObject: frame)
+    }
+
     static func connectOkData(id: String) -> Data {
         let json = """
         {
@@ -42,6 +51,7 @@ enum GatewayWebSocketTestSupport {
               "stateVersion": { "presence": 0, "health": 0 },
               "uptimeMs": 0
             },
+            "auth": { "role": "operator", "scopes": [] },
             "policy": { "maxPayload": 1, "maxBufferedBytes": 1, "tickIntervalMs": 30000 }
           }
         }

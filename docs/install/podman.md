@@ -14,15 +14,6 @@ not reproduce the native signer service, signer state volumes, administrative
 socket separation, or readiness ordering from the supported Docker Compose
 path.
 
-<Warning>
-Podman is not a supported VPS or cloud-hosting path. It is Gateway-only:
-signer-owned wallet creation/import/rotation, typed wallet sends, Vault, and SAT
-mining are unsupported. Do not enable those features unless Podman gains and
-passes the same native-signer lifecycle and isolation tests as Docker Compose.
-For a VPS, use [`install.sh --hosting`](/install/vps). For a local container with
-wallet/mining support, use [Docker Compose](/install/docker).
-</Warning>
-
 ## Requirements
 
 - Podman (rootless)
@@ -72,9 +63,6 @@ Control UI from the selected Agent:
 - **Chat** for the first working message
 - **Agent > Channels** for Telegram, Discord, WhatsApp, and other chat routes
 - **Agent > Services** for web/search, GitHub, Gmail, and other API connectors
-
-Do not configure Wallet, Vault, or SAT mining in this profile. Those surfaces
-require a native signer deployment that the Podman helper does not install.
 
 ## Systemd (Quadlet, optional)
 
@@ -184,11 +172,3 @@ To add quadlet **after** an initial setup that did not use it, re-run: `./setup-
   `podman info --format '{{.Host.CgroupsVersion}}'` should show `2`.
 
 ## Optional: run as your own user
-
-To run the gateway as your normal user, build the image, create `~/.fased/.env`
-with `FASED_GATEWAY_TOKEN`, and run the container with `--userns=keep-id` and
-mounts to your `~/.fased`. The launch script is designed for the `fased` user
-flow. For a single-user setup, run the `podman run` command from the script
-manually and point config/workspace to your home. For most users who need a
-complete local container deployment, including wallets or mining, use the
-supported Docker Compose path instead.

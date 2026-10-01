@@ -13,7 +13,6 @@ export const TAB_GROUPS = [
       "federation",
       "plugins",
       "config",
-      "mining",
     ],
   },
 ] as const;
@@ -23,10 +22,8 @@ export type Tab =
   | "overview"
   | "providers"
   | "federation"
-  | "marketplace"
   | "wallet"
   | "wen"
-  | "mining"
   | "channels"
   | "services"
   | "instances"
@@ -48,10 +45,8 @@ const TAB_PATHS: Record<Tab, string> = {
   overview: "/dash",
   providers: "/providers",
   federation: "/federation",
-  marketplace: "/marketplace",
   wallet: "/wallet",
   wen: "/wen",
-  mining: "/mining",
   channels: "/channels",
   services: "/services",
   instances: "/instances",
@@ -166,14 +161,10 @@ export function iconForTab(tab: Tab): IconName {
       return "settings";
     case "federation":
       return "network";
-    case "marketplace":
-      return "store";
     case "wallet":
       return "wallet";
     case "wen":
       return "globe";
-    case "mining":
-      return "zap";
     case "channels":
       return "link";
     case "services":
@@ -217,14 +208,10 @@ export function titleForTab(tab: Tab) {
       return "Providers";
     case "federation":
       return "Fased Network";
-    case "marketplace":
-      return "Marketplace";
     case "wallet":
       return "Wallets";
     case "wen":
       return "WEN";
-    case "mining":
-      return "Mining";
     case "channels":
       return "Channels";
     case "services":
@@ -286,14 +273,10 @@ export function subtitleForTab(tab: Tab) {
       return "Add model providers, paste API keys, sign in, and choose models for Chat and Agents.";
     case "federation":
       return "Directory, attestation, and Fased Network join status.";
-    case "marketplace":
-      return "Fased Network offers, requests, reviews, and dispute workflow.";
     case "wallet":
       return "Wallet status, policy, provider health, and runtime health.";
     case "wen":
       return "Review owner-authorized WEN actions and reconcile their outcomes.";
-    case "mining":
-      return "Legacy SAT cycle runtime and recovery.";
     case "channels":
       return "Connect chat apps, channel accounts, and command routing.";
     case "services":

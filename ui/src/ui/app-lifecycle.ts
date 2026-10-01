@@ -1,11 +1,9 @@
 import { connectGateway } from "./app-gateway.ts";
 import {
   startLogsPolling,
-  startMiningPolling,
   startNodesPolling,
   startFederationPolling,
   stopLogsPolling,
-  stopMiningPolling,
   stopNodesPolling,
   stopFederationPolling,
   startDebugPolling,
@@ -78,11 +76,8 @@ export function handleConnected(host: LifecycleHost) {
   if (host.tab === "debug") {
     startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
   }
-  if (host.tab === "federation" || host.tab === "marketplace") {
+  if (host.tab === "federation") {
     startFederationPolling(host as unknown as Parameters<typeof startFederationPolling>[0]);
-  }
-  if (host.tab === "mining") {
-    startMiningPolling(host as unknown as Parameters<typeof startMiningPolling>[0]);
   }
 }
 
@@ -96,7 +91,6 @@ export function handleDisconnected(host: LifecycleHost) {
   stopLogsPolling(host as unknown as Parameters<typeof stopLogsPolling>[0]);
   stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
   stopFederationPolling(host as unknown as Parameters<typeof stopFederationPolling>[0]);
-  stopMiningPolling(host as unknown as Parameters<typeof stopMiningPolling>[0]);
   host.client?.stop();
   host.client = null;
   host.connected = false;

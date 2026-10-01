@@ -15,12 +15,6 @@ shape.
 
 The current tranche is centered on:
 
-- wallet selection and signer posture
-- SAT mining
-- Fased Network bond and bonded operator flows
-- operator trust read-only status UI
-- local offers and marketplace offer discovery
-
 ## Next implementation lanes
 
 ### 1. Bonded verified chat

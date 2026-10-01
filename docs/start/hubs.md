@@ -40,21 +40,6 @@ Use these hubs to discover every page, including deep dives and reference docs t
 
 ## Wallets, SAT, and Fased Network
 
-- [Operator glossary](/start/operator-glossary)
-- [Wallet](/plugins/crypto/wallet-page)
-- [Mining](/plugins/crypto/mining-page)
-- [Advanced SAT mining](/plugins/crypto/mining-advanced)
-- [SAT mining API and protocol](/plugins/crypto/mining-protocol)
-- [Fased Network](/start/federation)
-- [Bond operator](/start/bond-operator-economy)
-- [Offers and Marketplace](/start/offers-marketplace)
-- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
-- [Wallet passkey](/plugins/crypto/wallet-control-passkey)
-- [Wallet production flow](/plugins/crypto/wallet-production-flow)
-- [Wallet self-hosted VPS](/plugins/crypto/wallet-self-hosted-vps)
-- [Autonomous wallet security](/plugins/crypto/wallet-autonomous-security)
-- [Autonomous wallet sessions](/plugins/crypto/wallet-autonomous-sessions)
-
 ## Core concepts
 
 - [Architecture](/concepts/architecture)

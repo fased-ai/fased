@@ -10,7 +10,7 @@ import {
   type LocalSocketSignerHealthProbe,
 } from "./providers/local-socket-signer-adapter.js";
 
-export type LocalSignerWalletRole = "agent" | "mining" | "vault" | "profile" | "strategy";
+export type LocalSignerWalletRole = "agent";
 
 export type LocalSignerWalletPublicRecord = {
   walletId: string;
@@ -50,6 +50,7 @@ export type LocalSignerWalletPolicyRecord = {
 export function lockedLocalSignerPolicy(role: LocalSignerWalletRole) {
   return {
     role,
+    approvalMode: "read-only" as const,
     operations: [] as string[],
     programs: [] as string[],
     assets: [] as LocalSignerPolicyRecord["assets"],
@@ -89,108 +90,6 @@ async function requireSignerOwnedProtocolV2(
   }
 }
 
-function assertRoleBaselineRecord(
-  record: LocalSignerWalletPolicyRecord,
-  role: LocalSignerWalletRole,
-): LocalSignerWalletPolicyRecord {
-  if (record.policy.role !== role) {
-    throw new Error(
-      `signer-owned wallet ${record.wallet.walletId} has role=${record.policy.role}, not ${role}`,
-    );
-  }
-  const denyAllRole =
-    record.policy.approvalMode === "read-only" || role === "profile" || role === "strategy";
-  const exactDenyAll =
-    denyAllRole &&
-    record.policy.operations.length === 0 &&
-    record.policy.programs.length === 0 &&
-    record.policy.assets.length === 0;
-  const activeBaseline =
-    !denyAllRole &&
-    record.policy.operations.length > 0 &&
-    record.policy.programs.length > 0 &&
-    record.policy.assets.length > 0;
-  if (record.policy.baselineVersion !== 1 || (!exactDenyAll && !activeBaseline)) {
-    throw new Error(
-      `signer-owned wallet ${record.wallet.walletId} is not role-ready; select Activate role baseline before using it`,
-    );
-  }
-  return record;
-}
-
-export async function createRoleReadySignerOwnedWallet(params: {
-  socketPath: string;
-  walletId: string;
-  role: LocalSignerWalletRole;
-  allowExisting?: boolean;
-  readOnly?: boolean;
-}): Promise<LocalSignerWalletPolicyRecord> {
-  const walletId = params.walletId.trim();
-  if (!/^[a-zA-Z0-9_-]+$/.test(walletId)) {
-    throw new Error("walletId must contain only letters, numbers, hyphens, or underscores");
-  }
-  await requireSignerOwnedProtocolV2(params.socketPath, ["signerOwnedRoleBaselines"]);
-  try {
-    const existing = await readSignerOwnedWallet({ socketPath: params.socketPath, walletId });
-    if (!params.allowExisting) {
-      throw new Error(`signer-owned wallet already exists: ${walletId}`);
-    }
-    if (params.readOnly && existing.policy.approvalMode !== "read-only") {
-      throw Error("Existing wallet policy is not read-only; explicit owner migration required");
-    }
-    return assertRoleBaselineRecord(existing, params.role);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.startsWith("signer-owned wallet")) {
-      throw error;
-    }
-  }
-
-  try {
-    const created = await callLocalSocketSigner<LocalSignerWalletPolicyRecord>(params.socketPath, {
-      op: "v2.wallet.create",
-      walletId,
-      request: {
-        expectedPolicyVersion: 0,
-        baseline: {
-          version: 1,
-          role: params.role,
-          ...(params.readOnly ? { approvalMode: "read-only" } : {}),
-        },
-      },
-    });
-    return assertRoleBaselineRecord(created, params.role);
-  } catch (error) {
-    if (!params.allowExisting) {
-      throw error;
-    }
-    const existing = await readSignerOwnedWallet({ socketPath: params.socketPath, walletId });
-    if (params.readOnly && existing.policy.approvalMode !== "read-only") {
-      throw Error("Existing wallet policy is not read-only; explicit owner migration required", {
-        cause: error,
-      });
-    }
-    return assertRoleBaselineRecord(existing, params.role);
-  }
-}
-
-export async function activateSignerOwnedRoleBaseline(params: {
-  socketPath: string;
-  walletId: string;
-  role: LocalSignerWalletRole;
-  expectedPolicyVersion: number;
-}): Promise<LocalSignerPolicyRecord> {
-  await requireSignerOwnedProtocolV2(params.socketPath, ["signerOwnedRoleBaselines"]);
-  return await callLocalSocketSigner<LocalSignerPolicyRecord>(params.socketPath, {
-    op: "v2.policy.activateBaseline",
-    walletId: params.walletId,
-    request: {
-      expectedPolicyVersion: params.expectedPolicyVersion,
-      baseline: { version: 1, role: params.role },
-    },
-  });
-}
-
 export async function readSignerOwnedWalletReadiness(params: {
   socketPath: string;
   walletId: string;
@@ -226,6 +125,26 @@ export async function readSignerOwnedWallet(params: {
  * The application socket may create only this explicit empty/deny-all policy. Policy expansion is
  * a separate signer-admin action, so a compromised Gateway cannot turn key creation into spending.
  */
+function assertLockedWalletRecord(
+  record: LocalSignerWalletPolicyRecord,
+  walletId: string,
+): LocalSignerWalletPolicyRecord {
+  if (
+    record.wallet.walletId !== walletId ||
+    record.policy.walletId !== walletId ||
+    record.policy.role !== "agent" ||
+    record.policy.approvalMode !== "read-only" ||
+    record.policy.operations.length !== 0 ||
+    record.policy.programs.length !== 0 ||
+    record.policy.assets.length !== 0
+  ) {
+    throw new Error(
+      "signer-owned wallet does not acknowledge the exact read-only policy; explicit owner review is required",
+    );
+  }
+  return record;
+}
+
 export async function createLockedSignerOwnedWallet(params: {
   socketPath: string;
   walletId: string;
@@ -242,11 +161,7 @@ export async function createLockedSignerOwnedWallet(params: {
     if (!params.allowExisting) {
       throw new Error(`signer-owned wallet already exists: ${walletId}`);
     }
-    if (existing.policy.role !== params.role) {
-      throw new Error(
-        `signer-owned wallet ${walletId} already has role=${existing.policy.role}, not ${params.role}`,
-      );
-    }
+    assertLockedWalletRecord(existing, walletId);
     return existing;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -256,7 +171,7 @@ export async function createLockedSignerOwnedWallet(params: {
   }
 
   try {
-    return await callLocalSocketSigner<LocalSignerWalletPolicyRecord>(params.socketPath, {
+    const created = await callLocalSocketSigner<LocalSignerWalletPolicyRecord>(params.socketPath, {
       op: "v2.wallet.create",
       walletId,
       request: {
@@ -264,19 +179,14 @@ export async function createLockedSignerOwnedWallet(params: {
         policy: lockedLocalSignerPolicy(params.role),
       },
     });
+    return assertLockedWalletRecord(created, walletId);
   } catch (error) {
     if (!params.allowExisting) {
       throw error;
     }
-    // A concurrent, identical create may have won. Read back the durable result; role mismatch
-    // still fails closed above on the normal retry path.
+    // A concurrent create may have won; accept only the exact locked policy.
     const existing = await readSignerOwnedWallet({ socketPath: params.socketPath, walletId });
-    if (existing.policy.role !== params.role) {
-      throw new Error(
-        `signer-owned wallet ${walletId} was concurrently created with role=${existing.policy.role}`,
-        { cause: error },
-      );
-    }
+    assertLockedWalletRecord(existing, walletId);
     return existing;
   }
 }

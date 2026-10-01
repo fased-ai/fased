@@ -16,7 +16,7 @@ const LEGACY_V2_EVIDENCE_POLICY_DIGEST =
   "sha256:327eb515f2ef9980ed17cab1751caa2d792b6f40a849fa9428ab8b3560d83369";
 const LEGACY_V2_RC80_EVIDENCE_POLICY_DIGEST =
   "sha256:8cf857831936399150ce4fef5339dc4371ba64bffc54509a768c5f45cc022a14";
-const commonPredicates = Object.freeze([
+const historicalCommonPredicates = Object.freeze([
   "artifact-identity",
   "public-installer-acquisition",
   "lifecycle-performance",
@@ -34,8 +34,11 @@ const commonPredicates = Object.freeze([
   "installer-already-current",
   "updater-already-current",
 ]);
+const commonPredicates = Object.freeze(
+  historicalCommonPredicates.filter((predicate) => predicate !== "mining-status"),
+);
 const legacyV2CommonPredicates = Object.freeze(
-  commonPredicates.filter(
+  historicalCommonPredicates.filter(
     (predicate) =>
       !["lifecycle-performance", "installer-noop-performance", "updater-noop-performance"].includes(
         predicate,

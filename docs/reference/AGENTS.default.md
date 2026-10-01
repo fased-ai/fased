@@ -79,15 +79,6 @@ missing; that is not an error when `MEMORY.md` exists.
 Workspace files are not the skill library and they do not grant execution
 permissions.
 
-- **Agent > Skills** controls which skills this Agent may load. Skill
-  instructions live in `SKILL.md` files.
-- **Agent > Tools** controls per-Agent allow/deny policy for tool calls.
-- **Agent > Services** connects credentials for APIs such as web search, GitHub,
-  Gmail, and media.
-- **Wallet > Skill Grants** is required before reviewed wallet-capable skills
-  can use Agent wallets. Mining and vault wallets are not granted to generic
-  skills.
-
 `TOOLS.md` can document how to use a local tool, but actual access still comes
 from the runtime tool catalog and Agent policy.
 

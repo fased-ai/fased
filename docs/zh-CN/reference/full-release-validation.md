@@ -103,24 +103,6 @@ pnpm docs:check-links
 
 公开 launch docs 最终前手动检查：
 
-- install paths：local、Docker/Podman、VPS、Tailscale
-- Agent-first setup：Models、Channels、Skills、Tools、Memory、Tasks、Services
-- wallet funding 和 Wallet > Skill Grants
-- SAT mining start/stop/readiness
-- Dashboard、Usage、Logs、Advanced > Debug/Nodes
-- beginner-critical screenshots
-
 ## Manual product smoke
 
 用新的临时 Agent 验证：
-
-1. Onboarding 生成或复用 gateway token，并打开 auth-ready Control UI URL。
-2. Agent > Models 完成 sign-in 或 provider key，保存 primary/fallback model refs。
-3. Chat 返回一次 model-backed reply，Usage 记录 provider/model tokens。
-4. Agent > Skills 创建本地 skill，为 Agent 启用，并在 Chat 中看到 skill loaded。
-5. Agent > Memory 启用 session archive，`/new` 或 `/reset` 在有内容时写 archive。
-6. Agent > Channels 将测试频道账号路由到选定 Agent。
-7. Agent > Tasks 创建继承 Agent model/skills policy 的 scheduled task。
-8. Wallet page 显示 role separation，Wallet > Skill Grants 不向 generic skills 授予 mining/vault roles。
-9. Mining page 可只读 status；start/stop 仅通过 configured mining wallet 和 approvals。
-10. Advanced > Debug 保持 operator-only，不复制普通 setup flows。

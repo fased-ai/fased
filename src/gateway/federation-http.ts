@@ -49,7 +49,6 @@ import {
   FEDERATION_MARKETPLACE_ORDER_PATH,
   isTrustedFederationPeerUrl,
   reserveAuthorizedFederationPeerRequest,
-  type FederationPeerAuthorizedRequest,
   type FederationPeerVerifyDeps,
 } from "../federation/peer-auth-v2.js";
 import {
@@ -253,40 +252,6 @@ function parseFederationToken(value: unknown): PersistedFederationToken | null {
     zrokToken: asScalarString(token.zrokToken)?.trim() || undefined,
     paidFlowEligible:
       typeof token.paidFlowEligible === "boolean" ? token.paidFlowEligible : undefined,
-    bondId: asScalarString(token.bondId)?.trim() || undefined,
-    bondWallet:
-      asObject(token.bondWallet) &&
-      asScalarString(asObject(token.bondWallet)?.chain) &&
-      asScalarString(asObject(token.bondWallet)?.address)
-        ? {
-            chain: asScalarString(asObject(token.bondWallet)?.chain) ?? "",
-            address: asScalarString(asObject(token.bondWallet)?.address) ?? "",
-          }
-        : undefined,
-    bondStatus:
-      token.bondStatus === "missing" ||
-      token.bondStatus === "active" ||
-      token.bondStatus === "unlocking" ||
-      token.bondStatus === "unlocked"
-        ? token.bondStatus
-        : undefined,
-    bondTier:
-      token.bondTier === "none" ||
-      token.bondTier === "basic-bond" ||
-      token.bondTier === "operator-bond"
-        ? token.bondTier
-        : undefined,
-    bondAmountRaw: asScalarString(token.bondAmountRaw)?.trim() || undefined,
-    bondUnlockAvailableAt: asScalarString(token.bondUnlockAvailableAt)?.trim() || undefined,
-    bondQuotaBand:
-      token.bondQuotaBand === "standard" ||
-      token.bondQuotaBand === "boosted" ||
-      token.bondQuotaBand === "operator"
-        ? token.bondQuotaBand
-        : undefined,
-    bondDerivedScopes: Array.isArray(token.bondDerivedScopes)
-      ? token.bondDerivedScopes.map((scope) => asScalarString(scope)?.trim() ?? "").filter(Boolean)
-      : undefined,
   };
 }
 
@@ -1248,7 +1213,7 @@ function validateSellerMarketplaceOrderIntake(params: {
   origin: string;
   localHandle: string;
   senderHandle: string;
-  peerBondTier?: FederationPeerAuthorizedRequest["bondTier"];
+
   order: MarketplaceOrderInput;
 }):
   | { ok: true; value: { offer: ReturnType<typeof listLocalFederationOffers>[number] } }
@@ -1294,28 +1259,11 @@ function validateSellerMarketplaceOrderIntake(params: {
   const requiredTier = normalizeComparableValue(
     localOffer.offer.requiredTrustOrBondTier || "verified",
   );
-  const peerTier = params.peerBondTier ?? "none";
-  const peerTierRank = peerTier === "operator-bond" ? 2 : peerTier === "basic-bond" ? 1 : 0;
-  const requiredTierRank =
-    requiredTier === "verified" || requiredTier === "none"
-      ? 0
-      : requiredTier === "basic-bond"
-        ? 1
-        : requiredTier === "operator-bond"
-          ? 2
-          : -1;
-  if (requiredTierRank < 0) {
+  if (requiredTier !== "verified" && requiredTier !== "none") {
     return {
       ok: false,
       status: 409,
-      reason: `local seller offer requires unsupported trust tier ${localOffer.offer.requiredTrustOrBondTier}`,
-    };
-  }
-  if (peerTierRank < requiredTierRank) {
-    return {
-      ok: false,
-      status: 403,
-      reason: `seller offer requires ${requiredTier}; verified peer has ${peerTier}`,
+      reason: "seller offer requires an unsupported trust requirement",
     };
   }
   if (
@@ -2450,7 +2398,7 @@ export async function handleFederationHttpRequest(
         origin,
         localHandle,
         senderHandle,
-        peerBondTier: peerAuth.bondTier,
+
         order: parsed.value,
       });
       if (!validation.ok) {

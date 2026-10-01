@@ -16,16 +16,6 @@ aligned with this page before adding page-specific styling or one-off layouts.
 The Control UI is a workbench for one selected Agent, plus a small set of global
 operator pages.
 
-- **Dashboard** is the compact overview board.
-- **Chat** is the browser conversation surface for the selected Agent/session.
-- **Agents** owns normal setup: the Providers tab for Agent model/provider
-  selection, Channels, Skills, Tools, Memory, Services, Tasks, Sessions, Files,
-  and Coordination.
-- **Wallets**, **Mining**, **Fased Network**, **Marketplace**, **Extensions**,
-  **Notifications**, and **Usage** are first-class global operation pages.
-- **Advanced** owns raw Config, Debug, and Nodes. Do not put Debug or Nodes back
-  into primary navigation.
-
 Global pages such as Providers, Channels, Services, Tasks, Skills, Memory,
 Debug, and Nodes may still exist for deep links or admin workflows. Hide them
 from primary navigation when their normal workflow now lives under a selected
@@ -73,16 +63,6 @@ The shell has three persistent pieces:
 
 Navigation rules:
 
-- Sidebar is icon-only when collapsed and icon plus text when expanded.
-- Use the order in `ui/src/ui/navigation.ts`: Dashboard, Chat, Agents, Wallets,
-  Mining, Fased Network, Marketplace, Extensions, Notifications, Usage,
-  Advanced, Logs.
-- No section group cards in the sidebar.
-- Selected nav state should be simple: background or text contrast only. Do not
-  add extra white border outlines around the selected item.
-- Hover state is a subtle grey/neutral surface with a tooltip when collapsed.
-- Use lucide icons, not custom inline icons, when a matching icon exists.
-
 Top bar rules:
 
 - The top bar owns the current page title, global health dot, docs icon, and the
@@ -114,21 +94,11 @@ Summary cards use this pattern:
 
 Examples:
 
-- Agent setup cards: Agent, Skills, Models, Channels, Tools, Tasks, Sessions,
-  Services, Usage, Extensions.
-- Dashboard widgets: Agents, Usage, Wallets, Mining, Fased Network.
-
 ## Dashboard Widgets
 
 Dashboard is a compact widget board, not a launch-link directory.
 
 Default widgets:
-
-- Agents: total Agents, tasks, sessions.
-- Usage: token usage history over the selected window.
-- Wallets: wallet role counts and SOL balances.
-- Mining: status, SAT wallet balance, capital, recent mining history.
-- Fased Network: hosted status and address/handle summary.
 
 Rules:
 
@@ -196,9 +166,6 @@ Explanatory copy belongs behind a small helper icon, not inline paragraphs.
 - Helper text uses normal sentence case, not uppercase labels.
 - Helper popovers must fit within the viewport.
 
-Use helper icons for concepts like caps, per-transaction limits, mining cycle
-states, dashboard metrics, service setup, and Advanced diagnostics.
-
 ## Status
 
 Status is visual and terse.
@@ -254,29 +221,12 @@ fine; primary navigation should stay simple.
 
 Security-sensitive surfaces must separate install, allow, and grant:
 
-- Installing a skill writes files or dependencies only.
-- Allowing a skill attaches it to an Agent.
-- Granting tools/wallets gives runtime authority.
-- Mining and vault wallet roles are not available to arbitrary skills.
-- External packages require visible trust and integrity warnings.
-
-Wallet, mining, exec, plugin-catalog, and dependency installer flows must show
-what is being changed before the action runs.
-
 ## Testing Expectations
 
 Any UI change touching shared layout or workflows should include at least one
 focused browser test for the real click path.
 
 Required checks by change type:
-
-- Navigation/sidebar/topbar: routing and responsive browser test.
-- Modal changes: button opens modal, backdrop closes, success/error remains
-  visible.
-- Dashboard widgets: widget add/remove/move and no horizontal content overflow.
-- Agent setup tabs: selected Agent scope is preserved.
-- Skills: create/edit, review install, dependency install, Agent allow toggle.
-- Wallet/mining: review gates and no policy broadening.
 
 Run targeted tests first, then the broader UI suite when the touched surface is
 shared.

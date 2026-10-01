@@ -1,7 +1,7 @@
 import AppKit
-import Foundation
 import FasedAgentIPC
 import FasedAgentKit
+import Foundation
 import WebKit
 
 @MainActor
@@ -361,7 +361,9 @@ final class CanvasWindowController: NSWindowController, WKNavigationDelegate, NS
 
     func shouldAutoNavigateToA2UI(lastAutoTarget: String?) -> Bool {
         let trimmed = (self.currentTarget ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == "/" { return true }
+        if trimmed.isEmpty || trimmed == "/" {
+            return true
+        }
         if let lastAuto = lastAutoTarget?.trimmingCharacters(in: .whitespacesAndNewlines),
            !lastAuto.isEmpty,
            trimmed == lastAuto

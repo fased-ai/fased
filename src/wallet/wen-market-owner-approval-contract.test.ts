@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
-import { registerWenApprovalGateway } from "../../extensions/sat-mining/src/wen-approval-gateway.js";
+import { registerWenApprovalGateway } from "../../extensions/wen/src/wen-approval-gateway.js";
 import { approveWenMarketWithOwnerConfirmation } from "../../ui/src/ui/wen-campaign-approval.js";
 import { createCampaignGatewayTransport } from "../../ui/src/ui/wen-campaign-gateway-transport.js";
 import type { FasedAgentPluginApi } from "../plugins/types.js";
 import { callLocalSocketSigner } from "./providers/local-socket-signer-adapter.js";
 import { createWenMarketGatewayProfile } from "./wen-campaign-gateway-profile.js";
+import type { CampaignSessionTransport } from "./wen-campaign-session.js";
 import { bindOwnerMarketApproval } from "./wen-market-owner-approval-contract.js";
 import type { MarketReviewExpectation } from "./wen-market-review-contract.js";
 const review = JSON.parse(
@@ -50,7 +51,9 @@ function setup() {
       throw Error("Passkey must not be invoked");
     }),
     confirmOwner: vi.fn(async () => structuredClone(metadata)),
-    journey: vi.fn(async () => structuredClone(result)),
+    journey: vi.fn(async (_request: Parameters<CampaignSessionTransport["journey"]>[0]) =>
+      structuredClone(result),
+    ),
   };
   const retain = vi.fn();
   const run = () =>
@@ -77,6 +80,7 @@ it("consumes exact owner confirmation without passkey and retains identity befor
   expect(f.transport.journey).toHaveBeenCalledExactlyOnceWith({
     requestId: review.requestId,
     action: "execute",
+    proof: { proofId },
   });
 });
 it("recovers once after lost execution response without resubmission", async () => {
@@ -84,7 +88,7 @@ it("recovers once after lost execution response without resubmission", async () 
   f.transport.journey.mockRejectedValueOnce(Error("response lost"));
   await f.run();
   expect(f.transport.journey.mock.calls.map(([r]) => r)).toEqual([
-    { requestId: review.requestId, action: "execute" },
+    { requestId: review.requestId, action: "execute", proof: { proofId } },
     { requestId: review.requestId, action: "recover" },
   ]);
 });
@@ -177,7 +181,7 @@ it("joins the UI, connection-owned gateway, protected profile and native proof i
       "v2.wenMarket.journey",
     ]);
     await expect(
-      transport.journey({ requestId: review.requestId, action: "execute" }),
+      transport.journey({ requestId: review.requestId, action: "execute", proof: { proofId } }),
     ).rejects.toThrow();
     expect(socket).toHaveBeenCalledTimes(2);
   } finally {
