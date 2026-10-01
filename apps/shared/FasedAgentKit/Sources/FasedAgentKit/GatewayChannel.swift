@@ -465,8 +465,8 @@ public actor GatewayChannelActor {
         } else if let tick = ok.policy["tickIntervalMs"]?.value as? Int {
             self.tickIntervalMs = Double(tick)
         }
-        if let auth = ok.auth,
-           let deviceToken = auth["deviceToken"]?.value as? String {
+        let auth = ok.auth
+        if let deviceToken = auth["deviceToken"]?.value as? String {
             let authRole = auth["role"]?.value as? String ?? role
             let scopes = (auth["scopes"]?.value as? [ProtoAnyCodable])?
                 .compactMap { $0.value as? String } ?? []
