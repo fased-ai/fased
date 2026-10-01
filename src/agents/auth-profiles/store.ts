@@ -115,7 +115,7 @@ export async function updateAuthProfileStoreWithLock(params: {
 
   try {
     return await withFileLock(authPath, AUTH_STORE_LOCK_OPTIONS, async () => {
-      const store = ensureAuthProfileStore(params.agentDir);
+      const store = ensureAuthProfileStoreForLocalUpdate(params.agentDir);
       const shouldSave = params.updater(store);
       if (shouldSave) {
         saveAuthProfileStore(store, params.agentDir);
@@ -827,11 +827,13 @@ export function ensureAuthProfileStore(
 }
 
 export function ensureAuthProfileStoreForLocalUpdate(agentDir?: string): AuthProfileStore {
-  const runtimeStore = resolveRuntimeAuthProfileStore(agentDir);
-  if (runtimeStore) {
-    return runtimeStore;
-  }
-  return loadAuthProfileStoreForAgent(agentDir, { syncExternalCli: false });
+  // Account edits must read durable credentials, not the activated inference snapshot.
+  // Strict read-only loading preserves fresh sign-ins and fails closed on corruption.
+  return loadAuthProfileStoreForAgent(agentDir, {
+    readOnly: true,
+    strict: true,
+    syncExternalCli: false,
+  });
 }
 
 export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {

@@ -1239,7 +1239,9 @@ export function renderProviders(props: ProvidersProps) {
                         <div class="providers-provider__chips">
                           ${
                             ready
-                              ? nothing
+                              ? html`
+                                  <span class="chip ok">Connected</span>
+                                `
                               : html`<span class=${runtimeStatusClass(runtimeStatus)}>
                                   ${
                                     runtimeStatus === "refresh-required"

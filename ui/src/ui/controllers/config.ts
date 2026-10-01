@@ -857,6 +857,23 @@ export async function runInteractiveProviderAuthCredential(
     }
     activeWizardSessionId = null;
 
+    // Activate the saved account before refreshing the card or claiming completion.
+    await state.client.request("secrets.reload", {});
+    await loadConfig(state);
+    if (!isCurrentRun()) {
+      return false;
+    }
+    const provider = state.configAuthStatus?.providers.find(
+      (entry) => entry.provider === params.provider,
+    );
+    const readyStatuses = new Set(["ready", "ok", "configured", "expiring", "static"]);
+    if (
+      !provider ||
+      (!readyStatuses.has(provider.status) &&
+        !provider.profiles.some((profile) => readyStatuses.has(profile.status)))
+    ) {
+      throw new Error("Sign-in finished, but Fased could not verify a connected account.");
+    }
     setConfigAuthAction(
       state,
       isCurrentRun()
@@ -873,7 +890,6 @@ export async function runInteractiveProviderAuthCredential(
           })
         : state.configAuthAction,
     );
-    await loadConfig(state);
     return true;
   } catch (err) {
     if (activeWizardSessionId && state.client && state.connected) {

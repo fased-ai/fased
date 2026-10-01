@@ -396,6 +396,7 @@ describe("renderProviders", () => {
       ),
     );
 
+    expect(text).toContain("Connected");
     expect(text).not.toContain("Configured providers");
     expect(text).toContain("openai");
     expect(text).toContain("ok");
@@ -500,6 +501,7 @@ describe("renderProviders", () => {
     );
 
     expect(text).toContain("Refresh sign-in");
+    expect(text).not.toContain("Connected");
   });
 
   it("renders compact OAuth sign-in link affordances in the included provider test shard", async () => {
