@@ -59,30 +59,8 @@ Skill 是 `SKILL.md` 指令包，加可选配置和依赖。安装 skill 只表�
 6. 允许选定 Agent 使用该 skill。
 7. 需要工具或钱包时分别授权。
 
-## 钱包、Mining 和 Skill Grants
-
 钱包访问与 skills 和 tools 分开。
-
-- 钱包设置和审批在 **Wallets**。
-- 通用 wallet-capable skills 只能使用显式允许的 Agent-role wallet。
-- Mining 和 Vault 钱包不给通用 skills。
-- SAT Mining 使用专用 mining runtime 和 mining wallet policy。
-- 安装 skill、审查插件或允许 Agent 使用 skill 都不会自动授予钱包访问。
 
 对 wallet-capable skills，请在 **Wallets > Skill Grants** 中授予最窄的 actions、wallet ids、chains、caps 和 automation level。
 
-新 signer wallet 使用 versioned role-ready baseline，而不是 unlimited default。
-Legacy deny-all wallet 需要一次明确 review 后 activation。创建 Agent wallet 不会
-自动设为 Default Agent；risky routing 顺序是 explicit wallet、skill grant、Agent
-assignment、最后才是 optional Default Agent fallback。Mining retirement 在移动
-runtime assignment 前写入永久 signer tombstone。
-
 ## 发布前检查
-
-- 非 loopback 访问启用 Gateway auth。
-- 远程访问使用 Tailscale、SSH tunnel 或锁定的反向代理。
-- Models、Channels、Services、Skills、Tools、Memory、Tasks 按 Agent 配置。
-- Skills 安装前审查；依赖安装后验证。
-- Wallet Skill Grants 与 Mining/Vault 角色分离。
-- 安装 smoke test 后检查 Logs 和 Usage。
-- Advanced > Debug 和 Advanced > Nodes 只作为运维诊断，不作为首次设置入口。

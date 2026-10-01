@@ -1,6 +1,6 @@
 {
   "name": "@fased/fased",
-  "version": "0.1.76-rc.166",
+  "version": "0.1.76-rc.167",
   "private": true,
   "description": "Fased Agent self-hosted AI gateway with channels, tools, plugins, and operator modules",
   "keywords": [
@@ -67,7 +67,13 @@
     "!extensions/**/*.e2e-harness.ts",
     "!extensions/**/*.test-harness.ts",
     "!extensions/**/*.test.ts",
-    "!extensions/**/*.test.tsx"
+    "!extensions/**/*.test.tsx",
+    "!dist/mining/",
+    "!dist/plugin-sdk/sat-runtime.*",
+    "!dist/cli/mining-cli.*",
+    "!dist/cli/mining-cli/",
+    "!dist/cli/program/register.mining.*",
+    "!extensions/sat-mining/"
   ],
   "os": [
     "linux",
@@ -105,9 +111,9 @@
       "types": "./dist/plugin-sdk/provider-web-search-config-contract.d.ts",
       "default": "./dist/plugin-sdk/provider-web-search-config-contract.js"
     },
-    "./plugin-sdk/sat-runtime": {
-      "types": "./dist/plugin-sdk/sat-runtime.d.ts",
-      "default": "./dist/plugin-sdk/sat-runtime.js"
+    "./plugin-sdk/wen-runtime": {
+      "types": "./dist/plugin-sdk/wen-runtime.d.ts",
+      "default": "./dist/plugin-sdk/wen-runtime.js"
     },
     "./plugin-sdk/slack": {
       "types": "./dist/plugin-sdk/slack.d.ts",
@@ -121,17 +127,17 @@
       "types": "./dist/plugin-sdk/whatsapp.d.ts",
       "default": "./dist/plugin-sdk/whatsapp.js"
     },
-    "./cli-entry": "./fased.mjs"
+    "./cli-entry": "./fased.mjs",
+    "./plugin-sdk/config": {
+      "types": "./dist/plugin-sdk/config.d.ts",
+      "default": "./dist/plugin-sdk/config.js"
+    },
+    "./plugin-sdk/line": {
+      "types": "./dist/plugin-sdk/line.d.ts",
+      "default": "./dist/plugin-sdk/line.js"
+    }
   },
   "scripts": {
-    "agent:capital-interface:check": "node scripts/generate-fased-agent-capital-interface.mjs --check",
-    "agent:capital-interface:import": "node scripts/generate-fased-agent-capital-interface.mjs --import",
-    "agent:identity-interface:check": "node scripts/generate-fased-agent-identity-interface.mjs --check",
-    "agent:identity-interface:import": "node scripts/generate-fased-agent-identity-interface.mjs --import",
-    "agent:money-foundation:check": "node scripts/generate-fased-money-foundation.mjs --check",
-    "agent:money-foundation:import": "node scripts/generate-fased-money-foundation.mjs --import",
-    "agent:public-views:check": "node scripts/generate-fased-agent-public-views.mjs --check",
-    "agent:public-views:import": "node scripts/generate-fased-agent-public-views.mjs --import",
     "android:assemble": "cd apps/android && ./gradlew :app:assembleDebug",
     "android:install": "cd apps/android && ./gradlew :app:installDebug",
     "android:run": "cd apps/android && ./gradlew :app:installDebug && adb shell am start -n ai.fased.android/.MainActivity",
@@ -146,7 +152,7 @@
     "build:runtime-assets": "pnpm canvas:a2ui:bundle && node --import tsx scripts/canvas-a2ui-copy.ts && node --import tsx scripts/copy-hook-metadata.ts && node --import tsx scripts/copy-export-html-templates.ts && node --import tsx scripts/write-build-info.ts && node --import tsx scripts/write-cli-compat.ts",
     "canvas:a2ui:bundle": "bash scripts/bundle-a2ui.sh",
     "check": "pnpm check:ci",
-    "check:ci": "pnpm signer:protocol:check && pnpm agent:identity-interface:check && pnpm agent:capital-interface:check && pnpm agent:money-foundation:check && pnpm sat:signer-codecs:check && pnpm format:check && pnpm lint && pnpm lint:tmp:no-random-messaging && pnpm lint:tmp:channel-agnostic-boundaries && pnpm lint:tmp:no-raw-channel-fetch && pnpm lint:auth:no-pairing-store-group && pnpm lint:auth:pairing-account-scope && pnpm check:host-env-policy:swift",
+    "check:ci": "pnpm signer:protocol:check && pnpm format:check && pnpm lint && pnpm lint:tmp:no-random-messaging && pnpm lint:tmp:channel-agnostic-boundaries && pnpm lint:tmp:no-raw-channel-fetch && pnpm lint:auth:no-pairing-store-group && pnpm lint:auth:pairing-account-scope && pnpm check:host-env-policy:swift",
     "check:dependency-ownership": "node --import tsx scripts/dependency-ownership-report.ts --check",
     "check:docs": "pnpm format:docs:check && pnpm lint:docs && pnpm docs:check-links && pnpm docs:check-product-contract",
     "check:host-env-policy:swift": "node scripts/generate-host-env-security-policy-swift.mjs --check",
@@ -221,12 +227,8 @@
     "protocol:gen:swift": "node --import tsx scripts/protocol-gen-swift.ts",
     "release:check": "pnpm build && pnpm release:validate-dist",
     "release:validate-dist": "pnpm release:validate-dist:contracts && pnpm release:validate-dist:packed",
-    "release:validate-dist:contracts": "pnpm signer:protocol:check && pnpm sat:signer-codecs:check && pnpm check:dependency-ownership && pnpm check:plugin-sdk:types && pnpm test:signer:compat && node --import tsx scripts/release-check.ts",
+    "release:validate-dist:contracts": "pnpm signer:protocol:check && pnpm check:dependency-ownership && pnpm check:plugin-sdk:types && pnpm test:signer:compat && node --import tsx scripts/release-check.ts",
     "release:validate-dist:packed": "node --import tsx scripts/smoke-packed-core.ts",
-    "sat:bond:runtime:local": "bash scripts/set-sat-bond-runtime-env.sh",
-    "sat:signer-codecs:check": "node scripts/generate-sat-signer-codecs.mjs --check",
-    "sat:signer-codecs:generate": "node scripts/generate-sat-signer-codecs.mjs",
-    "sat:vnext-interface:check": "node scripts/generate-sat-vnext-interface.mjs --check",
     "signer:protocol:check": "node scripts/generate-signer-protocol-v2.mjs --check",
     "signer:protocol:generate": "node scripts/generate-signer-protocol-v2.mjs",
     "start": "node scripts/run-node.mjs",
@@ -257,7 +259,7 @@
     "test:signer:portable": "bash scripts/test-fased-signerd-portable-builds.sh",
     "test:smoke:agent-flow": "vitest run --config vitest.unit.config.ts src/auto-reply/reply/channel-command-control-flow.test.ts -t \"Provider -> Agent -> Skill -> Chat -> Task -> Memory -> Channel delivery\"",
     "test:ui": "pnpm lint:ui:no-raw-window-open && pnpm --dir ui test",
-    "test:ui:mining": "pnpm --dir ui exec vitest run --config vitest.config.ts src/ui/app.mining-start-stop.browser.test.ts src/ui/app.mining-reconnect.browser.test.ts",
+    "test:ui:wen": "pnpm --dir ui exec vitest run --config vitest.config.ts src/ui/views/wen && pnpm --dir ui exec vitest run --config vitest.campaign-wire.config.ts",
     "test:voicecall:closedloop": "vitest run extensions/voice-call/src/manager.test.ts extensions/voice-call/src/media-stream.test.ts src/plugins/voice-call.plugin.test.ts --maxWorkers=1",
     "test:watch": "vitest",
     "tui": "node scripts/run-node.mjs tui",

@@ -19,7 +19,7 @@ function fixture() {
     version: 1,
     adapterId: "fased.mining-adapter",
     adapterOperations: ["status.read"],
-    capabilityPacks: ["miner", "risk-officer"],
+    capabilityPacks: ["risk-officer", "allocator"],
     permissions: createZeroCapabilityPermissions(),
     artifactSha256: "a".repeat(64),
     issuedAt: "2026-09-02T12:00:00.000Z",

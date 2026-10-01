@@ -121,7 +121,7 @@ Execute one checkpoint at a time and stop with exact evidence.
 ### D5 — Typed state participants
 
 - Quiesce before capture.
-- Add SQLite, signer, wallet, mining, federation, configuration, application
+- Add SQLite, signer, wallet, federation, configuration, application
   state and plugin-data participants.
 - Verify access under actual target UIDs.
 

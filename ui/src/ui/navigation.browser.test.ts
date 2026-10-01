@@ -62,21 +62,6 @@ describe("control UI workflow navigation", () => {
     expect(app.textContent).not.toContain("Resources");
   });
 
-  it("shows the legacy Mining route for an attached wallet and keeps it directly routable", async () => {
-    const app = mountApp("/overview");
-    await app.updateComplete;
-    expect(app.querySelector('a.nav-item[href="/mining"]')).toBeNull();
-
-    app.miningAttachedWalletId = "mining";
-    await app.updateComplete;
-    expect(app.querySelector('a.nav-item[href="/mining"]')).not.toBeNull();
-
-    app.miningAttachedWalletId = null;
-    app.setTab("mining");
-    await app.updateComplete;
-    expect(app.querySelector('a.nav-item[href="/mining"]')).not.toBeNull();
-  });
-
   it("keeps legacy Mining visible when its wallet role is registered", async () => {
     const app = mountApp("/overview");
     app.walletNamedWallets = [

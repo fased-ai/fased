@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
-import { registerWenApprovalGateway } from "../../extensions/sat-mining/src/wen-approval-gateway.js";
+import { registerWenApprovalGateway } from "../../extensions/wen/src/wen-approval-gateway.js";
 import { createCampaignGatewayTransport } from "../../ui/src/ui/wen-campaign-gateway-transport.js";
 import type { FasedAgentPluginApi } from "../plugins/types.js";
 import { callLocalSocketSigner } from "./providers/local-socket-signer-adapter.js";

@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { resolveCoreToolProfilePolicy } from "./tool-catalog.js";
+import {
+  PROFILE_OPTIONS,
+  resolveCoreToolProfilePolicy,
+  resolveCoreToolProfiles,
+} from "./tool-catalog.js";
 
 describe("tool-catalog", () => {
+  it("offers a narrow WEN strategy profile without changing existing profiles", () => {
+    expect(PROFILE_OPTIONS).toContainEqual({ id: "wen", label: "WEN strategy" });
+    expect(resolveCoreToolProfilePolicy("wen")?.allow?.toSorted()).toEqual([
+      "memory_get",
+      "memory_search",
+      "session_status",
+      "update_plan",
+      "wen_acquisition_request",
+      "wen_economy_facts",
+    ]);
+    expect(resolveCoreToolProfiles("memory_search")).toContain("wen");
+    expect(resolveCoreToolProfiles("exec")).not.toContain("wen");
+    expect(resolveCoreToolProfilePolicy("full")).toBeUndefined();
+  });
+
   it("includes code_execution, web_search, x_search, web_fetch, and update_plan in the coding profile policy", () => {
     const policy = resolveCoreToolProfilePolicy("coding");
     expect(policy).toBeDefined();

@@ -249,7 +249,7 @@ jobs:
       run_hosting: ${{ steps.scope.outputs.run_hosting }}
       run_ci_contracts: ${{ steps.scope.outputs.run_ci_contracts }}
       run_t2_contracts: ${{ steps.scope.outputs.run_t2_contracts }}
-      run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
+      run_ui_wen: ${{ steps.scope.outputs.run_ui_wen }}
       run_skills: ${{ steps.scope.outputs.run_skills }}
       full_matrix: ${{ steps.scope.outputs.full_matrix }}
     steps:
@@ -1165,10 +1165,10 @@ jobs:
       - name: Reject new repository-wide TypeScript errors
         run: pnpm check:typescript:baseline
 
-  ui-mining:
-    name: "ui-mining"
+  ui-wen:
+    name: "WEN browser"
     needs: [change-scope]
-    if: needs.change-scope.outputs.run_ui_mining == 'true'
+    if: needs.change-scope.outputs.run_ui_wen == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -1181,17 +1181,17 @@ jobs:
         with:
           install-bun: "false"
 
-      - name: Install Playwright Chromium for mining browser tests
+      - name: Install Playwright Chromium for WEN browser tests
         run: pnpm --dir ui exec playwright install chromium
 
-      - name: Run Control UI mining browser tests
-        run: pnpm test:ui:mining
+      - name: Run Control UI WEN browser tests
+        run: pnpm test:ui:wen
 
-      - name: Upload mining UI screenshots
+      - name: Upload WEN UI screenshots
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ui-mining-screenshots-${{ github.run_id }}
+          name: ui-wen-screenshots-${{ github.run_id }}
           if-no-files-found: ignore
           path: ui/src/ui/**/__screenshots__/
 
@@ -1498,7 +1498,7 @@ jobs:
       - codeql-javascript
       - codeql-go
       - codeql-python
-      - ui-mining
+      - ui-wen
       - ui
       - macos-runtime
       - macos-app
@@ -1536,7 +1536,7 @@ jobs:
           RUN_HOSTING: ${{ needs.change-scope.outputs.run_hosting }}
           RUN_CI_CONTRACTS: ${{ needs.change-scope.outputs.run_ci_contracts }}
           RUN_T2_CONTRACTS: ${{ needs.change-scope.outputs.run_t2_contracts }}
-          RUN_UI_MINING: ${{ needs.change-scope.outputs.run_ui_mining }}
+          RUN_UI_WEN: ${{ needs.change-scope.outputs.run_ui_wen }}
           RUN_UI: ${{ needs.change-scope.outputs.run_ui }}
           RUN_SKILLS: ${{ needs.change-scope.outputs.run_skills }}
           RUN_MACOS_RUNTIME: ${{ needs.change-scope.outputs.run_macos_runtime }}
@@ -1564,7 +1564,7 @@ jobs:
           CODEQL_JAVASCRIPT: ${{ needs.codeql-javascript.result }}
           CODEQL_GO: ${{ needs.codeql-go.result }}
           CODEQL_PYTHON: ${{ needs.codeql-python.result }}
-          UI_MINING: ${{ needs.ui-mining.result }}
+          UI_WEN: ${{ needs.ui-wen.result }}
           UI: ${{ needs.ui.result }}
           MACOS_RUNTIME: ${{ needs.macos-runtime.result }}
           MACOS_APP: ${{ needs.macos-app.result }}

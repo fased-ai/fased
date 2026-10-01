@@ -6,25 +6,10 @@ import {
 import {
   callDebugAdminRpcControl,
   callDebugAcpxPushTest,
-  callDebugSatProtocolMaintenance,
   loadDebug,
   updateDebugAcpxBridgeConfig,
   type DebugState,
 } from "./debug.ts";
-
-function createStorageMock(): Storage {
-  const values = new Map<string, string>();
-  return {
-    get length() {
-      return values.size;
-    },
-    clear: () => values.clear(),
-    getItem: (key) => values.get(key) ?? null,
-    key: (index) => [...values.keys()][index] ?? null,
-    removeItem: (key) => values.delete(key),
-    setItem: (key, value) => values.set(key, value),
-  };
-}
 
 function createDebugState(request: ReturnType<typeof vi.fn>): DebugState {
   return {
@@ -63,9 +48,6 @@ function createDebugState(request: ReturnType<typeof vi.fn>): DebugState {
     debugAcpxPushTestAuditHistory: null,
     debugAcpxPushTestResult: null,
     debugAcpxPushTestError: null,
-    debugSatProtocolMaintenanceBusy: false,
-    debugSatProtocolMaintenanceResult: null,
-    debugSatProtocolMaintenanceError: null,
   };
 }
 
@@ -459,79 +441,6 @@ describe("callDebugAdminRpcControl", () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(request).not.toHaveBeenCalled();
     expect(state.debugAdminRpcError).toContain("Node id is required");
-  });
-});
-
-describe("callDebugSatProtocolMaintenance", () => {
-  it("runs the SAT maintenance gateway method after confirmation", async () => {
-    const storage = createStorageMock();
-    vi.stubGlobal(
-      "confirm",
-      vi.fn(() => true),
-    );
-    vi.stubGlobal("localStorage", storage);
-    vi.stubGlobal("crypto", {
-      randomUUID: () => "11111111-1111-4111-8111-111111111111",
-    });
-    const request = vi.fn().mockResolvedValueOnce({
-      submitted: [{ action: "refillRegistryReserveFromTreasury", txHash: "tx" }],
-    });
-    const state = createDebugState(request);
-
-    await callDebugSatProtocolMaintenance(state);
-
-    expect(request).toHaveBeenCalledWith("sat.runProtocolMaintenanceOnce", {
-      idempotencyKey: "sat-maintain-ui-11111111-1111-4111-8111-111111111111",
-    });
-    expect(storage.getItem("fased.sat.maintenance.pending-idempotency.v1")).toBeNull();
-    expect(state.debugSatProtocolMaintenanceResult).toContain("refillRegistryReserveFromTreasury");
-    expect(state.debugSatProtocolMaintenanceError).toBeNull();
-    expect(state.debugSatProtocolMaintenanceBusy).toBe(false);
-  });
-
-  it("does not run SAT maintenance when confirmation is denied", async () => {
-    vi.stubGlobal(
-      "confirm",
-      vi.fn(() => false),
-    );
-    const request = vi.fn();
-    const state = createDebugState(request);
-
-    await callDebugSatProtocolMaintenance(state);
-
-    expect(request).not.toHaveBeenCalled();
-    expect(state.debugSatProtocolMaintenanceResult).toBeNull();
-  });
-
-  it("reuses the persisted maintenance key after an ambiguous request", async () => {
-    const storage = createStorageMock();
-    const randomUUID = vi
-      .fn()
-      .mockReturnValueOnce("11111111-1111-4111-8111-111111111111")
-      .mockReturnValueOnce("22222222-2222-4222-8222-222222222222");
-    vi.stubGlobal(
-      "confirm",
-      vi.fn(() => true),
-    );
-    vi.stubGlobal("localStorage", storage);
-    vi.stubGlobal("crypto", { randomUUID });
-    const request = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("gateway response lost"))
-      .mockResolvedValueOnce({ submitted: [] })
-      .mockResolvedValueOnce({ submitted: [] });
-    const state = createDebugState(request);
-
-    await callDebugSatProtocolMaintenance(state);
-    await callDebugSatProtocolMaintenance(state);
-    await callDebugSatProtocolMaintenance(state);
-
-    const keys = request.mock.calls.map(
-      (call) => (call[1] as { idempotencyKey: string }).idempotencyKey,
-    );
-    expect(keys[1]).toBe(keys[0]);
-    expect(keys[2]).not.toBe(keys[1]);
-    expect(randomUUID).toHaveBeenCalledTimes(2);
   });
 });
 

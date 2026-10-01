@@ -457,7 +457,7 @@ describe("gateway plugin HTTP auth boundary", () => {
           resolvedAuth,
         });
 
-        for (const path of ["/api/federation/status", "/api/federation/bond/wallet"]) {
+        for (const path of ["/api/federation/status"]) {
           const response = createResponse();
           await dispatchRequest(
             server,

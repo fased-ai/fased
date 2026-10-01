@@ -17,7 +17,6 @@ const expectedHostingPages = new Set([
   "docs/install/index.md",
   "docs/install/vps.md",
   "docs/maintainers/codex-skills/fased-release-manager/references/lifecycle.md",
-  "docs/start/agent-wallet-mining-walkthrough.md",
   "docs/start/fased.md",
   "docs/start/getting-started.md",
   "docs/zh-CN/install/index.md",
@@ -201,8 +200,6 @@ for (const page of [
   "install/vps",
   "install/installer",
   "plugins/crypto/wallet-roles-and-policies",
-  "plugins/crypto/mining-page",
-  "plugins/crypto/mining-troubleshooting",
 ]) {
   if (!navigationText.includes(`"${page}"`)) {
     fail(`docs navigation omits ${page}`);
@@ -212,7 +209,6 @@ for (const page of [
 for (const translation of [
   "docs/zh-CN/cli/wallet.md",
   "docs/zh-CN/plugins/crypto/wallet-roles-and-policies.md",
-  "docs/zh-CN/plugins/crypto/mining-page.md",
 ]) {
   if (!fs.existsSync(path.join(root, translation))) {
     fail(`missing Chinese product-contract page ${translation}`);

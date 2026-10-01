@@ -20,24 +20,6 @@ Fased 运行一个 Gateway 进程，可以托管多个持久 Agent。嵌入式�
 
 普通设置从 **Agents** 页面开始，然后选择一个 Agent。选定 Agent 拥有这些面向用户的设置标签页：
 
-| 标签页       | 负责内容                                                                                                                      |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| Setup        | identity、workspace、memory、skills、models、channels、tools、services、tasks、sessions、usage 和 extension health 的摘要卡片 |
-| Models       | 提供商登录/API key，以及该 Agent 的 primary、fallback、task 模型引用                                                          |
-| Channels     | 聊天账号设置、QR/login、路由、DM/group policy，以及投递到该 Agent                                                             |
-| Skills       | Skill library、插件目录搜索/审查/安装、创建/编辑/配置、依赖安装，以及该 Agent 的 skill access policy                          |
-| Tools        | 服务/扩展暴露工具后，每 Agent 的 allow/deny                                                                                   |
-| Memory       | session archive 开关、workspace memory roots、backend、QMD 状态和每 Agent 验证                                                |
-| Sessions     | 该 Agent 的会话、token/session metadata、关联任务和受保护的删除/恢复操作                                                      |
-| Services     | 选定 Agent 上下文中的 connector setup/status；某些服务凭证仍是全局的                                                          |
-| Tasks        | 该 Agent 的定时/事件触发工作，以及 webhook、channel、media、wallet、Marketplace、Mining 等来源的共享运行历史                  |
-| Coordination | 多 Agent task evidence、选定 Agent review、retry-with-evidence 控制                                                           |
-| Files        | `AGENTS.md`、`SOUL.md`、`TOOLS.md`、`IDENTITY.md`、`USER.md` 等用户拥有的工作区 bootstrap 文件                                |
-
-Debug、Advanced Config、Extensions、Logs、Nodes、Usage、Wallets、Mining、Fased Network 和 Marketplace 仍然存在，用于运行时、安全、经济和诊断。普通 Agent 设置不应要求编辑原始配置。
-
-**Agent > Tasks** 是审计和工作面，不是所有领域的控制面。Wallet、Marketplace 和 Mining 行在这里是只读镜像：可以打开来源页面或启动 review workflow，但签名、订单/争议、start/stop、commit/reveal、claim 和 recovery 仍必须在 Wallets、Marketplace 或 Mining 页面完成；gateway 会拒绝从 Tasks 直接 retry/resume/control 这些来源记录。
-
 ## 工作区（必需）
 
 每个 Agent 都有一个工作区目录。默认 Agent 使用 `agents.defaults.workspace`；其他 Agent 可以通过 `agents.list[].workspace` 覆盖。当前 Agent 工作区是文件工具和工作区上下文的工作目录。

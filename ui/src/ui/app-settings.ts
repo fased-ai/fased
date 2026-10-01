@@ -6,8 +6,6 @@ import {
   stopDebugPolling,
   startFederationPolling,
   stopFederationPolling,
-  startMiningPolling,
-  stopMiningPolling,
 } from "./app-polling.ts";
 import { scheduleChatScroll, scheduleLogsScroll } from "./app-scroll.ts";
 import type { FasedAgentApp } from "./app.ts";
@@ -30,7 +28,6 @@ import { loadExecApprovals } from "./controllers/exec-approvals.ts";
 import { loadFederation } from "./controllers/federation.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadMemory } from "./controllers/memory.ts";
-import { loadMining } from "./controllers/mining.ts";
 import { loadModelCatalogSnapshot } from "./controllers/models.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadOperationsStatus } from "./controllers/operations-status.ts";
@@ -447,15 +444,10 @@ export function setTab(host: SettingsHost, next: Tab) {
   } else {
     stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
   }
-  if (resolvedNext === "federation" || resolvedNext === "marketplace") {
+  if (resolvedNext === "federation") {
     startFederationPolling(host as unknown as Parameters<typeof startFederationPolling>[0]);
   } else {
     stopFederationPolling(host as unknown as Parameters<typeof stopFederationPolling>[0]);
-  }
-  if (resolvedNext === "mining") {
-    startMiningPolling(host as unknown as Parameters<typeof startMiningPolling>[0]);
-  } else {
-    stopMiningPolling(host as unknown as Parameters<typeof stopMiningPolling>[0]);
   }
   void refreshActiveTab(host);
   syncUrlWithTab(host, resolvedNext, false);
@@ -546,7 +538,7 @@ export async function refreshActiveTab(host: SettingsHost) {
   if (host.tab === "cron") {
     await loadCron(host);
   }
-  if (host.tab === "federation" || host.tab === "marketplace") {
+  if (host.tab === "federation") {
     await loadFederation(host as unknown as FasedAgentApp);
   }
   if (host.tab === "wallet") {
@@ -555,9 +547,6 @@ export async function refreshActiveTab(host: SettingsHost) {
     } else {
       await loadWallet(host as unknown as FasedAgentApp);
     }
-  }
-  if (host.tab === "mining") {
-    await loadMining(host as unknown as FasedAgentApp);
   }
   if (host.tab === "skills") {
     await loadSkills(host as unknown as FasedAgentApp);
@@ -798,16 +787,12 @@ export function setTabFromRoute(host: SettingsHost, next: Tab) {
   } else {
     stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
   }
-  if (resolvedNext === "federation" || resolvedNext === "marketplace") {
+  if (resolvedNext === "federation") {
     startFederationPolling(host as unknown as Parameters<typeof startFederationPolling>[0]);
   } else {
     stopFederationPolling(host as unknown as Parameters<typeof stopFederationPolling>[0]);
   }
-  if (resolvedNext === "mining") {
-    startMiningPolling(host as unknown as Parameters<typeof startMiningPolling>[0]);
-  } else {
-    stopMiningPolling(host as unknown as Parameters<typeof stopMiningPolling>[0]);
-  }
+
   if (host.connected) {
     void refreshActiveTab(host);
   }

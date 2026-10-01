@@ -88,12 +88,6 @@ request wallet actions.
 
 Normal setup:
 
-1. Open **Wallets > Skill Grants**.
-2. Select the reviewed wallet-capable skill.
-3. Grant only the needed Agent wallet ids, chains, mints, actions, caps, and
-   automation flags.
-4. Keep Mining and Vault wallet roles unavailable to normal skills.
-
 Scripted setup:
 
 ```bash
@@ -144,27 +138,6 @@ The generated shape is:
 ```
 
 Rules:
-
-- `roles` must be Agent-scoped; skills cannot use Mining or Vault wallets.
-- mints are exact allowlists; symbols are not authority for execution.
-- `maxAmount` is in base units for the input mint.
-- installed plugin-catalog skills must come from an allowlisted registry origin.
-- the grant command replaces the skill's wallet grant block so stale routes do
-  not silently accumulate.
-- Plugin-catalog installs record requested wallet permissions in
-  `<workspace>/skills/<skill>/.clawhub/origin.json`; updates that add risky
-  wallet permissions, requested tool access, install metadata, or new archive
-  scan warnings are blocked until explicitly approved by the operator.
-- Plugin archives are scanned before install. Symlinks, VCS folders,
-  `node_modules`, oversized files, package lifecycle scripts, and package
-  dependency blocks are rejected. Dependency manifests and helper scripts are
-  recorded as review warnings.
-- Every Marketplace version must publish a SHA-256/SRI archive digest. Missing
-  or mismatched integrity refuses installation before extraction.
-- Marketplace skill environment/API-key overrides are never injected. Their
-  instructions force a per-session, no-network, no-writable-workspace,
-  read-only-root sandbox and normal mixed-skill turns receive only `read`.
-  Configure a working sandbox backend (Docker by default); absence fails closed.
 
 Inspect installed marketplace sources and grant state:
 

@@ -131,14 +131,6 @@ writable modes, package version, and build identity before activation.
 | `fased-gateway` | Gateway service                                         | Application operations only through `app.sock`     |
 | `fased-signer`  | Native signer service                                   | Owns keys, policy, network state, and audit        |
 
-Protected Local Linux uses the same authority model with random per-profile
-service identities and socket paths. Normal `fased wallet` commands route
-create, import, readiness, policy, RPC, and Mining retirement through the typed
-native operator client. Recovery, raw export, re-encryption, WebAuthn
-enrollment, and mutating rotation are intentionally unavailable on the
-operator socket; use the installed bounded signer-owner helper after normal OS
-administrator authorization.
-
 Ubuntu WSL2 x86_64 Local reuses this Linux lifecycle when systemd is active and
 state remains under the WSL Linux `/home` filesystem. Linux arm64 Local uses
 its separately attested native artifact set. macOS Local selects separately
@@ -146,17 +138,6 @@ attested Darwin x86_64 or arm64 assets and system LaunchDaemons. Native Windows
 remains deferred; source or companion-app code does not imply managed support.
 
 ## Wallet setup contract
-
-- The operator chooses `agent`, `mining`, or `vault`; the role is permanent.
-- Create/import/recovery installs signer-owned role baseline v1 and one verified
-  primary RPC as one resumable lifecycle.
-- New Agent and Vault wallets are ready for reviewed owner actions. Automation
-  still needs explicit caps, destinations, programs, and grants.
-- New Mining wallets become SAT-ready only when the release-bound SAT manifest
-  is verified; funding is still required.
-- Existing legacy deny-all wallets are never expanded silently. Review the role
-  and explicitly run `fased wallet policy activate-role-baseline ... --confirm`.
-- Creating an Agent wallet does not silently make it the Default Agent wallet.
 
 See [Wallet CLI](/cli/wallet), [roles and policies](/plugins/crypto/wallet-roles-and-policies),
 and [wallet selection](/plugins/crypto/wallet-selection-contract).

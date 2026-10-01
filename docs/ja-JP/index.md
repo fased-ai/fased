@@ -15,8 +15,6 @@ x-i18n:
 
 **Fasedは、あなたが管理するマシンまたはサーバーで動くセルフホスト型エージェントランタイムです。**
 
-まずはブラウザのControl UIでチャットできる状態を作ります。その後、必要に応じてチャネル、モデル、サービス、スキル、タスク、ノード、ウォレット、Mining、Fased Networkを追加します。
-
 <Columns>
   <Card title="はじめに" href="/start/getting-started" icon="rocket">
     インストールから最初のブラウザチャットまでの最短ルート。
@@ -32,25 +30,6 @@ x-i18n:
 ## 何をするものか
 
 Fasedはチャットアプリだけではありません。Gatewayがランタイムの中心になり、Agentのセッション、ルーティング、ツール、メモリ、タスク、ノード接続を扱います。
-
-```mermaid
-flowchart LR
-  user["Chat / Control UI"] --> gateway["Gateway"]
-  gateway --> agent["Agent runtime"]
-  agent --> tools["Tools / Skills"]
-  agent --> memory["Memory"]
-  agent --> tasks["Tasks"]
-  gateway --> channels["Channels"]
-  gateway --> nodes["Nodes"]
-  gateway --> optional["Optional: Wallet / Mining / Network"]
-
-  classDef root fill:#120605,stroke:#ff5a36,color:#ffffff;
-  classDef core fill:#071018,stroke:#12cfff,color:#ffffff;
-  classDef opt fill:#20120a,stroke:#ffb020,color:#ffffff;
-  class user,gateway root;
-  class agent,tools,memory,tasks,channels,nodes core;
-  class optional opt;
-```
 
 ## 基本の流れ
 
@@ -69,27 +48,6 @@ fased dashboard
 ```
 
 ## 主な領域
-
-<CardGroup cols={2}>
-  <Card title="Gateway" href="/gateway" icon="server">
-    Control UI、CLI、チャネル、ノードが接続する実行面。
-  </Card>
-  <Card title="Agents" href="/concepts/agents-sessions-tasks" icon="bot">
-    Agent、セッション、保存タスクの基本モデル。
-  </Card>
-  <Card title="Channels" href="/channels" icon="message-square">
-    WhatsApp、Telegram、DiscordなどをAgentへ接続します。
-  </Card>
-  <Card title="Tools and Skills" href="/tools" icon="wrench">
-    Agentが使える操作能力と、外部サービスとの接続。
-  </Card>
-  <Card title="Nodes" href="/nodes" icon="smartphone">
-    ローカル端末の画面、カメラ、Canvas、実行能力をGatewayに接続します。
-  </Card>
-  <Card title="Wallet / Mining / Network" href="/plugins/crypto/wallet-page" icon="shield">
-    ベースランタイムが安定してから有効化するオプションのオペレーターモジュール。
-  </Card>
-</CardGroup>
 
 ## 次に読む
 

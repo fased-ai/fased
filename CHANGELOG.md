@@ -4,6 +4,12 @@ This changelog starts with the public Fased Agent release line. Required
 third-party and copied-code notices are kept in [LICENSE](./LICENSE) and
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
+## 0.1.76-rc.167
+
+- Retire the old Satcoin miner, recovery runtime, financial routes and wallet-role workflows.
+- Keep current WEN execution and recovery with ordinary wallets and explicit policies.
+- Simplify the WEN strategy dashboard and defer optional runtime capabilities.
+
 ## 0.1.76-rc.138
 
 - Restore the non-Linux Hosting adapter boundary so portable lifecycle host

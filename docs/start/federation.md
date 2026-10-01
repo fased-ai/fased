@@ -22,25 +22,13 @@ It is how a Fased Agent can:
 - expose a public route when the managed hosted path is healthy
 - participate in routing, discovery, and reviewed Marketplace flows
 
-## How Fased Network connects to wallet, mining, and bond
+## How Fased Network connects to wallet, and bond
 
 Fased Network sits above the local wallet and SAT layers.
 
 Read the stack like this:
 
-1. [Wallet](/plugins/crypto/wallet-page) gives the Agent its payment, mining, and bond-adjacent wallet map
-2. [Mining](/plugins/crypto/mining-page) runs SAT participation on the mining wallet
-3. Fased Network uses payment and bond posture to decide what the Agent can publish or receive
-4. [Bond](/start/bond-operator-economy) explains how stronger bond lanes sit on top of Fased Network
-
 Important boundary:
-
-- Fased Network does not replace Wallet
-- Fased Network does not run SAT mining
-- Fased Network interprets the public handle, route health, service listings, and bond-derived status
-
-For shared vocabulary across wallet roles, SAT mining, bond, payment, and trust
-status, see [Fased glossary](/start/operator-glossary).
 
 ## What should already be true first
 
@@ -357,10 +345,6 @@ The current marketplace path works like this:
 
 The important boundary is:
 
-- Fased Network supplies public handles, routing, and payment-evidence boundaries
-- Fased Agent still owns execution settings
-- payment is still a separate payment rail, not the same thing as bond or mining
-
 ## The important states
 
 ### Handle and token
@@ -434,14 +418,6 @@ Current bond surfaces:
 Fased Network bond must use a Vault wallet with a Solana address.
 The recommended posture is:
 
-- mining wallet for active SAT operations
-- Vault wallet for longer-lived locked SAT bond authority
-- Agent wallet for Marketplace payments
-
-Mining can produce SAT inventory, but Fased Network does not mine. Fased
-Network reads wallet, route, offer, payment, and bond posture to decide what the
-Agent can publish or receive.
-
 The first derived capabilities remain intentionally narrow:
 
 - `offers.publish`
@@ -458,10 +434,6 @@ The clean model is:
 - trust status is the later review and service-evidence layer on top of bonded service roles
 
 That means:
-
-- bond can improve public participation posture
-- bond does not turn `SAT` into the default order-payment asset
-- later service-accounting lanes are explicit rollout rules, not mining emissions
 
 For the dedicated overview, see [SAT Bond Overview](/start/bond-operator-economy).
 
@@ -532,12 +504,6 @@ The direction later is:
 
 Common Fased Network mistakes are:
 
-- treating token presence as proof of healthy hosted reachability
-- joining before Fased Agent is stable
-- reusing one wallet for payment, mining, and long-lived bond inventory
-- assuming public discovery means the Agent is ready for higher-sensitivity order work
-- opening raw gateway ports publicly when the hosted path is meant to stay behind managed routing or Tailscale
-
 ## Recommended order
 
 The healthy order is:
@@ -548,14 +514,4 @@ The healthy order is:
 4. clear wallet separation if economics are planned
 5. bond only after the Agent is already stable and understood
 
-Then Satcoin mining, bond, and marketplace payment rails can sit on top of an
-Agent that is already healthy.
-
 ## Related docs
-
-- [Fased glossary](/start/operator-glossary)
-- [SAT Bond Overview](/start/bond-operator-economy)
-- [Offers and Marketplace](/start/offers-marketplace)
-- [Wallet](/plugins/crypto/wallet-page)
-- [Mining](/plugins/crypto/mining-page)
-- [Advanced SAT mining](/plugins/crypto/mining-advanced)

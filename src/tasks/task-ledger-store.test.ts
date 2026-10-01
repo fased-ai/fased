@@ -249,6 +249,8 @@ describe("task ledger store", () => {
   it("fails closed before mutation for a newer schema", () => {
     const ledgerPath = resolveTaskLedgerPath();
     createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       source: "cron",
       runtime: "cron",
       task: "creates ledger",
@@ -272,6 +274,8 @@ describe("task ledger store", () => {
   it("fails closed before mutation when a v3 definitions table is missing", () => {
     const ledgerPath = resolveTaskLedgerPath();
     createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       source: "cron",
       runtime: "cron",
       task: "creates ledger",
@@ -297,6 +301,8 @@ describe("task ledger store", () => {
   it("fails closed before mutation when a v3 cron queue table is missing", () => {
     const ledgerPath = resolveTaskLedgerPath();
     createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       source: "cron",
       runtime: "cron",
       task: "creates ledger",
@@ -450,6 +456,8 @@ describe("task ledger store", () => {
   it("upgrades v2 to v3 without changing task or definition JSON columns", () => {
     const ledgerPath = resolveTaskLedgerPath();
     createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       taskId: "v2-task",
       source: "cron",
       runtime: "cron",
@@ -502,6 +510,8 @@ describe("task ledger store", () => {
   it("rejects a conflicting v2 queue table without relabeling or changing JSON rows", () => {
     const ledgerPath = resolveTaskLedgerPath();
     createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       taskId: "v2-conflict-task",
       source: "cron",
       runtime: "cron",
@@ -556,6 +566,8 @@ describe("task ledger store", () => {
   it("upgrades v1 through v3 transactionally without changing existing task rows", () => {
     const ledgerPath = resolveTaskLedgerPath();
     createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       taskId: "v1-task",
       source: "cron",
       runtime: "cron",
@@ -608,6 +620,8 @@ describe("task ledger store", () => {
 
   it("keeps taskId and runId idempotency through the registry", () => {
     const first = createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       source: "cron",
       runtime: "cron",
       task: "first",
@@ -615,6 +629,8 @@ describe("task ledger store", () => {
       runId: "same-run",
     });
     const second = createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       source: "cron",
       runtime: "cron",
       task: "updated",
@@ -628,6 +644,8 @@ describe("task ledger store", () => {
 
   it("retargets a matched runId and patch identity without retaining the old row", () => {
     createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       taskId: "original-task",
       source: "cron",
       runtime: "cron",
@@ -636,6 +654,8 @@ describe("task ledger store", () => {
       runId: "shared-run",
     });
     const retargeted = createTaskRecord({
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "done_only",
       taskId: "replacement-task",
       source: "cron",
       runtime: "cron",

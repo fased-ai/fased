@@ -13,18 +13,11 @@ import {
 import {
   bindSignerOwnedRPCProfile,
   createSignerOwnedRPCProfile,
-  createRoleReadySignerOwnedWallet,
+  createLockedSignerOwnedWallet,
   listSignerOwnedRPCProfiles,
-  readSignerOwnedWallet,
   readSignerOwnedWalletReadiness,
-  type LocalSignerPolicyRecord,
   type LocalSignerWalletPolicyRecord,
 } from "../wallet/local-socket-signer-lifecycle.js";
-import {
-  buildMiningRetirementEvidence,
-  verifyMiningRecoveryPackage,
-  writeMiningRetirementReceipt,
-} from "../wallet/mining-wallet-retirement.js";
 import { resolveNativeSignerOperatorLifecycle } from "../wallet/native-signer-lifecycle-context.js";
 import {
   invokeNativeSignerOperatorHealth,
@@ -47,7 +40,6 @@ import {
   reconcileWalletInboundEvents,
   type WalletInboundStatus,
 } from "../wallet/wallet-inbound-events.js";
-import type { WalletRetireOptions } from "../wallet/wallet-mining-rotation-facade.js";
 import { buildWalletProviderCapabilityMatrix } from "../wallet/wallet-provider-capabilities.js";
 import { walletProviderFacade } from "../wallet/wallet-provider-facade.js";
 import type { WalletProviderRegistry } from "../wallet/wallet-provider-registry.js";
@@ -82,13 +74,9 @@ import {
 
 const {
   nextRoleIdentity: nextRoleWalletIdentity,
-  normalizeRole: normalizeWalletUserRole,
   read: readWalletProviderRegistry,
-  replaceRetiredMiningWallet,
   resolveRole: resolveWalletUserRole,
-  setDefault: setDefaultWallet,
   setProviderEnabled: setWalletProviderEnabled,
-  setRole: setNamedWalletRole,
   upsert: upsertNamedWallet,
   write: writeWalletProviderRegistry,
 } = walletRegistryFacade;
@@ -127,7 +115,6 @@ export type WalletSetupOptions = {
   turnkeyOrganizationId?: string;
   turnkeyPolicyId?: string;
   turnkeyBaseUrl?: string;
-  role?: string;
   noProviderIdUpdate?: boolean;
   force?: boolean;
   enableLimitOrders?: boolean;
@@ -149,8 +136,6 @@ export type {
   WalletRecoveryImportOptions,
 } from "../wallet/wallet-recovery-facade.js";
 
-export type { WalletRetireOptions } from "../wallet/wallet-mining-rotation-facade.js";
-
 export type WalletRpcSetOptions = {
   walletId: string;
   rpcUrl: string;
@@ -160,13 +145,6 @@ export type WalletRpcSetOptions = {
 export type WalletStatusOptions = {
   json?: boolean;
   walletId?: string;
-};
-
-export type WalletPolicyActivateRoleBaselineOptions = {
-  walletId: string;
-  role: string;
-  confirm: boolean;
-  json?: boolean;
 };
 
 export type WalletRotateKeysOptions = {
@@ -264,13 +242,6 @@ export type WalletProviderConfigureOptions = {
   values?: string[];
 };
 
-export type WalletRoleSetOptions = {
-  walletId: string;
-  role: string;
-  primary?: boolean;
-  json?: boolean;
-};
-
 export type WalletRpcProfileCreateOptions = {
   profileId: string;
   name: string;
@@ -300,20 +271,6 @@ export type WalletSignerServeOptions = {
   pidFile?: string;
   auditLog?: string;
 };
-
-function resolveConfiguredMiningWalletId(cfg: FasedAgentConfig): string | undefined {
-  const config = cfg.plugins?.entries?.["sat-mining"]?.config;
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return undefined;
-  }
-  const walletId = (config as { walletId?: unknown }).walletId;
-  return typeof walletId === "string" ? walletId.trim() || undefined : undefined;
-}
-
-function normalizeWalletRoleForCli(value: string | undefined): "agent" | "vault" | undefined {
-  const role = normalizeWalletUserRole(value);
-  return role === "agent" || role === "vault" ? role : undefined;
-}
 
 export function createLegacyLocalSignerEmbeddedAdapter(): never {
   throwLegacyEmbeddedKeystoreMigrationRequired("legacy embedded adapter construction requested");
@@ -779,7 +736,7 @@ async function createSignerOwnedWalletForSetup(params: {
   walletId?: string;
   rpcUrl?: string;
   rpcProfileId?: string;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
 }) {
   if (params.chain !== "solana") {
     throw new Error("fased-signerd protocol v2 currently supports Solana wallet creation only");
@@ -787,7 +744,7 @@ async function createSignerOwnedWalletForSetup(params: {
   if (Boolean(params.rpcUrl?.trim()) === Boolean(params.rpcProfileId?.trim())) {
     throw new Error("wallet creation requires exactly one of rpcUrl or rpcProfileId");
   }
-  const readOnly = params.options.role === undefined;
+  const readOnly = true;
   const registeredWallets = readWalletProviderRegistry(params.env).wallets;
   const generatedIdentity = readOnly
     ? nextStandardWalletIdentity(registeredWallets)
@@ -803,17 +760,6 @@ async function createSignerOwnedWalletForSetup(params: {
     managedLifecycle && params.env.FASED_GATEWAY_SERVICE !== "1" ? managedLifecycle : undefined;
   const socketPath = resolveLocalSignerSocketPath(mergedEnv);
   const expectedSignerWalletId = normalizeNativeSignerWalletId(walletId);
-  if (params.role === "mining") {
-    const activeMiningWallet = registeredWallets.find((entry) => {
-      const role = normalizeWalletUserRole(entry.metadata?.role ?? entry.metadata?.purpose);
-      return role === "mining" || entry.id === "mining";
-    });
-    if (activeMiningWallet && activeMiningWallet.id !== walletId) {
-      throw new Error(
-        `Mining already has one active wallet (${activeMiningWallet.id}). Archive it after the safety checks or complete a reviewed replacement before creating ${walletId}.`,
-      );
-    }
-  }
   const existingSignerIdCollision = findNativeSignerWalletIdCollision(
     registeredWallets,
     walletId,
@@ -850,11 +796,10 @@ async function createSignerOwnedWalletForSetup(params: {
           allowExisting: Boolean(params.options.force),
           env: mergedEnv,
         })
-      : await createRoleReadySignerOwnedWallet({
+      : await createLockedSignerOwnedWallet({
           socketPath,
           walletId,
           role: params.role,
-          readOnly,
           allowExisting: Boolean(params.options.force),
         });
   } catch (error) {
@@ -1000,7 +945,7 @@ async function createSignerOwnedWalletForSetup(params: {
     addresses: { solana: result.wallet.publicKey },
     metadata: {
       ...(readOnly ? { purpose: "wallet" } : { role: params.role, purpose: params.role }),
-      ...(params.role === "profile" || params.role === "strategy" ? { roleChain: "solana" } : {}),
+
       keyAuthority: "signer-owned-v2",
       signerWalletId,
       policyHash: result.policy.hash,
@@ -1022,30 +967,6 @@ async function createSignerOwnedWalletForSetup(params: {
     },
     env: params.env,
   });
-  if (params.role === "mining") {
-    const currentEntry = cfg.plugins?.entries?.["sat-mining"];
-    const currentSatConfig =
-      currentEntry?.config &&
-      typeof currentEntry.config === "object" &&
-      !Array.isArray(currentEntry.config)
-        ? currentEntry.config
-        : {};
-    cfg = {
-      ...cfg,
-      plugins: {
-        ...cfg.plugins,
-        entries: {
-          ...cfg.plugins?.entries,
-          "sat-mining": {
-            enabled: true,
-            ...currentEntry,
-            config: { ...currentSatConfig, walletId: wallet.id },
-          },
-        },
-      },
-    };
-    await writeConfigFile(cfg);
-  }
 
   if (params.options.json) {
     params.runtime.log(
@@ -1078,7 +999,7 @@ async function createSignerOwnedWalletForSetup(params: {
       params.runtime.log(
         readOnly
           ? "Read-only wallet ready. Enable permissions and budgets before financial actions."
-          : `Role baseline active: ${params.role} v${readiness.baselineVersion} (${readiness.operationLane}).`,
+          : `Wallet policy active: v${readiness.baselineVersion} (${readiness.operationLane}).`,
       );
     }
   }
@@ -1127,7 +1048,7 @@ function requireOwnerOnlySignerImportFile(rawPath: string): { path: string; fd: 
 function parseNativeSignerImportResult(params: {
   stdout: string;
   walletId: string;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
 }): LocalSignerWalletPolicyRecord {
   let value: unknown;
   try {
@@ -1139,10 +1060,7 @@ function parseNativeSignerImportResult(params: {
     throw new Error("native signer import returned an invalid result");
   }
   const result = value as Partial<LocalSignerWalletPolicyRecord>;
-  const denyAllRole =
-    result.policy?.approvalMode === "read-only" ||
-    params.role === "profile" ||
-    params.role === "strategy";
+  const denyAllRole = result.policy?.approvalMode === "read-only";
   const policyShapeReady = denyAllRole
     ? result.policy?.operations?.length === 0 &&
       result.policy?.programs?.length === 0 &&
@@ -1165,7 +1083,9 @@ function parseNativeSignerImportResult(params: {
     typeof result.policy.hash !== "string" ||
     !/^sha256:[0-9a-f]{64}$/.test(result.policy.hash)
   ) {
-    throw new Error("native signer import did not return an active signer-owned role baseline");
+    throw new Error(
+      "native signer import did not return an acknowledged signer-owned wallet policy",
+    );
   }
   return result as LocalSignerWalletPolicyRecord;
 }
@@ -1176,7 +1096,7 @@ function invokeNativeSignerWalletImport(params: {
   controlSocketPath: string;
   walletId: string;
   readOnly?: boolean;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
   importFile: string;
   env: NodeJS.ProcessEnv;
 }): LocalSignerWalletPolicyRecord {
@@ -1191,8 +1111,6 @@ function invokeNativeSignerWalletImport(params: {
     "--wallet-id",
     params.walletId,
     ...(params.readOnly ? ["--read-only"] : []),
-    "--baseline-role",
-    params.role,
   ];
   try {
     const child = spawnSync(command, args, {
@@ -1241,7 +1159,7 @@ function invokeNativeSignerWalletCreate(params: {
   signerBinPath: string;
   operatorSocketPath: string;
   walletId: string;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
   allowExisting?: boolean;
   readOnly?: boolean;
   env: NodeJS.ProcessEnv;
@@ -1256,8 +1174,6 @@ function invokeNativeSignerWalletCreate(params: {
       params.operatorSocketPath,
       "--wallet-id",
       params.walletId,
-      "--baseline-role",
-      params.role,
       ...(params.readOnly ? ["--read-only"] : []),
       ...(params.allowExisting ? ["--allow-existing"] : []),
     ],
@@ -1351,79 +1267,6 @@ export function invokeNativeSignerNetworkSetPrimary(params: {
   };
 }
 
-function invokeNativeSignerPolicyActivateBaseline(params: {
-  signerBinPath: string;
-  socketFlag: "--control-socket" | "--operator-socket";
-  socketPath: string;
-  walletId: string;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
-  expectedVersion: number;
-  env: NodeJS.ProcessEnv;
-}): LocalSignerPolicyRecord {
-  const child = spawnSync(
-    params.signerBinPath,
-    [
-      "admin",
-      "policy",
-      "activate-baseline",
-      params.socketFlag,
-      params.socketPath,
-      "--wallet-id",
-      params.walletId,
-      "--baseline-role",
-      params.role,
-      "--expected-version",
-      String(params.expectedVersion),
-    ],
-    {
-      env: nativeSignerLifecycleEnv(params.env),
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-      maxBuffer: 256 * 1024,
-      timeout: 30_000,
-    },
-  );
-  if (child.error) {
-    throw child.error;
-  }
-  if (child.status !== 0) {
-    throw new Error(
-      redactWalletDiagnosticText(
-        String(child.stderr || "native signer role-baseline activation failed").trim(),
-      ),
-    );
-  }
-  let result: unknown;
-  try {
-    result = JSON.parse(String(child.stdout ?? ""));
-  } catch {
-    throw new Error("native signer role-baseline activation returned invalid JSON");
-  }
-  const policy = result as Partial<LocalSignerPolicyRecord>;
-  const denyAllRole = params.role === "profile" || params.role === "strategy";
-  const policyShapeReady = denyAllRole
-    ? policy.operations?.length === 0 &&
-      policy.programs?.length === 0 &&
-      policy.assets?.length === 0
-    : Boolean(policy.operations?.length && policy.programs?.length && policy.assets?.length);
-  if (
-    !policy ||
-    policy.walletId !== params.walletId ||
-    policy.role !== params.role ||
-    policy.version !== params.expectedVersion + 1 ||
-    policy.baselineVersion !== 1 ||
-    !Array.isArray(policy.operations) ||
-    !Array.isArray(policy.programs) ||
-    !Array.isArray(policy.assets) ||
-    !policyShapeReady ||
-    typeof policy.hash !== "string" ||
-    !/^sha256:[0-9a-f]{64}$/.test(policy.hash)
-  ) {
-    throw new Error("native signer role-baseline activation returned an invalid policy");
-  }
-  return policy as LocalSignerPolicyRecord;
-}
-
 function invokeNativeSignerWalletReadiness(params: {
   signerBinPath: string;
   socketFlag: "--control-socket" | "--operator-socket";
@@ -1480,244 +1323,12 @@ function invokeNativeSignerWalletReadiness(params: {
   return readiness;
 }
 
-type NativeSignerRotationV2 = {
-  rotationId: string;
-  sourceWalletId: string;
-  sourcePublicKey: string;
-  successorWalletId: string;
-  successorPublicKey: string;
-  role: string;
-  state: "prepared" | "committed";
-  version: number;
-  prepareExpectedSourceWalletVersion: number;
-  prepareExpectedSourcePolicyVersion: number;
-  sourceRetiredPolicyVersion?: number;
-  sourceRetiredPolicyHash?: string;
-  successorActivatedPolicyVersion?: number;
-  successorActivatedPolicyHash?: string;
-  recoveryPackageHash?: string;
-  safetyEvidenceHash?: string;
-  safetyEvidence?: ReturnType<typeof buildMiningRetirementEvidence>;
-  committedAt?: string;
-};
-
-function invokeNativeSignerJSON(params: {
-  signerBinPath: string;
-  args: string[];
-  env: NodeJS.ProcessEnv;
-  input?: string;
-  label: string;
-}): Record<string, unknown> {
-  const child = spawnSync(params.signerBinPath, params.args, {
-    env: nativeSignerLifecycleEnv(params.env),
-    input: params.input,
-    stdio: [params.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-    encoding: "utf8",
-    maxBuffer: 512 * 1024,
-    timeout: 120_000,
-  });
-  if (child.error) {
-    throw child.error;
-  }
-  if (child.status !== 0) {
-    throw new Error(
-      redactWalletDiagnosticText(String(child.stderr || `${params.label} failed`).trim()),
-    );
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(String(child.stdout ?? ""));
-  } catch {
-    throw new Error(`${params.label} returned invalid JSON`);
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${params.label} returned an invalid result`);
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function invokeNativeSignerBalance(params: {
-  signerBinPath: string;
-  socketFlag: "--control-socket" | "--operator-socket";
-  socketPath: string;
-  walletId: string;
-  publicKey: string;
-  env: NodeJS.ProcessEnv;
-}): string {
-  const result = invokeNativeSignerJSON({
-    signerBinPath: params.signerBinPath,
-    args: [
-      "admin",
-      "wallet",
-      "balance",
-      params.socketFlag,
-      params.socketPath,
-      "--wallet-id",
-      params.walletId,
-    ],
-    env: params.env,
-    label: "native signer balance lookup",
-  });
-  const balance = typeof result.balance === "string" ? result.balance : "";
-  if (
-    result.address !== params.publicKey ||
-    result.chain !== "solana" ||
-    result.unit !== "lamports" ||
-    !/^\d+$/u.test(balance)
-  ) {
-    throw new Error("native signer balance lookup returned an invalid result");
-  }
-  return balance;
-}
-
-function parseNativeSignerRotation(value: Record<string, unknown>): NativeSignerRotationV2 {
-  if (
-    typeof value.rotationId !== "string" ||
-    !/^sha256:[0-9a-f]{64}$/u.test(value.rotationId) ||
-    typeof value.sourceWalletId !== "string" ||
-    typeof value.sourcePublicKey !== "string" ||
-    typeof value.successorWalletId !== "string" ||
-    typeof value.successorPublicKey !== "string" ||
-    (value.state !== "prepared" && value.state !== "committed") ||
-    !Number.isSafeInteger(value.version)
-  ) {
-    throw new Error("native signer rotation returned an invalid result");
-  }
-  return value as NativeSignerRotationV2;
-}
-
-function invokeNativeSignerRotationCreate(params: {
-  signerBinPath: string;
-  socketFlag: "--control-socket" | "--operator-socket";
-  socketPath: string;
-  sourceWalletId: string;
-  successorWalletId: string;
-  sourcePublicKey: string;
-  sourceWalletVersion: number;
-  sourcePolicyVersion: number;
-  env: NodeJS.ProcessEnv;
-}): NativeSignerRotationV2 {
-  return parseNativeSignerRotation(
-    invokeNativeSignerJSON({
-      signerBinPath: params.signerBinPath,
-      args: [
-        "admin",
-        "wallet",
-        "rotate-successor",
-        params.socketFlag,
-        params.socketPath,
-        "--wallet-id",
-        params.sourceWalletId,
-        "--successor-wallet-id",
-        params.successorWalletId,
-        "--expected-source-public-key",
-        params.sourcePublicKey,
-        "--expected-source-wallet-version",
-        String(params.sourceWalletVersion),
-        "--expected-source-policy-version",
-        String(params.sourcePolicyVersion),
-      ],
-      env: params.env,
-      label: "native signer Mining successor preparation",
-    }),
-  );
-}
-
-function invokeNativeSignerRotationStatus(params: {
-  signerBinPath: string;
-  socketFlag: "--control-socket" | "--operator-socket";
-  socketPath: string;
-  sourceWalletId: string;
-  env: NodeJS.ProcessEnv;
-}): NativeSignerRotationV2 | null {
-  try {
-    return parseNativeSignerRotation(
-      invokeNativeSignerJSON({
-        signerBinPath: params.signerBinPath,
-        args: [
-          "admin",
-          "wallet",
-          "rotation-status",
-          params.socketFlag,
-          params.socketPath,
-          "--wallet-id",
-          params.sourceWalletId,
-        ],
-        env: params.env,
-        label: "native signer Mining rotation status",
-      }),
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/rotation.*not found/iu.test(message)) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-function invokeNativeSignerRotationCommit(params: {
-  signerBinPath: string;
-  socketFlag: "--control-socket" | "--operator-socket";
-  socketPath: string;
-  rotation: NativeSignerRotationV2;
-  successorNetworkVersion: number;
-  successorNetworkHash: string;
-  recoveryPackageHash: string;
-  safetyEvidence: ReturnType<typeof buildMiningRetirementEvidence>;
-  env: NodeJS.ProcessEnv;
-}): NativeSignerRotationV2 {
-  const rotation = params.rotation;
-  return parseNativeSignerRotation(
-    invokeNativeSignerJSON({
-      signerBinPath: params.signerBinPath,
-      args: [
-        "admin",
-        "wallet",
-        "rotation-commit",
-        params.socketFlag,
-        params.socketPath,
-        "--wallet-id",
-        rotation.sourceWalletId,
-        "--successor-wallet-id",
-        rotation.successorWalletId,
-        "--rotation-id",
-        rotation.rotationId,
-        "--expected-source-public-key",
-        rotation.sourcePublicKey,
-        "--expected-successor-public-key",
-        rotation.successorPublicKey,
-        "--expected-source-wallet-version",
-        String(rotation.prepareExpectedSourceWalletVersion),
-        "--expected-source-policy-version",
-        String(rotation.prepareExpectedSourcePolicyVersion),
-        "--expected-successor-wallet-version",
-        "1",
-        "--expected-successor-policy-version",
-        "1",
-        "--expected-rotation-version",
-        "1",
-        "--expected-successor-network-version",
-        String(params.successorNetworkVersion),
-        "--expected-successor-network-hash",
-        params.successorNetworkHash,
-      ],
-      input: JSON.stringify({
-        recoveryPackageHash: params.recoveryPackageHash,
-        safetyEvidence: params.safetyEvidence,
-      }),
-      env: params.env,
-      label: "native signer Mining retirement commit",
-    }),
-  );
-}
-
 function invokeNativeSignerRecoveryImport(params: {
   operatorLifecycle: boolean;
   signerBinPath: string;
   controlSocketPath: string;
   walletId: string;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
   recoveryFile: string;
   env: NodeJS.ProcessEnv;
 }): LocalSignerWalletPolicyRecord {
@@ -1733,8 +1344,6 @@ function invokeNativeSignerRecoveryImport(params: {
         params.controlSocketPath,
         "--wallet-id",
         params.walletId,
-        "--baseline-role",
-        params.role,
         "--recovery-file",
         input.path,
       ],
@@ -1775,7 +1384,7 @@ async function importSignerOwnedWalletForSetup(params: {
   walletId: string;
   rpcUrl?: string;
   rpcProfileId?: string;
-  role: "agent" | "mining" | "vault" | "profile" | "strategy";
+  role: "agent";
   importFile: string;
 }) {
   if (params.chain !== "solana") {
@@ -1793,23 +1402,12 @@ async function importSignerOwnedWalletForSetup(params: {
     throw new Error(
       [
         `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} recovery import requires a one-shot signer-owner ceremony.`,
-        `First run: ${signerOwnerCeremonyPrefix(operatorLifecycle)} wallet recovery-import --wallet-id ${signerWalletId} --baseline-role ${params.role} --recovery-file ${params.importFile}`,
-        `Then register and configure the restored wallet with: fased wallet create --wallet-id ${params.walletId} --wallet-name <NAME> --role ${params.role} --rpc-url <RPC_URL> --force --non-interactive`,
+        `First run: ${signerOwnerCeremonyPrefix(operatorLifecycle)} wallet recovery-import --wallet-id ${signerWalletId} --recovery-file ${params.importFile}`,
+        `Then register and configure the restored wallet with: fased wallet create --wallet-id ${params.walletId} --wallet-name <NAME> --rpc-url <RPC_URL> --force --non-interactive`,
       ].join("\n"),
     );
   }
   const registeredWallets = readWalletProviderRegistry(params.env).wallets;
-  if (
-    params.role === "mining" &&
-    registeredWallets.some((entry) => {
-      const role = normalizeWalletUserRole(entry.metadata?.role ?? entry.metadata?.purpose);
-      return (role === "mining" || entry.id === "mining") && entry.id !== params.walletId;
-    })
-  ) {
-    throw new Error(
-      "Mining already has one active wallet. Complete the guarded Archive/Replace flow first.",
-    );
-  }
   const collision = findNativeSignerWalletIdCollision(
     registeredWallets,
     params.walletId,
@@ -1847,7 +1445,7 @@ async function importSignerOwnedWalletForSetup(params: {
           controlSocketPath,
           walletId: signerWalletId,
           role: params.role,
-          readOnly: params.options.role === undefined,
+          readOnly: true,
           importFile: params.importFile,
           env: mergedEnv,
         });
@@ -1862,7 +1460,6 @@ async function importSignerOwnedWalletForSetup(params: {
       ).find((entry) => entry.profileId === params.rpcProfileId)
     : undefined;
   if (
-    params.options.role === undefined &&
     params.options.mode !== "local-signer-recovery-import" &&
     (result.policy.approvalMode !== "read-only" ||
       result.policy.operations.length ||
@@ -1947,10 +1544,8 @@ async function importSignerOwnedWalletForSetup(params: {
     providerId: "local-socket-signer",
     addresses: { solana: result.wallet.publicKey },
     metadata: {
-      ...(params.options.role === undefined
-        ? { purpose: "wallet" }
-        : { role: params.role, purpose: params.role }),
-      ...(params.role === "profile" || params.role === "strategy" ? { roleChain: "solana" } : {}),
+      purpose: "wallet",
+
       keyAuthority: "signer-owned-v2",
       signerWalletId,
       policyHash: result.policy.hash,
@@ -1972,30 +1567,6 @@ async function importSignerOwnedWalletForSetup(params: {
     },
     env: params.env,
   });
-  if (params.role === "mining") {
-    const currentEntry = cfg.plugins?.entries?.["sat-mining"];
-    const currentConfig =
-      currentEntry?.config &&
-      typeof currentEntry.config === "object" &&
-      !Array.isArray(currentEntry.config)
-        ? currentEntry.config
-        : {};
-    cfg = {
-      ...cfg,
-      plugins: {
-        ...cfg.plugins,
-        entries: {
-          ...cfg.plugins?.entries,
-          "sat-mining": {
-            enabled: true,
-            ...currentEntry,
-            config: { ...currentConfig, walletId: wallet.id },
-          },
-        },
-      },
-    };
-    await writeConfigFile(cfg);
-  }
   if (params.options.json) {
     params.runtime.log(
       JSON.stringify(
@@ -2047,9 +1618,7 @@ export async function walletSetupCommand(
   ) {
     throwLegacyEmbeddedKeystoreMigrationRequired("legacy wallet setup state detected");
   }
-  if (options.role && !normalizeWalletUserRole(options.role)) {
-    throw new Error("wallet role must be agent, mining, vault, profile, or strategy");
-  }
+
   if (options.rpcUrl?.trim() && options.rpcProfileId?.trim()) {
     throw new Error("choose either --rpc-url or --rpc-profile, not both");
   }
@@ -2169,21 +1738,8 @@ export async function walletSetupCommand(
 
   if (mode === "local-signer-create") {
     const chain = options.chain ?? "solana";
-    const roleInput = options.role ?? "agent";
-    const role = normalizeWalletUserRole(roleInput);
-    if (!role) {
-      throw new Error(
-        "--role is required for non-interactive wallet creation and must be agent, mining, vault, profile, or strategy",
-      );
-    }
-    const generatedIdentity =
-      options.role === undefined
-        ? nextStandardWalletIdentity(readWalletProviderRegistry(env).wallets)
-        : nextRoleWalletIdentity(
-            role,
-            readWalletProviderRegistry(env).wallets,
-            chain === "solana" ? "solana" : "evm",
-          );
+    const role = "agent" as const;
+    const generatedIdentity = nextStandardWalletIdentity(readWalletProviderRegistry(env).wallets);
     const walletId = options.walletId?.trim() || generatedIdentity.walletId;
     const rpcProfileId = (
       options.rpcProfileId ??
@@ -2224,13 +1780,9 @@ export async function walletSetupCommand(
   }
 
   if (mode === "local-signer-import" || mode === "local-signer-recovery-import") {
-    const roleInput = options.role ?? "agent";
-    const role = normalizeWalletUserRole(roleInput);
-    if (!role) {
-      throw new Error("Invalid compatibility role");
-    }
+    const role = "agent" as const;
     const standardIdentity = nextStandardWalletIdentity(readWalletProviderRegistry(env).wallets);
-    const defaultId = options.role === undefined ? standardIdentity.walletId : role;
+    const defaultId = standardIdentity.walletId;
     const friendlyWalletId =
       options.walletId ?? (interactive ? await prompt("Wallet id", defaultId) : defaultId);
     const walletId = friendlyWalletId.trim() || defaultId;
@@ -2734,8 +2286,8 @@ export async function walletRecoveryImportCommand(
     throw new Error(
       [
         `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} recovery import requires a one-shot signer-owner ceremony.`,
-        `First run: ${ownerCommand} wallet recovery-import --wallet-id ${signerWalletId} --baseline-role ${options.role} --recovery-file ${options.recoveryFile}`,
-        `Then return to the app account and run: fased wallet create --wallet-id ${options.walletId} --wallet-name <NAME> --role ${options.role} (--rpc-profile <ID> | --rpc-url <RPC_URL>) --force --non-interactive`,
+        `First run: ${ownerCommand} wallet recovery-import --wallet-id ${signerWalletId} --recovery-file ${options.recoveryFile}`,
+        `Then return to the app account and run: fased wallet create --wallet-id ${options.walletId} --wallet-name <NAME> (--rpc-profile <ID> | --rpc-url <RPC_URL>) --force --non-interactive`,
       ].join("\n"),
     );
   }
@@ -2744,7 +2296,6 @@ export async function walletRecoveryImportCommand(
     chain: "solana",
     walletId: options.walletId,
     walletName: options.walletName,
-    role: options.role,
     recoveryFile: options.recoveryFile,
     rpcUrl: options.rpcUrl,
     rpcProfileId: options.rpcProfileId,
@@ -2752,334 +2303,6 @@ export async function walletRecoveryImportCommand(
     noDoctor: true,
     noSignerHints: true,
   });
-}
-
-export async function walletRetireCommand(
-  runtime: RuntimeEnv = defaultRuntime,
-  options: WalletRetireOptions,
-) {
-  const walletId = options.walletId.trim();
-  const successorWalletId = options.successorWalletId.trim();
-  const successorWalletName = options.successorWalletName.trim();
-  const rpcUrl = options.rpcUrl.trim();
-  if (!walletId || !successorWalletId || !successorWalletName || !rpcUrl) {
-    throw new Error(
-      "--wallet-id, --successor-wallet-id, --successor-wallet-name, and --rpc-url are required",
-    );
-  }
-  if (walletId === successorWalletId) {
-    throw new Error("Mining successor wallet id must differ from the retired wallet id");
-  }
-  if (!/^[a-zA-Z0-9_-]+$/u.test(successorWalletId)) {
-    throw new Error(
-      "--successor-wallet-id must contain only letters, numbers, hyphens, or underscores",
-    );
-  }
-
-  const cfg = loadConfig();
-  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
-  const registry = readWalletProviderRegistry(effectiveEnv);
-  const source = registry.wallets.find((entry) => entry.id === walletId);
-  if (
-    !source ||
-    source.providerId !== "local-socket-signer" ||
-    resolveWalletUserRole(source) !== "mining"
-  ) {
-    throw new Error(`active signer-owned Mining wallet not found: ${walletId}`);
-  }
-  const configuredMiningWalletId = resolveConfiguredMiningWalletId(cfg);
-  if (configuredMiningWalletId !== walletId && configuredMiningWalletId !== successorWalletId) {
-    throw new Error(`${walletId} is not the active singleton Mining wallet`);
-  }
-  if (registry.wallets.some((entry) => entry.id === successorWalletId)) {
-    throw new Error(`successor wallet id is already registered: ${successorWalletId}`);
-  }
-  const sourcePublicKey = source.addresses?.solana?.trim() ?? "";
-  if (!sourcePublicKey) {
-    throw new Error("source Mining wallet has no verified Solana address");
-  }
-  const sourceSignerWalletId =
-    typeof source.metadata?.signerWalletId === "string" && source.metadata.signerWalletId.trim()
-      ? source.metadata.signerWalletId.trim()
-      : normalizeNativeSignerWalletId(source.id);
-  const successorSignerWalletId = normalizeNativeSignerWalletId(successorWalletId);
-  if (sourceSignerWalletId === successorSignerWalletId) {
-    throw new Error("Mining successor signer wallet id must be distinct");
-  }
-  const recovery = verifyMiningRecoveryPackage({
-    recoveryFile: options.recoveryFile,
-    walletId: sourceSignerWalletId,
-    publicKey: sourcePublicKey,
-  });
-  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
-  const signerBinPath = operatorLifecycle?.signerBinPath ?? resolveSignerdBinaryPath(effectiveEnv);
-  const socketFlag = operatorLifecycle ? "--operator-socket" : "--control-socket";
-  const socketPath =
-    operatorLifecycle?.operatorSocketPath ?? resolveLocalSignerControlSocketPath(effectiveEnv);
-
-  let rotation = invokeNativeSignerRotationStatus({
-    signerBinPath,
-    socketFlag,
-    socketPath,
-    sourceWalletId: sourceSignerWalletId,
-    env: effectiveEnv,
-  });
-  if (rotation && rotation.successorWalletId !== successorSignerWalletId) {
-    throw new Error(
-      `source wallet is already bound to immutable successor ${rotation.successorWalletId}`,
-    );
-  }
-  if (!rotation && configuredMiningWalletId !== walletId) {
-    throw new Error("Mining configuration changed before the signer prepared a successor");
-  }
-
-  let evidence: ReturnType<typeof buildMiningRetirementEvidence> | undefined;
-  if (!rotation || rotation.state !== "committed") {
-    if (operatorLifecycle) {
-      throw new Error(
-        [
-          `${operatorLifecycle.profile === "hosting" ? "Hosting" : "Protected Local"} Mining retirement requires a signer-owner rotation ceremony before registry finalization.`,
-          `Use ${signerOwnerCeremonyPrefix(operatorLifecycle)} for rotate-successor and rotation-commit, then rerun this command to verify and finalize the committed successor.`,
-          "The ordinary operator may inspect rotation status but cannot mutate signer rotation state.",
-        ].join("\n"),
-      );
-    }
-    const sourceReadiness = invokeNativeSignerWalletReadiness({
-      signerBinPath,
-      socketFlag,
-      socketPath,
-      walletId: sourceSignerWalletId,
-      env: effectiveEnv,
-    });
-    if (
-      sourceReadiness.publicKey !== sourcePublicKey ||
-      sourceReadiness.role !== "mining" ||
-      !sourceReadiness.keyReady ||
-      !sourceReadiness.policyReady ||
-      !sourceReadiness.networkReady
-    ) {
-      throw new Error("source Mining wallet is not live and role-ready in the signer");
-    }
-    const signerSOL = invokeNativeSignerBalance({
-      signerBinPath,
-      socketFlag,
-      socketPath,
-      walletId: sourceSignerWalletId,
-      publicKey: sourcePublicKey,
-      env: effectiveEnv,
-    });
-    evidence = buildMiningRetirementEvidence({
-      walletId,
-      signerWalletId: sourceSignerWalletId,
-      publicKey: sourcePublicKey,
-      signerSolBalanceLamports: signerSOL,
-      liveStatus: options.liveMiningStatus,
-      env: effectiveEnv,
-    });
-    rotation ??= invokeNativeSignerRotationCreate({
-      signerBinPath,
-      socketFlag,
-      socketPath,
-      sourceWalletId: sourceSignerWalletId,
-      successorWalletId: successorSignerWalletId,
-      sourcePublicKey,
-      sourceWalletVersion: Number(sourceReadiness.walletVersion),
-      sourcePolicyVersion: sourceReadiness.policyVersion,
-      env: effectiveEnv,
-    });
-    if (
-      rotation.role !== "mining" ||
-      rotation.sourcePublicKey !== sourcePublicKey ||
-      rotation.successorPublicKey === sourcePublicKey
-    ) {
-      throw new Error("signer prepared an invalid Mining successor binding");
-    }
-    let successorReadiness = invokeNativeSignerWalletReadiness({
-      signerBinPath,
-      socketFlag,
-      socketPath,
-      walletId: successorSignerWalletId,
-      env: effectiveEnv,
-    });
-    let successorNetwork = {
-      version: successorReadiness.networkVersion,
-      hash: successorReadiness.networkHash ?? "",
-      ready: successorReadiness.networkReady,
-    };
-    if (successorNetwork.version === 0) {
-      successorNetwork = invokeNativeSignerNetworkSetPrimary({
-        signerBinPath,
-        socketFlag,
-        socketPath,
-        walletId: successorSignerWalletId,
-        primaryRpcUrl: rpcUrl,
-        expectedVersion: 0,
-        env: effectiveEnv,
-      });
-    }
-    if (!successorNetwork.ready || !successorNetwork.hash) {
-      throw new Error("Mining successor RPC is not verified and ready");
-    }
-    rotation = invokeNativeSignerRotationCommit({
-      signerBinPath,
-      socketFlag,
-      socketPath,
-      rotation,
-      successorNetworkVersion: successorNetwork.version,
-      successorNetworkHash: successorNetwork.hash,
-      recoveryPackageHash: recovery.packageHash,
-      safetyEvidence: evidence,
-      env: effectiveEnv,
-    });
-    successorReadiness = invokeNativeSignerWalletReadiness({
-      signerBinPath,
-      socketFlag,
-      socketPath,
-      walletId: successorSignerWalletId,
-      env: effectiveEnv,
-    });
-    if (
-      rotation.state !== "committed" ||
-      successorReadiness.publicKey !== rotation.successorPublicKey ||
-      successorReadiness.role !== "mining" ||
-      successorReadiness.operationLane !== "mining-typed-sat" ||
-      !successorReadiness.ready ||
-      successorReadiness.policyHash !== rotation.successorActivatedPolicyHash
-    ) {
-      throw new Error(
-        "Mining successor did not become authoritatively role-ready after retirement",
-      );
-    }
-  }
-
-  if (
-    rotation.state !== "committed" ||
-    rotation.recoveryPackageHash !== recovery.packageHash ||
-    !rotation.sourceRetiredPolicyHash ||
-    !rotation.successorActivatedPolicyHash ||
-    !rotation.safetyEvidenceHash
-  ) {
-    throw new Error("signer retirement acknowledgement is incomplete");
-  }
-  const successorReadiness = invokeNativeSignerWalletReadiness({
-    signerBinPath,
-    socketFlag,
-    socketPath,
-    walletId: successorSignerWalletId,
-    env: effectiveEnv,
-  });
-  if (
-    successorReadiness.publicKey !== rotation.successorPublicKey ||
-    successorReadiness.role !== "mining" ||
-    !successorReadiness.ready
-  ) {
-    throw new Error("committed Mining successor is not live and ready");
-  }
-  const receipt = {
-    version: 1,
-    kind: "fased-mining-wallet-retirement",
-    rotationId: rotation.rotationId,
-    committedAt: rotation.committedAt,
-    sourceWalletId: walletId,
-    sourceSignerWalletId,
-    sourcePublicKey,
-    sourceRetiredPolicyVersion: rotation.sourceRetiredPolicyVersion,
-    sourceRetiredPolicyHash: rotation.sourceRetiredPolicyHash,
-    successorWalletId,
-    successorSignerWalletId,
-    successorPublicKey: rotation.successorPublicKey,
-    successorPolicyVersion: successorReadiness.policyVersion,
-    successorPolicyHash: successorReadiness.policyHash,
-    successorNetworkVersion: successorReadiness.networkVersion,
-    successorNetworkHash: successorReadiness.networkHash,
-    recoveryPackageHash: rotation.recoveryPackageHash,
-    safetyEvidenceHash: rotation.safetyEvidenceHash,
-    balances:
-      (evidence ?? rotation.safetyEvidence)
-        ? {
-            solBalanceLamports: (evidence ?? rotation.safetyEvidence)!.solBalanceLamports,
-            satBalanceRaw: (evidence ?? rotation.safetyEvidence)!.satBalanceRaw,
-          }
-        : undefined,
-  };
-  const receiptPath = writeMiningRetirementReceipt({
-    sourceWalletId: walletId,
-    receipt,
-    env: effectiveEnv,
-  });
-
-  const currentEntry = cfg.plugins?.entries?.["sat-mining"];
-  const currentPluginConfig =
-    currentEntry?.config &&
-    typeof currentEntry.config === "object" &&
-    !Array.isArray(currentEntry.config)
-      ? currentEntry.config
-      : {};
-  await writeConfigFile({
-    ...cfg,
-    plugins: {
-      ...cfg.plugins,
-      entries: {
-        ...cfg.plugins?.entries,
-        "sat-mining": {
-          ...currentEntry,
-          enabled: true,
-          config: { ...currentPluginConfig, walletId: successorWalletId },
-        },
-      },
-    },
-  });
-  replaceRetiredMiningWallet({
-    sourceWalletId: walletId,
-    signerAcknowledgement: {
-      rotationId: rotation.rotationId,
-      sourceRetiredPolicyHash: String(rotation.sourceRetiredPolicyHash),
-      successorPublicKey: rotation.successorPublicKey,
-      successorPolicyHash: successorReadiness.policyHash,
-    },
-    successor: {
-      id: successorWalletId,
-      name: successorWalletName,
-      providerId: "local-socket-signer",
-      addresses: { solana: rotation.successorPublicKey },
-      metadata: {
-        role: "mining",
-        purpose: "mining",
-        keyAuthority: "signer-owned-v2",
-        signerWalletId: successorSignerWalletId,
-        policyHash: successorReadiness.policyHash,
-        policyVersion: successorReadiness.policyVersion,
-        baselineVersion: successorReadiness.baselineVersion,
-        policyState: "ready",
-        networkHash: successorReadiness.networkHash,
-        networkVersion: successorReadiness.networkVersion,
-        networkReady: true,
-        operationLane: successorReadiness.operationLane,
-        roleReady: true,
-        predecessorWalletId: walletId,
-        rotationId: rotation.rotationId,
-      },
-    },
-    env: effectiveEnv,
-  });
-
-  const result = {
-    ok: true,
-    retiredWalletId: walletId,
-    retiredAddress: sourcePublicKey,
-    successorWalletId,
-    successorAddress: rotation.successorPublicKey,
-    rotationId: rotation.rotationId,
-    receiptPath,
-  };
-  if (options.json) {
-    runtime.log(JSON.stringify(result, null, 2));
-  } else {
-    runtime.log(`Retired Mining wallet ${walletId} (${sourcePublicKey}).`);
-    runtime.log(`Active Mining successor: ${successorWalletId} (${rotation.successorPublicKey}).`);
-    runtime.log(`Audit receipt: ${receiptPath}`);
-  }
-  return result;
 }
 
 export async function walletRawExportCommand(
@@ -3159,66 +2382,6 @@ export async function walletRawExportCommand(
   }
   runtime.log(`Raw private key written: ${output} (owner-only)`);
   runtime.log(`Wallet: ${wallet.id} · Address: ${publicKey}`);
-}
-
-export async function walletRoleSetCommand(
-  runtime: RuntimeEnv = defaultRuntime,
-  options: WalletRoleSetOptions,
-) {
-  const walletId = options.walletId.trim();
-  const role = normalizeWalletRoleForCli(options.role);
-  if (!walletId) {
-    throw new Error("walletId is required");
-  }
-  if (!role) {
-    throw new Error("role must be agent or vault");
-  }
-  const cfg = loadConfig();
-  const activeMiningWalletId = resolveConfiguredMiningWalletId(cfg);
-  if (activeMiningWalletId === walletId) {
-    throw new Error(
-      "This wallet is the singleton SAT mining wallet. Delete and recreate @wallet:mining before changing its Agent/Vault role.",
-    );
-  }
-  const currentRegistry = readWalletProviderRegistry(process.env);
-  const existingWallet = currentRegistry.wallets.find((entry) => entry.id === walletId);
-  if (!existingWallet) {
-    throw new Error("walletId does not exist");
-  }
-  const currentRole =
-    resolveWalletUserRole(existingWallet) ??
-    (currentRegistry.defaultWalletId === walletId ? "agent" : undefined);
-  if (currentRole && currentRole !== role) {
-    throw new Error(
-      `Wallet purpose is permanent after creation. ${existingWallet.name} (${walletId}) is already ${currentRole}. Create a new wallet for ${role} use instead.`,
-    );
-  }
-  const registry = setNamedWalletRole({ walletId, role, env: process.env });
-  const wallet = registry.wallets.find((entry) => entry.id === walletId);
-  if (role === "agent" && options.primary) {
-    setDefaultWallet({ walletId, env: process.env });
-  }
-  const updatedRegistry = readWalletProviderRegistry(process.env);
-  const primary = updatedRegistry.defaultWalletId === walletId;
-  if (options.json) {
-    runtime.log(
-      JSON.stringify(
-        {
-          ok: true,
-          walletId,
-          walletName: wallet?.name,
-          role,
-          primary,
-        },
-        null,
-        2,
-      ),
-    );
-    return;
-  }
-  runtime.log(
-    `${wallet?.name ?? walletId} (${walletId}) set to ${role === "agent" ? "Agent wallet" : "Vault wallet"}${primary ? " and Default Agent wallet fallback" : ""}.`,
-  );
 }
 
 export async function walletStatusCommand(
@@ -3359,135 +2522,6 @@ export async function walletStatusCommand(
   if (status.error) {
     runtime.log(`Status warning: ${status.error}`);
   }
-}
-
-export async function walletPolicyActivateRoleBaselineCommand(
-  runtime: RuntimeEnv = defaultRuntime,
-  options: WalletPolicyActivateRoleBaselineOptions,
-): Promise<void> {
-  if (!options.confirm) {
-    throw new Error("Activate role baseline requires --confirm after reviewing the selected role");
-  }
-  const role = normalizeWalletUserRole(options.role);
-  if (!role) {
-    throw new Error("role must be one of: agent, mining, vault");
-  }
-  const cfg = loadConfig();
-  const effectiveEnv = { ...process.env, ...cfg.env?.vars } as NodeJS.ProcessEnv;
-  const registry = readWalletProviderRegistry(effectiveEnv);
-  const wallet = registry.wallets.find((entry) => entry.id === options.walletId.trim());
-  if (!wallet || wallet.providerId !== "local-socket-signer") {
-    throw new Error(`registered signer-owned wallet was not found: ${options.walletId}`);
-  }
-  const registeredRole = resolveWalletUserRole(wallet);
-  if (registeredRole && registeredRole !== role) {
-    throw new Error(
-      `wallet ${wallet.id} has immutable role=${registeredRole}; refusing requested role=${role}`,
-    );
-  }
-  const signerWalletId =
-    typeof wallet.metadata?.signerWalletId === "string" && wallet.metadata.signerWalletId.trim()
-      ? wallet.metadata.signerWalletId.trim()
-      : normalizeNativeSignerWalletId(wallet.id);
-  const operatorLifecycle = resolveNativeSignerOperatorLifecycle(effectiveEnv);
-  const signerBinPath = operatorLifecycle?.signerBinPath ?? resolveSignerdBinaryPath(effectiveEnv);
-  const socketFlag = operatorLifecycle ? "--operator-socket" : "--control-socket";
-  const lifecycleSocketPath =
-    operatorLifecycle?.operatorSocketPath ?? resolveLocalSignerControlSocketPath(effectiveEnv);
-  const appSocketPath = requireLocalSocketSignerPath(effectiveEnv);
-  const currentRecord = operatorLifecycle
-    ? undefined
-    : await readSignerOwnedWallet({ socketPath: appSocketPath, walletId: signerWalletId });
-  const currentReadiness = operatorLifecycle
-    ? invokeNativeSignerWalletReadiness({
-        signerBinPath,
-        socketFlag,
-        socketPath: lifecycleSocketPath,
-        walletId: signerWalletId,
-        env: effectiveEnv,
-      })
-    : undefined;
-  const currentPublicKey = currentRecord?.wallet.publicKey ?? currentReadiness?.publicKey;
-  const currentRole = currentRecord?.policy.role ?? currentReadiness?.role;
-  if (currentPublicKey !== wallet.addresses?.solana) {
-    throw new Error("registered wallet address does not match the signer-owned wallet");
-  }
-  if (currentRole !== role) {
-    throw new Error(
-      `signer-owned wallet ${signerWalletId} has immutable role=${currentRole}, not ${role}`,
-    );
-  }
-  let policy = currentRecord?.policy;
-  const currentBaselineVersion = policy?.baselineVersion ?? currentReadiness?.baselineVersion;
-  if (currentBaselineVersion === undefined || currentBaselineVersion === 0) {
-    policy = invokeNativeSignerPolicyActivateBaseline({
-      signerBinPath,
-      socketFlag,
-      socketPath: lifecycleSocketPath,
-      walletId: signerWalletId,
-      role,
-      expectedVersion: policy?.version ?? currentReadiness?.policyVersion ?? 0,
-      env: effectiveEnv,
-    });
-  } else if (currentBaselineVersion !== 1) {
-    throw new Error(
-      `signer-owned wallet ${signerWalletId} uses unsupported baseline version ${currentBaselineVersion}`,
-    );
-  }
-  const readiness = operatorLifecycle
-    ? invokeNativeSignerWalletReadiness({
-        signerBinPath,
-        socketFlag,
-        socketPath: lifecycleSocketPath,
-        walletId: signerWalletId,
-        env: effectiveEnv,
-      })
-    : await readSignerOwnedWalletReadiness({
-        socketPath: appSocketPath,
-        walletId: signerWalletId,
-      });
-  if (
-    readiness.publicKey !== currentPublicKey ||
-    readiness.role !== role ||
-    (policy && readiness.policyHash !== policy.hash) ||
-    (policy && readiness.policyVersion !== policy.version) ||
-    readiness.baselineVersion !== 1
-  ) {
-    throw new Error("Setup incomplete: activated role baseline does not match live signer state");
-  }
-  upsertNamedWallet({
-    walletId: wallet.id,
-    name: wallet.name,
-    providerId: wallet.providerId,
-    addresses: wallet.addresses,
-    metadata: {
-      ...wallet.metadata,
-      role,
-      purpose: role,
-      signerWalletId,
-      policyHash: readiness.policyHash,
-      policyVersion: readiness.policyVersion,
-      baselineVersion: readiness.baselineVersion,
-      policyState: readiness.policyReady ? "ready" : "setup-incomplete",
-      networkHash: readiness.networkHash,
-      networkVersion: readiness.networkVersion,
-      networkReady: readiness.networkReady,
-      operationLane: readiness.operationLane,
-      roleReady: readiness.ready,
-    },
-    env: effectiveEnv,
-  });
-  const payload = { ok: true, walletId: wallet.id, signerWalletId, role, readiness };
-  if (options.json) {
-    runtime.log(JSON.stringify(payload, null, 2));
-    return;
-  }
-  runtime.log(
-    `Activated ${role} role baseline v${readiness.baselineVersion} for ${wallet.name} (${wallet.id}).`,
-  );
-  runtime.log(
-    `Readiness: ${readiness.ready ? "ready" : "setup incomplete"} (${readiness.operationLane}).`,
-  );
 }
 
 export async function walletKeystoreInitCommand(

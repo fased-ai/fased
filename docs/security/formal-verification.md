@@ -7,6 +7,8 @@ read_when:
 permalink: /security/formal-verification/
 ---
 
+> Historical assessment: references to the retired Satcoin miner and wallet roles describe the assessed version only. They are not current setup instructions or evidence for WEN.
+
 # Formal Verification (Security Models)
 
 This page tracks optional Fased **formal security models** (TLA+/TLC today; more

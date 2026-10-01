@@ -2,14 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveSatBondProgramIdFromEnv } from "../config/sat-runtime-ids.js";
 import {
   enforceWalletDailyCap,
   isWalletToolAllowed,
   resolveWalletPolicyConfig,
   resolveWalletRecurringTransferPolicy,
   resolveWalletRoleForId,
-  resolveWalletRolePolicyProfile,
   upsertWalletPolicyConfig,
   validateWalletTxPolicy,
 } from "./wallet-policy.js";
@@ -254,88 +252,8 @@ describe("wallet-policy", () => {
       spentToday: "1500000000",
     });
   });
-
-  it("resolves role defaults and persisted overrides per wallet", async () => {
-    await writeProviderRegistry({
-      defaultWalletId: "wallet-agent",
-      wallets: [
-        { id: "wallet-agent", name: "Agent" },
-        { id: "wallet-mining", name: "Mining" },
-        { id: "wallet-vault", name: "Vault" },
-      ],
-    });
-    const cfg = {
-      wallet: {
-        runtime: {
-          chains: ["solana"],
-          policy: {
-            directSigning: true,
-            solana: {
-              maxPerTx: "2500000000",
-              maxDaily: "9000000000",
-            },
-          },
-        },
-      },
-      plugins: {
-        entries: {
-          "sat-mining": {
-            config: {
-              walletId: "wallet-mining",
-            },
-          },
-        },
-      },
-    } as never;
-
-    const miningDefault = resolveWalletPolicyConfig(cfg, process.env, "wallet-mining");
-    const agentDefault = resolveWalletPolicyConfig(cfg, process.env, "wallet-agent");
-    const vaultDefault = resolveWalletPolicyConfig(cfg, process.env, "wallet-vault");
-
-    expect(miningDefault.policy.directSigning).toBe(true);
-    expect(miningDefault.policy.capsEnabled).toBe(false);
-    expect(miningDefault.policy.skillsEnabled).toBe(false);
-    expect(miningDefault.policy.solana.caps.maxPerTx).toBe(0n);
-    expect(agentDefault.policy.directSigning).toBe(true);
-    expect(agentDefault.policy.capsEnabled).toBe(true);
-    expect(agentDefault.policy.skillsEnabled).toBe(false);
-    expect(agentDefault.policy.solana.caps.maxPerTx).toBe(2500000000n);
-    expect(vaultDefault.policy.directSigning).toBe(false);
-    expect(vaultDefault.policy.capsEnabled).toBe(true);
-    expect(vaultDefault.policy.skillsEnabled).toBe(false);
-    expect(vaultDefault.policy.solana.caps.maxPerTx).toBe(1000000000n);
-
-    expect(() =>
-      upsertWalletPolicyConfig({
-        cfg,
-        env: process.env,
-        walletId: "wallet-vault",
-        patch: {
-          directSigning: true,
-        },
-      }),
-    ).toThrow("Vault wallets are manual-only");
-
-    upsertWalletPolicyConfig({
-      cfg,
-      env: process.env,
-      walletId: "wallet-vault",
-      patch: {
-        solanaMaxPerTx: "4200000000",
-      },
-    });
-
-    const overriddenVault = resolveWalletPolicyConfig(cfg, process.env, "wallet-vault");
-    expect(overriddenVault.policy.directSigning).toBe(false);
-    expect(overriddenVault.policy.solana.caps.maxPerTx).toBe(4200000000n);
-  });
-
-  it("keeps an explicitly designated Vault role when that wallet is also the default", async () => {
-    await writeProviderRegistry({
-      defaultWalletId: "wallet-vault",
-      wallets: [{ id: "wallet-vault", name: "Vault", role: "vault" }],
-    });
-    expect(resolveWalletRoleForId({ walletId: "wallet-vault", env: process.env })).toBe("vault");
+  it("uses only the ordinary internal wallet discriminator", () => {
+    expect(resolveWalletRoleForId({ walletId: "wallet", env: process.env })).toBe("agent");
   });
 
   it("defaults fresh Agent and Vault wallets to manual capped execution", async () => {
@@ -398,7 +316,7 @@ describe("wallet-policy", () => {
         walletId: "wallet-vault",
         patch: { skillsEnabled: true },
       }),
-    ).toThrow("Skill wallet access can only be enabled for Agent wallets");
+    ).not.toThrow();
   });
 
   it("stores recurring transfer policy with Agent wallet caps", async () => {
@@ -478,74 +396,7 @@ describe("wallet-policy", () => {
           },
         },
       }),
-    ).toThrow("generic recurring transfer policy requires an Agent wallet");
-  });
-
-  it("keeps mining wallets on SAT sweep policy instead of generic recurring transfer policy", async () => {
-    await writeProviderRegistry({
-      defaultWalletId: "wallet-agent",
-      wallets: [
-        { id: "wallet-agent", name: "Agent" },
-        { id: "wallet-mining", name: "Mining" },
-      ],
-    });
-    const cfg = {
-      plugins: {
-        entries: {
-          "sat-mining": {
-            config: {
-              walletId: "wallet-mining",
-            },
-          },
-        },
-      },
-    } as never;
-
-    expect(() =>
-      upsertWalletPolicyConfig({
-        cfg,
-        env: process.env,
-        walletId: "wallet-mining",
-        patch: {
-          recurringTransfer: {
-            enabled: true,
-            chain: "solana",
-            to: "@wallet:agent",
-            amountMode: "fixed",
-            amount: "1",
-          },
-        },
-      }),
-    ).toThrow("generic recurring transfer policy requires an Agent wallet");
-  });
-
-  it("keeps SAT bond program out of wallet role allowlists", () => {
-    vi.stubEnv("FASED_SAT_PROGRAM_ID", "SatProgram1111111111111111111111111111111111");
-    vi.stubEnv("FASED_SAT_BOND_PROGRAM_ID", "SatBond1111111111111111111111111111111111111");
-    vi.stubEnv("FASED_SAT_MINT_ADDRESS", "SatMint1111111111111111111111111111111111111");
-    vi.stubEnv("FASED_SAT_MINT_PROGRAM_ID", "SatMintProgram111111111111111111111111111111");
-    const bondProgramId = resolveSatBondProgramIdFromEnv(process.env);
-    const miningProfile = resolveWalletRolePolicyProfile("mining", process.env);
-    const vaultProfile = resolveWalletRolePolicyProfile("vault", process.env);
-
-    expect(miningProfile.defaults.solana.allowPrograms).not.toContain(bondProgramId);
-    expect(vaultProfile.defaults.solana.allowPrograms).not.toContain(bondProgramId);
-  });
-
-  it("adds the address lookup table program only when SAT ALT/v0 is enabled", () => {
-    const lookupTableProgram = "AddressLookupTab1e1111111111111111111111111";
-    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "");
-    expect(
-      resolveWalletRolePolicyProfile("mining", process.env).defaults.solana.allowPrograms,
-    ).not.toContain(lookupTableProgram);
-
-    vi.stubEnv("FASED_SAT_ENABLE_ALT_V0", "1");
-    expect(
-      resolveWalletRolePolicyProfile("mining", process.env).defaults.solana.allowPrograms,
-    ).toContain(lookupTableProgram);
-    expect(
-      resolveWalletRolePolicyProfile("agent", process.env).defaults.solana.allowPrograms,
-    ).not.toContain(lookupTableProgram);
+    ).not.toThrow();
   });
 
   it("fails closed without replacing a corrupt daily spend ledger", async () => {

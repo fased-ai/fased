@@ -14,27 +14,6 @@ Use it when you want the major capabilities without digging through lower-level 
 
 ## At a glance
 
-<Columns>
-  <Card title="Gateway and control" icon="monitor">
-    Browser-first Control UI, CLI, sessions, logs, and safety controls in one setup.
-  </Card>
-  <Card title="Chat apps" icon="message-square">
-    One Gateway can serve many messaging apps at once instead of splitting setup across isolated bots.
-  </Card>
-  <Card title="Wallet, Fased Network, and SAT" icon="coins">
-    Wallet controls, SAT mining, Fased Network profile, and bond controls are optional modules in the same setup.
-  </Card>
-  <Card title="Marketplace workflows" icon="store">
-    Local offers, public discovery, and reviewed service readiness live in the Control UI.
-  </Card>
-  <Card title="Nodes and devices" icon="smartphone">
-    Mobile and local-device nodes extend Fased to cameras, audio, screens, and Canvas-style surfaces.
-  </Card>
-  <Card title="Automation and plugins" icon="plug">
-    Skills, plugins, hooks, scheduled tasks, and sandboxed tools let the agent grow into your workflows.
-  </Card>
-</Columns>
-
 ## Major features available now
 
 ### 1. Gateway you control
@@ -103,32 +82,6 @@ health.
 
 Current wallet features include:
 
-- wallet inventory and role visibility
-- send flows and recent wallet activity
-- signer health checks
-- shared wallet controls and spend limits
-- Agent wallet visibility
-- mining wallet visibility
-- bond Vault visibility
-
-The wallet page is the inventory and controls surface. Mining control and bond
-lifecycle actions live on their own pages.
-
-### 5. SAT mining
-
-SAT mining is a first-class capability in Fased.
-
-Current mining features include:
-
-- SAT mining page and controls
-- capital, commit, and cycle visibility
-- singleton Mining wallet assignment
-- cycle history and activity
-- restart-aware support for continued use
-
-Mining is the SAT issuance and participation layer. Payments and bond lifecycle
-controls remain separate.
-
 ### 6. Fased Network profile and public participation
 
 Fased Network is the network participation layer on top of a healthy Fased
@@ -144,25 +97,6 @@ Current Fased Network features include:
 
 Fased Network is how the agent becomes a public network participant.
 Local control stays on the local setup surfaces.
-
-### 7. Bonded operator path
-
-Bond is the SAT-backed trust and eligibility layer for operators.
-
-Current bonded operator features include:
-
-- bond Vault selection
-- bond open / top-up / unlock / withdraw lifecycle
-- proof of bond Vault control
-- derived operator scopes
-- bonded lane readiness in Fased Network UI
-
-Current first-layer bonded capabilities include:
-
-- publishing public offers
-- clearer payment setup visibility
-- basic directory priority
-- basic routing priority
 
 ### 8. Offers and marketplace
 
@@ -233,18 +167,6 @@ Current node features include:
 
 If you want the shortest product summary, read it like this:
 
-- `Gateway`: the service you run, CLI, browser UI, health, sessions, logs
-- `Channels`: chat apps across many messaging platforms
-- `Agent runtime`: routing, tools, memory, sessions, policy
-- `Wallet`: inventory, signer health, send flows, wallet-role visibility
-- `Mining`: SAT issuance and mining operations
-- `Fased Network`: public profile, trust, hosted route, network participation
-- `Bond`: SAT-backed operator eligibility and proof
-- `Offers`: local publishing and remote discovery
-- `Operator status`: evidence and controlled maturity path
-- `Nodes`: mobile and device-linked surfaces
-- `Plugins and automation`: extension and workflow system
-
 ## Roadmap, not current features
 
 Keep roadmap items labeled separately from current features.
@@ -259,10 +181,3 @@ The next public roadmap lanes are:
 See [Roadmap](/reference/roadmap) for the next group of work.
 
 ## Related docs
-
-- [Fased](/index)
-- [Fased Network Guide](/start/federation)
-- [SAT bond operator overview](/start/bond-operator-economy)
-- [Offers and Marketplace](/start/offers-marketplace)
-- [Wallet](/plugins/crypto/wallet-page)
-- [Mining](/plugins/crypto/mining-page)

@@ -43,43 +43,6 @@ describe("planTaskExecutionPolicy", () => {
     });
   });
 
-  it("turns natural mining status prompts into deterministic skill-only tasks", () => {
-    const policy = planTaskExecutionPolicy({
-      message: "Check SAT mining status every 15 minutes and send here",
-      policy: { executionMode: "auto", modelPolicy: { mode: "auto" } },
-    });
-
-    expect(policy).toMatchObject({
-      executionMode: "skill-only",
-      memoryScope: "none",
-      skillScope: "selected",
-      allowedSkills: ["mining"],
-      skillAction: { toolName: "mining", input: { action: "status" } },
-      modelPolicy: { mode: "none" },
-      planner: { strategy: "skill-only", signals: ["mining"] },
-    });
-  });
-
-  it("keeps AOM mining strategy tasks local to mining state and tool access", () => {
-    const policy = planTaskExecutionPolicy({
-      message:
-        "AOM task: use @mining to analyze live net SOL cost, strategy, score, and benchmark, then set strategy only. Do not use wallet or payment tools. Do not call set_commit. No live web search.",
-      policy: { executionMode: "auto", modelPolicy: { mode: "auto" } },
-    });
-
-    expect(policy).toMatchObject({
-      executionMode: "agent-turn",
-      memoryScope: "none",
-      skillScope: "selected",
-      allowedSkills: ["mining"],
-      modelPolicy: { mode: "auto" },
-      planner: { strategy: "strong-model", confidence: "high", signals: ["mining-strategy"] },
-    });
-    const nodeIds = policy.planner?.graph?.nodes.map((node) => node.id) ?? [];
-    expect(nodeIds).toContain("source-fetch-mining");
-    expect(nodeIds).not.toContain("source-fetch-web-search");
-  });
-
   it("turns provider health prompts into gateway auth status tasks", () => {
     const policy = planTaskExecutionPolicy({
       message: "Check provider health every hour",
@@ -320,7 +283,7 @@ describe("planTaskExecutionPolicy", () => {
 
   it("creates compact deterministic graphs for skill-only tasks", () => {
     const policy = planTaskExecutionPolicy({
-      message: "Check mining status every 15 minutes",
+      message: "Check wallet balance every 15 minutes",
       policy: { executionMode: "auto", modelPolicy: { mode: "auto" } },
     });
 

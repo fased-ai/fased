@@ -116,9 +116,3 @@ pnpm check:strict:scoped
 
 `check:strict:baseline` writes the current full output and grouped summary under
 `.artifacts/strict/`. It is a reporting command and does not hide failures.
-
-`check:strict:scoped` also runs `pnpm tsgo`, but it fails only when strict errors
-appear in the wallet, Marketplace, mining, and recently touched UI/tool files.
-This gives those lanes a usable no-regression gate while older ACPX, ACP spawn,
-config/debug UI, SDK typing, and other repo-wide strict buckets are cleaned in
-separate commits.

@@ -244,7 +244,7 @@ func newTestSignerWebAuthnFixtureV2(t *testing.T) *testSignerWebAuthnFixtureV2 {
 	store.now = func() time.Time { return fixture.now }
 	destination := solanaNativeMintV2
 	policyInput := testSignerPolicyV2(fixture.walletID, destination, 10_000, 100_000)
-	policyInput.Role = "vault"
+	policyInput.Role = "agent"
 	walletRecord, createdPolicy, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
 		WalletID:        fixture.walletID,
 		ExpectedVersion: 0,
@@ -728,7 +728,7 @@ func TestSignerWebAuthnPolicyChangeInvalidatesPendingChallenge(t *testing.T) {
 	fixture := newTestSignerWebAuthnFixtureV2(t)
 	fixture.enroll(t, fixture.authenticator)
 	begin := fixture.beginReview(t)
-	if _, err := fixture.store.putPolicy(signerPolicyV2{WalletID: fixture.walletID, Role: "vault"}, fixture.policy.Version); err != nil {
+	if _, err := fixture.store.putPolicy(signerPolicyV2{WalletID: fixture.walletID, Role: "agent"}, fixture.policy.Version); err != nil {
 		t.Fatalf("replace signer policy: %v", err)
 	}
 	if _, err := fixture.finishReview(t, begin, fixture.authenticator, 2); err == nil || !strings.Contains(err.Error(), "policy is no longer current") {
@@ -744,7 +744,7 @@ func TestSignerWebAuthnPolicyChangeInvalidatesIssuedProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finish review authorization: %v", err)
 	}
-	if _, err := fixture.store.putPolicy(signerPolicyV2{WalletID: fixture.walletID, Role: "vault"}, fixture.policy.Version); err != nil {
+	if _, err := fixture.store.putPolicy(signerPolicyV2{WalletID: fixture.walletID, Role: "agent"}, fixture.policy.Version); err != nil {
 		t.Fatalf("replace signer policy: %v", err)
 	}
 	if err := fixture.service.verifyAndConsumeReviewProofV2(finish.Binding, &finish.Authorization.Proof); err == nil || !strings.Contains(err.Error(), "policy is no longer current") {

@@ -188,7 +188,7 @@ describe("hosted component contract", () => {
     const contract = await readHostedComponentContract(
       path.join(process.cwd(), "config", "hosted-component-packs.json"),
     );
-    expect(contract.core.loadedPluginIds).toEqual(["memory-core", "sat-mining"]);
+    expect(contract.core.loadedPluginIds).toEqual(["memory-core", "wen"]);
     await expect(
       assertCompleteExtensionOwnership({
         extensionsRoot: path.join(process.cwd(), "extensions"),
@@ -227,8 +227,6 @@ describe("hosted component contract", () => {
     expect(artifactSource).toContain('for (const id of ["typescript", "@fedify/vocab-tools"])');
     expect(artifactSource).toContain('].join("\\n")');
     expect(artifactSource).not.toContain('].join(";")');
-    expect(artifactSource).toContain("extensions/sat-mining/implementation.js");
-    expect(artifactSource).toContain("Dormant SAT Mining loaded its operational implementation");
     for (const packageName of [
       "@anthropic-ai/sdk",
       "@aws-sdk/client-bedrock-runtime",

@@ -26,19 +26,7 @@ Dashboard 是紧凑小组件板，不是设置向导。
 
 它用于：
 
-- 查看 Agent、任务、会话、usage、wallet、mining 和 Fased Network 的高层状态
-- 从顶部栏添加/移除 widgets
-- 桌面端拖动 widget header 并调整高度
-- 在 widget 内容过多时只在 widget 内部纵向滚动
-- 避免把 gateway access、runtime clients、raw config、Debug、Nodes 放回普通 Dashboard
-
 详细设置属于焦点页面：
-
-- **Agents**：models、skills、channels、services、tools、memory、tasks、sessions
-- **Wallets**：钱包角色、余额、审批、passkey 和安全策略
-- **Mining**：SAT mining 控制、capital、live cycle、history、recovery
-- **Usage**：按 provider/model/Agent/session/task/source 的本地模型 usage 历史
-- **Advanced**：Config、Debug、Nodes 运维诊断
 
 关键参考：
 
@@ -56,12 +44,6 @@ Dashboard 是紧凑小组件板，不是设置向导。
 ## Dashboard widgets
 
 默认 widgets 保持高信号：
-
-- **Agents**：所有 Agents、tasks、sessions。
-- **Usage**：7 天 token usage 历史。
-- **Wallets**：按 Agent、Mining、Vault 钱包角色聚合的 SOL。
-- **Mining**：mining 状态、mining 钱包余额、locked capital、7 天 SAT history。
-- **Fased Network**：节点身份和 operator 状态摘要。
 
 Gateway access 和 runtime-client/presence 细节不是普通用户 Dashboard widgets。需要底层诊断时使用顶部 health dot、Advanced > Debug 或 Advanced > Nodes。
 

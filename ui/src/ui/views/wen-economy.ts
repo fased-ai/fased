@@ -13,6 +13,25 @@ type Row =
       scope: string;
       observedAtMs: number;
     };
+const retailRows = new Set([
+  "issuedSupply",
+  "stakingCustody",
+  "usdBacking",
+  "economicNav",
+  "liquidity",
+  "exitCapacity",
+]);
+function displayValue(row: Row) {
+  if (row.status !== "reported") {
+    return "Unavailable";
+  }
+  if (row.unit === "native token atoms" && /^(0|[1-9][0-9]*)$/.test(row.value)) {
+    const atoms = BigInt(row.value);
+    const fraction = (atoms % 100000000000n).toString().padStart(11, "0").replace(/0+$/, "");
+    return `${(atoms / 100000000000n).toLocaleString("en-US")}${fraction ? `.${fraction}` : ""} SAT`;
+  }
+  return `${row.value} ${row.unit}`;
+}
 type Snapshot = {
   signingEnabled: false;
   identity: { economy: string; program: string };
@@ -144,7 +163,7 @@ export class WenEconomyPanel extends LitElement {
   render() {
     return html`<section class="wen-desk__card" aria-label="WEN economy read">
       <span class="wen-desk__eyebrow">01 · Understand</span><h3>Economy</h3>
-      <p>Current facts for your decisions. This view cannot sign or spend.</p>
+      <p>Your economy at a glance.</p>
       <button type="button" ?disabled=${!this.connected || this.busy} @click=${() => void this.refresh()}>
         ${this.busy ? "Reading…" : "Refresh facts"}
       </button>
@@ -152,16 +171,18 @@ export class WenEconomyPanel extends LitElement {
       ${
         this.snapshot
           ? html`<p class="wen-desk__meta">${this.snapshot.identity.economy} · updated ${new Date(this.snapshot.observedAtMs).toLocaleTimeString()}</p>
-        <dl class="wen-desk__facts">${this.snapshot.rows.map(
-          (row) => html`<div>
+        <dl class="wen-desk__facts">${this.snapshot.rows
+          .filter((row) => retailRows.has(row.id))
+          .map(
+            (row) => html`<div>
           <dt>${row.id.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase())}</dt>
           <dd>${
             row.status === "reported"
-              ? html`${row.value} ${row.unit}<details><summary>Source details</summary><small>${row.evidence} · ${row.source} · ${row.scope} · ${new Date(row.observedAtMs).toISOString()} · finalized slot ${this.snapshot?.slot}</small></details>`
-              : `Unavailable: ${row.reason}`
+              ? html`${displayValue(row)}<details><summary>Source details</summary><small>${row.evidence} · ${row.source} · ${row.scope} · ${new Date(row.observedAtMs).toISOString()} · finalized slot ${this.snapshot?.slot}</small></details>`
+              : html`Unavailable<details><summary>Why unavailable?</summary><small>${row.reason}</small></details>`
           }</dd>
         </div>`,
-        )}</dl>`
+          )}</dl><details class="wen-desk__details"><summary>Detailed accounting</summary><dl>${this.snapshot.rows.filter((row) => !retailRows.has(row.id)).map((row) => html`<div><dt>${row.id}</dt><dd>${displayValue(row)}<small>${row.status === "reported" ? `${row.evidence} · ${row.source} · ${row.scope}` : row.reason}</small></dd></div>`)}</dl></details>`
           : html`<p class="wen-desk__empty">${this.connected ? "Refresh to see the latest economy facts." : "Connect your instance to read the economy."}</p>`
       }
     </section>`;

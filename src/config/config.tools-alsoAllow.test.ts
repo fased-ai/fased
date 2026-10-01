@@ -4,6 +4,14 @@ import { validateConfigObject } from "./validation.js";
 // NOTE: These tests ensure allow + alsoAllow cannot be set in the same scope.
 
 describe("config: tools.alsoAllow", () => {
+  it("accepts the WEN profile with explicit optional task capabilities and deny rules", () => {
+    const res = validateConfigObject({
+      tools: { profile: "wen", alsoAllow: ["cron"], deny: ["exec"] },
+      agents: { list: [{ id: "strategy", tools: { profile: "wen" } }] },
+    });
+    expect(res.ok).toBe(true);
+  });
+
   it("rejects tools.allow + tools.alsoAllow together", () => {
     const res = validateConfigObject({
       tools: {

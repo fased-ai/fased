@@ -47,8 +47,16 @@ export default defineConfig({
         ),
       },
       {
-        find: "fased/plugin-sdk/sat-runtime",
-        replacement: path.join(repoRoot, "src", "plugin-sdk", "sat-runtime.ts"),
+        find: "fased/plugin-sdk/line",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "line.ts"),
+      },
+      {
+        find: "fased/plugin-sdk/config",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "config.ts"),
+      },
+      {
+        find: "fased/plugin-sdk/wen-runtime",
+        replacement: path.join(repoRoot, "src", "plugin-sdk", "wen-runtime.ts"),
       },
       {
         find: "fased/plugin-sdk/slack",

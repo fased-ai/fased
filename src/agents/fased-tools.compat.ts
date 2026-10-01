@@ -35,7 +35,6 @@ import {
   createVideoGenerateTool,
 } from "./tools/media-generation-tools.js";
 import { createMessageTool } from "./tools/message-tool.js";
-import { createMiningTool } from "./tools/mining-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
 import { resolveInternalSessionKey, resolveMainSessionAlias } from "./tools/sessions-helpers.js";
@@ -398,7 +397,6 @@ export function createFasedCompatTools(options?: {
       }),
       ownerOnly: true,
     },
-    createMiningTool(),
     createOffersTool(),
     createMarketplaceTool(),
     createMarketplaceOfferDraftTool(),

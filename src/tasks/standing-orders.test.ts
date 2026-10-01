@@ -67,7 +67,7 @@ describe("standing orders", () => {
     const order = saveStandingOrder({
       agentId: "main",
       name: "Mining readiness program",
-      instructions: "Propose a mining readiness workflow when conditions change.",
+      instructions: "Propose a provider readiness workflow when conditions change.",
       proposalKind: "workflow",
     });
 
@@ -85,7 +85,7 @@ describe("standing orders", () => {
       metadata: expect.objectContaining({
         authority: "proposal-only",
         approvalRequired: true,
-        forbiddenGrants: ["wallet", "tools", "mining"],
+        forbiddenGrants: ["wallet", "tools"],
       }),
     });
     expect(listTaskRecords({ agentId: "main" }).tasks).toHaveLength(1);

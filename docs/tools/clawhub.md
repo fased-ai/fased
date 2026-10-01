@@ -89,13 +89,6 @@ fased skills marketplace update <skill-slug> --dry-run
 fased skills marketplace update <skill-slug> --approve-permission-change
 ```
 
-The Control UI uses the same Fased review/install path as the CLI from
-**Agent > Skills**: search opens skill details, **Review install**
-stages the archive in quarantine, and **Install** copies only the reviewed files
-into the selected Agent workspace or shared skill library. A catalog install
-never grants wallet signing, mining wallets, tool access, or autonomous
-execution by itself; those grants stay in Wallet, Agent Tools, and task policy.
-
 When the install target is an Agent, Fased installs into that Agent's
 `<workspace>/skills` and loads the skill on the **next** session. When the
 install target is the shared library, Fased installs into `~/.fased/skills`.
@@ -163,12 +156,6 @@ fased skills wallet grant reviewed-wallet-skill \
   --autonomous \
   --cron
 ```
-
-Installed catalog skills are checked against the registry recorded in
-`<workspace>/skills/<skill>/.clawhub/origin.json`; wallet actions are rejected
-unless that registry is allowlisted, normally `https://clawhub.com`. Wallet
-actions are Agent-wallet-only. Mining and Vault wallets are not available to
-third-party or custom skills for generic wallet actions.
 
 Fased also records the wallet permissions, tool access, and install metadata a
 catalog skill requests at install time. If an update adds or changes risky wallet

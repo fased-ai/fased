@@ -49,8 +49,6 @@ Fased 支持 `SecretRef` 对象，让凭据保留在环境变量、本地 secret
 | `plugins.entries.<pluginId>.apiKey`   | 无稳定 top-level field    | Extensions              | 不要依赖 generic plugin `apiKey`。plugin credentials 属于 plugin-defined config。     |
 | `plugins.entries.<pluginId>.config.*` | Plugin-defined            | Extensions              | 具体 credential path 由 plugin manifest/UI hints 和 plugin docs 定义。                |
 
-安装 skill 或 plugin 不会授予 wallet、mining、tool 或 autonomous task access。那些 grant 需要单独审核。
-
 ### Google Chat
 
 | Field                                                 | 支持 SecretRef | Managed by                        | Notes                                                      |

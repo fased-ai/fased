@@ -146,14 +146,14 @@ function requireGatewayAmountNotRaised(params: {
 
 export function buildLocalSignerPolicyTightening(params: {
   current: LocalSocketSignerPolicyV2;
-  expectedRole: "agent" | "mining" | "vault";
+  expectedRole: "agent";
   gatewayPolicy: GatewayPolicyState;
   patch: LocalSignerGatewayPolicyPatch;
   hosting: boolean;
 }): LocalSocketSignerPolicyV2 {
   if (params.current.role !== params.expectedRole) {
     requireAdmin(
-      `Wallet role metadata (${params.expectedRole}) does not match the signer-owned role (${params.current.role}); roles are immutable.`,
+      "Wallet policy discriminator does not match the signer-owned policy; roles are immutable.",
       params.hosting,
     );
   }
@@ -278,9 +278,7 @@ export function localSignerPolicyState(
       /^[1-9][0-9]*$/.test(asset.maxPerTx) &&
       /^[1-9][0-9]*$/.test(asset.maxDaily),
   );
-  const hasOnChainOperation = policy.operations.some(
-    (operation) => operation !== "federation.bondChallenge",
-  );
+  const hasOnChainOperation = policy.operations.length > 0;
   const nativeFeeReserve = BigInt(LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2);
   const hasNativeFeeBudget = policy.assets.some(
     (asset) =>

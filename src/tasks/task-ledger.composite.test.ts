@@ -9,7 +9,6 @@ import type { CronJob } from "../cron/types.js";
 import { syncMarketplaceOrderTask } from "../federation/marketplace-task-ledger.js";
 import { tasksHandlers } from "../gateway/server-methods/tasks.js";
 import type { GatewayRequestHandlerOptions } from "../gateway/server-methods/types.js";
-import { syncMiningGatewayTask } from "../mining/mining-task-ledger.js";
 import type { WalletSendApprovalRequest } from "../wallet/wallet-send-approvals.js";
 import { syncWalletApprovalTask } from "../wallet/wallet-task-ledger.js";
 import {
@@ -44,7 +43,7 @@ afterEach(async () => {
 });
 
 describe("composite task ledger smoke", () => {
-  it("records webhook, agent, channel, media, wallet, marketplace, and mining work in one ledger", async () => {
+  it("records webhook, agent, channel, media, wallet, and marketplace work in one ledger", async () => {
     const now = Date.now();
     const cronStorePath = path.join(stateDir, "cron-runs.json");
 
@@ -272,28 +271,8 @@ describe("composite task ledger smoke", () => {
       } satisfies FederationMarketplaceOrderConfig,
     });
 
-    syncMiningGatewayTask({
-      method: "sat.startMining",
-      requestId: "mining-smoke",
-      requestParams: { walletId: "mining-1" },
-      nowMs: now + 3_000,
-      responsePayload: {
-        ok: true,
-        payload: {
-          started: true,
-          status: {
-            running: true,
-            enabledWanted: true,
-            walletId: "mining-1",
-            currentCycleId: 7,
-            currentCapitalLockedLamports: "5000",
-          },
-        },
-      },
-    });
-
     const result = await listTasksViaGateway({ agentId: "main", limit: 50, includeAudit: true });
-    expect(result.summary.total).toBeGreaterThanOrEqual(9);
+    expect(result.summary.total).toBeGreaterThanOrEqual(8);
     expect(result.summary.bySource).toMatchObject({
       webhook: 1,
       subagent: 1,
@@ -303,7 +282,6 @@ describe("composite task ledger smoke", () => {
       media: 1,
       wallet: 1,
       marketplace: 1,
-      mining: 1,
     });
     expect(result.tasks.map((task) => task.task)).toEqual(
       expect.arrayContaining([
@@ -315,7 +293,6 @@ describe("composite task ledger smoke", () => {
         "Media task smoke",
         "Wallet approval: 0.01 SOL to dest111111111111111111111111111111111111111",
         "Marketplace order: Smoke order",
-        "Mining: Start mining",
       ]),
     );
     expect(result.tasks.find((task) => task.source === "channel")).toMatchObject({
@@ -330,10 +307,6 @@ describe("composite task ledger smoke", () => {
     expect(result.tasks.find((task) => task.source === "marketplace")?.metadata).toMatchObject({
       orderId: "order-smoke",
       deliveryStatus: "delivered",
-    });
-    expect(result.tasks.find((task) => task.source === "mining")?.metadata).toMatchObject({
-      action: "startMining",
-      walletId: "mining-1",
     });
     expect(result.tasks.every((task) => task.rootTaskId && task.correlationId)).toBe(true);
     expect(result.tasks.find((task) => task.source === "webhook")).toMatchObject({
@@ -364,7 +337,6 @@ describe("composite task ledger smoke", () => {
       media: 1,
       wallet: 1,
       marketplace: 1,
-      mining: 1,
     });
     expect(result.tasks).toEqual(
       expect.arrayContaining([
@@ -402,7 +374,6 @@ describe("composite task ledger smoke", () => {
         }),
         expect.objectContaining({ source: "wallet", taskKind: "wallet_approval" }),
         expect.objectContaining({ source: "marketplace", taskKind: "marketplace_order" }),
-        expect.objectContaining({ source: "mining", taskKind: "mining_control" }),
       ]),
     );
 

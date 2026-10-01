@@ -14,12 +14,6 @@ title: "Control UI 设计"
 
 Control UI 是围绕一个选定 Agent 的工作台，加少量全局运维页面：
 
-- **Dashboard**：紧凑概览小组件板。
-- **Chat**：选定 Agent/session 的浏览器聊天界面。
-- **Agents**：普通设置入口，包含 Models、Channels、Skills、Tools、Memory、Services、Tasks、Sessions、Files、Coordination。
-- **Wallets**、**Mining**、**Fased Network**、**Marketplace**、**Extensions**、**Notifications**、**Usage**：一等全局操作页面。
-- **Advanced**：Config、Debug、Nodes。不要把 Debug 或 Nodes 放回主导航。
-
 旧的全局 Providers、Channels、Services、Tasks、Skills、Memory、Debug、Nodes 页面可以保留为深链或管理员视图，但主导航应保持简单。
 
 ## 主题
@@ -49,12 +43,6 @@ Control UI 是围绕一个选定 Agent 的工作台，加少量全局运维页�
 ## Dashboard widgets
 
 Dashboard 是概览，不是启动链接目录。默认 widgets：
-
-- Agents：Agents、tasks、sessions。
-- Usage：所选时间窗口内的 token usage history。
-- Wallets：按 Agent、Mining、Vault 角色聚合的钱包和 SOL。
-- Mining：mining 状态、mining 钱包余额、capital、7 天 history。
-- Fased Network：hosted 状态和地址/handle 摘要。
 
 Widget 规则：
 
@@ -87,19 +75,6 @@ Widget 规则：
 
 敏感能力必须分离：
 
-- 安装 skill 只写文件或依赖。
-- Allow skill 只把 skill 附加给 Agent。
-- Grant tools/wallets 才给运行时权限。
-- Mining/Vault 钱包不提供给通用 skills。
-- 外部 npm/go/uv/brew/download 安装器必须显示来源、命令、pin/integrity 和 PATH 验证结果。
-
 ## 测试要求
 
 涉及共享布局或真实工作流的 UI 改动应有浏览器测试：
-
-- 导航/topbar/sidebar：路由和响应式。
-- Modal：按钮打开、backdrop 关闭、成功/错误可见。
-- Dashboard：add/remove/move widget，且无内容横向 overflow。
-- Agent tabs：保持选定 Agent 作用域。
-- Skills：create/edit、review install、dependency install、Agent allow toggle。
-- Wallet/mining：review gate 和 policy 不被放宽。

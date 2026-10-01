@@ -82,7 +82,7 @@ func wenCampaignClaimStakeStoredBindingV1(r signerReviewV2, p signerPolicyV2) (s
 		r.TransactionDigest != "sha256:"+wenHashV1(a.Message) || r.StateDigest != a.stateHash() || r.StateSlot != a.Snapshot.Claim.Slot ||
 		r.Asset != "solana:native" || r.Amount != strconv.FormatUint(debit, 10) || r.Destination != a.Claim.Economy.String() || r.PolicyOperation != wenCampaignClaimStakeOperationV1 ||
 		len(r.RequiredPrograms) != 1 || r.RequiredPrograms[0] != a.Claim.Program.String() || r.Nonce == "" || r.IssuedAt == "" || r.ExpiresAt == "" ||
-		r.Transaction != nil || r.VaultReference != nil || r.MessageBase64 != "" {
+		r.Transaction != nil || r.MessageBase64 != "" {
 		return signerReviewBindingV2{}, bad
 	}
 	return signerReviewBindingV2{RequestID: r.RequestID, WalletID: r.WalletID, WalletPublicKey: r.WalletPublicKey, Role: p.Role,

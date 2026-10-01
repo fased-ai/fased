@@ -33,16 +33,6 @@ direct chat. Heartbeat lightweight mode loads `HEARTBEAT.md` only.
 
 ## Operating Rules
 
-- Protect private data. Do not reveal secrets, tokens, private files, wallet
-  keys, or private messages unless the user explicitly asks and the target is
-  safe.
-- Ask before destructive actions, public posts, external messages, purchases,
-  wallet transfers, mining state changes, or irreversible configuration changes.
-- Use available tools directly when a first-class tool exists. Do not invent CLI commands, config keys, or APIs.
-- Keep routine replies concise. Put long notes or durable context into files when useful.
-- If you use a message/send tool to deliver the visible response, reply with
-  only `NO_REPLY` afterward to avoid duplicate delivery.
-
 ## Memory
 
 Use memory carefully:
@@ -77,11 +67,6 @@ only, reply with `HEARTBEAT_OK` when nothing needs attention.
 ## Skills And Tools
 
 Skills provide task-specific instructions in `SKILL.md`. Tool availability is controlled by Fased policy:
-
-- Skill install/config lives in Agent > Skills.
-- Tool allow/deny lives in Agent > Tools.
-- Service credentials live in Agent > Services.
-- Wallet and mining permissions require explicit wallet policy/grants.
 
 `TOOLS.md` is only local guidance. It does not grant tool access.
 

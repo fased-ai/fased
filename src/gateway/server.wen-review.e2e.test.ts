@@ -5,7 +5,7 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 import { expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
-import plugin from "../../extensions/sat-mining/index.js";
+import plugin from "../../extensions/wen/index.js";
 import { createServer } from "../../ui/node_modules/vite/dist/node/index.js";
 import type { GatewayBrowserClient as BrowserClient } from "../../ui/src/ui/gateway.js";
 import type { WenReviewPanel } from "../../ui/src/ui/views/wen-review.js";
@@ -33,7 +33,7 @@ const profile = vi.hoisted(() => ({
   runClaimJourney: vi.fn(async () => ({ outcome: "finalized-success" })),
   refreshReviewPage: vi.fn(async () => ({ items: [], signingEnabled: false })),
 }));
-vi.mock("fased/plugin-sdk/sat-runtime", async (original) => ({
+vi.mock("fased/plugin-sdk/wen-runtime", async (original) => ({
   ...(await original<Record<string, unknown>>()),
   createLocalWenRecoveryProfile: async () => profile,
 }));

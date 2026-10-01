@@ -78,6 +78,7 @@ function createBaseReport(): PluginStatusReport {
     typedHooks: [],
     channels: [],
     providers: [],
+    runtimeProviders: {},
     webSearchProviders: [],
     imageGenerationProviders: [],
     videoGenerationProviders: [],

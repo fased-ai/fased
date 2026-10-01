@@ -1,16 +1,13 @@
 {
-  "protocol": { "current": 2, "min": 2, "max": 2 },
+  "protocol": {
+    "current": 2,
+    "min": 2,
+    "max": 2
+  },
   "nativeFeeReservationLamports": 6500000,
   "intentTypes": [
     "solana.nativeTransfer",
     "solana.splTransferChecked",
-    "solana.satAction",
-    "solana.satKeeperAction",
-    "solana.satLookupTable",
-    "solana.vaultBondAction",
-    "solana.agentCapitalAction",
-    "solana.moneyFoundationAction",
-    "federation.bondChallenge",
     "solana.jupiter.swap",
     "solana.jupiter.trigger.create",
     "solana.jupiter.trigger.cancel"
@@ -27,10 +24,8 @@
     "atomicIdempotency",
     "ambiguousBroadcastReconciliation",
     "signerOwnedKeys",
-    "signerOwnedRoleBaselines",
     "liveWalletReadiness",
     "signerOwnedSuccessorRotation",
-    "signerOwnedMiningRetirementEvidence",
     "permanentRetiredWalletPolicies",
     "signerOwnedRPC",
     "applicationNetworkBootstrap",
@@ -42,13 +37,6 @@
     "typedA2aPaymentMemos",
     "typedA2aRefundMemos",
     "idempotentAssociatedTokenCreation",
-    "typedSATActions",
-    "signerOwnedKeeperFeePayer",
-    "atomicSatOpenCommitV2",
-    "typedSATAddressLookupTables",
-    "typedVaultBondActions",
-    "domainSeparatedFederationBondChallenges",
-    "federationBondChallengeWrapperV2",
     "signerOwnedWebAuthn",
     "signerOwnedWebAuthnCredentialRevocation",
     "singleUseReviewedAuthorization",
@@ -56,18 +44,13 @@
     "signerOwnedReviewPrepareExecute",
     "exactPreparedTransactions",
     "legacyOnlyJupiterTransactions",
-    "reviewedVaultBondActions",
-    "reviewedAgentCapitalActions",
-    "reviewedMoneyFoundationActions",
     "preSignedEphemeralPositionMint",
-    "reviewedFederationBondChallenges",
     "signerOwnedStateRecheck",
     "durableReviewAuthorization",
     "signerOwnedJupiterTriggerV2",
     "signerOwnedJupiterTriggerHistory",
     "jupiterTriggerSecretsNeverCrossSocket",
-    "jupiterTriggerDurablePhases",
-    "signerOwnedEncryptedSATCommitments"
+    "jupiterTriggerDurablePhases"
   ],
   "clientRequiredFeatures": [
     "failClosedPolicies",
@@ -79,7 +62,6 @@
     "atomicIdempotency",
     "ambiguousBroadcastReconciliation",
     "signerOwnedKeys",
-    "signerOwnedRoleBaselines",
     "liveWalletReadiness",
     "signerOwnedRPC",
     "applicationNetworkBootstrap",
@@ -93,9 +75,7 @@
     "signerOwnedJupiterTriggerHistory",
     "signerOwnedReviewPrepareExecute",
     "exactPreparedTransactions",
-    "reviewedMoneyFoundationActions",
     "preSignedEphemeralPositionMint",
-    "legacyOnlyJupiterTransactions",
-    "signerOwnedEncryptedSATCommitments"
+    "legacyOnlyJupiterTransactions"
   ]
 }

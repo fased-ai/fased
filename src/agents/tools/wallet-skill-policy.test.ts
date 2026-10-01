@@ -33,7 +33,6 @@ describe("removed skill wallet authority", () => {
   it("denies wallet access whenever a skill-file identity is present", async () => {
     const wallet = resolveWalletRuntimeConfig({
       wallet: {
-        enabled: true,
         runtime: {
           policy: { skillsEnabled: true },
           toolAccess: { mode: "all", allowSkills: ["local"] },
@@ -56,7 +55,7 @@ describe("removed skill wallet authority", () => {
   });
 
   it("leaves non-skill owner and typed-adapter paths to their own policies", async () => {
-    const wallet = resolveWalletRuntimeConfig({ wallet: { enabled: true } });
+    const wallet = resolveWalletRuntimeConfig({ wallet: {} });
     expect(() => enforceWalletSkillAccessEnabled({ wallet, requesterSkillId: null })).not.toThrow();
     await expect(
       enforceWalletSkillPolicy({

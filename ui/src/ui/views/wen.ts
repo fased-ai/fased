@@ -1,7 +1,6 @@
 import { html } from "lit";
 import "../../styles/wen-desk.css";
 import type { GatewayBrowserClient } from "../gateway.js";
-import "./wen-review.js";
 import "./wen-economy.js";
 import "./wen-acquisition.js";
 
@@ -18,7 +17,26 @@ export function renderWen(props: { client: GatewayBrowserClient | null; connecte
       props.client
         ? html`<div class="wen-desk__grid"><wen-economy-panel .client=${props.client} .connected=${props.connected}></wen-economy-panel>
           <wen-acquisition-panel .client=${props.client} .connected=${props.connected}></wen-acquisition-panel></div>
-          <div class="wen-desk__operations"><wen-review-panel .client=${props.client} .connected=${props.connected}></wen-review-panel></div>`
+          <details class="wen-desk__operations" @toggle=${(event: Event) => {
+            const details = event.target as HTMLDetailsElement;
+            if (details.open) {
+              const status = details.querySelector<HTMLElement>("[data-operation-load-status]");
+              if (status) {
+                status.textContent = "Loading operations…";
+              }
+              void import("./wen-review.js")
+                .then(() => {
+                  if (status) {
+                    status.textContent = "";
+                  }
+                })
+                .catch(() => {
+                  if (status) {
+                    status.textContent = "Operations could not load. Close and reopen to retry.";
+                  }
+                });
+            }
+          }}><summary>Manage approved operations</summary><p role="status" data-operation-load-status></p><wen-review-panel .client=${props.client} .connected=${props.connected}></wen-review-panel></details>`
         : html`
             <p role="status">Connect a WEN-enabled Fased instance to open your strategy desk.</p>
           `

@@ -1,14 +1,6 @@
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { acpAction, registerAcpCli } = vi.hoisted(() => {
-  const action = vi.fn();
-  const register = vi.fn((program: Command) => {
-    program.command("acp").action(action);
-  });
-  return { acpAction: action, registerAcpCli: register };
-});
-
 const { nodesAction, registerNodesCli } = vi.hoisted(() => {
   const action = vi.fn();
   const register = vi.fn((program: Command) => {
@@ -16,24 +8,6 @@ const { nodesAction, registerNodesCli } = vi.hoisted(() => {
     nodes.command("list").action(action);
   });
   return { nodesAction: action, registerNodesCli: register };
-});
-
-const { miningAction, registerMiningCli } = vi.hoisted(() => {
-  const action = vi.fn();
-  const register = vi.fn((program: Command) => {
-    const mining = program.command("mining");
-    mining.command("status").action(action);
-  });
-  return { miningAction: action, registerMiningCli: register };
-});
-
-const { satAction, registerSatCli } = vi.hoisted(() => {
-  const action = vi.fn();
-  const register = vi.fn((program: Command) => {
-    const sat = program.command("sat");
-    sat.command("maintain").action(action);
-  });
-  return { satAction: action, registerSatCli: register };
 });
 
 const { federationAction, registerFederationCli } = vi.hoisted(() => {
@@ -45,10 +19,7 @@ const { federationAction, registerFederationCli } = vi.hoisted(() => {
   return { federationAction: action, registerFederationCli: register };
 });
 
-vi.mock("../acp-cli.js", () => ({ registerAcpCli }));
 vi.mock("../nodes-cli.js", () => ({ registerNodesCli }));
-vi.mock("../mining-cli.js", () => ({ registerMiningCli }));
-vi.mock("../sat-cli.js", () => ({ registerSatCli }));
 vi.mock("../federation-cli.js", () => ({ registerFederationCli }));
 
 const { registerSubCliByName, registerSubCliCommands } = await import("./register.subclis.js");
@@ -73,14 +44,8 @@ describe("registerSubCliCommands", () => {
     } else {
       process.env.FASED_DISABLE_LAZY_SUBCOMMANDS = originalDisableLazySubcommands;
     }
-    registerAcpCli.mockClear();
-    acpAction.mockClear();
     registerNodesCli.mockClear();
     nodesAction.mockClear();
-    registerMiningCli.mockClear();
-    miningAction.mockClear();
-    registerSatCli.mockClear();
-    satAction.mockClear();
     registerFederationCli.mockClear();
     federationAction.mockClear();
   });
@@ -95,14 +60,14 @@ describe("registerSubCliCommands", () => {
   });
 
   it("registers only the primary placeholder and dispatches", async () => {
-    const program = createRegisteredProgram(["node", "fased", "acp"]);
+    const program = createRegisteredProgram(["node", "fased", "nodes", "list"]);
 
-    expect(program.commands.map((cmd) => cmd.name())).toEqual(["acp"]);
+    expect(program.commands.map((cmd) => cmd.name())).toEqual(["nodes"]);
 
-    await program.parseAsync(["acp"], { from: "user" });
+    await program.parseAsync(["nodes", "list"], { from: "user" });
 
-    expect(registerAcpCli).toHaveBeenCalledTimes(1);
-    expect(acpAction).toHaveBeenCalledTimes(1);
+    expect(registerNodesCli).toHaveBeenCalledTimes(1);
+    expect(nodesAction).toHaveBeenCalledTimes(1);
   });
 
   it("registers placeholders for all subcommands when no primary", () => {
@@ -110,13 +75,13 @@ describe("registerSubCliCommands", () => {
 
     const names = program.commands.map((cmd) => cmd.name());
     expect(names).toContain("start");
-    expect(names).toContain("managed");
-    expect(names).toContain("acp");
+    expect(names).not.toContain("managed");
+    expect(names).toContain("nodes");
     expect(names).toContain("gateway");
-    expect(names).toContain("mining");
-    expect(names).toContain("sat");
+    expect(names).not.toContain("mining");
+    expect(names).not.toContain("sat");
     expect(names).toContain("federation");
-    expect(registerAcpCli).not.toHaveBeenCalled();
+    expect(registerNodesCli).not.toHaveBeenCalled();
   });
 
   it("re-parses argv for lazy subcommands", async () => {
@@ -130,39 +95,17 @@ describe("registerSubCliCommands", () => {
     expect(nodesAction).toHaveBeenCalledTimes(1);
   });
 
-  it("dispatches lazy mining subcommands", async () => {
-    const program = createRegisteredProgram(["node", "fased", "mining", "status"], "fased");
-
-    expect(program.commands.map((cmd) => cmd.name())).toEqual(["mining"]);
-
-    await program.parseAsync(["mining", "status"], { from: "user" });
-
-    expect(registerMiningCli).toHaveBeenCalledTimes(1);
-    expect(miningAction).toHaveBeenCalledTimes(1);
-  });
-
-  it("dispatches lazy SAT operator subcommands", async () => {
-    const program = createRegisteredProgram(["node", "fased", "sat", "maintain"], "fased");
-
-    expect(program.commands.map((cmd) => cmd.name())).toEqual(["sat"]);
-
-    await program.parseAsync(["sat", "maintain"], { from: "user" });
-
-    expect(registerSatCli).toHaveBeenCalledTimes(1);
-    expect(satAction).toHaveBeenCalledTimes(1);
-  });
-
   it("replaces placeholder when registering a subcommand by name", async () => {
-    const program = createRegisteredProgram(["node", "fased", "acp", "--help"], "fased");
+    const program = createRegisteredProgram(["node", "fased", "nodes", "--help"], "fased");
 
-    await registerSubCliByName(program, "acp");
+    await registerSubCliByName(program, "nodes");
 
     const names = program.commands.map((cmd) => cmd.name());
-    expect(names.filter((name) => name === "acp")).toHaveLength(1);
+    expect(names.filter((name) => name === "nodes")).toHaveLength(1);
 
-    await program.parseAsync(["acp"], { from: "user" });
-    expect(registerAcpCli).toHaveBeenCalledTimes(1);
-    expect(acpAction).toHaveBeenCalledTimes(1);
+    await program.parseAsync(["nodes", "list"], { from: "user" });
+    expect(registerNodesCli).toHaveBeenCalledTimes(1);
+    expect(nodesAction).toHaveBeenCalledTimes(1);
   });
 
   it("registers federation subcommands by name without duplicate placeholders", async () => {

@@ -36,6 +36,8 @@ function fakeApi(overrides: Partial<FasedAgentPluginApi> = {}): FasedAgentPlugin
     // oxlint-disable-next-line typescript/no-explicit-any
     runtime: { version: "test" } as any,
     logger: { info() {}, warn() {}, error() {}, debug() {} },
+    registerCapabilityProvider() {},
+    registerRuntimeProvider() {},
     registerTool() {},
     registerHttpHandler() {},
     registerChannel() {},

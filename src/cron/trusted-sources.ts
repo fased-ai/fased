@@ -51,9 +51,7 @@ export function classifyTrustedSourceTaskType(text: string): string {
   if (/\bwallet\b|\bwallets?\b|\bbalances?\b|\baddress\b/.test(value)) {
     return "wallet";
   }
-  if (/\bmining\b|\bsat mining\b|\bminers?\b/.test(value)) {
-    return "mining";
-  }
+
   if (/\boffers?\b|\bmarketplace\b|\borders?\b|\brequests?\b/.test(value)) {
     return "offers";
   }

@@ -2,13 +2,10 @@ package main
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
-
-	"fased-signerd/internal/execution"
 
 	solana "github.com/gagliardetto/solana-go"
 )
@@ -35,22 +32,6 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 	var transaction signerSolanaTransactionEnvelopeV2
 	var artifact signerReviewArtifactInputV2
 	switch {
-	case intent.Intent.Type == intentSolanaVaultMining:
-		if req.Transaction != nil || req.Mode != jupiterReviewModeReviewedV2 {
-			return signerReviewV2{}, errors.New("Vault mining requires reference-only reviewed preparation")
-		}
-		policy, policyErr := s.store.getPolicy(walletID)
-		if policyErr != nil {
-			return signerReviewV2{}, policyErr
-		}
-		if policy.Role != "agent" || policy.ApprovalMode != "" {
-			return signerReviewV2{}, errors.New("Vault mining requires Agent executor role")
-		}
-		if err := validateReviewPolicyV2(policy, intent, req.Mode); err != nil {
-			return signerReviewV2{}, err
-		}
-		validated, artifact, _, err = s.resolveVaultReviewV1(walletID, intent, nil)
-		defer zeroBytes(validated.RawUnsigned)
 	case intent.Intent.Type == intentSolanaJupiterSwap:
 		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
 		if networkErr != nil {
@@ -101,107 +82,8 @@ func (s *signerServiceV2) prepareJupiterReviewV2(walletID string, req signerRevi
 				Digest: "sha256:" + hex.EncodeToString(digest[:]), Transaction: &transaction,
 			}
 		}
-	case intent.Intent.Type == intentSolanaVaultBondAction:
-		if req.Transaction != nil {
-			return signerReviewV2{}, errors.New("reviewed Vault bond transactions are built only by the signer")
-		}
-		if mode, modeErr := normalizeReviewModeV2(req.Mode); modeErr != nil || mode != jupiterReviewModeReviewedV2 {
-			return signerReviewV2{}, errors.New("Vault bond actions require reviewed mode")
-		}
-		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			return signerReviewV2{}, errSignerNetworkPendingV2
-		}
-		var snapshot signerOwnedAccountSnapshotV2
-		var verifiedRPCs []string
-		intent, snapshot, verifiedRPCs, err = resolveVaultBondReviewStateV2(rpcURLs, walletPublicKey, intent)
-		if err == nil {
-			var unsigned *solana.Transaction
-			unsigned, err = buildVaultBondUnsignedTransactionV2(verifiedRPCs, walletPublicKey, intent, nil)
-			if err == nil {
-				transaction, _, err = typedTransactionEnvelopeV2(unsigned)
-			}
-		}
-		if err == nil {
-			validated, err = validateAndSimulateVaultBondReviewV2(verifiedRPCs, walletPublicKey, intent, transaction)
-		}
-		if err == nil {
-			artifact = signerReviewArtifactInputV2{
-				WalletPublicKey: wallet.PublicKey, Kind: signerReviewArtifactSolanaTransactionV2,
-				Digest: vaultBondReviewArtifactDigestV2(validated), Transaction: &transaction,
-				StateDigest: snapshot.Digest, StateSlot: snapshot.Slot,
-			}
-		}
-	case intent.Intent.Type == intentSolanaAgentCapitalAction:
-		if req.Transaction != nil {
-			return signerReviewV2{}, errors.New("reviewed Agent Capital transactions are built only by the signer")
-		}
-		if mode, modeErr := normalizeReviewModeV2(req.Mode); modeErr != nil || mode != jupiterReviewModeReviewedV2 {
-			return signerReviewV2{}, errors.New("Agent Capital actions require reviewed mode")
-		}
-		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			return signerReviewV2{}, errSignerNetworkPendingV2
-		}
-		var snapshot signerOwnedAccountSnapshotV2
-		var verifiedRPCs []string
-		intent, snapshot, verifiedRPCs, err = resolveAgentCapitalReviewStateV2(rpcURLs, walletPublicKey, intent)
-		if err == nil {
-			var unsigned *solana.Transaction
-			unsigned, err = buildAgentCapitalUnsignedTransactionV2(verifiedRPCs, walletPublicKey, intent, nil)
-			if err == nil {
-				transaction, _, err = typedTransactionEnvelopeV2(unsigned)
-			}
-		}
-		if err == nil {
-			validated, err = validateAndSimulateAgentCapitalReviewV2(verifiedRPCs, walletPublicKey, intent, transaction)
-		}
-		if err == nil {
-			artifact = signerReviewArtifactInputV2{WalletPublicKey: wallet.PublicKey, Kind: signerReviewArtifactSolanaTransactionV2, Digest: agentCapitalArtifactDigestV2(validated), Transaction: &transaction, StateDigest: snapshot.Digest, StateSlot: snapshot.Slot}
-		}
-	case intent.Intent.Type == intentSolanaMoneyFoundation:
-		if req.Transaction == nil {
-			return signerReviewV2{}, errors.New("reviewed money-foundation action requires the exact compiler transaction")
-		}
-		if mode, modeErr := normalizeReviewModeV2(req.Mode); modeErr != nil || mode != jupiterReviewModeReviewedV2 {
-			return signerReviewV2{}, errors.New("money-foundation actions require reviewed mode")
-		}
-		rpcURLs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			return signerReviewV2{}, errSignerNetworkPendingV2
-		}
-		var snapshot signerOwnedAccountSnapshotV2
-		var verifiedRPCs []string
-		intent, snapshot, verifiedRPCs, err = resolveMoneyFoundationReviewStateV2(rpcURLs, walletPublicKey, intent)
-		if err == nil {
-			transaction, err = normalizeTransactionEnvelopeV2(*req.Transaction)
-		}
-		if err == nil {
-			validated, err = validateAndSimulateMoneyFoundationReviewV2(verifiedRPCs, walletPublicKey, intent, transaction)
-		}
-		if err == nil {
-			artifact = signerReviewArtifactInputV2{WalletPublicKey: wallet.PublicKey, Kind: signerReviewArtifactSolanaTransactionV2, Digest: moneyFoundationArtifactDigestV2(validated), Transaction: &transaction, StateDigest: snapshot.Digest, StateSlot: snapshot.Slot}
-		}
-	case intent.Intent.Type == intentFederationBondChallenge:
-		if req.Transaction != nil {
-			return signerReviewV2{}, errors.New("federation bond challenge rejects transaction artifacts")
-		}
-		if mode, modeErr := normalizeReviewModeV2(req.Mode); modeErr != nil || mode != jupiterReviewModeReviewedV2 {
-			return signerReviewV2{}, errors.New("federation bond challenges require reviewed mode")
-		}
-		if intent.Intent.Federation == nil || req.RequestID != federationBondChallengeRequestIDV2(intent.Intent.Federation.ChallengeID) {
-			return signerReviewV2{}, errors.New("federation bond review requestId must be derived from the exact challengeId")
-		}
-		_, payload, decodeErr := federationPayloadFromIntentV2(intent)
-		if decodeErr != nil {
-			return signerReviewV2{}, decodeErr
-		}
-		if err = validateFederationBondChallengeTimeV2(payload, s.store.now()); err == nil {
-			artifact, err = federationMessageArtifactV2(intent)
-			artifact.WalletPublicKey = wallet.PublicKey
-		}
 	default:
-		return signerReviewV2{}, errors.New("review.prepare supports typed Jupiter, signer-built SOL/SPL transfers, Vault bond, Agent Capital, money-foundation, and federation actions")
+		return signerReviewV2{}, errors.New("review.prepare supports typed Jupiter and signer-built SOL/SPL transfers")
 	}
 	if err != nil {
 		return signerReviewV2{}, err
@@ -228,9 +110,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			return signerReviewExecutionResultV2{}, walletErr
 		}
 		result := signerReviewExecutionResultV2{Review: review, Operation: &terminal, Signer: wallet.PublicKey}
-		if review.IntentType == intentFederationBondChallenge {
-			result.SignatureBase64 = terminal.Signature
-		}
+
 		return result, nil
 	} else if lookupErr != nil && !errors.Is(lookupErr, errSignerOperationNotFoundV2) {
 		return signerReviewExecutionResultV2{}, lookupErr
@@ -260,11 +140,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	}
 	var validated jupiterValidatedTransactionV2
 	var rpcURLs []string
-	var message []byte
 	switch {
-	case intent.Intent.Type == intentSolanaVaultMining:
-		validated, _, rpcURLs, err = s.resolveVaultReviewV1(walletID, intent, &review)
-		defer zeroBytes(validated.RawUnsigned)
 	case intent.Intent.Type == intentSolanaJupiterSwap:
 		rpcURLs, err = s.keys.SolanaRPCURLsV2(walletID)
 		if err != nil {
@@ -290,79 +166,6 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			return signerReviewExecutionResultV2{}, errors.New("stored signer review transaction is missing")
 		}
 		validated, err = validateAndSimulateTypedTransferReviewV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
-	case intent.Intent.Type == intentSolanaVaultBondAction:
-		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
-		}
-		var currentIntent normalizedIntentV2
-		var snapshot signerOwnedAccountSnapshotV2
-		currentIntent, snapshot, rpcURLs, err = resolveVaultBondReviewStateV2(configuredRPCs, walletPublicKey, intent)
-		if err == nil {
-			err = compareVaultBondReviewStateV2(review, currentIntent, snapshot)
-		}
-		if err == nil {
-			intent = currentIntent
-			if artifact.Transaction == nil {
-				err = errors.New("stored Vault bond review transaction is missing")
-			} else {
-				validated, err = validateAndSimulateVaultBondReviewV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
-			}
-		}
-	case intent.Intent.Type == intentSolanaAgentCapitalAction:
-		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
-		}
-		var currentIntent normalizedIntentV2
-		var snapshot signerOwnedAccountSnapshotV2
-		currentIntent, snapshot, rpcURLs, err = resolveAgentCapitalReviewStateV2(configuredRPCs, walletPublicKey, intent)
-		if err == nil {
-			err = compareAgentCapitalReviewStateV2(review, currentIntent, snapshot)
-		}
-		if err == nil {
-			intent = currentIntent
-			if artifact.Transaction == nil {
-				err = errors.New("stored Agent Capital review transaction is missing")
-			} else {
-				validated, err = validateAndSimulateAgentCapitalReviewV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
-			}
-		}
-	case intent.Intent.Type == intentSolanaMoneyFoundation:
-		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
-		}
-		var currentIntent normalizedIntentV2
-		var snapshot signerOwnedAccountSnapshotV2
-		currentIntent, snapshot, rpcURLs, err = resolveMoneyFoundationReviewStateV2(configuredRPCs, walletPublicKey, intent)
-		if err == nil {
-			err = compareMoneyFoundationReviewStateV2(review, currentIntent, snapshot)
-		}
-		if err == nil {
-			intent = currentIntent
-			if artifact.Transaction == nil {
-				err = errors.New("stored money-foundation review transaction is missing")
-			} else {
-				validated, err = validateAndSimulateMoneyFoundationReviewV2(rpcURLs, walletPublicKey, intent, *artifact.Transaction)
-			}
-		}
-	case intent.Intent.Type == intentFederationBondChallenge:
-		if artifact.Kind != signerReviewArtifactDomainMessageV2 {
-			return signerReviewExecutionResultV2{}, errors.New("federation review is not bound to a domain message")
-		}
-		message, err = decodeFederationReviewMessageV2(review)
-		if err == nil && (len(message) != len(intent.Message) || subtle.ConstantTimeCompare(message, intent.Message) != 1) {
-			err = errors.New("stored federation review payload does not match the exact semantic challenge")
-		}
-		if err == nil {
-			_, payload, decodeErr := federationPayloadFromIntentV2(intent)
-			if decodeErr != nil {
-				err = decodeErr
-			} else {
-				err = validateFederationBondChallengeTimeV2(payload, s.store.now())
-			}
-		}
 	default:
 		return signerReviewExecutionResultV2{}, errors.New("stored signer review intent is unsupported")
 	}
@@ -383,8 +186,8 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	var reviewedBinding signerReviewBindingV2
 	controlUIAuthorization := false
 	if review.Mode == jupiterReviewModeAutonomousV2 {
-		if policy.Role != "agent" || policy.ApprovalMode != "" {
-			return signerReviewExecutionResultV2{}, errors.New("autonomous signer execution is restricted to Agent-role wallets")
+		if err := requireAutonomousRoleV2(policy, intent); err != nil {
+			return signerReviewExecutionResultV2{}, err
 		}
 		if req.Authorization != nil {
 			return signerReviewExecutionResultV2{}, errors.New("autonomous execution cannot accept a WebAuthn authorization proof")
@@ -404,9 +207,9 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			}
 		case "control-ui":
 			if !allowsControlUIReviewIntentV2(intent.Intent, policy.Role) {
-				return signerReviewExecutionResultV2{}, errors.New("Control UI confirmation is restricted to exact reviewed transfers or allowlisted role-bound Devnet Capital lifecycle actions")
+				return signerReviewExecutionResultV2{}, errors.New("Control UI confirmation is restricted to exact reviewed transfers")
 			}
-			if (policy.Role == "vault" || policy.Role == "profile") && s.webauthn != nil {
+			if s.webauthn != nil {
 				health, healthErr := s.webauthn.health()
 				if healthErr != nil {
 					return signerReviewExecutionResultV2{}, healthErr
@@ -467,17 +270,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 			return signerReviewExecutionResultV2{}, proofErr
 		}
 	}
-	if intent.Intent.Type == intentSolanaVaultMining {
-		// Recheck after owner proof consumption and immediately before signing.
-		current, _, urls, stateErr := s.resolveVaultReviewV1(walletID, intent, &review)
-		if stateErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, stateErr)
-			return signerReviewExecutionResultV2{}, stateErr
-		}
-		zeroBytes(validated.RawUnsigned)
-		validated, rpcURLs = current, urls
-		defer zeroBytes(current.RawUnsigned)
-	}
+
 	if isSignerOwnedTriggerIntentV2(intent) {
 		currentStateDigest, _, stateErr := s.jupiterTriggerReviewStateV2(walletID, walletPublicKey, intent, privateKey)
 		if stateErr == nil && currentStateDigest != review.StateDigest {
@@ -515,98 +308,12 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 		}
 		return signerReviewExecutionResultV2{Review: review, Operation: &operation, Signer: wallet.PublicKey}, nil
 	}
-	if intent.Intent.Type == intentSolanaVaultBondAction {
-		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, errSignerNetworkPendingV2)
-			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
-		}
-		currentIntent, snapshot, verifiedRPCs, stateErr := resolveVaultBondReviewStateV2(configuredRPCs, walletPublicKey, intent)
-		if stateErr == nil {
-			stateErr = compareVaultBondReviewStateV2(review, currentIntent, snapshot)
-		}
-		if stateErr == nil && artifact.Transaction != nil {
-			validated, stateErr = validateAndSimulateVaultBondReviewV2(verifiedRPCs, walletPublicKey, currentIntent, *artifact.Transaction)
-		}
-		if stateErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, stateErr)
-			return signerReviewExecutionResultV2{}, stateErr
-		}
-		intent, rpcURLs = currentIntent, verifiedRPCs
-	}
-	if intent.Intent.Type == intentSolanaAgentCapitalAction {
-		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, errSignerNetworkPendingV2)
-			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
-		}
-		currentIntent, snapshot, verifiedRPCs, stateErr := resolveAgentCapitalReviewStateV2(configuredRPCs, walletPublicKey, intent)
-		if stateErr == nil {
-			stateErr = compareAgentCapitalReviewStateV2(review, currentIntent, snapshot)
-		}
-		if stateErr == nil && artifact.Transaction != nil {
-			validated, stateErr = validateAndSimulateAgentCapitalReviewV2(verifiedRPCs, walletPublicKey, currentIntent, *artifact.Transaction)
-		}
-		if stateErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, stateErr)
-			return signerReviewExecutionResultV2{}, stateErr
-		}
-		intent, rpcURLs = currentIntent, verifiedRPCs
-	}
-	if intent.Intent.Type == intentSolanaMoneyFoundation {
-		configuredRPCs, networkErr := s.keys.SolanaRPCURLsV2(walletID)
-		if networkErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, errSignerNetworkPendingV2)
-			return signerReviewExecutionResultV2{}, errSignerNetworkPendingV2
-		}
-		currentIntent, snapshot, verifiedRPCs, stateErr := resolveMoneyFoundationReviewStateV2(configuredRPCs, walletPublicKey, intent)
-		if stateErr == nil {
-			stateErr = compareMoneyFoundationReviewStateV2(review, currentIntent, snapshot)
-		}
-		if stateErr == nil && artifact.Transaction != nil {
-			validated, stateErr = validateAndSimulateMoneyFoundationReviewV2(verifiedRPCs, walletPublicKey, currentIntent, *artifact.Transaction)
-		}
-		if stateErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, stateErr)
-			return signerReviewExecutionResultV2{}, stateErr
-		}
-		intent, rpcURLs = currentIntent, verifiedRPCs
-	}
-	if intent.Intent.Type == intentFederationBondChallenge {
-		_, payload, payloadErr := federationPayloadFromIntentV2(intent)
-		if payloadErr == nil {
-			payloadErr = validateFederationBondChallengeTimeV2(payload, s.store.now())
-		}
-		if payloadErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, payloadErr)
-			return signerReviewExecutionResultV2{}, payloadErr
-		}
-		signatureBase64, signErr := execution.SignDomainMessageBase64(privateKey, message)
-		if signErr != nil {
-			failed, markErr := s.store.markFailedClaim(operation.RequestID, attempt, signErr)
-			if markErr != nil {
-				return signerReviewExecutionResultV2{}, fmt.Errorf("%v; persist signer failure: %w", signErr, markErr)
-			}
-			return signerReviewExecutionResultV2{Operation: &failed}, signErr
-		}
-		operation, err = s.store.markCompletedClaim(operation.RequestID, attempt, signatureBase64, artifact.Digest)
-		if err != nil {
-			return signerReviewExecutionResultV2{}, err
-		}
-		review, err = s.store.markReviewSignedV2(review.RequestID, artifact.Digest, signatureBase64)
-		return signerReviewExecutionResultV2{
-			Review: review, Operation: &operation, SignatureBase64: signatureBase64, Signer: wallet.PublicKey,
-		}, err
-	}
+
 	var signedRaw []byte
 	var signature solana.Signature
-	if intent.Intent.Type == intentSolanaMoneyFoundation {
-		signedRaw, signature, err = execution.SignValidatedMoneyFoundationTransaction(
-			validated.Transaction, validated.WalletSignerIndex, validated.EphemeralSignerIndex, privateKey,
-		)
-	} else {
-		signedRaw, signature, err = signValidatedJupiterTransactionV2(validated, privateKey)
-	}
+
+	signedRaw, signature, err = signValidatedJupiterTransactionV2(validated, privateKey)
+
 	if err != nil {
 		failed, markErr := s.store.markFailedClaim(operation.RequestID, attempt, err)
 		if markErr != nil {
@@ -617,16 +324,10 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	signedDigestBytes := sha256.Sum256(signedRaw)
 	signedDigest := "sha256:" + hex.EncodeToString(signedDigestBytes[:])
 	defer zeroBytes(signedRaw)
-	if intent.Intent.Type == intentSolanaVaultMining {
-		if err := simulateSignedAtomicOpenCommitV2(rpcURLs, validated.Transaction); err != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, attempt, errors.New("signed Vault simulation failed"))
-			return signerReviewExecutionResultV2{}, errors.New("signed Vault simulation failed")
-		}
-		operation, err = s.markVaultBroadcastV1(operation.RequestID, attempt, signature.String(), signedDigest, signedRaw)
-	} else {
-		signedTxBase64 := base64.StdEncoding.EncodeToString(signedRaw)
-		operation, err = s.store.markBroadcastClaim(operation.RequestID, attempt, signature.String(), signedDigest, signedTxBase64)
-	}
+
+	signedTxBase64 := base64.StdEncoding.EncodeToString(signedRaw)
+	operation, err = s.store.markBroadcastClaim(operation.RequestID, attempt, signature.String(), signedDigest, signedTxBase64)
+
 	if err != nil {
 		return signerReviewExecutionResultV2{}, err
 	}
@@ -641,7 +342,7 @@ func (s *signerServiceV2) executeJupiterReviewV2(
 	}
 
 	envelope := review.Transaction
-	if envelope == nil && artifact.Kind != signerReviewArtifactVaultReferenceV1 {
+	if envelope == nil {
 		return result, errors.New("signed signer review transaction envelope is missing")
 	}
 	if err := broadcastSignedOnceV2(rpcURLs, signedRaw, signature); err != nil {

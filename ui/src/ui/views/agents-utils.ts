@@ -118,6 +118,7 @@ export const FALLBACK_TOOL_SECTIONS: AgentToolSection[] = [
 ];
 
 export const PROFILE_OPTIONS = [
+  { id: "wen", label: "WEN strategy" },
   { id: "minimal", label: "Minimal" },
   { id: "coding", label: "Coding" },
   { id: "messaging", label: "Messaging" },

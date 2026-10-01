@@ -116,9 +116,6 @@ The tag-bound workflow performs the one official build.
 
 3. **Docs**
 
-- [ ] update user/operator docs if behavior changed
-- [ ] confirm install, update, wallet, Fased Network, mining, or bond docs still match reality
-
 ## Changelog and release notes
 
 - [ ] update `CHANGELOG.md`

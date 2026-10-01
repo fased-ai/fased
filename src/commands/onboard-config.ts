@@ -9,6 +9,7 @@ export function applyOnboardingLocalWorkspaceConfig(
 ): FasedAgentConfig {
   return {
     ...baseConfig,
+    tools: baseConfig.tools ?? { profile: "wen" },
     agents: {
       ...baseConfig.agents,
       defaults: {

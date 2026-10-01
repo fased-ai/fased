@@ -26,17 +26,6 @@ export type PersistedFederationToken = {
   zrokTokenPresent?: boolean;
   lastAttestOrRenewAt?: string;
   paidFlowEligible?: boolean;
-  bondId?: string;
-  bondWallet?: {
-    chain: string;
-    address: string;
-  };
-  bondStatus?: "missing" | "active" | "unlocking" | "unlocked";
-  bondTier?: "none" | "basic-bond" | "operator-bond";
-  bondAmountRaw?: string;
-  bondUnlockAvailableAt?: string;
-  bondQuotaBand?: "standard" | "boosted" | "operator";
-  bondDerivedScopes?: string[];
 };
 
 export function resolveFederationTokenPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -100,42 +89,6 @@ export async function loadPersistedFederationToken(
         typeof token.lastAttestOrRenewAt === "string" ? token.lastAttestOrRenewAt : undefined,
       paidFlowEligible:
         typeof token.paidFlowEligible === "boolean" ? token.paidFlowEligible : undefined,
-      bondId: typeof token.bondId === "string" ? token.bondId : undefined,
-      bondWallet:
-        token.bondWallet &&
-        typeof token.bondWallet === "object" &&
-        typeof (token.bondWallet as { chain?: unknown }).chain === "string" &&
-        typeof (token.bondWallet as { address?: unknown }).address === "string"
-          ? {
-              chain: (token.bondWallet as { chain: string }).chain,
-              address: (token.bondWallet as { address: string }).address,
-            }
-          : undefined,
-      bondStatus:
-        token.bondStatus === "missing" ||
-        token.bondStatus === "active" ||
-        token.bondStatus === "unlocking" ||
-        token.bondStatus === "unlocked"
-          ? token.bondStatus
-          : undefined,
-      bondTier:
-        token.bondTier === "none" ||
-        token.bondTier === "basic-bond" ||
-        token.bondTier === "operator-bond"
-          ? token.bondTier
-          : undefined,
-      bondAmountRaw: typeof token.bondAmountRaw === "string" ? token.bondAmountRaw : undefined,
-      bondUnlockAvailableAt:
-        typeof token.bondUnlockAvailableAt === "string" ? token.bondUnlockAvailableAt : undefined,
-      bondQuotaBand:
-        token.bondQuotaBand === "standard" ||
-        token.bondQuotaBand === "boosted" ||
-        token.bondQuotaBand === "operator"
-          ? token.bondQuotaBand
-          : undefined,
-      bondDerivedScopes: Array.isArray(token.bondDerivedScopes)
-        ? token.bondDerivedScopes.filter((scope): scope is string => typeof scope === "string")
-        : undefined,
     };
   } catch {
     return null;

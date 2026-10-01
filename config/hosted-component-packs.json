@@ -21,16 +21,9 @@
       "skills"
     ],
     "excludedApplicationPaths": ["assets/chrome-extension"],
-    "extensionDirectories": [
-      "device-pair",
-      "fased-federation",
-      "llm-task",
-      "memory-core",
-      "sat-mining",
-      "thread-ownership"
-    ],
+    "extensionDirectories": ["device-pair", "llm-task", "memory-core", "wen", "thread-ownership"],
     "sharedDirectories": ["shared"],
-    "loadedPluginIds": ["memory-core", "sat-mining"],
+    "loadedPluginIds": ["memory-core", "wen"],
     "maximumApplicationFiles": 4000,
     "maximumApplicationBytes": 33554432,
     "maximumDependencyFiles": 28000,

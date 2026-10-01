@@ -102,9 +102,7 @@ function sourceToolFromNodeId(
   if (nodeId.includes("wallet")) {
     return "wallet";
   }
-  if (nodeId.includes("mining")) {
-    return "mining";
-  }
+
   if (nodeId.includes("offers")) {
     return "offers";
   }
@@ -132,9 +130,7 @@ function sourceRepairTool(params: {
   if (/\bwallets?\b|\bbalances?\b|\baddress\b|\bsigner\b|\btreasury\b/.test(text)) {
     return "wallet";
   }
-  if (/\bmining\b|\bminers?\b|\bsat mining\b|\bhashrate\b|\bhash rate\b/.test(text)) {
-    return "mining";
-  }
+
   if (/\boffers?\b|\bmarketplace\b|\borders?\b|\brequests?\b|\bremote index\b/.test(text)) {
     return "offers";
   }
@@ -160,9 +156,7 @@ function preferredLocalRepairTool(job: CronJob): CronTaskGraphRepairPlan["toolNa
   if (/\bwallets?\b|\bbalances?\b|\baddress\b|\bsigner\b|\btreasury\b/.test(text)) {
     return "wallet";
   }
-  if (/\bmining\b|\bminers?\b|\bsat mining\b|\bhashrate\b|\bhash rate\b/.test(text)) {
-    return "mining";
-  }
+
   if (/\boffers?\b|\bmarketplace\b|\borders?\b|\brequests?\b|\bremote index\b/.test(text)) {
     return "offers";
   }

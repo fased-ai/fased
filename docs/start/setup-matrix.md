@@ -92,47 +92,12 @@ provisioning.
 
 The current CLI wizard order is:
 
-1. Choose QuickStart or Manual.
-2. Read the setup map, then choose Local or Hosting profile.
-3. If config already exists, choose update settings or repair auth/sessions.
-4. Choose workspace directory.
-5. Configure Gateway port, bind address, and auth.
-6. Configure Fased Network / federation when selected.
-7. Configure wallet roles and the optional singleton Mining wallet. When a wallet is created or imported, install the version-matched native signer automatically.
-8. Write config and bootstrap workspace/session state.
-9. Apply hosting security only when the Hosting profile is selected. Hosting requires Tailscale.
-10. Run final daemon, health, Control UI, and readiness steps.
-
 The verified `install.sh` transfers the static Go bootstrap. The signed
 lifecycle transaction then acquires the immutable application, bundled Node
 runtime, Go signer v2, services, and profile state. It does not build from
 source or install through npm.
 
 ## What Each Step Is For
-
-- **Model:** needed before the agent can answer. Add it after onboarding in
-  `Agent > Models`, then use it in Chat or tasks.
-- **Provider auth:** stores API/OAuth credentials or references for model
-  providers. Ordinary setup belongs in `Agent > Models`.
-- **Gateway:** the connection point for Control UI, CLI, WebChat, chat apps, and
-  remote clients.
-- **Tailscale:** hidden from the basic Local path. Required for Hosting profile
-  admin access.
-- **Channels:** the internal name for external chat apps like Telegram,
-  Discord, WhatsApp, and Slack.
-  Connect them after onboarding in `Agent > Channels`, then route each account
-  to an Agent.
-- **Wallet:** policy-bound actions for sends, receipts, mining, Marketplace,
-  and reviewed wallet-connected workflows. Not required for normal chat.
-- **Skills:** agent abilities. Configure, edit, install, and allow them after
-  onboarding in `Agent > Skills`.
-- **Plugins:** runtime extensions. Install/review after onboarding in
-  Control UI > Extensions.
-- **Hooks:** background automation that runs around agent events. Enable
-  `session-memory` after onboarding in `Agent > Memory`.
-- **Memory:** saved workspace context, session archives, and optional
-  QMD-backed indexing/export. Memory diagnostics are read-only in the UI;
-  repair remains in Debug/CLI.
 
 ## Onboarding vs Control UI vs CLI
 
@@ -164,14 +129,6 @@ source or install through npm.
   Gmail/Calendar, GitHub, browser/media, plugin-reported APIs, and task
   needs-access recovery.
 - CLI: service-specific CLI/config commands.
-
-### Wallet / Mining / Network
-
-- Onboarding: optional setup, role assignment, and readiness summary.
-- Control UI: Wallet, Mining, and Fased Network stay separate source-of-truth
-  pages. `/agents` may show their setup status but should load the same live
-  data.
-- CLI: wallet, mining, and federation commands.
 
 ### Skills
 

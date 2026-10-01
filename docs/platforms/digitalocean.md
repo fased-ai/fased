@@ -67,7 +67,7 @@ The hosting installer runs onboarding and walks you through:
 
 - Host profile, workspace, Gateway bind/auth, and hosting security
 - Gateway token generation
-- Optional wallet/mining setup if you choose those paths
+- Optional wallet setup if you choose those paths
 - Daemon installation (systemd)
 - Tailscale-only dashboard and SSH access
 

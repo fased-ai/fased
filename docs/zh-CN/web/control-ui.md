@@ -2,7 +2,7 @@
 read_when:
   - 你想从浏览器操作 Gateway 网关
   - 你想要无需 SSH 隧道的 Tailnet 访问
-summary: Gateway 网关的浏览器 Control UI：Dashboard、Chat、Agents、Wallets、Mining、Usage、Advanced 和运维页面。
+summary: Gateway 网关的浏览器 Control UI：Dashboard、Chat、Agents、Wallets、Usage、Advanced 和运维页面。
 title: 控制 UI
 x-i18n:
   generated_at: "2026-02-03T10:13:20Z"
@@ -23,14 +23,6 @@ x-i18n:
 它**直接与同一端口上的 Gateway 网关 WebSocket** 通信。
 
 首次设置请参考 [Control UI 设置模型](/start/control-ui-setup)。简短版本：
-
-- `/dash` 是紧凑 Dashboard 小组件板。
-- `/chat` 是浏览器聊天界面。
-- `/agents` 是普通设置工作台：Setup、Models、Channels、Skills、Tools、Memory、Sessions、Services、Tasks、Coordination 和 Files。
-- `/wallet`、`/mining`、`/federation`、`/marketplace` 负责各自的运行时工作流。
-- `/extensions` 管理全局插件/扩展生命周期；渠道账号路由仍属于 Agent > Channels。
-- `/notifications`、`/usage`、`/logs` 是运维页面。
-- `/config` 是 **Advanced**，其中包含 Config、Debug 和 Nodes。
 
 旧的全局 provider/channel/service/skills/task 路由保留用于兼容、深链或管理员视图，但普通设置从选定 Agent 开始。
 
@@ -77,31 +69,6 @@ fased devices approve <requestId>
 - 每个浏览器配置文件生成唯一的设备 ID，因此切换浏览器或清除浏览器数据将需要重新配对。
 
 ## 目前可以做什么
-
-- 通过 Gateway 网关 WS 与模型聊天（`chat.history`、`chat.send`、`chat.abort`、`chat.inject`）
-- 首先使用浏览器 Chat，不需要先配置任何消息渠道
-- 在聊天中流式传输工具调用 + 实时工具输出卡片（智能体事件）
-- Dashboard：Agents、Usage、Wallets、Mining、Fased Network 的紧凑小组件板
-- Chat：选定 Agent/session 的聊天，支持会话切换、模型覆盖、统计、任务/会话面板和工具卡片
-- Agent 工作台：Setup、Models、Channels、Skills、Tools、Memory、Sessions、Services、Tasks、Coordination 和 Files
-- Agent > Channels：Telegram、Discord、WhatsApp、Slack、Signal 和扩展渠道的状态、QR/login、字段和路由
-- Agent > Skills：插件目录搜索/审查/安装、创建、编辑、配置、依赖安装和每 Agent 的 skill access
-- Agent > Tools：每 Agent 的工具 allow/deny 和 available-now runtime 检查
-- Agent > Services：web/search、GitHub、Gmail、browser/media 和插件报告的 API 连接器
-- Agent > Memory：session-memory archive 控制和每 Agent 的 memory/QMD 诊断
-- Wallets：钱包角色、policy、余额、send、signer health 和 Skill Grants
-- SAT Mining：状态、准备度、历史、commit、capital、recovery 和 claim
-- Usage：按 Agent、provider、model、session、task、channel/source、tokens、priced/unpriced cost 的 7 天本地 usage 历史
-- Notifications：投递路由、wallet/mining/network 事件开关、测试通知和站内历史
-- Nodes：在 Advanced 下查看已配对设备和能力（`node.list`）
-- 执行批准：编辑 Gateway 网关或节点允许列表 + `exec host=gateway/node` 的询问策略（`exec.approvals.*`）
-- 配置：在 Advanced > Config 查看/编辑 `~/.fased/fased.json`（`config.get`、`config.set`）
-- 配置：应用 + 带验证的重启（`config.apply`）并唤醒上次活动的会话
-- 配置写入包含基础哈希保护，以防止覆盖并发编辑
-- 配置 schema + 表单渲染（`config.schema`，包括插件 + 渠道 schema）；原始 JSON 编辑器仍然可用
-- 调试：Advanced > Debug 中的 status/health/models、插件运行时、memory repair preview、事件日志和手动 RPC
-- 日志：Gateway 网关文件日志的实时尾部跟踪，带过滤、auto-follow 和导出（`logs.tail`）
-- 更新：运行包/git 更新 + 重启（`update.run`）并显示重启报告
 
 ## 聊天行为
 

@@ -13,7 +13,7 @@ import (
 )
 
 func TestValidateSignerNativeSpendDistinguishesRejectedSimulationV2(t *testing.T) {
-	privateKey := testKeeperPrivateKeyV2(t)
+	privateKey := testSignerPrivateKeyV2(t)
 	wallet := privateKey.PublicKey()
 	program := solana.NewWallet().PublicKey()
 	tx, err := execution.NewSignedTypedTransaction(
@@ -65,7 +65,7 @@ func TestValidateSignerNativeSpendDistinguishesRejectedSimulationV2(t *testing.T
 	defer server.Close()
 
 	intent := normalizedIntentV2{
-		Intent: signerIntentV2{Type: intentSolanaSATAction},
+		Intent: signerIntentV2{Type: intentSolanaSPLTransferChecked},
 		Amount: big.NewInt(0),
 	}
 	err = validateSignerNativeSpendV2([]string{server.URL}, tx, wallet, intent)

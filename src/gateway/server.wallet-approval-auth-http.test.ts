@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { SOLANA_ASSET_CONSTANTS } from "../wallet/solana-assets.js";
 import type {
   WalletProviderAdapter,
   WalletProviderJupiterReviewV2,
@@ -130,7 +131,7 @@ function signerReviewAdapter() {
       semanticIntent: request.mint
         ? {
             type: "solana.splTransferChecked" as const,
-            tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            tokenProgram: SOLANA_ASSET_CONSTANTS.tokenProgramId,
             mint: request.mint,
             destination: request.destination,
             amount: request.amount,
@@ -154,7 +155,7 @@ function signerReviewAdapter() {
       destination: request.destination,
       policyOperation: request.mint ? "solana.splTransferChecked" : "solana.nativeTransfer",
       requiredPrograms: ["11111111111111111111111111111111"],
-      requiredRole: "vault" as const,
+      requiredRole: "agent" as const,
       issuedAt: "2026-07-16T12:00:00.000Z",
       state: "prepared" as const,
       preparedAt: "2026-07-16T12:00:00.000Z",
@@ -190,7 +191,7 @@ function signerReviewAdapter() {
     const semanticIntent = preparedInput.mint
       ? {
           type: "solana.splTransferChecked" as const,
-          tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          tokenProgram: SOLANA_ASSET_CONSTANTS.tokenProgramId,
           mint: preparedInput.mint,
           destination: preparedInput.destination,
           amount: preparedInput.amount,
@@ -203,7 +204,7 @@ function signerReviewAdapter() {
     return {
       requestId,
       walletId,
-      role: "vault" as const,
+      role: "agent" as const,
       intentType,
       intentDigest: `sha256:${"a".repeat(64)}`,
       semanticIntent,
@@ -540,7 +541,7 @@ describe("wallet approval-auth HTTP", () => {
     });
   });
 
-  test("accepts mining.capital as a valid passkey assertion operation", async () => {
+  test("rejects removed mining.capital passkey operation", async () => {
     await withTempConfig({
       cfg,
       run: async () => {
@@ -565,13 +566,13 @@ describe("wallet approval-auth HTTP", () => {
           response.res,
         );
         expect(response.res.statusCode).toBe(400);
-        expect(response.getBody()).toContain("webauthn_not_ready");
-        expect(response.getBody()).not.toContain("invalid_operation");
+        expect(response.getBody()).not.toContain("webauthn_not_ready");
+        expect(response.getBody()).toContain("invalid_operation");
       },
     });
   });
 
-  test("accepts mining.policy as a valid passkey assertion operation", async () => {
+  test("rejects removed mining.policy passkey operation", async () => {
     await withTempConfig({
       cfg,
       run: async () => {
@@ -596,8 +597,8 @@ describe("wallet approval-auth HTTP", () => {
           response.res,
         );
         expect(response.res.statusCode).toBe(400);
-        expect(response.getBody()).toContain("webauthn_not_ready");
-        expect(response.getBody()).not.toContain("invalid_operation");
+        expect(response.getBody()).not.toContain("webauthn_not_ready");
+        expect(response.getBody()).toContain("invalid_operation");
       },
     });
   });
@@ -1355,4 +1356,17 @@ describe("wallet approval-auth HTTP", () => {
       }
     }
   });
+});
+
+vi.mock("../wallet/wallet-provider-facade.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../wallet/wallet-provider-facade.js")>();
+  const resolver = await import("../wallet/wallet-provider-resolver.js");
+  return {
+    ...actual,
+    walletProviderFacade: {
+      ...actual.walletProviderFacade,
+      createAdapter: (...args: Parameters<typeof resolver.createWalletProviderAdapter>) =>
+        resolver.createWalletProviderAdapter(...args),
+    },
+  };
 });

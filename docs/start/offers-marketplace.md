@@ -114,10 +114,6 @@ Required now: Vault/bond posture for that stronger lane.
 
 This is needed only for those lanes, not ordinary buying.
 
-The buyer pays from the Agent wallet. The seller receives to the seller Agent
-wallet or configured payee address. Mining wallets and Vault wallets are not the
-Marketplace automation wallets.
-
 Seller trust score is a ranking signal. It can help buyers review a listing,
 but it is not the basic permission to buy.
 
@@ -569,13 +565,6 @@ Delivery targets are part of the order contract, not loose chat text.
 
 Delivery targets should have scope and expiry:
 
-- order id or subscription id
-- allowed service kind
-- delivery method
-- buyer-controlled revoke path
-- expiration or renewal boundary
-- no access to Vault, Mining, or raw wallet secrets
-
 Current implementation stores delivery targets as local scoped records and keeps
 only a redacted target summary on the order. That means Marketplace can remember
 where a result should go without exposing the raw webhook URL, chat id, or token
@@ -689,9 +678,3 @@ Use the current flow like this:
 4. treat payment, review, and dispute as execution-stage actions, not browsing-stage actions
 
 ## Related docs
-
-- [Fased Network guide](/start/federation)
-- [SAT Bond Overview](/start/bond-operator-economy)
-- [Wallet](/plugins/crypto/wallet-page)
-- [Wallet Roles and Rules](/plugins/crypto/wallet-roles-and-policies)
-- [Mining](/plugins/crypto/mining-page)

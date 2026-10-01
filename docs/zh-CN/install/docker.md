@@ -69,10 +69,6 @@ Compose 将签名器状态、应用 socket 和管理 socket 分开；Gateway 只
 的应用 socket。服务以非 root 用户运行、丢弃 Linux capabilities、启用
 `no-new-privileges`，并只把 Gateway 端口绑定到 `127.0.0.1`。
 
-这仍然只是**本地容器隔离**，不是 Hosting 的主机级托管边界。拥有本机账户或 Docker
-daemon 权限的人仍可控制容器和卷。Agent/Mining 钱包应保持低余额并配置明确的 typed
-操作、目标和正数额度；Vault/储备资金应使用硬件钱包或经审查的远程托管提供商。
-
 不要把端口改为 `0.0.0.0`，不要挂载 `docker.sock`，不要使用 host network 或
 privileged 模式。不要运行 `docker compose down -v`，除非你明确要永久删除签名器
 状态和钱包。

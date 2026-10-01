@@ -35,12 +35,6 @@ state.
 
 ## Config and grants
 
-- Skill-local config lives under `skills.entries.<skillKey>`.
-- Root config requirements, such as a channel token, should be shown as typed
-  fields that write the real config path.
-- Wallet and mining permissions are never granted by install. Wallet-capable
-  skills require explicit review in **Wallets → Access / Skill Grants**.
-
 ## Remote mode
 
 - Install + config updates happen on the gateway host (not the local Mac).

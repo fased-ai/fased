@@ -1,14 +1,6 @@
 import { html, nothing } from "lit";
 import { t } from "../../i18n/index.ts";
 import type { EventLogEntry } from "../app-events.ts";
-import type {
-  FederationOperatorEconomyFeeBucketBalanceView,
-  FederationOperatorEconomyFeeBucketJournalRow,
-  FederationOperatorEconomyFeeCollectionStatus,
-  FederationOperatorEconomyFeeObjectRecord,
-  FederationOperatorEconomyFeeReconciliationReport,
-  FederationOperatorEconomyAutoFeeDecisionRecord,
-} from "../federation-api.ts";
 import { formatEventPayload } from "../presenter.ts";
 import type {
   CommandsListResult,
@@ -125,17 +117,6 @@ export type DebugProps = {
   acpxPushTestAuditHistory?: DebugAcpxPushTestAuditHistoryPayload | null;
   acpxPushTestResult?: string | null;
   acpxPushTestError?: string | null;
-  satProtocolMaintenanceBusy?: boolean;
-  satProtocolMaintenanceResult?: string | null;
-  satProtocolMaintenanceError?: string | null;
-  feeOpsLoading?: boolean;
-  feeOpsError?: string | null;
-  feeCollectionStatus?: FederationOperatorEconomyFeeCollectionStatus[];
-  feeObjects?: FederationOperatorEconomyFeeObjectRecord[];
-  feeBucketJournal?: FederationOperatorEconomyFeeBucketJournalRow[];
-  feeBucketBalances?: FederationOperatorEconomyFeeBucketBalanceView[];
-  feeReconciliationReports?: FederationOperatorEconomyFeeReconciliationReport[];
-  feeAutoDecisions?: FederationOperatorEconomyAutoFeeDecisionRecord[];
   onCallMethodChange: (next: string) => void;
   onCallParamsChange: (next: string) => void;
   onAdminChatSessionKeyChange: (next: string) => void;
@@ -156,20 +137,7 @@ export type DebugProps = {
   onAdminRpcAction: (action: DebugAdminRpcAction) => void;
   onAcpxBridgeConfigAction?: (action: DebugAcpxBridgeConfigAction) => void;
   onAcpxPushTestAction?: (action: DebugAcpxPushTestAction) => void;
-  onSatProtocolMaintenance?: () => void;
 };
-
-function formatFeeThresholds(status: FederationOperatorEconomyFeeCollectionStatus): string {
-  const required = status.thresholds;
-  const observed = status.observed;
-  return [
-    `history ${observed.historyDaysObserved}/${required.historyDays}d`,
-    `marketplace ${observed.marketplaceRunsObserved}/${required.marketplaceRuns}`,
-    `notary ${observed.disputeNotaryCasesObserved}/${required.disputeNotaryCases}`,
-    `verifier ${observed.settlementVerifierCasesObserved}/${required.settlementVerifierCases}`,
-    `routing ${observed.routingRunsObserved}/${required.routingRuns}`,
-  ].join(" · ");
-}
 
 type GatewayStartupView = {
   entries: Array<{ name: string; durationMs: number }>;
@@ -2280,48 +2248,6 @@ function renderTaskLedgerDiagnosticsCard(props: DebugProps) {
   `;
 }
 
-function renderSatProtocolMaintenanceCard(props: DebugProps) {
-  const busy = props.satProtocolMaintenanceBusy === true;
-  return html`
-    <div class="card">
-      <div class="row" style="justify-content: space-between;">
-        <div>
-          <div class="card-title">SAT Protocol Maintenance</div>
-          <div class="card-sub">
-            Operator-only one-shot for reserve refill, fixed-recipient treasury claims, staking distributor feed, and staking SOL claim.
-          </div>
-        </div>
-        <span class="chip chip-warn">advanced</span>
-      </div>
-      <div class="callout warn" style="margin-top: 12px;">
-        This does not start mining and does not choose a cycle keeper. It only submits permissionless
-        protocol maintenance transactions when on-chain thresholds are met.
-      </div>
-      <div class="row" style="margin-top: 12px;">
-        <button
-          class="btn primary"
-          ?disabled=${busy || !props.onSatProtocolMaintenance}
-          @click=${() => props.onSatProtocolMaintenance?.()}
-        >
-          ${busy ? "Running..." : "Run maintenance once"}
-        </button>
-      </div>
-      ${
-        props.satProtocolMaintenanceError
-          ? html`<div class="callout danger" style="margin-top: 12px;">
-              ${props.satProtocolMaintenanceError}
-            </div>`
-          : nothing
-      }
-      ${
-        props.satProtocolMaintenanceResult
-          ? html`<pre class="code-block" style="margin-top: 12px;">${props.satProtocolMaintenanceResult}</pre>`
-          : nothing
-      }
-    </div>
-  `;
-}
-
 function renderManualRpcCard(props: DebugProps) {
   return html`
     <div class="card">
@@ -2372,90 +2298,6 @@ function renderManualRpcCard(props: DebugProps) {
           : nothing
       }
     </div>
-  `;
-}
-
-function renderFeeOpsCard(props: DebugProps) {
-  const feeOpsLoading = props.feeOpsLoading === true;
-  const feeCollectionStatus = props.feeCollectionStatus ?? [];
-  const feeObjects = props.feeObjects ?? [];
-  const feeBucketJournal = props.feeBucketJournal ?? [];
-  const feeBucketBalances = props.feeBucketBalances ?? [];
-  const feeReconciliationReports = props.feeReconciliationReports ?? [];
-  const feeAutoDecisions = props.feeAutoDecisions ?? [];
-  return html`
-    <section class="card">
-      <div class="row" style="justify-content: space-between;">
-        <div>
-          <div class="card-title">Network Fee Ops</div>
-          <div class="card-sub">
-            Read-only fee collection state and reserve accounting. Collection remains gated off until retained-history thresholds are met.
-          </div>
-        </div>
-        <span class="chip ${feeOpsLoading ? "chip-warn" : ""}">${feeOpsLoading ? "refreshing" : "read-only"}</span>
-      </div>
-      ${
-        props.feeOpsError
-          ? html`<div class="callout danger" style="margin-top: 12px;">${props.feeOpsError}</div>`
-          : nothing
-      }
-      ${
-        feeCollectionStatus.length === 0 &&
-        feeObjects.length === 0 &&
-        feeBucketJournal.length === 0 &&
-        feeBucketBalances.length === 0 &&
-        feeReconciliationReports.length === 0 &&
-        feeAutoDecisions.length === 0
-          ? html`
-              <div class="muted" style="margin-top: 12px">No operator activity fee data loaded yet.</div>
-            `
-          : html`
-              <div class="stack" style="margin-top: 12px;">
-                <div>
-                  <div class="muted">Collection status</div>
-                  <div class="list" style="margin-top: 8px;">
-                    ${feeCollectionStatus.map(
-                      (entry) => html`
-                        <div class="list-item">
-                          <div class="list-main">
-                            <div class="list-title">
-                              ${entry.lane}
-                              <span class="chip ${entry.enabled ? "chip-ok" : "chip-warn"}">
-                                ${entry.enabled ? "enabled" : "disabled"}
-                              </span>
-                            </div>
-                            <div class="list-sub">${entry.reason ?? "Threshold state loaded."}</div>
-                            <div class="muted" style="margin-top: 6px;">${formatFeeThresholds(entry)}</div>
-                          </div>
-                        </div>
-                      `,
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div class="muted">Reserve balances</div>
-                  <pre class="code-block">${JSON.stringify(feeBucketBalances, null, 2)}</pre>
-                </div>
-                <div>
-                  <div class="muted">Recent fee objects</div>
-                  <pre class="code-block">${JSON.stringify(feeObjects, null, 2)}</pre>
-                </div>
-                <div>
-                  <div class="muted">Bucket journal</div>
-                  <pre class="code-block">${JSON.stringify(feeBucketJournal, null, 2)}</pre>
-                </div>
-                <div>
-                  <div class="muted">Reconciliation reports</div>
-                  <pre class="code-block">${JSON.stringify(feeReconciliationReports, null, 2)}</pre>
-                </div>
-                <div>
-                  <div class="muted">Auto fee decisions</div>
-                  <pre class="code-block">${JSON.stringify(feeAutoDecisions, null, 2)}</pre>
-                </div>
-              </div>
-            `
-      }
-    </section>
   `;
 }
 
@@ -2546,13 +2388,6 @@ export function renderDebug(props: DebugProps) {
   ).length;
   const taskLedgerActive =
     (props.taskLedger?.summary.queued ?? 0) + (props.taskLedger?.summary.running ?? 0);
-  const feeDataCount =
-    (props.feeCollectionStatus?.length ?? 0) +
-    (props.feeObjects?.length ?? 0) +
-    (props.feeBucketJournal?.length ?? 0) +
-    (props.feeBucketBalances?.length ?? 0) +
-    (props.feeReconciliationReports?.length ?? 0) +
-    (props.feeAutoDecisions?.length ?? 0);
 
   const sections: DebugSection[] = [
     {
@@ -2612,16 +2447,6 @@ export function renderDebug(props: DebugProps) {
       priority: taskLedgerWarnings > 0 ? 2 : 9,
       open: taskLedgerWarnings > 0,
       content: renderTaskLedgerDiagnosticsCard(props),
-    },
-    {
-      id: "sat-protocol-maintenance",
-      title: "SAT Protocol Maintenance",
-      detail: "Permissionless reserve refill and fixed-recipient protocol lane claims.",
-      status: props.satProtocolMaintenanceBusy ? "running" : "one-shot",
-      tone: props.satProtocolMaintenanceError ? "danger" : "neutral",
-      priority: props.satProtocolMaintenanceError ? 2 : 10,
-      open: Boolean(props.satProtocolMaintenanceError || props.satProtocolMaintenanceResult),
-      content: renderSatProtocolMaintenanceCard(props),
     },
     {
       id: "plugins",
@@ -2753,19 +2578,6 @@ export function renderDebug(props: DebugProps) {
       tone: props.commandsCatalog ? "ok" : "warn",
       priority: 36,
       content: renderCommandCatalogCard(props.commandsCatalog),
-    },
-    {
-      id: "fee-ops",
-      title: "Network Fee Ops",
-      detail: "Read-only fee collection state and reserve accounting.",
-      status: props.feeOpsError
-        ? "error"
-        : feeDataCount > 0
-          ? `${feeDataCount} records`
-          : "no data",
-      tone: props.feeOpsError ? "danger" : feeDataCount > 0 ? "ok" : "neutral",
-      priority: props.feeOpsError ? 11 : 42,
-      content: renderFeeOpsCard(props),
     },
     {
       id: "models",

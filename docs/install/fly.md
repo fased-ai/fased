@@ -13,14 +13,6 @@ Fased does not currently support running the full Gateway on Fly.io. The files
 under `deploy/hosting/fly*.toml` are retained as historical reference and are
 not a maintained, release-tested installation path.
 
-<Warning>
-Do not use the archived Fly manifests for a new deployment. They do not provide
-the root-managed native signer/updater, separate signer application and control
-sockets, Tailscale-first host hardening, coordinated rollback, or cold-reboot
-validation required by the supported Hosting profile. Wallet, Vault, and SAT
-mining must not be enabled on this path.
-</Warning>
-
 ## Supported alternatives
 
 - For an always-on server, provision a normal Linux VPS and run the maintained

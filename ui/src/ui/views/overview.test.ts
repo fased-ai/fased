@@ -224,8 +224,8 @@ describe("renderOverview dashboard", () => {
     expect(text).toContain("Tasks");
     expect(text).not.toContain("Active tasks");
     expect(text).toContain("Sessions");
-    expect(text).toContain("Tokens");
-    expect(text).toContain("1.8K");
+    expect(text).not.toContain("Tokens");
+    expect(text).not.toContain("1.8K");
     expect(text).not.toContain("1 session");
     expect(text).not.toContain("Refresh dashboard");
     expect(text).not.toContain("Launch");
@@ -323,11 +323,11 @@ describe("renderOverview dashboard", () => {
       ),
     );
 
-    expect(text).toContain("Tokens");
-    expect(text).toContain("700");
+    expect(text).not.toContain("Tokens");
+    expect(text).not.toContain("700");
     expect(text).not.toContain("1 session");
-    expect(text).toContain("7d tokens");
-    expect(text).toContain("7d 2026-05-19: 100 tokens");
+    expect(text).not.toContain("7d tokens");
+    expect(text).not.toContain("7d 2026-05-19: 100 tokens");
     expect(text).not.toContain("2.0K");
   });
 

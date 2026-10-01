@@ -90,7 +90,6 @@ const BASE_RELOAD_RULES_TAIL: ReloadRule[] = [
   { prefix: "skills", kind: "none" },
   { prefix: "federation", kind: "none" },
   { prefix: "secrets", kind: "none" },
-  { prefix: "plugins.entries.sat-mining", kind: "none" },
   { prefix: "plugins", kind: "restart" },
   { prefix: "ui", kind: "none" },
   { prefix: "gateway", kind: "restart" },

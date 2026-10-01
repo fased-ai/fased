@@ -1,7 +1,7 @@
 import { chromium } from "playwright-core";
 import { expect, test } from "vitest";
 import { WebSocket } from "ws";
-import { registerWenApprovalGateway } from "../../extensions/sat-mining/src/wen-approval-gateway.js";
+import { registerWenApprovalGateway } from "../../extensions/wen/src/wen-approval-gateway.js";
 import { createServer } from "../../ui/node_modules/vite/dist/node/index.js";
 import { startCampaignWireFixture } from "../../ui/test/wen-campaign-wire-fixture.js";
 import { createEmptyPluginRegistry } from "../plugins/registry.js";
@@ -223,7 +223,7 @@ test.each(["stop", "setup", "policy", "claim", "claim-stake", "buy"] as const)(
                 throw Error("lost recovery was not retained");
               }
               const saved = sessionStorage.getItem(
-                `wen.market.pending:${panel.host && "pins" in panel.host.expected ? panel.host.expected.policy.Successor.Genesis : ""}:${panel.host?.expected.walletId}`,
+                `wen.market.pending:${panel.host && "pins" in panel.host.expected && "Successor" in panel.host.expected.policy ? panel.host.expected.policy.Successor.Genesis : ""}:${panel.host?.expected.walletId}`,
               );
               if (!saved) {
                 throw Error("Buy recovery identity not persisted");

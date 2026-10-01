@@ -14,10 +14,6 @@ const commandExecMocks = vi.hoisted(() => ({
     result: { ok: true },
     replyText: "offers command ok",
   })),
-  executeMiningChatCommand: vi.fn(async () => ({
-    result: { ok: true },
-    replyText: "mining command ok",
-  })),
 }));
 
 const fallbackMocks = vi.hoisted(() => ({
@@ -61,14 +57,6 @@ vi.mock("../../federation/marketplace-chat-command.js", async (importOriginal) =
   };
 });
 
-vi.mock("../../mining/chat-command.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../mining/chat-command.js")>();
-  return {
-    ...actual,
-    executeMiningChatCommand: commandExecMocks.executeMiningChatCommand,
-  };
-});
-
 vi.mock("../../auto-reply/reply/dispatch-from-config.js", () => ({
   dispatchReplyFromConfig: fallbackMocks.dispatchReplyFromConfig,
 }));
@@ -88,7 +76,6 @@ beforeEach(() => {
   commandExecMocks.executeWalletChatCommand.mockClear();
   commandExecMocks.executeTradeChatCommand.mockClear();
   commandExecMocks.executeOffersChatCommand.mockClear();
-  commandExecMocks.executeMiningChatCommand.mockClear();
   fallbackMocks.dispatchReplyFromConfig.mockClear();
   deliveryMocks.deliverDiscordReply.mockClear();
   sendMocks.reactMessageDiscord.mockClear();
@@ -170,20 +157,5 @@ describe("processDiscordMessage deterministic command parity", () => {
       }),
     );
     expectFinalDiscordReply("offers command ok");
-  });
-
-  it("routes authorized Discord @mining messages through deterministic dispatch", async () => {
-    await processAuthorizedDiscordText("Stop @mining.");
-
-    expect(commandExecMocks.executeMiningChatCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        command: expect.objectContaining({
-          action: "stop",
-          method: "sat.stopMining",
-          expectFinal: true,
-        }),
-      }),
-    );
-    expectFinalDiscordReply("mining command ok");
   });
 });

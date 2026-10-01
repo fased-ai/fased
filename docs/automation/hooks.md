@@ -207,7 +207,7 @@ Examples: `message:received`, `message:sent`.
 Plugin-side tool-result transforms.
 
 Tool-result hooks are intentionally narrow. They can transform tool output for
-a participating plugin path. Tool, credential, wallet, mining, and marketplace
+a participating plugin path. Tool, credential, wallet, and marketplace
 authority stay in their owning surfaces.
 
 ## Configuration

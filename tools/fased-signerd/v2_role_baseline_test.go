@@ -1,14 +1,7 @@
 package main
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +11,7 @@ import (
 
 func TestSignerRoleBaselineV1CompilesUsefulImmutableRoles(t *testing.T) {
 	wallet := solana.NewWallet().PublicKey().String()
-	for _, role := range []string{"agent", "vault"} {
+	for _, role := range []string{"agent"} {
 		policy, err := compileSignerRoleBaselineV1(
 			role,
 			wallet,
@@ -32,7 +25,7 @@ func TestSignerRoleBaselineV1CompilesUsefulImmutableRoles(t *testing.T) {
 			!containsStringV2(policy.Operations, intentSolanaNativeTransfer) || len(policy.Assets) == 0 {
 			t.Fatalf("%s baseline is not role-ready: %#v", role, policy)
 		}
-		if role == "vault" {
+		if role == "agent" {
 			intent, err := normalizeSignerIntentV2(signerIntentV2{
 				Type: intentSolanaNativeTransfer, Destination: solana.NewWallet().PublicKey().String(), Lamports: "1",
 			})
@@ -40,178 +33,45 @@ func TestSignerRoleBaselineV1CompilesUsefulImmutableRoles(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := validateReviewPolicyV2(policy, intent, jupiterReviewModeReviewedV2); err != nil {
-				t.Fatalf("Vault baseline did not authorize an exact reviewed destination: %v", err)
+				t.Fatalf("Ordinary wallet baseline did not authorize an exact reviewed destination: %v", err)
 			}
 			if _, err := policyAssetForIntentV2(policy, intent); err == nil || !strings.Contains(err.Error(), "denies destination") {
-				t.Fatalf("Vault baseline allowed the reviewed destination through direct policy: %v", err)
+				t.Fatalf("Ordinary wallet baseline allowed the reviewed destination through direct policy: %v", err)
 			}
 		}
 	}
 }
 
-func TestSignerProfileAndStrategyBaselinesAreExplicitDenyAll(t *testing.T) {
-	wallet := solana.NewWallet().PublicKey().String()
-	for _, role := range []string{"profile", "strategy"} {
-		policy, err := compileSignerRoleBaselineV1(
-			role,
-			wallet,
-			signerRoleBaselineRequestV1{Version: 1, Role: role},
-			signerRoleBaselineRuntimeV1{},
-		)
-		if err != nil {
-			t.Fatalf("compile %s deny-all baseline: %v", role, err)
-		}
-		if policy.BaselineVersion != 1 || policy.Role != role || policy.Hash == "" || len(policy.Operations) != 0 || len(policy.Programs) != 0 || len(policy.Assets) != 0 {
-			t.Fatalf("%s baseline is not exact deny-all: %#v", role, policy)
+func TestRetiredWalletRolesRejected(t *testing.T) {
+	for _, role := range []string{"mining", "vault", "profile", "strategy", "keeper"} {
+		if _, err := compileSignerRoleBaselineV1("wallet", solana.NewWallet().PublicKey().String(), signerRoleBaselineRequestV1{Version: 1, Role: role}, signerRoleBaselineRuntimeV1{}); err == nil {
+			t.Fatalf("retired role accepted: %s", role)
 		}
 	}
 }
 
-func TestSignerMiningRoleBaselineV1UsesReleaseRuntimeAndAllTypedActions(t *testing.T) {
-	wallet := solana.NewWallet().PublicKey().String()
-	program := solana.NewWallet().PublicKey().String()
-	bondProgram := solana.NewWallet().PublicKey().String()
-	mint := solana.NewWallet().PublicKey().String()
-	policy, err := compileSignerRoleBaselineV1(
-		"mining",
-		wallet,
-		signerRoleBaselineRequestV1{Version: 1, Role: "mining"},
-		signerRoleBaselineRuntimeV1{
-			SATProgramID: program, SATBondProgramID: bondProgram,
-			SATMintAddress: mint, SATMintProgramID: solana.TokenProgramID.String(), Verified: true,
-		},
-	)
-	if err != nil {
-		t.Fatalf("compile Mining baseline: %v", err)
-	}
-	if !policy.TypedSATPrograms || policy.BaselineVersion != 1 {
-		t.Fatalf("Mining baseline lacks typed SAT authority: %#v", policy)
-	}
-	for _, action := range sortedSATActionsV2() {
-		if signerSATCodecsV2[action].Family == satFamilyMain && !containsStringV2(policy.Operations, "sat."+action+"@"+program) {
-			t.Fatalf("Mining baseline omitted typed SAT action %s", action)
-		}
-	}
-	for _, action := range []string{"create", "extend", "deactivate", "close"} {
-		operation := "satLookup." + action + "@" + satAddressLookupTableProgramIDV2.String()
-		if !containsStringV2(policy.Operations, operation) {
-			t.Fatalf("Mining baseline omitted %s", operation)
-		}
-	}
-	prelaunch, err := compileSignerRoleBaselineV1(
-		"mining",
-		wallet,
-		signerRoleBaselineRequestV1{Version: 1, Role: "mining"},
-		signerRoleBaselineRuntimeV1{},
-	)
-	if err != nil || prelaunch.BaselineVersion != 1 || prelaunch.Role != "mining" ||
-		prelaunch.TypedSATPrograms || !containsStringV2(prelaunch.Operations, intentSolanaNativeTransfer) {
-		t.Fatalf("Mining pre-launch baseline was not restricted to reviewed transfers: policy=%#v err=%v", prelaunch, err)
-	}
-}
-
-func TestSignerKeeperFeePayerBaselineHasNoGeneralWalletAuthority(t *testing.T) {
-	wallet := solana.NewWallet().PublicKey().String()
-	program := solana.NewWallet().PublicKey().String()
-	policy, err := compileSignerRoleBaselineV1(
-		"keeper",
-		wallet,
-		signerRoleBaselineRequestV1{Version: 1, Role: "keeper"},
-		signerRoleBaselineRuntimeV1{
-			SATProgramID: program, SATBondProgramID: solana.NewWallet().PublicKey().String(),
-			SATMintAddress: solana.NewWallet().PublicKey().String(), SATMintProgramID: solana.TokenProgramID.String(), Verified: true,
-		},
-	)
-	if err != nil {
-		t.Fatalf("compile Keeper fee-payer baseline: %v", err)
-	}
-	if policy.Role != "keeper" || !policy.TypedSATPrograms ||
-		containsStringV2(policy.Operations, intentSolanaNativeTransfer) ||
-		containsStringV2(policy.Operations, intentSolanaSATAction) {
-		t.Fatalf("Keeper baseline exposed general wallet or Mining authority: %#v", policy)
-	}
-	for _, action := range sortedKeeperFeePayerActionsV2() {
-		if !containsStringV2(policy.Operations, "satKeeperFee."+action+"@"+program) {
-			t.Fatalf("Keeper baseline omitted %s", action)
-		}
-	}
-	asset, err := policyAssetByNameV2(policy, "solana:native")
-	if err != nil || asset.MaxPerTx != "500000" || asset.MaxDaily != "50000000" {
-		t.Fatalf("Keeper baseline limits drifted: asset=%#v err=%v", asset, err)
-	}
-}
-
-func TestSignerMiningPrelaunchBaselineIsWalletReadyWithoutSATAuthority(t *testing.T) {
+func TestSignerOrdinaryBaselineRequiresNetworkAndReviewedTransfers(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	wallet, policy, err := keys.CreateWithRoleBaseline(
-		"prelaunch-mining",
+		"ordinary-reviewed",
 		0,
-		signerRoleBaselineRequestV1{Version: 1, Role: "mining"},
+		signerRoleBaselineRequestV1{Version: 1, Role: "agent"},
 		signerRoleBaselineRuntimeV1{},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.TypedSATPrograms {
-		t.Fatalf("pre-launch policy unexpectedly granted typed SAT authority: %#v", policy)
+	if !containsStringV2(policy.Operations, intentSolanaNativeTransfer) || !containsStringV2(policy.Operations, intentSolanaSPLTransferChecked) {
+		t.Fatalf("Ordinary wallet baseline lacks reviewed transfer operations: %#v", policy)
 	}
 	readiness, err := (&signerServiceV2{store: store, keys: keys}).walletReadinessV2(wallet.WalletID)
 	if err != nil || !readiness.PolicyReady || readiness.NetworkReady || readiness.Ready ||
-		readiness.OperationLane != "mining-reviewed-only" {
-		t.Fatalf("pre-launch Mining wallet did not expose its reviewed-use lane: %#v err=%v", readiness, err)
+		readiness.OperationLane != "reviewed-and-autonomous" {
+		t.Fatalf("Ordinary wallet did not expose its operation lane: %#v err=%v", readiness, err)
 	}
 }
 
-func TestSignerMiningRoleBaselineRuntimeRequiresTrustedSignedManifest(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	program := solana.NewWallet().PublicKey().String()
-	bondProgram := solana.NewWallet().PublicKey().String()
-	mint := solana.NewWallet().PublicKey().String()
-	manifest, err := json.Marshal(map[string]any{
-		"schema": "sat-mainnet-addresses.v1", "network": "mainnet-beta", "status": "live",
-		"sat": map[string]string{
-			"programId": program, "bondProgramId": bondProgram, "mint": mint,
-			"mintProgramId": solana.TokenProgramID.String(),
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(manifest)
-	dir := t.TempDir()
-	manifestPath := filepath.Join(dir, "sat-runtime.manifest.json")
-	signaturePath := filepath.Join(dir, "sat-runtime.manifest.sig")
-	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(signaturePath, []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, manifest))), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("FASED_SAT_PROGRAM_ID", program)
-	t.Setenv("FASED_SAT_BOND_PROGRAM_ID", bondProgram)
-	t.Setenv("FASED_SAT_MINT_ADDRESS", mint)
-	t.Setenv("FASED_SAT_MINT_PROGRAM_ID", solana.TokenProgramID.String())
-	t.Setenv("FASED_SAT_RUNTIME_MANIFEST_PATH", manifestPath)
-	t.Setenv("FASED_SAT_RUNTIME_MANIFEST_SHA256", hex.EncodeToString(digest[:]))
-	t.Setenv("FASED_SAT_RUNTIME_MANIFEST_SIGNATURE_PATH", signaturePath)
-	t.Setenv("FASED_SAT_MAINNET_MANIFEST_PUBLIC_KEY", base64.RawURLEncoding.EncodeToString(publicKey))
-	runtime := signerRoleBaselineRuntimeFromEnvV1()
-	if !runtime.Verified || runtime.VerificationErr != "" {
-		t.Fatalf("signed SAT runtime was not verified: %#v", runtime)
-	}
-	if err := os.WriteFile(signaturePath, []byte(base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runtime = signerRoleBaselineRuntimeFromEnvV1()
-	if runtime.Verified || !strings.Contains(runtime.VerificationErr, "not trusted") {
-		t.Fatalf("untrusted SAT runtime signature was accepted: %#v", runtime)
-	}
-}
-
-func TestSignerApplicationCreatesAndExplicitlyActivatesRoleBaselineV1(t *testing.T) {
+func TestSignerApplicationCreatesOrdinaryWalletBaselineV1(t *testing.T) {
 	store, keys := openTestSignerV2(t)
 	service := &signerServiceV2{store: store, keys: keys}
 	createBody, err := json.Marshal(signerWalletCreateRequestV2{
@@ -230,49 +90,10 @@ func TestSignerApplicationCreatesAndExplicitlyActivatesRoleBaselineV1(t *testing
 	}
 	readiness, err := service.walletReadinessV2("ready-agent")
 	if err != nil || !readiness.KeyReady || !readiness.PolicyReady || readiness.NetworkReady || readiness.Ready ||
-		readiness.OperationLane != "agent-reviewed-and-autonomous" {
+		readiness.OperationLane != "reviewed-and-autonomous" {
 		t.Fatalf("unexpected pre-network readiness: %#v err=%v", readiness, err)
 	}
 
-	locked, _, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
-		WalletID: "locked-vault", ExpectedVersion: 0,
-		Policy: signerPolicyV2{Role: "vault", Operations: []string{}, Programs: []string{}, Assets: []signerPolicyAssetV2{}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	activationBody, err := json.Marshal(signerRoleBaselineActivationRequestV1{
-		ExpectedVersion: 1,
-		Baseline:        signerRoleBaselineRequestV1{Version: 1, Role: "vault"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.handle(
-		request{Op: "v2.policy.activateBaseline", WalletID: locked.WalletID, Request: activationBody},
-		signerConfig{},
-		false,
-	); err == nil || !strings.Contains(err.Error(), "control socket") {
-		t.Fatalf("application socket activated a role baseline: %v", err)
-	}
-	if _, err := service.handle(
-		request{Op: "v2.policy.activateBaseline", WalletID: locked.WalletID, Request: activationBody},
-		signerConfig{},
-		true,
-	); err != nil {
-		t.Fatalf("control-socket deny-all migration: %v", err)
-	}
-	activated, err := store.getPolicy(locked.WalletID)
-	if err != nil || activated.Version != 2 || activated.BaselineVersion != 1 || activated.Role != "vault" {
-		t.Fatalf("unexpected activated policy: %#v err=%v", activated, err)
-	}
-	if _, err := service.handle(
-		request{Op: "v2.policy.activateBaseline", WalletID: locked.WalletID, Request: activationBody},
-		signerConfig{},
-		true,
-	); err == nil {
-		t.Fatal("role baseline activation silently expanded an already activated wallet")
-	}
 }
 
 func TestSignerRoleBaselineControlUIConfirmationBindsExactReviewedTransfer(t *testing.T) {

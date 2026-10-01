@@ -15,13 +15,13 @@ describe("capability component installation", () => {
 
   it("enables a core plugin without a managed transaction", async () => {
     loadCapabilityCatalog.mockReturnValue([
-      { id: "sat-mining", label: "SAT Mining", delivery: "core", pluginId: "sat-mining" },
+      { id: "wen", label: "WEN", delivery: "core", pluginId: "wen" },
     ]);
     const { installCapabilityComponent } = await import("./install.js");
     const runManagedTransaction = vi.fn();
 
     await installCapabilityComponent({
-      id: "sat-mining",
+      id: "wen",
       config: {},
       runManagedTransaction,
     });
@@ -29,7 +29,7 @@ describe("capability component installation", () => {
     expect(runManagedTransaction).not.toHaveBeenCalled();
     expect(finalizeInstalledPluginConfig).toHaveBeenCalledWith({
       config: {},
-      pluginId: "sat-mining",
+      pluginId: "wen",
     });
   });
 

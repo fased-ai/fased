@@ -117,7 +117,7 @@ describe("plugin status cache", () => {
     ).not.toBeNull();
     fs.writeFileSync(
       configPath,
-      '{"gateway":{"port":2},"plugins":{"entries":{"sat-mining":{"enabled":true}}}}\n',
+      '{"gateway":{"port":2},"plugins":{"entries":{"wen":{"enabled":true}}}}\n',
     );
     expect(
       readValidPluginStatusCache({ cachePath, configPath, packageVersion: "1.2.3" }),

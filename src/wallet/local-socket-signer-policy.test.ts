@@ -4,10 +4,11 @@ import {
   localSignerPolicyState,
 } from "./local-socket-signer-policy.js";
 import type { LocalSocketSignerPolicyV2 } from "./local-socket-signer-protocol.js";
+import { SOLANA_ASSET_CONSTANTS } from "./solana-assets.js";
 
 const destination = "Vote111111111111111111111111111111111111111";
 const systemProgram = "11111111111111111111111111111111";
-const federationDomain = "domain:fased:federation-bond-challenge-v1";
+const tokenProgram = SOLANA_ASSET_CONSTANTS.tokenProgramId;
 const mint = "So11111111111111111111111111111111111111112";
 
 function signerPolicy(): LocalSocketSignerPolicyV2 {
@@ -16,7 +17,7 @@ function signerPolicy(): LocalSocketSignerPolicyV2 {
     role: "agent",
     version: 4,
     operations: ["solana.nativeTransfer", "solana.splTransferChecked"],
-    programs: [systemProgram, federationDomain],
+    programs: [systemProgram, tokenProgram],
     assets: [
       {
         asset: "solana:native",
@@ -40,7 +41,7 @@ const gatewayPolicy = {
   directSigning: false,
   skillsEnabled: false,
   solana: {
-    allowPrograms: [systemProgram, federationDomain],
+    allowPrograms: [systemProgram, tokenProgram],
     maxPerTx: "10000000",
     maxDaily: "50000000",
     tokenCaps: { [mint]: { maxPerTx: "100", maxDaily: "500" } },
@@ -136,8 +137,8 @@ describe("local signer application policy tightening", () => {
     }
     expect(() =>
       buildLocalSignerPolicyTightening({
-        current: signerPolicy(),
-        expectedRole: "vault",
+        current: { ...signerPolicy(), role: "invalid" as never },
+        expectedRole: "agent",
         gatewayPolicy,
         hosting: false,
         patch: {},
@@ -160,7 +161,7 @@ describe("local signer application policy tightening", () => {
       { patch: { skillsEnabled: true }, message: /Skill wallet access cannot be enabled/i },
       { patch: { capsEnabled: false }, message: /spend caps cannot be disabled/i },
       {
-        patch: { solanaAllowPrograms: [systemProgram, federationDomain] },
+        patch: { solanaAllowPrograms: [systemProgram, tokenProgram] },
         message: /Adding Gateway program permission/i,
       },
       {
@@ -216,7 +217,7 @@ describe("local signer application policy tightening", () => {
     ).toBe("locked");
   });
 
-  it("locks pre-upgrade on-chain policies below the signer fee reserve without locking federation-only proof policies", () => {
+  it("locks on-chain policies below the signer fee reserve", () => {
     expect(
       localSignerPolicyState({
         ...signerPolicy(),
@@ -227,23 +228,5 @@ describe("local signer application policy tightening", () => {
         ),
       }),
     ).toBe("locked");
-    expect(
-      localSignerPolicyState({
-        walletId: "vault",
-        role: "vault",
-        version: 1,
-        operations: ["federation.bondChallenge"],
-        programs: [federationDomain],
-        assets: [
-          {
-            asset: "federation:bond-challenge",
-            destinations: [destination],
-            maxPerTx: "1",
-            maxDaily: "2",
-          },
-        ],
-        hash: `sha256:${"b".repeat(64)}`,
-      }),
-    ).toBe("acknowledged");
   });
 });

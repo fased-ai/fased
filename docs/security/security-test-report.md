@@ -9,6 +9,8 @@ read_when:
   - Auditing whether Agent skills, tasks, and mining controls stay separated
 ---
 
+> Historical assessment: references to the retired Satcoin miner and wallet roles describe the assessed version only. They are not current setup instructions or evidence for WEN.
+
 # Security Test Report
 
 This page is the public security evidence report for Fased Agent. It is not a

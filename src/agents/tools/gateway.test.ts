@@ -59,7 +59,7 @@ describe("gateway tool defaults", () => {
     );
 
     callGatewayMock.mockResolvedValueOnce({ ok: true });
-    await callGatewayTool("sat.startMining", {
+    await callGatewayTool("wen.mining.review.refresh", {
       gatewayTarget: "local",
       operatorScopes: ["operator.admin"],
     });

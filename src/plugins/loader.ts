@@ -49,6 +49,7 @@ export type PluginLoadOptions = {
   preloadedModules?: Map<string, FasedAgentPluginModule>;
 };
 
+const MAX_CACHED_PLUGIN_REGISTRIES = 4;
 const registryCache = new Map<string, PluginRegistry>();
 
 export function clearPluginLoaderCache(): void {
@@ -148,10 +149,11 @@ const PLUGIN_SDK_ALIAS_SPECS = [
     srcFile: "provider-web-search-config-contract.ts",
     distFile: "provider-web-search-config-contract.js",
   },
+  { requests: ["fased/plugin-sdk/config"], srcFile: "config.ts", distFile: "config.js" },
   {
-    requests: ["fased/plugin-sdk/sat-runtime"],
-    srcFile: "sat-runtime.ts",
-    distFile: "sat-runtime.js",
+    requests: ["fased/plugin-sdk/wen-runtime"],
+    srcFile: "wen-runtime.ts",
+    distFile: "wen-runtime.js",
   },
   {
     requests: ["fased/plugin-sdk/slack"],
@@ -682,6 +684,8 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
   if (cacheEnabled) {
     const cached = registryCache.get(cacheKey);
     if (cached) {
+      registryCache.delete(cacheKey);
+      registryCache.set(cacheKey, cached);
       setActivePluginRegistry(cached, cacheKey);
       return cached;
     }
@@ -1098,6 +1102,14 @@ export function loadFasedAgentPlugins(options: PluginLoadOptions = {}): PluginRe
 
   if (cacheEnabled) {
     registryCache.set(cacheKey, registry);
+    // Release only cache references. Services and the active registry retain their own lifetime.
+    while (registryCache.size > MAX_CACHED_PLUGIN_REGISTRIES) {
+      const oldest = registryCache.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      registryCache.delete(oldest);
+    }
   }
   setActivePluginRegistry(registry, cacheKey);
   initializeGlobalHookRunner(registry);

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import "./wen-acquisition.js";
+import { satQuantityToAtoms } from "./wen-acquisition.js";
 import type { WenAcquisitionPanel } from "./wen-acquisition.js";
 afterEach(() => {
   document.body.replaceChildren();
@@ -13,7 +13,7 @@ const reply = () => ({
 });
 async function mount(request: ReturnType<typeof vi.fn>) {
   const panel = document.createElement("wen-acquisition-panel") as WenAcquisitionPanel;
-  panel.client = { request };
+  panel.client = { request: request as NonNullable<WenAcquisitionPanel["client"]>["request"] };
   panel.connected = true;
   panel.owner = "owner";
   panel.netAtoms = "100";
@@ -76,4 +76,28 @@ it("blocks an expired link even without a render", async () => {
   await panel.updateComplete;
   expect(panel.querySelector("a")).toBeNull();
   expect(panel.error).toContain("expired");
+});
+
+it("converts retail SAT amounts exactly and rejects rounding or invalid quantities", () => {
+  expect(satQuantityToAtoms("0.01")).toBe("1000000000");
+  expect(satQuantityToAtoms("1.00000000001")).toBe("100000000001");
+  for (const amount of ["0", "-1", "1e2", "0.000000000001", "184467440.73709551616"]) {
+    expect(() => satQuantityToAtoms(amount)).toThrow();
+  }
+});
+it("sends decimal input as exact base units without presenting raw atoms", async () => {
+  const request = vi.fn().mockResolvedValue(reply());
+  const panel = await mount(request);
+  panel.quantity = "0.01";
+  await panel.updateComplete;
+  panel.querySelector("button")!.click();
+  await vi.waitFor(() =>
+    expect(request).toHaveBeenCalledWith("wen.acquisition.handoff", {
+      owner: "owner",
+      action: "buy",
+      netAtoms: "1000000000",
+    }),
+  );
+  expect(panel.textContent).toContain("Amount (SAT)");
+  expect(panel.textContent).not.toContain("base units");
 });

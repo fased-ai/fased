@@ -1,13 +1,3 @@
-import {
-  buildGatewayMiningChangedEventPayload,
-  GATEWAY_EVENT_MINING_CHANGED,
-  isSatMiningMutationMethod,
-  SAT_MINING_MUTATION_METHODS,
-} from "../mining/mining-facade.js";
-import {
-  shouldMirrorMiningGatewayTask,
-  syncMiningGatewayTask,
-} from "../mining/mining-task-ledger.js";
 import { formatControlPlaneActor, resolveControlPlaneActor } from "./control-plane-audit.js";
 import { consumeControlPlaneWriteBudget } from "./control-plane-rate-limit.js";
 import { ADMIN_SCOPE, authorizeOperatorScopesForMethod } from "./method-scopes.js";
@@ -212,53 +202,12 @@ export async function handleGatewayRequest(
     );
     return;
   }
-  let responseOk: boolean | null = null;
-  let responsePayload: unknown;
-  const wrappedRespond: typeof respond = (...args: Parameters<typeof respond>) => {
-    const [ok, payload] = args;
-    responseOk = ok;
-    responsePayload = payload;
-    respond(...args);
-  };
   await handler({
     req,
     params: (req.params ?? {}) as Record<string, unknown>,
     client,
     isWebchatConnect,
-    respond: wrappedRespond,
+    respond,
     context,
   });
-  if (responseOk === true) {
-    const requestParams = (req.params ?? {}) as Record<string, unknown>;
-    if (
-      shouldMirrorMiningGatewayTask({
-        method: req.method,
-        responsePayload,
-        requestParams,
-        mutationMethods: SAT_MINING_MUTATION_METHODS,
-      })
-    ) {
-      try {
-        syncMiningGatewayTask({
-          method: req.method,
-          requestId: req.id,
-          requestParams,
-          responsePayload,
-        });
-      } catch (error) {
-        context.logGateway.warn(
-          `mining task ledger mirror failed method=${req.method}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-  }
-  if (responseOk === true && isSatMiningMutationMethod(req.method)) {
-    context.broadcast(
-      GATEWAY_EVENT_MINING_CHANGED,
-      buildGatewayMiningChangedEventPayload(req.method, responsePayload),
-      { dropIfSlow: true },
-    );
-  }
 }

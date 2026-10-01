@@ -692,7 +692,7 @@ func TestJupiterAuthorizationModesFailClosed(t *testing.T) {
 	wallet, _, err := keys.CreateWithPolicy(signerWalletCreateRequestV2{
 		WalletID:        walletID,
 		ExpectedVersion: 0,
-		Policy:          signerPolicyV2{WalletID: walletID, Role: "vault"},
+		Policy:          signerPolicyV2{WalletID: walletID, Role: "agent"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -703,14 +703,9 @@ func TestJupiterAuthorizationModesFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy, err := store.putPolicy(signerPolicyV2{
-		WalletID:   wallet.WalletID,
-		Role:       "vault",
-		Operations: []string{intentSolanaJupiterSwap},
-		Programs:   []string{jupiterAggregatorV6V2},
-		Assets: []signerPolicyAssetV2{
-			{Asset: normalized.Asset, Destinations: []string{wallet.PublicKey}, MaxPerTx: "100", MaxDaily: "1000"},
-			{Asset: "solana:native", Destinations: []string{wallet.PublicKey}, MaxPerTx: "6500000", MaxDaily: "10000000"},
-		},
+		WalletID:     wallet.WalletID,
+		Role:         "agent",
+		ApprovalMode: "read-only",
 	}, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -722,8 +717,8 @@ func TestJupiterAuthorizationModesFailClosed(t *testing.T) {
 		Intent:      normalized.Intent,
 		Transaction: &signerSolanaTransactionEnvelopeV2{SerializedTxBase64: "AQ==", Programs: normalized.RequiredPrograms, WritableAccounts: []string{wallet.PublicKey}, Submission: jupiterSubmissionRPCV2},
 	}
-	if _, err := store.prepareReviewV2(wallet.WalletID, req, normalized, *req.Transaction, "sha256:"+strings.Repeat("a", 64)); err == nil || !strings.Contains(err.Error(), "Agent-role") {
-		t.Fatalf("Vault autonomous review was accepted: %v", err)
+	if _, err := store.prepareReviewV2(wallet.WalletID, req, normalized, *req.Transaction, "sha256:"+strings.Repeat("a", 64)); err == nil || !strings.Contains(err.Error(), "explicit owner approval") {
+		t.Fatalf("Read-only autonomous review was accepted: %v", err)
 	}
 }
 

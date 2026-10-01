@@ -15,7 +15,7 @@ type signerWENBTCMessageIntentV1 struct {
 	blockhash      solana.Hash
 	units          uint32
 	data           []byte
-	accounts       []signerSATAccountV2
+	accounts       []signerTypedAccountV2
 }
 type signerWENBTCLookupPinV1 struct {
 	key    solana.PublicKey

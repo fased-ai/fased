@@ -40,20 +40,7 @@ describe("task ledger source route", () => {
     });
   });
 
-  it("routes marketplace records to order anchors", () => {
-    expect(
-      resolveTaskLedgerSourceRoute(
-        task("marketplace", {
-          metadata: { orderId: "order-456", requestId: "request-1" },
-        }),
-      ),
-    ).toMatchObject({
-      tab: "marketplace",
-      hash: "marketplace-order-order-456",
-    });
-  });
-
-  it("routes mining records to recent activity with cycle filters", () => {
+  it("routes WEN mining records to owner review", () => {
     expect(
       resolveTaskLedgerSourceRoute(
         task("mining", {
@@ -61,10 +48,7 @@ describe("task ledger source route", () => {
         }),
       ),
     ).toMatchObject({
-      tab: "mining",
-      miningActivityFilter: "cycle",
-      miningActivityWindow: "all",
-      hash: "mining-cycle-cycle-9",
+      tab: "wen",
     });
   });
 

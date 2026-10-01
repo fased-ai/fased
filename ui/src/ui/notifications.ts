@@ -59,34 +59,6 @@ export type AppNotification = {
 
 export const NOTIFICATION_DEFINITIONS: NotificationDefinition[] = [
   {
-    code: "mining.low_fee_buffer",
-    category: "mining",
-    label: "Mining fee buffer low",
-    description: "Warn when the mining wallet does not have enough SOL for cycle fees.",
-    defaultRouted: true,
-  },
-  {
-    code: "mining.rpc_fallback",
-    category: "mining",
-    label: "Mining RPC fallback",
-    description: "Alert when SAT mining starts reading from the fallback Solana RPC.",
-    defaultRouted: true,
-  },
-  {
-    code: "mining.rpc_quota",
-    category: "mining",
-    label: "Mining RPC quota/degraded",
-    description: "Alert when mining RPC usage looks rate-limited, credit-limited, or unhealthy.",
-    defaultRouted: true,
-  },
-  {
-    code: "mining.sync_mainnet",
-    category: "mining",
-    label: "SAT mainnet sync",
-    description: "Alert when the official SAT mainnet manifest sync changes state.",
-    defaultRouted: true,
-  },
-  {
     code: "wallet.rpc_degraded",
     category: "wallet",
     label: "Wallet RPC degraded",

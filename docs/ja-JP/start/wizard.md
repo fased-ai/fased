@@ -67,14 +67,6 @@ Hostingプロファイルでは、オンボーディング前にTailscaleへ参�
 
 オンボーディングはベースランタイムをオンラインにします。次はControl UIで設定します：
 
-- **Agent > Models**: モデルプロバイダーまたはローカルモデル。
-- **Agent > Channels**: Telegram、Discord、WhatsAppなど。
-- **Agent > Services**: Web/search、Gmail、Calendar、GitHub、custom APIなど。
-- **Agent > Skills / Tools**: Agentに許可する能力。
-- **Agent > Memory**: セッションメモリ、QMD、アーカイブ。
-- **Agent > Tasks**: 保存されたタスク定義と実行履歴。
-- Wallets、Mining、Fased Network: ベースランタイムが安定してから、必要に応じて設定。
-
 ## Local と Hosting
 
 | Profile       | 用途                      | 基本姿勢                              |
@@ -98,10 +90,6 @@ Remote modeは、別の場所にあるGatewayへ接続するクライアント�
 
 ウォレット設定は通常のチャットには不要です。使う場合は用途を分けます：
 
-- `agent`: Agent関連のウォレット操作。
-- `mining`: SAT Mining用。
-- `vault`: 保管、bond、ネットワーク関連用途。
-
 Mining用の有効構成ウォレットは1つです。置き換える場合は、まずMiningを停止し、保留中の処理と残高状態を確認してから入れ替えます。
 
 ## よく使う確認コマンド
@@ -114,12 +102,6 @@ fased dashboard
 ```
 
 ウォレットまたはMiningを設定した場合：
-
-```bash
-fased wallet status --json
-fased wallet signer doctor --json
-fased mining readiness --wallet mining
-```
 
 ## 関連ドキュメント
 

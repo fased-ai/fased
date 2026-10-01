@@ -4,7 +4,7 @@ import {
   buildDefaultToolPolicyPipelineSteps,
   resetToolPolicyWarningCacheForTest,
 } from "./tool-policy-pipeline.js";
-import { resolveToolProfilePolicy } from "./tool-policy.js";
+import { mergeAlsoAllowPolicy, resolveToolProfilePolicy } from "./tool-policy.js";
 
 type DummyTool = { name: string };
 
@@ -37,6 +37,47 @@ function runAllowlistWarningStep(params: {
 }
 
 describe("tool-policy-pipeline", () => {
+  test("WEN profile admits only facts, handoffs and planning unless capabilities are enabled", () => {
+    const names = [
+      "wen_economy_facts",
+      "wen_acquisition_request",
+      "memory_search",
+      "memory_get",
+      "session_status",
+      "update_plan",
+      "exec",
+      "browser",
+      "message",
+      "nodes",
+      "image",
+      "cron",
+    ];
+    const tools = names.map((name) => ({ name })) as Parameters<
+      typeof applyToolPolicyPipeline
+    >[0]["tools"];
+    const filter = (alsoAllow?: string[], deny?: string[]) =>
+      applyToolPolicyPipeline({
+        tools,
+        toolMeta: (tool) => (tool.name.startsWith("wen_") ? { pluginId: "wen" } : undefined),
+        warn: () => {},
+        steps: buildDefaultToolPolicyPipelineSteps({
+          profile: "wen",
+          profilePolicy: mergeAlsoAllowPolicy(resolveToolProfilePolicy("wen"), alsoAllow),
+          globalPolicy: { deny },
+        }),
+      }).map((tool) => tool.name);
+    expect(filter()).toEqual(names.slice(0, 6));
+    expect(filter(["cron"])).toEqual([...names.slice(0, 6), "cron"]);
+    expect(filter(["cron", "exec"], ["exec", "wen_acquisition_request"])).toEqual([
+      "wen_economy_facts",
+      "memory_search",
+      "memory_get",
+      "session_status",
+      "update_plan",
+      "cron",
+    ]);
+  });
+
   beforeEach(() => {
     resetToolPolicyWarningCacheForTest();
   });

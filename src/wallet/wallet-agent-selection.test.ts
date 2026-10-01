@@ -7,7 +7,6 @@ import { parseWalletHandle, resolveAgentWalletSelection } from "./wallet-agent-s
 import {
   setDefaultWallet,
   setAgentWalletAssignment,
-  setNamedWalletRole,
   upsertNamedWallet,
 } from "./wallet-provider-registry.js";
 
@@ -33,29 +32,30 @@ describe("wallet-agent-selection", () => {
       walletId: "agent",
       name: "Agent",
       providerId: "local-socket-signer",
+      metadata: { role: "agent" },
       env: process.env,
     });
-    setNamedWalletRole({ walletId: "agent", role: "agent", env: process.env });
     upsertNamedWallet({
       walletId: "mining",
       name: "Mining",
       providerId: "local-socket-signer",
+      metadata: { role: "agent" },
       env: process.env,
     });
     upsertNamedWallet({
       walletId: "vault",
       name: "Vault",
       providerId: "local-socket-signer",
+      metadata: { role: "agent" },
       env: process.env,
     });
     upsertNamedWallet({
       walletId: "trading",
       name: "Trading",
       providerId: "local-socket-signer",
+      metadata: { role: "agent" },
       env: process.env,
     });
-    setNamedWalletRole({ walletId: "trading", role: "agent", env: process.env });
-    setNamedWalletRole({ walletId: "vault", role: "vault", env: process.env });
     setDefaultWallet({ walletId: "agent", env: process.env });
   });
 
@@ -143,15 +143,6 @@ describe("wallet-agent-selection", () => {
     ).toThrow("Select an Agent wallet");
   });
 
-  it("rejects Mining and Vault Agent assignments", () => {
-    expect(() =>
-      setAgentWalletAssignment({ agentId: "research", walletId: "mining", env: process.env }),
-    ).toThrow("only Agent wallets");
-    expect(() =>
-      setAgentWalletAssignment({ agentId: "research", walletId: "vault", env: process.env }),
-    ).toThrow("only Agent wallets");
-  });
-
   it("resolves a second Agent wallet by explicit handle", () => {
     const selection = resolveAgentWalletSelection({
       config: cfg,
@@ -175,26 +166,6 @@ describe("wallet-agent-selection", () => {
         env: process.env,
       }),
     ).toThrow("walletName is display-only");
-  });
-
-  it("rejects mining wallets for agent actions", () => {
-    expect(() =>
-      resolveAgentWalletSelection({
-        config: cfg,
-        walletHandle: "@wallet:mining",
-        env: process.env,
-      }),
-    ).toThrow("wallet_role_not_allowed");
-  });
-
-  it("rejects vault wallets for agent actions", () => {
-    expect(() =>
-      resolveAgentWalletSelection({
-        config: cfg,
-        walletHandle: "@wallet:vault",
-        env: process.env,
-      }),
-    ).toThrow("wallet_role_not_allowed");
   });
 
   it("rejects missing handles", () => {

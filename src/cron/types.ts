@@ -359,7 +359,7 @@ export type CronTaskPendingCoordination = {
 export type CronTaskGraphRepairPlan = {
   action: "add_source" | "replace_source";
   nodeId: string;
-  toolName: "web_search" | "web_fetch" | "gateway" | "wallet" | "mining" | "offers";
+  toolName: "web_search" | "web_fetch" | "gateway" | "wallet" | "offers";
   reason: string;
   createdAtMs: number;
   replacesNodeId?: string;

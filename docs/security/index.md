@@ -125,12 +125,6 @@ Related docs:
 
 Wallet access is intentionally separate from skills and tools.
 
-- Wallet setup and approvals live in **Wallets**.
-- Generic wallet-capable skills can only use Agent-role wallets that you explicitly allow.
-- Mining and vault wallets are not available to generic skills.
-- SAT mining uses the dedicated mining path and Mining wallet controls.
-- A skill install, plugin review, or Agent skill allowlist change does not grant wallet access.
-
 For wallet-capable skills, use **Wallets > Skill Grants** after review. Grant
 only the actions, wallet ids, chains, caps, and automation level required for
 the workflow.
@@ -161,11 +155,6 @@ controls, Wallet > Skill Grants, approval state, and audit as an additional
 boundary; the provider/hardware policy remains an independent custody authority.
 
 Related docs:
-
-- [Wallets](/plugins/crypto/wallet-page)
-- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
-- [Wallet Autonomous Security](/plugins/crypto/wallet-autonomous-security)
-- [SAT Mining](/plugins/crypto/mining-page)
 
 ## Public Launch Checklist
 

@@ -4,13 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  activateSignerOwnedRoleBaseline,
   bindSignerOwnedRPCProfile,
   createSignerOwnedRPCProfile,
   createLockedSignerOwnedWallet,
-  createRoleReadySignerOwnedWallet,
   listSignerOwnedRPCProfiles,
-  readSignerOwnedWalletReadiness,
 } from "./local-socket-signer-lifecycle.js";
 
 const cleanupPaths: string[] = [];
@@ -43,7 +40,6 @@ function capabilityResult() {
         "failClosedPolicies",
         "policyHashes",
         "signerOwnedKeys",
-        "signerOwnedRoleBaselines",
         "liveWalletReadiness",
         "applicationNetworkBootstrap",
         "signerOwnedRPCProfiles",
@@ -176,110 +172,6 @@ describe("signer-owned wallet lifecycle", () => {
     }
   });
 
-  it("creates and reads a signer-owned role-ready baseline without policy JSON", async () => {
-    const server = await createServer((request) => {
-      if (request.op === "v2.capabilities") {
-        return { ok: true, result: capabilityResult() };
-      }
-      if (request.op === "v2.wallet.create") {
-        return {
-          ok: true,
-          result: {
-            wallet: {
-              walletId: "agent",
-              publicKey: "11111111111111111111111111111111",
-              version: 1,
-              createdAt: "2026-07-20T12:00:00.000Z",
-            },
-            policy: {
-              walletId: "agent",
-              role: "agent",
-              version: 1,
-              baselineVersion: 1,
-              operations: ["solana.nativeTransfer"],
-              programs: ["11111111111111111111111111111111"],
-              assets: [
-                {
-                  asset: "solana:native",
-                  destinations: ["11111111111111111111111111111111"],
-                  maxPerTx: "1000000000",
-                  maxDaily: "5000000000",
-                  reviewedDestinations: true,
-                },
-              ],
-              hash: `sha256:${"a".repeat(64)}`,
-            },
-          },
-        };
-      }
-      if (request.op === "v2.wallet.readiness") {
-        return {
-          ok: true,
-          result: {
-            walletId: "agent",
-            publicKey: "11111111111111111111111111111111",
-            role: "agent",
-            baselineVersion: 1,
-            policyVersion: 1,
-            policyHash: `sha256:${"a".repeat(64)}`,
-            networkVersion: 1,
-            networkHash: `hmac-sha256:${"b".repeat(64)}`,
-            keyReady: true,
-            policyReady: true,
-            networkReady: true,
-            operationLane: "agent-reviewed-and-autonomous",
-            ready: true,
-          },
-        };
-      }
-      if (request.op === "v2.policy.activateBaseline") {
-        return {
-          ok: true,
-          result: {
-            walletId: "agent",
-            role: "agent",
-            version: 2,
-            baselineVersion: 1,
-            operations: ["solana.nativeTransfer"],
-            programs: ["11111111111111111111111111111111"],
-            assets: [],
-            hash: `sha256:${"c".repeat(64)}`,
-          },
-        };
-      }
-      return { ok: false, error: "wallet not found" };
-    });
-    try {
-      const created = await createRoleReadySignerOwnedWallet({
-        socketPath: server.socketPath,
-        walletId: "agent",
-        role: "agent",
-      });
-      expect(created.policy.baselineVersion).toBe(1);
-      expect(server.requests).toContainEqual({
-        op: "v2.wallet.create",
-        walletId: "agent",
-        request: { expectedPolicyVersion: 0, baseline: { version: 1, role: "agent" } },
-      });
-
-      const readiness = await readSignerOwnedWalletReadiness({
-        socketPath: server.socketPath,
-        walletId: "agent",
-      });
-      expect(readiness.ready).toBe(true);
-
-      const activated = await activateSignerOwnedRoleBaseline({
-        socketPath: server.socketPath,
-        walletId: "agent",
-        role: "agent",
-        expectedPolicyVersion: 1,
-      });
-      expect(activated.version).toBe(2);
-    } finally {
-      await server.close();
-    }
-  });
-
   it("creates keys only inside Go with an explicit deny-all policy", async () => {
     const server = await createServer((request) => {
       if (request.op === "v2.capabilities") {
@@ -298,6 +190,7 @@ describe("signer-owned wallet lifecycle", () => {
             policy: {
               walletId: "agent",
               role: "agent",
+              approvalMode: "read-only",
               version: 1,
               operations: [],
               programs: [],
@@ -321,7 +214,13 @@ describe("signer-owned wallet lifecycle", () => {
         walletId: "agent",
         request: {
           expectedPolicyVersion: 0,
-          policy: { role: "agent", operations: [], programs: [], assets: [] },
+          policy: {
+            role: "agent",
+            approvalMode: "read-only",
+            operations: [],
+            programs: [],
+            assets: [],
+          },
         },
       });
       expect(JSON.stringify(server.requests)).not.toMatch(/private|secret|seed|passphrase/i);
@@ -351,7 +250,8 @@ describe("signer-owned wallet lifecycle", () => {
           ok: true,
           result: {
             walletId: "vault",
-            role: "vault",
+            role: "agent",
+            approvalMode: "read-only",
             version: 1,
             operations: [],
             programs: [],
@@ -366,7 +266,7 @@ describe("signer-owned wallet lifecycle", () => {
       const result = await createLockedSignerOwnedWallet({
         socketPath: server.socketPath,
         walletId: "vault",
-        role: "vault",
+        role: "agent",
         allowExisting: true,
       });
       expect(result.wallet.publicKey).toBe("Vault1111111111111111111111111111111111");
@@ -376,3 +276,55 @@ describe("signer-owned wallet lifecycle", () => {
     }
   });
 });
+
+it.each([false, true])(
+  "rejects a granting policy when creating or resuming an ordinary wallet (existing=%s)",
+  async (existing) => {
+    const wallet = {
+      walletId: "wallet",
+      publicKey: "11111111111111111111111111111111",
+      version: 1,
+      createdAt: "2026-09-30T00:00:00.000Z",
+    };
+    const policy = {
+      walletId: "wallet",
+      role: "agent",
+      approvalMode: "manual",
+      version: 1,
+      operations: ["solana.nativeTransfer"],
+      programs: ["11111111111111111111111111111111"],
+      assets: [],
+      hash: `sha256:${"a".repeat(64)}`,
+    };
+    const server = await createServer((request) => {
+      if (request.op === "v2.capabilities") {
+        return { ok: true, result: capabilityResult() };
+      }
+      if (existing && request.op === "v2.wallet.get") {
+        return { ok: true, result: wallet };
+      }
+      if (existing && request.op === "v2.policy.get") {
+        return { ok: true, result: policy };
+      }
+      if (request.op === "v2.wallet.create") {
+        return { ok: true, result: { wallet, policy } };
+      }
+      return { ok: false, error: "wallet not found" };
+    });
+    try {
+      await expect(
+        createLockedSignerOwnedWallet({
+          socketPath: server.socketPath,
+          walletId: "wallet",
+          role: "agent",
+          allowExisting: existing,
+        }),
+      ).rejects.toThrow(/exact read-only policy/);
+      if (existing) {
+        expect(server.requests.some((request) => request.op === "v2.wallet.create")).toBe(false);
+      }
+    } finally {
+      await server.close();
+    }
+  },
+);

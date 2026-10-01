@@ -1,5 +1,4 @@
 import { listChannelPlugins } from "../channels/plugins/index.js";
-import { GATEWAY_EVENT_MINING_CHANGED } from "./events.js";
 
 const BASE_METHODS = [
   "health",
@@ -223,5 +222,4 @@ export const GATEWAY_EVENTS = [
   "voicewake.routing.changed",
   "exec.approval.requested",
   "exec.approval.resolved",
-  GATEWAY_EVENT_MINING_CHANGED,
 ];

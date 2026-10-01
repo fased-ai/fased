@@ -29,10 +29,9 @@ export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayout = {
   ],
 };
 
-const VALID_WIDGETS = new Set<DashboardWidgetId>([
-  ...DEFAULT_DASHBOARD_LAYOUT.columns.flatMap((column) => column.widgets),
-  "usage",
-]);
+const VALID_WIDGETS = new Set<DashboardWidgetId>(
+  DEFAULT_DASHBOARD_LAYOUT.columns.flatMap((column) => column.widgets),
+);
 
 function cloneLayout(layout: DashboardLayout): DashboardLayout {
   return {

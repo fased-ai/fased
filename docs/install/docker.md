@@ -230,46 +230,19 @@ The supplied local Compose configuration:
 - excludes local `.env*`, `.fased`, SSH/private keys, and common credential
   directories from the image build context
 
-This is **Local container isolation**, not the Hosting custody boundary. The
-Gateway cannot mount signer state or the administrative control socket, but it
-can request operations allowed by wallet policy through the application socket.
-The local account and Docker daemon still control all containers and volumes, so
-container separation does not protect a high-value reserve wallet from a fully
-compromised host. Keep automated Agent and Mining wallets low-balance with
-explicit typed policies and positive caps; use a hardware-backed Wallet
-Standard account or a reviewed remote custody provider for reserve/Vault funds.
-
 Do not change the port mappings to `0.0.0.0`, add `network_mode: host`, mount
 `docker.sock`, or enable `privileged`. Those changes cross the supported local
 security boundary. Do not change the services to root to work around
 permissions. Remote access and Docker VPS hosting are not covered by this guide.
 
-### Wallets and SAT mining
+# Edit every REPLACE*WITH* value and review every line before continuing.
 
-Local Docker supports signer-owned Solana Agent, Mining, and Vault wallet setup,
-typed wallet operations, and SAT mining. The native signer is part of the image;
-users do not install Go or download a second signer binary.
-
-To create or manage wallets after initial onboarding:
-
-```bash
-docker compose run --rm fased-cli wallet setup --chain solana
-```
-
-New signer-owned wallets begin with role baseline v1. Before funding a wallet,
-review its exact role, live policy/network hashes, destinations, and positive
-caps. Use a private role template only when intentionally replacing the built-in
-baseline with narrower or additional authority. For example:
-
-```bash
-cp config/signer-policies/agent.json.template "$HOME/fased-agent-policy.json"
-chmod 600 "$HOME/fased-agent-policy.json"
-# Edit every REPLACE_WITH_ value and review every line before continuing.
 scripts/docker-signer-policy.sh \
-  --initial-install \
-  --wallet-id agent \
-  --policy-file "$HOME/fased-agent-policy.json"
-```
+ --initial-install \
+ --wallet-id agent \
+ --policy-file "$HOME/fased-agent-policy.json"
+
+````
 
 The helper refuses placeholders, group/world-readable policy files, a policy
 owned by another user, an unhealthy signer, or a digest-confirmation mismatch.
@@ -288,7 +261,7 @@ docker compose --profile signer-admin run --rm --no-deps \
   fased-signer-admin policy get \
   --control-socket /run/fased-signerd-control/control.sock \
   --wallet-id agent
-```
+````
 
 This service is deliberately short-lived and networkless. Review every admin
 command and its input from the local owner terminal before running it.
@@ -322,42 +295,10 @@ docker compose --profile signer-admin run --rm -T --no-deps \
   fased-signer-admin jupiter api-key-remove \
   --output /var/lib/fased-signerd-secrets/jupiter-trigger-api.key
 docker compose restart fased-signerd
-```
-
-If no Trigger key is installed, wallet creation, SOL/SPL transfers, SAT mining,
-and reviewed Vault operations continue to work; Trigger history/create/cancel
-fail closed with a configuration error.
-
-Vault operations and any separately enabled owner-review lane require a
-signer-owned approval credential. Agent and Mining automation inside narrow
-policy does not prompt for a passkey. This is separate from the optional Control
-UI account passkey. Run the one-shot enrollment service, open the printed
-`http://localhost:18791` URL on the same computer, and touch/approve your
-authenticator:
-
-```bash
+bash
 docker compose --profile signer-admin run --rm --service-ports \
   fased-signer-enroll "Local Docker owner"
-```
-
-The enrollment port is published on host loopback only and exists only while
-that one-shot command runs. Continue with
-[Agent, wallet, and mining walkthrough](/start/agent-wallet-mining-walkthrough).
-
-The signer state survives normal container recreation and `docker compose down`.
-It does **not** survive `docker compose down -v` or manual removal of the
-project's `fased-signer-state` and `fased-signer-secrets` volumes. Stop both
-Gateway and signer before an offline backup; never copy the live bbolt database
-while the signer is running. A complete recovery point must include both named
-volumes, the host paths in `FASED_CONFIG_DIR` and `FASED_WORKSPACE_DIR`, `.env`,
-the base and extra Compose files, and the exact immutable image identity. The
-coordinated update helper below captures and checksums that complete set.
-
-Run `docker compose ...` from the repo root. If you enabled
-`FASED_EXTRA_MOUNTS` or `FASED_HOME_VOLUME`, the setup script writes
-`docker-compose.extra.yml`; include it when running Compose elsewhere:
-
-```bash
+bash
 docker compose -f docker-compose.yml -f docker-compose.extra.yml <command>
 ```
 
@@ -524,7 +465,7 @@ home volume if host bind-mount ownership cannot be represented cleanly.
 The supplied multi-stage Dockerfile caches Go modules and pnpm dependencies
 before copying the remaining source. Keep using it: a simplified custom
 Dockerfile that copies only the Node application will omit `fased-signerd` and
-wallet/mining setup will fail closed.
+wallet setup will fail closed.
 
 ### Channel setup (optional)
 

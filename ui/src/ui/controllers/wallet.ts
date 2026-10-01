@@ -1,5 +1,4 @@
 import type { FasedAgentApp } from "../app.js";
-import { getMiningProfile, getMiningReadiness, getMiningStatus } from "../mining-api.js";
 import { looksLikeRpcFailure, looksLikeRpcQuotaError } from "../notifications.ts";
 import {
   getWalletApprovals,
@@ -254,38 +253,6 @@ function mergeWalletReadiness(
     ...(wallet.readiness?.api === undefined ? {} : { api: wallet.readiness.api }),
     ...(wallet.readiness?.ata === undefined ? {} : { ata: wallet.readiness.ata }),
   };
-}
-
-function queueWalletMiningSummaryRefresh(host: FasedAgentApp, loadToken: number) {
-  const isStale = () => walletLoadTokens.get(host) !== loadToken;
-  void (async () => {
-    const [profileResult, statusResult] = await Promise.allSettled([
-      getMiningProfile(),
-      getMiningStatus(),
-    ]);
-    if (isStale()) {
-      return;
-    }
-    if (profileResult.status === "fulfilled") {
-      host.miningProfile = profileResult.value.profile;
-    }
-    if (statusResult.status === "fulfilled") {
-      host.miningStatus = statusResult.value.status;
-    }
-    const walletId = host.miningProfile?.walletId || undefined;
-    if (!walletId) {
-      return;
-    }
-    try {
-      const readinessResponse = await getMiningReadiness(walletId);
-      if (isStale()) {
-        return;
-      }
-      host.miningReadiness = readinessResponse.readiness;
-    } catch {
-      // Best effort; wallet page should still load without mining readiness.
-    }
-  })().catch(() => {});
 }
 
 function notifyWalletRpcHealth(host: FasedAgentApp) {
@@ -552,7 +519,6 @@ export async function loadWallet(host: FasedAgentApp) {
     const backgroundWalletIds = host.walletNamedWallets
       .map((wallet) => wallet.id)
       .filter((walletId) => walletId !== selectedWalletId);
-    queueWalletMiningSummaryRefresh(host, loadToken);
     queueBackgroundWalletBalanceRefresh(host, loadToken, backgroundWalletIds);
 
     const balancesResultPromise = (

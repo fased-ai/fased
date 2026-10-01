@@ -2020,7 +2020,7 @@ function isReminderLeadIn(raw: string): boolean {
 }
 
 function isNaturalWorkFragment(raw: string): boolean {
-  return /\b(?:check|monitor|watch|status|search|find|research|summar[yi][sz]e|analy[sz]e|@?wallet|@?mining|@?offers)\b/i.test(
+  return /\b(?:check|monitor|watch|status|search|find|research|summar[yi][sz]e|analy[sz]e|@?wallet|@?offers)\b/i.test(
     raw,
   );
 }

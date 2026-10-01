@@ -1148,7 +1148,6 @@ function renderWebhookTriggerPanel(params: {
 const WORKFLOW_TEMPLATE_SOURCE_TAGS = new Set([
   "wallet",
   "marketplace",
-  "mining",
   "services",
   "channels",
   "media",
@@ -1202,7 +1201,7 @@ function renderWorkflowTemplateLibraryDialog(params: {
             <div class="workflow-template-preview-title">Templates</div>
             <div class="muted">
               Pick a Task or Workflow starter for this Agent. Templates do not grant wallet,
-              mining, marketplace, channel, service, or tool authority.
+              channel, service, or tool authority.
             </div>
           </div>
           <button
@@ -1227,7 +1226,7 @@ function renderWorkflowTemplateLibraryDialog(params: {
                 <span class="webhook-trigger-main">
                   <strong>
                     ${template.label}
-                    <span class="workflow-template-source-badge workflow-template-source-badge--mining">
+                    <span class="workflow-template-source-badge workflow-template-source-badge--task">
                       Task
                     </span>
                   </strong>
@@ -1958,7 +1957,7 @@ function renderStandingOrdersPanel(params: {
                     </div>
                     <div class="muted">
                       Programs propose Tasks or Workflows. They never grant tools, wallets,
-                      mining, marketplace, or service authority.
+                      service authority.
                     </div>
                   </div>
                   <button
@@ -2273,7 +2272,7 @@ const TASK_LEDGER_SOURCE_LABELS: Record<TaskRecord["source"], string> = {
   media: "Media",
   wallet: "Wallet",
   marketplace: "Marketplace",
-  mining: "Mining",
+  mining: "Task",
 };
 const TASK_LEDGER_SOURCE_KEYS = new Set(Object.keys(TASK_LEDGER_SOURCE_LABELS));
 const AGENT_TASK_WORKBENCH_HELP =
@@ -2567,27 +2566,6 @@ function taskLedgerKindLabel(task: TaskRecord): string {
       return "Marketplace order";
     }
     return "Marketplace task";
-  }
-  if (task.source === "mining") {
-    if (task.taskKind === "mining_readiness") {
-      return "Mining readiness";
-    }
-    if (task.taskKind === "mining_control") {
-      return "Mining control";
-    }
-    if (task.taskKind === "mining_capital") {
-      return "Mining capital";
-    }
-    if (task.taskKind === "mining_cycle") {
-      return "Mining cycle";
-    }
-    if (task.taskKind === "mining_claim") {
-      return "Mining claim";
-    }
-    if (task.taskKind === "mining_recovery") {
-      return "Mining recovery";
-    }
-    return "Mining task";
   }
   if (task.source === "cron") {
     return "Scheduled task";
@@ -2899,7 +2877,7 @@ function formatTaskActionSupport(task: TaskRecord, jobs: CronJob[] = []): string
 }
 
 function isTaskLedgerViewOnlySource(task: TaskRecord): boolean {
-  return task.source === "wallet" || task.source === "marketplace" || task.source === "mining";
+  return task.source === "wallet" || task.source === "marketplace";
 }
 
 function taskCronDefinitionId(task: TaskRecord): string {
@@ -2921,9 +2899,6 @@ function taskLedgerSourceOwnedChipLabel(task: TaskRecord): string {
   if (task.source === "marketplace") {
     return "Marketplace controls";
   }
-  if (task.source === "mining") {
-    return "Mining controls";
-  }
   return "Source controls";
 }
 
@@ -2936,9 +2911,6 @@ function taskLedgerSourceOwnershipNote(task: TaskRecord): string {
   }
   if (task.source === "marketplace") {
     return "Marketplace settlement, delivery, receipts, and dispute controls stay in Marketplace.";
-  }
-  if (task.source === "mining") {
-    return "Mining start/stop, capital, cycle, commit/reveal, claim, and recovery controls stay in Mining.";
   }
   return "";
 }
@@ -2981,9 +2953,6 @@ function taskLedgerSourceControlNote(task: TaskRecord, jobs: CronJob[] = []): st
   }
   if (task.source === "marketplace") {
     return "Offer, payment, delivery, receipt, and dispute controls stay in Marketplace. Use Open Marketplace for control; this row is run history.";
-  }
-  if (task.source === "mining") {
-    return "Start/stop, capital, commit/reveal, claim, and recovery controls stay in Mining.";
   }
   if (task.source === "channel") {
     return "Channel delivery state is updated by the dispatcher. Open the task session to inspect context; retry is available only for recorded workflows.";
@@ -3030,20 +2999,6 @@ function taskLedgerSourceOpenLabel(task: TaskRecord, jobs: CronJob[] = []): stri
       return "Open marketplace offer";
     }
     return "Open Marketplace";
-  }
-  if (task.source === "mining") {
-    if (
-      taskMetadataString(task, "cycleId") ||
-      taskMetadataString(task, "currentCycleId") ||
-      taskMetadataString(task, "epochId") ||
-      task.taskKind === "mining_cycle"
-    ) {
-      return "Open mining cycle";
-    }
-    if (taskMetadataString(task, "action") || task.taskKind?.startsWith("mining_")) {
-      return "Open mining action";
-    }
-    return "Open Mining";
   }
   if (task.source === "channel") {
     return taskMetadataString(task, "messageId") || taskMetadataString(task, "threadId")
@@ -3438,37 +3393,6 @@ function taskLedgerExtraFields(
   const currency = taskMetadataString(task, "currency");
   const amount = taskMetadataString(task, "amount");
   const disputeCaseId = taskMetadataString(task, "disputeCaseId");
-  const miningMethod = taskMetadataString(task, "method");
-  const miningAction = taskMetadataString(task, "action");
-  const miningCycleId =
-    taskMetadataString(task, "cycleId") || taskMetadataString(task, "currentCycleId");
-  const miningEpochId =
-    taskMetadataString(task, "epochId") || taskMetadataString(task, "currentEpochId");
-  const miningMicroRoundId =
-    taskMetadataString(task, "microRoundId") || taskMetadataString(task, "currentMicroRoundId");
-  const activeCommitLamports = taskMetadataString(task, "activeCommitLamports");
-  const capitalFunded = taskMetadataString(task, "currentCapitalFundedLamports");
-  const capitalFree = taskMetadataString(task, "currentCapitalFreeLamports");
-  const capitalLocked = taskMetadataString(task, "currentCapitalLockedLamports");
-  const capitalPendingCycleCount = taskMetadataString(task, "currentCapitalPendingCycleCount");
-  const capitalAddress = taskMetadataString(task, "currentCapitalAddress");
-  const running = taskMetadataString(task, "running");
-  const drainOnly = taskMetadataString(task, "drainOnly");
-  const enabledWanted = taskMetadataString(task, "enabledWanted");
-  const started = taskMetadataBoolLabel(task, "started");
-  const stopped = taskMetadataBoolLabel(task, "stopped");
-  const bootstrapReason = taskMetadataString(task, "bootstrapReason");
-  const nextActionDetail = taskMetadataString(task, "nextActionDetail");
-  const blockedReason = taskMetadataString(task, "blockedReason");
-  const lastAction = taskMetadataString(task, "lastAction");
-  const lastActionTxHash = taskMetadataString(task, "lastActionTxHash");
-  const strategyMode = taskMetadataString(task, "strategyMode");
-  const strategyExecution = taskMetadataString(task, "strategyExecution");
-  const strategyPreset = taskMetadataString(task, "strategyPreset");
-  const pageIndex = taskMetadataString(task, "pageIndex");
-  const chunkIndex = taskMetadataString(task, "chunkIndex");
-  const lamports = taskMetadataString(task, "lamports");
-  const readinessChecks = taskMetadataRecordList(task, "readinessChecks");
   const mediaCount = taskMetadataString(task, "mediaCount");
   const mediaIds = taskMetadataList(task, "mediaIds");
   const mediaSizes = taskMetadataList(task, "mediaSizes");
@@ -3653,95 +3577,6 @@ function taskLedgerExtraFields(
     }
     if (expiresAt && task.taskKind === "marketplace_request") {
       fields.push({ label: "Expires", value: expiresAt });
-    }
-  }
-  if (task.source === "mining") {
-    if (miningAction) {
-      fields.push({ label: "Mining action", value: miningAction, mono: true });
-    }
-    if (miningMethod) {
-      fields.push({ label: "Mining method", value: miningMethod, mono: true });
-    }
-    if (miningCycleId || miningEpochId || miningMicroRoundId) {
-      fields.push({
-        label: "Cycle",
-        value: [
-          miningCycleId ? `cycle ${miningCycleId}` : "",
-          miningEpochId ? `epoch ${miningEpochId}` : "",
-          miningMicroRoundId ? `round ${miningMicroRoundId}` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      });
-    }
-    if (running || drainOnly || enabledWanted) {
-      fields.push({
-        label: "Runtime",
-        value: [
-          running ? `running ${running}` : "",
-          drainOnly ? `drain ${drainOnly}` : "",
-          enabledWanted ? `enabled ${enabledWanted}` : "",
-          started ? `started ${started}` : "",
-          stopped ? `stopped ${stopped}` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      });
-    }
-    if (activeCommitLamports) {
-      fields.push({ label: "Commit", value: `${activeCommitLamports} lamports` });
-    }
-    if (capitalFunded || capitalFree || capitalLocked) {
-      fields.push({
-        label: "Capital",
-        value: [
-          capitalFunded ? `funded ${capitalFunded}` : "",
-          capitalFree ? `free ${capitalFree}` : "",
-          capitalLocked ? `locked ${capitalLocked}` : "",
-          capitalPendingCycleCount ? `pending cycles ${capitalPendingCycleCount}` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      });
-    }
-    if (capitalAddress) {
-      fields.push({ label: "Capital address", value: capitalAddress, mono: true });
-    }
-    if (strategyMode || strategyExecution || strategyPreset) {
-      fields.push({
-        label: "Strategy",
-        value: [strategyMode, strategyExecution, strategyPreset].filter(Boolean).join(" · "),
-      });
-    }
-    if (lastAction || lastActionTxHash) {
-      fields.push({
-        label: "Last action",
-        value: [lastAction, lastActionTxHash ? `tx ${lastActionTxHash}` : ""]
-          .filter(Boolean)
-          .join(" · "),
-        mono: Boolean(lastActionTxHash),
-      });
-    }
-    if (pageIndex || chunkIndex || lamports) {
-      fields.push({
-        label: "Request params",
-        value: [
-          pageIndex ? `page ${pageIndex}` : "",
-          chunkIndex ? `chunk ${chunkIndex}` : "",
-          lamports ? `${lamports} lamports` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      });
-    }
-    if (readinessChecks.length > 0) {
-      fields.push({ label: "Readiness", value: formatTaskRecordChecks(readinessChecks) });
-    }
-    if (blockedReason || nextActionDetail || bootstrapReason) {
-      fields.push({
-        label: "Mining detail",
-        value: blockedReason || nextActionDetail || bootstrapReason,
-      });
     }
   }
   if (approvalId && task.source === "wallet") {
@@ -5898,7 +5733,7 @@ export function renderAgentCron(params: {
       }
       .workflow-template-source-badge--wallet,
       .workflow-template-source-badge--marketplace,
-      .workflow-template-source-badge--mining {
+      .workflow-template-source-badge--task {
         border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
         color: var(--warn);
       }

@@ -309,19 +309,19 @@ describe("config plugin validation", () => {
     }
   });
 
-  it("accepts SAT mining sweep and token runtime config", async () => {
+  it("rejects deleted Satcoin mining settings on the WEN engine", async () => {
     const home = await createCaseHome();
-    const satMiningPluginDir = path.resolve(
+    const wenPluginDir = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      "../../extensions/sat-mining",
+      "../../extensions/wen",
     );
     const res = validateInHome(home, {
       agents: { list: [{ id: "pi" }] },
       plugins: {
         enabled: true,
-        load: { paths: [satMiningPluginDir] },
+        load: { paths: [wenPluginDir] },
         entries: {
-          "sat-mining": {
+          wen: {
             enabled: true,
             config: {
               enabled: true,
@@ -339,17 +339,12 @@ describe("config plugin validation", () => {
                   keepRaw: "0",
                 },
               },
-              tokenConfig: {
-                programId: "EB4vLPuwkETenY7RxjEunneBuQoH8iMZdzrjqZDYvx75",
-                mintAddress: "2AhikHhzJdv6uve1yUBSUmhRKWaSfa7exrsDsfKjVFKa",
-                mintProgramId: "TokenzQdBNbLqP5VEhdkAS6EPF5NTPZ4c88AuE9HnJQh",
-              },
             },
           },
         },
       },
     });
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
   });
 
   it("accepts known plugin ids", async () => {

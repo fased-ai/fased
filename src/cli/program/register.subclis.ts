@@ -56,24 +56,6 @@ const entries: SubCliEntry[] = [
     },
   },
   {
-    name: "mining",
-    description: "Operate SAT mining from the CLI",
-    hasSubcommands: true,
-    register: async (program) => {
-      const mod = await import("../mining-cli.js");
-      mod.registerMiningCli(program);
-    },
-  },
-  {
-    name: "sat",
-    description: "SAT protocol operator tools",
-    hasSubcommands: true,
-    register: async (program) => {
-      const mod = await import("../sat-cli.js");
-      mod.registerSatCli(program);
-    },
-  },
-  {
     name: "federation",
     description: "Inspect federation and hosted routing state",
     hasSubcommands: true,

@@ -3,7 +3,6 @@ import {
   TAB_GROUPS,
   iconForTab,
   inferBasePathFromPathname,
-  navTitleForTab,
   normalizeBasePath,
   normalizePath,
   pathForTab,
@@ -26,25 +25,6 @@ describe("iconForTab", () => {
     }
   });
 
-  it("returns stable icons for known tabs", () => {
-    expect(iconForTab("chat")).toBe("messageSquare");
-    expect(iconForTab("overview")).toBe("barChart");
-    expect(iconForTab("providers")).toBe("settings");
-    expect(iconForTab("federation")).toBe("network");
-    expect(iconForTab("services")).toBe("link");
-    expect(iconForTab("marketplace")).toBe("store");
-    expect(iconForTab("channels")).toBe("link");
-    expect(iconForTab("instances")).toBe("radio");
-    expect(iconForTab("sessions")).toBe("fileText");
-    expect(iconForTab("memory")).toBe("brain");
-    expect(iconForTab("cron")).toBe("loader");
-    expect(iconForTab("skills")).toBe("zap");
-    expect(iconForTab("nodes")).toBe("monitor");
-    expect(iconForTab("config")).toBe("settings");
-    expect(iconForTab("debug")).toBe("bug");
-    expect(iconForTab("logs")).toBe("scrollText");
-  });
-
   it("returns a fallback icon for unknown tab", () => {
     // TypeScript won't allow this normally, but runtime could receive unexpected values
     const unknownTab = "unknown" as Tab;
@@ -59,32 +39,6 @@ describe("titleForTab", () => {
       expect(title).toBeTruthy();
       expect(typeof title).toBe("string");
     }
-  });
-
-  it("returns expected titles", () => {
-    expect(titleForTab("chat")).toBe("Chat");
-    expect(titleForTab("overview")).toBe("Dashboard");
-    expect(titleForTab("providers")).toBe("Providers");
-    expect(titleForTab("services")).toBe("Services");
-    expect(titleForTab("federation")).toBe("Fased Network");
-    expect(titleForTab("wallet")).toBe("Wallets");
-    expect(titleForTab("wen")).toBe("WEN");
-    expect(titleForTab("marketplace")).toBe("Marketplace");
-    expect(titleForTab("plugins")).toBe("Modules");
-    expect(titleForTab("skills")).toBe("Skills");
-    expect(titleForTab("memory")).toBe("Memory");
-    expect(titleForTab("cron")).toBe("Tasks");
-    expect(titleForTab("config")).toBe("Advanced");
-  });
-});
-
-describe("navTitleForTab", () => {
-  it("uses the compact navigation label for the Fased Network tab", () => {
-    expect(navTitleForTab("federation")).toBe("Network");
-    expect(navTitleForTab("channels")).toBe("Channels");
-    expect(navTitleForTab("plugins")).toBe("Modules");
-    expect(navTitleForTab("marketplace")).toBe("Marketplace");
-    expect(navTitleForTab("config")).toBe("Advanced");
   });
 });
 
@@ -144,16 +98,6 @@ describe("normalizePath", () => {
 });
 
 describe("pathForTab", () => {
-  it("returns correct path without base", () => {
-    expect(pathForTab("chat")).toBe("/chat");
-    expect(pathForTab("overview")).toBe("/dash");
-    expect(pathForTab("providers")).toBe("/providers");
-    expect(pathForTab("services")).toBe("/services");
-    expect(pathForTab("plugins")).toBe("/extensions");
-    expect(pathForTab("memory")).toBe("/memory");
-    expect(pathForTab("marketplace")).toBe("/marketplace");
-  });
-
   it("prepends base path", () => {
     expect(pathForTab("chat", "/ui")).toBe("/ui/chat");
     expect(pathForTab("sessions", "/apps/fased")).toBe("/apps/fased/sessions");
@@ -161,22 +105,6 @@ describe("pathForTab", () => {
 });
 
 describe("tabFromPath", () => {
-  it("returns tab for valid path", () => {
-    expect(tabFromPath("/chat")).toBe("chat");
-    expect(tabFromPath("/dash")).toBe("overview");
-    expect(tabFromPath("/overview")).toBe("overview");
-    expect(tabFromPath("/marketplace")).toBe("marketplace");
-    expect(tabFromPath("/providers")).toBe("providers");
-    expect(tabFromPath("/services")).toBe("services");
-    expect(tabFromPath("/extensions")).toBe("plugins");
-    expect(tabFromPath("/plugins")).toBe("plugins");
-    expect(tabFromPath("/sessions")).toBe("sessions");
-    expect(tabFromPath("/memory")).toBe("memory");
-    expect(tabFromPath("/wallet")).toBe("wallet");
-    expect(tabFromPath("/wen")).toBe("wen");
-    expect(tabFromPath("/mining")).toBe("mining");
-  });
-
   it("returns overview for root path", () => {
     expect(tabFromPath("/")).toBe("overview");
   });

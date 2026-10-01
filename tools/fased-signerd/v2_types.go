@@ -23,14 +23,6 @@ const (
 
 	intentSolanaNativeTransfer     = "solana.nativeTransfer"
 	intentSolanaSPLTransferChecked = "solana.splTransferChecked"
-	intentSolanaSATAction          = "solana.satAction"
-	intentSolanaSATKeeperAction    = "solana.satKeeperAction"
-	intentSolanaSATLookupTable     = "solana.satLookupTable"
-	intentSolanaVaultBondAction    = "solana.vaultBondAction"
-	intentSolanaAgentCapitalAction = "solana.agentCapitalAction"
-	intentSolanaVaultMining        = "solana.vaultMining"
-	intentSolanaMoneyFoundation    = "solana.moneyFoundationAction"
-	intentFederationBondChallenge  = "federation.bondChallenge"
 	intentSolanaJupiterSwap        = "solana.jupiter.swap"
 	intentSolanaTriggerAuth        = "solana.jupiter.trigger.auth"
 	intentSolanaTriggerCreate      = "solana.jupiter.trigger.create"
@@ -60,29 +52,22 @@ type signerCapabilitiesV2 struct {
 }
 
 type signerIntentV2 struct {
-	WENBTC              *signerWENBTCIntentV1                  `json:"wenBtc,omitempty"`
-	VaultMining         *signerVaultMiningIntentV1             `json:"vaultMining,omitempty"`
-	Type                string                                 `json:"type"`
-	Destination         string                                 `json:"destination,omitempty"`
-	Lamports            string                                 `json:"lamports,omitempty"`
-	TokenProgram        string                                 `json:"tokenProgram,omitempty"`
-	Mint                string                                 `json:"mint,omitempty"`
-	Amount              string                                 `json:"amount,omitempty"`
-	Memo                string                                 `json:"memo,omitempty"`
-	Action              string                                 `json:"action,omitempty"`
-	ProgramID           string                                 `json:"programId,omitempty"`
-	DataBase64          string                                 `json:"dataBase64,omitempty"`
-	Keys                []signerSATAccountV2                   `json:"keys,omitempty"`
-	Context             *signerSATContextV2                    `json:"context,omitempty"`
-	SATCommitment       *signerSATCommitmentIntentV1           `json:"satCommitment,omitempty"`
-	Instructions        []signerSATInstructionV2               `json:"instructions,omitempty"`
-	AddressLookupTables []string                               `json:"addressLookupTables,omitempty"`
-	LookupTable         *signerSATLookupTableIntentV2          `json:"lookupTable,omitempty"`
-	Jupiter             *signerJupiterIntentV2                 `json:"jupiter,omitempty"`
-	Cluster             string                                 `json:"cluster,omitempty"`
-	AuthorityWalletID   string                                 `json:"authorityWalletId,omitempty"`
-	Federation          *signerFederationBondChallengeIntentV2 `json:"federation,omitempty"`
-	MoneyFoundation     *signerMoneyFoundationIntentV2         `json:"moneyFoundation,omitempty"`
+	WENBTC              *signerWENBTCIntentV1          `json:"wenBtc,omitempty"`
+	Type                string                         `json:"type"`
+	Destination         string                         `json:"destination,omitempty"`
+	Lamports            string                         `json:"lamports,omitempty"`
+	TokenProgram        string                         `json:"tokenProgram,omitempty"`
+	Mint                string                         `json:"mint,omitempty"`
+	Amount              string                         `json:"amount,omitempty"`
+	Memo                string                         `json:"memo,omitempty"`
+	Action              string                         `json:"action,omitempty"`
+	ProgramID           string                         `json:"programId,omitempty"`
+	DataBase64          string                         `json:"dataBase64,omitempty"`
+	Keys                []signerTypedAccountV2         `json:"keys,omitempty"`
+	AddressLookupTables []string                       `json:"addressLookupTables,omitempty"`
+	Jupiter             *signerJupiterIntentV2         `json:"jupiter,omitempty"`
+	Cluster             string                         `json:"cluster,omitempty"`
+	AuthorityWalletID   string                         `json:"authorityWalletId,omitempty"`
 }
 
 type signerExecuteRequestV2 struct {
@@ -293,19 +278,10 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 		return normalizedIntentV2{}, errors.New("WEN BTC requires dedicated signer-owned descriptor and offer admission; signing disabled")
 	}
 
-	if input.Type == intentSolanaVaultMining {
-		return normalizeVaultMiningIntentV1(input, wallet)
-	}
-	if input.VaultMining != nil {
-		return normalizedIntentV2{}, errors.New("Vault mining metadata requires its dedicated intent")
-	}
 	if isJupiterIntentTypeV2(strings.TrimSpace(input.Type)) {
 		return normalizeJupiterIntentV2(input)
 	}
 	intent := signerIntentV2{Type: strings.TrimSpace(input.Type)}
-	if input.SATCommitment != nil && intent.Type != intentSolanaSATAction {
-		return normalizedIntentV2{}, errors.New("signer-owned SAT commitment reference requires a typed SAT action")
-	}
 	var program string
 	var asset string
 	var destination string
@@ -353,38 +329,6 @@ func normalizeSignerIntentForWalletV2(input signerIntentV2, wallet *solana.Publi
 		program = intent.TokenProgram
 		asset = "solana:spl:" + intent.Mint
 		destination = intent.Destination
-	case intentSolanaSATAction:
-		if wallet == nil || wallet.IsZero() {
-			return normalizedIntentV2{}, errors.New("typed SAT intent requires signer wallet context")
-		}
-		return normalizeSATIntentV2(input, *wallet)
-	case intentSolanaSATKeeperAction:
-		return normalizedIntentV2{}, errors.New("typed SAT keeper intent requires signer-owned authority hydration")
-	case intentSolanaSATLookupTable:
-		if wallet == nil || wallet.IsZero() {
-			return normalizedIntentV2{}, errors.New("typed SAT lookup-table intent requires signer wallet context")
-		}
-		return normalizeSATLookupTableIntentV2(input, *wallet)
-	case intentSolanaVaultBondAction:
-		if wallet == nil || wallet.IsZero() {
-			return normalizedIntentV2{}, errors.New("typed Vault bond intent requires signer wallet context")
-		}
-		return normalizeSATIntentV2(input, *wallet)
-	case intentSolanaAgentCapitalAction:
-		if wallet == nil || wallet.IsZero() {
-			return normalizedIntentV2{}, errors.New("typed Agent Capital intent requires signer wallet context")
-		}
-		return normalizeAgentCapitalIntentV2(input, *wallet)
-	case intentSolanaMoneyFoundation:
-		if wallet == nil || wallet.IsZero() {
-			return normalizedIntentV2{}, errors.New("typed money-foundation intent requires signer wallet context")
-		}
-		return normalizeMoneyFoundationIntentV2(input, *wallet)
-	case intentFederationBondChallenge:
-		if wallet == nil || wallet.IsZero() {
-			return normalizedIntentV2{}, errors.New("federation bond challenge requires signer wallet context")
-		}
-		return normalizeFederationBondChallengeIntentV2(input, *wallet)
 	default:
 		return normalizedIntentV2{}, fmt.Errorf("unsupported signer-v2 intent type %q", intent.Type)
 	}
@@ -451,12 +395,6 @@ func normalizeSignerPolicyV2(input signerPolicyV2) (signerPolicyV2, error) {
 	return signerpolicy.Normalize(input)
 }
 
-func isTypedSATIntentV2(policy signerPolicyV2, intent normalizedIntentV2) bool {
-	return (policy.Role == "mining" &&
-		(intent.Intent.Type == intentSolanaSATAction || intent.Intent.Type == intentSolanaSATLookupTable)) ||
-		(policy.Role == "keeper" && intent.Intent.Type == intentSolanaSATKeeperAction)
-}
-
 func policyAssetForIntentModeV2(
 	policy signerPolicyV2,
 	intent normalizedIntentV2,
@@ -482,7 +420,7 @@ func policyAssetForIntentModeV2(
 		return signerPolicyAssetV2{}, fmt.Errorf("policy denies operation %s", operation)
 	}
 	for _, program := range intent.RequiredPrograms {
-		if !containsStringV2(policy.Programs, program) && !(policy.TypedSATPrograms && isTypedSATIntentV2(policy, intent)) {
+		if !containsStringV2(policy.Programs, program) {
 			return signerPolicyAssetV2{}, fmt.Errorf("policy denies program %s", program)
 		}
 	}
@@ -491,8 +429,7 @@ func policyAssetForIntentModeV2(
 			continue
 		}
 		allowsReviewedDestination := reviewed && asset.ReviewedDestinations
-		allowsTypedSATDestination := asset.TypedSATDestinations && isTypedSATIntentV2(policy, intent)
-		if !containsStringV2(asset.Destinations, intent.Destination) && !allowsReviewedDestination && !allowsTypedSATDestination {
+		if !containsStringV2(asset.Destinations, intent.Destination) && !allowsReviewedDestination {
 			return signerPolicyAssetV2{}, fmt.Errorf("policy denies destination %s", intent.Destination)
 		}
 		maxPerTx, _ := new(big.Int).SetString(asset.MaxPerTx, 10)
@@ -518,9 +455,6 @@ func policyAssetByNameV2(policy signerPolicyV2, assetName string) (signerPolicyA
 }
 
 func signerFeeReservationForIntentV2(intent normalizedIntentV2) (*big.Int, error) {
-	if intent.Intent.Type == intentFederationBondChallenge {
-		return big.NewInt(0), nil
-	}
 	if isJupiterIntentTypeV2(intent.Intent.Type) {
 		if intent.Intent.Jupiter == nil {
 			return nil, errors.New("typed Jupiter intent is missing its fee ceiling")
@@ -570,7 +504,7 @@ func policyReservationsForIntentModeV2(
 	requirements := make([]signerReservationRequirementV2, 0, 2+len(intent.AdditionalReservations))
 	feeOnlyPrimary := false
 	switch intent.Intent.Type {
-	case intentSolanaTriggerAuth, intentSolanaTriggerCancel, intentSolanaTriggerWithdraw, intentSolanaSATKeeperAction:
+	case intentSolanaTriggerAuth, intentSolanaTriggerCancel, intentSolanaTriggerWithdraw:
 		// These operations historically expose maxFeeLamports as their primary
 		// semantic amount. It is not an additional principal transfer; the
 		// signer-owned fee reservation below replaces it for durable accounting.

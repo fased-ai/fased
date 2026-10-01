@@ -8,9 +8,6 @@ title: "开始使用"
 
 # 开始使用
 
-最短路径是安装、连接一个模型、发送一条浏览器消息。Wallet、channel、skill
-与 Mining 都可以稍后再加。
-
 ## 1. 安装
 
 <Tabs>
@@ -79,21 +76,6 @@ Reply with one sentence: Fased is ready.
 
 ## 按需添加
 
-<CardGroup cols={2}>
-  <Card title="Channels" href="/channels" icon="message-circle">
-    连接 Telegram、Discord、WhatsApp、Slack 或其他支持的聊天应用。
-  </Card>
-  <Card title="Wallets" href="/plugins/crypto/wallet-page" icon="wallet">
-    创建 role-ready Agent、Mining 或 Vault wallet。
-  </Card>
-  <Card title="Mining" href="/plugins/crypto/mining-page" icon="coins">
-    验证 SAT runtime、为 Mining wallet 充值并开始 Mining。
-  </Card>
-  <Card title="Skills" href="/tools/skills" icon="blocks">
-    安装 skill；需要 wallet 时再单独授权。
-  </Card>
-</CardGroup>
-
 <AccordionGroup>
   <Accordion title="账号与运行边界">
     Local 在你的 OS 账号下运行。Hosting 分离 human `app` operator、
@@ -111,10 +93,4 @@ Reply with one sentence: Fased is ready.
 
   </Accordion>
 
-  <Accordion title="Wallet 与 Mining 风险边界">
-    明确选择 wallet role，hot role 只保留工作资金。不要把 private key 或
-    recovery password 粘贴到 chat 或普通 browser UI。转入资金前先阅读
-    [wallet role](/plugins/crypto/wallet-roles-and-policies) 与
-    [risk disclaimer](/legal/disclaimer)。
-  </Accordion>
 </AccordionGroup>

@@ -10,9 +10,18 @@ describe("applyOnboardingLocalWorkspaceConfig", () => {
     const baseConfig: FasedAgentConfig = {};
     const result = applyOnboardingLocalWorkspaceConfig(baseConfig, "/tmp/workspace");
 
+    expect(result.tools?.profile).toBe("wen");
     expect(result.session?.dmScope).toBe(ONBOARDING_DEFAULT_DM_SCOPE);
     expect(result.gateway?.mode).toBe("local");
     expect(result.agents?.defaults?.workspace).toBe("/tmp/workspace");
+  });
+
+  it("preserves owner tool policies during onboarding", () => {
+    const tools = { profile: "coding" as const, deny: ["exec"], alsoAllow: ["web_fetch"] };
+    expect(applyOnboardingLocalWorkspaceConfig({ tools }, "/tmp/workspace").tools).toEqual(tools);
+    expect(
+      applyOnboardingLocalWorkspaceConfig({ tools: { allow: ["read"] } }, "/tmp/workspace").tools,
+    ).toEqual({ allow: ["read"] });
   });
 
   it("preserves existing dmScope when already configured", () => {

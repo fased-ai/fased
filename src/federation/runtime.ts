@@ -1,5 +1,4 @@
 import path from "node:path";
-import type { FasedAgentConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 
@@ -81,22 +80,4 @@ export function resolveFederationHandle(params?: {
   const prefix = sanitizeName(env.FASED_A2A_NAME?.trim() || "fased-agent");
   const shortNodeId = nodeId.slice(0, 12);
   return `@${prefix}-${shortNodeId}@${federationDomain}`;
-}
-
-export function resolveFederationBondWalletId(params?: {
-  env?: NodeJS.ProcessEnv;
-  cfg?: FasedAgentConfig;
-}): string {
-  const env = params?.env ?? process.env;
-  const cfg = params?.cfg;
-  const envExplicit =
-    env.FASED_FEDERATION_BOND_WALLET_ID?.trim() || env.FASED_BOND_WALLET_ID?.trim() || "";
-  if (envExplicit) {
-    return envExplicit;
-  }
-  const configExplicit = cfg?.federation?.bond?.walletId?.trim() || "";
-  if (configExplicit) {
-    return configExplicit;
-  }
-  return "";
 }

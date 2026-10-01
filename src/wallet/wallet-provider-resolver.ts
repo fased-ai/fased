@@ -146,20 +146,11 @@ export function resolveWalletProviderId(
     registryHasLegacyEmbeddedWallet =
       Boolean(registry.providers["embedded-keystore"]?.enabled) ||
       registry.wallets.some((entry) => entry.providerId === "embedded-keystore");
-    const satWalletId =
-      typeof cfg.plugins?.entries?.["sat-mining"]?.config?.walletId === "string"
-        ? cfg.plugins.entries["sat-mining"]?.config?.walletId.trim()
-        : "";
     const defaultWallet = registry.defaultWalletId?.trim()
       ? registry.wallets.find((entry) => entry.id === registry.defaultWalletId?.trim())
       : undefined;
-    const satWallet = satWalletId
-      ? registry.wallets.find((entry) => entry.id === satWalletId)
-      : undefined;
-    // Generic owner actions follow the selected wallet. The legacy mining
-    // wallet remains a fallback for installations without a default wallet.
-    if (defaultWallet?.providerId || satWallet?.providerId) {
-      registryProvider = defaultWallet?.providerId ?? satWallet?.providerId ?? null;
+    if (defaultWallet?.providerId) {
+      registryProvider = defaultWallet.providerId;
     } else {
       const distinctProviders = [...new Set(registry.wallets.map((entry) => entry.providerId))];
       if (distinctProviders.length === 1) {

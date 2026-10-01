@@ -550,7 +550,7 @@ async function main(): Promise<void> {
       rootDir,
     );
 
-    for (const pluginId of ["memory-core", "sat-mining"]) {
+    for (const pluginId of ["memory-core", "wen"]) {
       const pluginRoot = path.join(packageRoot, "extensions", pluginId);
       await fs.access(path.join(pluginRoot, "index.js"));
       const remainingTypeScript = (await listFiles(pluginRoot)).filter(
@@ -583,7 +583,7 @@ async function main(): Promise<void> {
         {
           plugins: {
             allow: componentContract.core.loadedPluginIds,
-            entries: { "sat-mining": { enabled: true } },
+            entries: { wen: { enabled: true } },
           },
         },
         null,
@@ -641,9 +641,7 @@ async function main(): Promise<void> {
     const moduleTracePath = path.join(tempRoot, "gateway-module-trace.log");
     const gatewaySmoke = await smokeGateway(packageRoot, smokeEnv, moduleTracePath);
     const pluginLoadMs = gatewaySmoke.pluginLoadMs;
-    if (gatewaySmoke.applicationModules.includes("extensions/sat-mining/implementation.js")) {
-      throw new Error("Dormant SAT Mining loaded its operational implementation");
-    }
+
     const piAiProviderSdkPackages = [
       "@anthropic-ai/sdk",
       "@aws-sdk/client-bedrock-runtime",
@@ -663,7 +661,7 @@ async function main(): Promise<void> {
         `Dormant Gateway loaded forbidden pi-ai provider SDKs: ${unexpectedIdlePiAiProviderSdkPackages.join(", ")}`,
       );
     }
-    for (const pluginId of ["memory-core", "sat-mining"]) {
+    for (const pluginId of ["memory-core", "wen"]) {
       if (!gatewaySmoke.output.includes(`[plugins] ${pluginId} native preload `)) {
         throw new Error(
           `Hosted ${pluginId} did not use native preload.\n${gatewaySmoke.output.slice(-8_000)}`,
@@ -719,7 +717,7 @@ async function main(): Promise<void> {
     );
     const cachedPluginInfo = await run(
       process.execPath,
-      [path.join(packageRoot, "fased.mjs"), "plugins", "info", "sat-mining"],
+      [path.join(packageRoot, "fased.mjs"), "plugins", "info", "wen"],
       packageRoot,
       smokeEnv,
     );
@@ -827,7 +825,6 @@ async function main(): Promise<void> {
             gatewayReadyRssBytes: gatewaySmoke.gatewayRssBytes,
             applicationModules: gatewaySmoke.applicationModules.length,
             dependencyPackages: gatewaySmoke.dependencyPackages.length,
-            dormantMiningImplementationLoaded: false,
             idleLoadedPiAiProviderSdkPackages,
             allowedIdlePiAiProviderSdkPackages,
           },

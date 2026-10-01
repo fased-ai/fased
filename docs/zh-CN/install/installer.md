@@ -101,21 +101,7 @@ commit、architecture、app/dependency/signer digest、archive path、link、own
 | `fased-gateway` | Gateway service                               | 只能使用 application `app.sock`          |
 | `fased-signer`  | Native signer service                         | 拥有 key、policy、network state 与 audit |
 
-Local 与 Hosting 使用相同 `fased wallet` 命令。Hosting 通过受限 operator socket
-执行 create、import、recovery、raw export、RPC 修改与 Mining retirement，不需要
-未文档化 root helper。
-
 ## Wallet setup contract
-
-- Operator 明确选择永久 `agent`、`mining` 或 `vault` role。
-- Create/import/recovery 以可恢复 lifecycle 安装 signer-owned role baseline v1
-  与一个已验证 primary RPC。
-- 新 Agent/Vault 可立即执行 owner-reviewed action；automation 仍需明确 cap、
-  destination、program 与 grant。
-- 新 Mining 只有在 release-bound SAT manifest 验证后才 SAT-ready，且仍需资金。
-- Legacy deny-all wallet 不会自动扩权；review role 后明确运行
-  `fased wallet policy activate-role-baseline ... --confirm`。
-- 创建 Agent wallet 不会自动把它设为 Default Agent wallet。
 
 详见 [Wallet CLI](/cli/wallet)、
 [role 与 policy](/plugins/crypto/wallet-roles-and-policies) 和

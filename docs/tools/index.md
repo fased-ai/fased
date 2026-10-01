@@ -15,41 +15,7 @@ Normal setup starts from **Agents**, select the Agent, then open **Agent >
 Tools**. That page decides which discovered tools this Agent may use. Credentials
 and domain controls stay on the owning surfaces.
 
-```mermaid
-flowchart TD
-  agent["Selected Agent"] --> policy["Agent > Tools policy"]
-  services["Services"] --> catalog["Tool catalog"]
-  channels["Channels"] --> catalog
-  wallets["Wallets / Mining / Marketplace"] --> catalog
-  skills["Skills"] --> prompt["Tool guidance"]
-  policy --> exposed["Model tool schema"]
-  catalog --> exposed
-  prompt --> run["Agent run"]
-  exposed --> run
-  run --> audit["Run history / Logs"]
-
-  classDef owner fill:#120605,stroke:#ff5a36,color:#ffffff;
-  classDef setup fill:#071018,stroke:#12cfff,color:#ffffff;
-  classDef run fill:#20120a,stroke:#ffb020,color:#ffffff;
-  class agent,policy owner;
-  class services,channels,wallets,skills,catalog,prompt setup;
-  class exposed,run,audit run;
-```
-
 ## Setup Ownership
-
-- Allow or deny tools for an Agent: **Agent > Tools**.
-- Web/search, GitHub, Gmail, and media credentials: **Agent > Services**.
-- Chat delivery and channel actions: **Agent > Channels**.
-- Skill instructions and dependencies: **Agent > Skills**.
-- Wallet approvals and signing: **Wallets**.
-- Mining start/stop, capital, and claims: **Mining**.
-- Marketplace offers and orders: **Marketplace**.
-- Device pairing and diagnostics: **Advanced > Nodes**.
-
-Agent > Tools should answer: “May this Agent use this capability?” It should
-not collect API keys, wallet approvals, mining capital, channel credentials, or
-plugin install settings.
 
 ## Tool Families
 
@@ -130,17 +96,6 @@ Provider-specific policy can only narrow access:
 ```
 
 ## Boundaries
-
-- A denied tool is not sent to the model provider.
-- A skill teaches the Agent how to use tools; it does not grant tool access.
-- A plugin may register tools; installing a plugin does not automatically grant
-  every Agent access to those tools.
-- Wallet, mining, marketplace, and node actions keep their own approval and
-  policy gates.
-- `apply_patch` is available only when enabled and allowed for compatible model
-  paths.
-- Host or node `exec` needs approvals unless the operator deliberately changes
-  that policy.
 
 ## Start Here
 

@@ -92,7 +92,7 @@ type FinalizeOnboardingOptions = {
   runtime: RuntimeEnv;
   walletSecurityFocus?: {
     walletId: string;
-    role: "agent" | "mining" | "vault";
+    role: "agent";
   } | null;
 };
 
@@ -102,7 +102,7 @@ export function buildOnboardingDashboardUrl(params: {
   token?: string;
   walletSecurityFocus?: {
     walletId: string;
-    role: "agent" | "mining" | "vault";
+    role: "agent";
   } | null;
 }): string {
   const url = new URL(params.baseUrl);
@@ -1251,15 +1251,6 @@ async function waitForManagedFederationSummary(params: {
   return { fedToken, reservations };
 }
 
-function readSatMiningWalletId(config: FasedAgentConfig): string | null {
-  const raw = config.plugins?.entries?.["sat-mining"]?.config;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-  const walletId = "walletId" in raw ? raw.walletId : undefined;
-  return typeof walletId === "string" && walletId.trim().length > 0 ? walletId.trim() : null;
-}
-
 export function formatOperatorReadinessSummary(
   items: ReturnType<typeof describeOperatorReadinessChecklist>,
   options?: { federationActivationPending?: boolean },
@@ -1268,14 +1259,8 @@ export function formatOperatorReadinessSummary(
     if (title === "Wallet Control Passkey ready") {
       return "Passkey";
     }
-    if (title === "Agent wallet set") {
-      return "Agent wallet";
-    }
-    if (title === "Mining wallet separate") {
-      return "Legacy mining wallet";
-    }
-    if (title === "Vault wallet present") {
-      return "Vault wallet";
+    if (title === "Wallet available") {
+      return "Wallet";
     }
     if (title === "Fased Network joined / trusted") {
       return "Network trust";
@@ -1302,26 +1287,14 @@ export function formatOperatorReadinessSummary(
     }
     return item.summary;
   };
-  const summaryLines = items
-    .filter(
-      (item) =>
-        item.title !== "Mining wallet separate" || item.summary !== "Optional and not configured",
-    )
-    .map((item) => `${noteLabel(titleLabel(item.title))}: ${tone(item)}`);
+  const summaryLines = items.map((item) => `${noteLabel(titleLabel(item.title))}: ${tone(item)}`);
   const nextActionLines: string[] = [];
   if (items.some((item) => item.summary === "Passkey setup incomplete")) {
     nextActionLines.push(noteBullet("Wallet: finish passkey before higher-risk automation."));
   }
-  if (items.some((item) => item.title === "Agent wallet set" && item.tone !== "success")) {
+  if (items.some((item) => item.title === "Wallet available" && item.tone !== "success")) {
     nextActionLines.push(
       noteBullet("Wallet: set an Agent wallet before paid network or skill wallet work."),
-    );
-  }
-  if (
-    items.some((item) => item.title === "Mining wallet separate" && item.summary === "Conflict")
-  ) {
-    nextActionLines.push(
-      noteBullet("Legacy Mining: resolve its wallet conflict before paid Agent flows."),
     );
   }
   if (
@@ -3048,7 +3021,6 @@ export async function finalizeOnboardingWizard(
     ...collectConfigServiceEnvVars(nextConfig),
   } as NodeJS.ProcessEnv;
   const walletRegistry = readWalletProviderRegistry(onboardingEnv);
-  const miningWalletId = readSatMiningWalletId(nextConfig);
   let persistedFederationToken = federation.enabled
     ? await loadPersistedFederationToken(onboardingEnv).catch(() => null)
     : null;
@@ -3157,8 +3129,6 @@ export async function finalizeOnboardingWizard(
       metadata: wallet.metadata,
     })),
     defaultWalletId: walletRegistry.defaultWalletId ?? null,
-    miningAttachedWalletId: miningWalletId,
-    federationBondWalletId: nextConfig.federation?.bond?.walletId ?? null,
     joined: federation.enabled && Boolean(persistedFederationToken),
     trustState: federation.enabled ? (persistedFederationToken?.trustState ?? "pending") : null,
     hostedState: federation.enabled

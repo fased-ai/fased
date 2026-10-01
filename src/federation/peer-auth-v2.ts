@@ -51,7 +51,7 @@ export type FederationPeerDirectoryIdentity = {
   nodeId: string;
   handle?: string;
   nodeEndpoint?: string;
-  bondTier?: "none" | "basic-bond" | "operator-bond";
+
   supportsProtocolV2?: boolean;
 };
 
@@ -94,7 +94,6 @@ export type FederationPeerAuthorizationResult =
       nonce: string;
       timestampMs: number;
       bodySha256: string;
-      bondTier?: "none" | "basic-bond" | "operator-bond";
     }
   | {
       ok: false;
@@ -324,12 +323,6 @@ function readDirectoryIdentity(body: unknown): FederationPeerDirectoryIdentity |
             : typeof entry.publicUrl === "string"
               ? entry.publicUrl.trim()
               : undefined,
-      bondTier:
-        entry.bondTier === "none" ||
-        entry.bondTier === "basic-bond" ||
-        entry.bondTier === "operator-bond"
-          ? entry.bondTier
-          : undefined,
       supportsProtocolV2: supportsFederationPeerProtocolV2(entry),
     };
   }
@@ -729,7 +722,6 @@ export async function authorizeFederationPeerRequestV2(params: {
     nonce,
     timestampMs,
     bodySha256: claimedBodySha256,
-    ...(directoryIdentity.bondTier ? { bondTier: directoryIdentity.bondTier } : {}),
   };
   if (params.deferReplayReservation) {
     return authorization;

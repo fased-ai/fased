@@ -26,14 +26,6 @@ fased logs --follow
 
 然后打开对应 owner 页面：
 
-- Agent > Models：模型和 provider。
-- Agent > Channels：聊天路由。
-- Agent > Services：外部 API。
-- Agent > Skills / Tools：运行能力。
-- Agent > Memory：memory/QMD/session-memory。
-- Agent > Tasks：保存的任务定义和运行记录。
-- Wallets、Mining、Fased Network：钱包、挖矿、网络状态。
-
 <a id="im-stuck--whats-the-fastest-way-to-get-unstuck"></a>
 
 ## 卡住时最快怎么排查？
@@ -46,26 +38,11 @@ fased logs --follow
 
 钱包、挖矿、网络问题：
 
-```bash
-fased wallet status --json
-fased wallet signer doctor --json
-fased mining readiness --wallet mining
-fased mining status --json
-fased federation status --json
-```
-
 ## 安装和首次运行
 
 ### 推荐安装流程是什么？
 
 使用 [Getting Started](/start/getting-started)：
-
-1. 安装。
-2. 运行 onboarding。
-3. 打开 Control UI。
-4. 配置模型 provider。
-5. 发送第一条 chat。
-6. 需要时再添加 channels、skills、tasks、wallets、mining 或 Fased Network。
 
 ### Onboarding 做什么？
 
@@ -158,24 +135,11 @@ fased task run <task-id>
 - delivery target 仍然存在；
 - Logs 没有 queue 或 stale lease 错误。
 
-## Wallets、Mining 和 Fased Network
-
 ### 应该读哪些文档？
-
-- [Wallet page](/plugins/crypto/wallet-page)
-- [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
-- [Mining page](/plugins/crypto/mining-page)
-- [Mining troubleshooting](/plugins/crypto/mining-troubleshooting)
-- [Fased Network](/start/federation)
-- [Bond operator](/start/bond-operator-economy)
 
 ### 钱包怎么分？
 
 尽量按角色拆分：
-
-- Agent wallet：普通 Agent 钱包动作。
-- Mining wallet：SAT mining。
-- Vault/bond wallet：bond/operator inventory。
 
 ### 挖矿提交为什么低于 target？
 

@@ -56,8 +56,8 @@ describe("dashboard layout", () => {
     const removed = removeDashboardWidget(DEFAULT_DASHBOARD_LAYOUT, "usage");
     expect(dashboardWidgetIds(removed)).not.toContain("usage");
     const restored = addDashboardWidget(removed, "usage", "dashboard");
-    expect(dashboardWidgetIds(restored).filter((id) => id === "usage")).toHaveLength(1);
-    expect(restored.columns[0]?.widgets.at(-1)).toBe("usage");
+    expect(dashboardWidgetIds(restored)).not.toContain("usage");
+    expect(restored).toEqual(removed);
   });
 
   it("normalizes old multi-column layouts into one masonry order", () => {
@@ -70,6 +70,6 @@ describe("dashboard layout", () => {
     });
     expect(layout.columns).toHaveLength(1);
     expect(layout.columns[0]?.id).toBe("dashboard");
-    expect(layout.columns[0]?.widgets).toEqual(["agents", "usage", "wallet", "wen"]);
+    expect(layout.columns[0]?.widgets).toEqual(["agents", "wallet", "wen"]);
   });
 });

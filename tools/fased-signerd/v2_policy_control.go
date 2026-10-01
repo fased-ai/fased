@@ -77,25 +77,8 @@ func requireAutonomousRoleV2(policy signerPolicyV2, intent normalizedIntentV2) e
 		return errors.New("wallet policy requires explicit owner approval; no automatic delegation is installed")
 	}
 
-	switch policy.Role {
-	case "profile", "strategy":
-		return errors.New("Profile and Strategy wallets remain deny-all until a separately reviewed policy generation")
-	case "vault":
-		return errors.New("Vault execution requires signer-reviewed authorization")
-	case "mining":
-		if intent.Intent.Type != intentSolanaSATAction && intent.Intent.Type != intentSolanaSATLookupTable {
-			return errors.New("Mining autonomous execution is restricted to typed SAT operations")
-		}
-	case "keeper":
-		if intent.Intent.Type != intentSolanaSATKeeperAction {
-			return errors.New("Keeper autonomous execution is restricted to typed SAT keeper fee payment")
-		}
-	case "agent":
-		if intent.Intent.Type == intentSolanaSATAction || intent.Intent.Type == intentSolanaSATLookupTable || intent.Intent.Type == intentSolanaSATKeeperAction {
-			return errors.New("typed SAT mining operations require a Mining wallet")
-		}
-	default:
-		return errors.New("signer policy has an invalid wallet role")
-	}
+	if policy.Role != "agent" {
+ return errors.New("signer policy has an invalid ordinary wallet discriminator")
+ }
 	return nil
 }

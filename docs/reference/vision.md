@@ -27,15 +27,6 @@ Fased is no longer aimed at being only a generic chat agent.
 
 The current shape is:
 
-- browser-first control UI
-- local or hosted onboarding flows
-- token-protected and device-auth protected control pages
-- wallet-aware controls
-- SAT mining
-- bonded Fased Network roles
-- network views and accounting records
-- local offer records and marketplace discovery
-
 Near-term roadmap:
 
 - bonded verified chat and public inbox
@@ -82,26 +73,12 @@ Current principles:
 - high-risk capabilities stay explicit and operator-controlled
 - onboarding should expose the security posture, not hide it
 
-## Wallets, mining, bond, and federation
-
 Wallet and network features belong near the agent, but they should not all be
 turned on at once.
 
 Safe setup sequence:
 
-1. bring up the Gateway and dashboard
-2. confirm private access and restart health
-3. choose wallet controls
-4. attach signer or passkey-backed wallet flows where needed
-5. define sweep and funding rules before moving funds
-6. add mining, Fased Network, and bond only after the base agent is stable
-
 Current module split:
-
-- `Mining` handles SAT mining participation
-- `Bond` uses SAT bond positions as an operator trust signal where enabled
-- `Payments` stay in explicitly configured rails
-- `Operator records` track fees, reserves, reconciliation, and claimable records where enabled
 
 ## Plugins, skills, and extensions
 
@@ -137,6 +114,3 @@ Things we should keep resisting:
 - mixing admin/control access with public federation routing
 - turning SAT into generic message gas
 - hiding risk boundaries behind “easy mode” marketing
-
-Strong defaults matter more here than in a normal chatbot project because the repo
-already includes wallet, network, mining, and market review surfaces.

@@ -18,7 +18,7 @@ type wenArtifactFixture struct {
 	ProgramID, Genesis, SourceAccount, AdmissionAccount                                                        string
 	Vector                                                                                                     struct {
 		DataBase64 string
-		Keys       []signerSATAccountV2
+		Keys       []signerTypedAccountV2
 	}
 }
 

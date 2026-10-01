@@ -14,12 +14,6 @@ title: "Roadmap"
 
 当前 tranche 围绕：
 
-- wallet selection 和 signer posture
-- SAT mining
-- Fased Network bond 和 bonded operator flows
-- operator trust read-only status UI
-- local offers 和 marketplace offer discovery
-
 ## 下一步实现 lanes
 
 ### 1. Bonded verified chat

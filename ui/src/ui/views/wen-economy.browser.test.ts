@@ -7,7 +7,7 @@ afterEach(() => {
 });
 
 it("shows verified facts and unavailable NAV only after a manual read", async () => {
-  const panel = document.createElement("wen-economy-panel") as WenEconomyPanel;
+  const panel = document.createElement("wen-economy-panel");
   const observedAtMs = Date.parse("2026-09-25T12:00:00.000Z");
   vi.spyOn(Date, "now").mockReturnValue(observedAtMs);
   const request = vi.fn().mockResolvedValue({
@@ -21,7 +21,7 @@ it("shows verified facts and unavailable NAV only after a manual read", async ()
         id: "issuedSupply",
         status: "reported",
         value: "100",
-        unit: "atoms",
+        unit: "native token atoms",
         evidence: "onchain",
         source: "finalized account",
         scope: "Current account",
@@ -37,19 +37,19 @@ it("shows verified facts and unavailable NAV only after a manual read", async ()
     await panel.updateComplete;
     expect(request).not.toHaveBeenCalled();
     panel.querySelector("button")!.click();
-    await vi.waitFor(() => expect(panel.textContent).toContain("100 atoms"));
+    await vi.waitFor(() => expect(panel.textContent).toContain("0.000000001 SAT"));
     expect(request).toHaveBeenCalledWith("wen.economy.read", {});
-    expect(panel.textContent).toContain("Unavailable: Coverage incomplete");
+    expect(panel.textContent).toContain("Coverage incomplete");
     expect(panel.textContent).toContain("onchain · finalized account · Current account");
     expect(panel.textContent).toContain("2026-09-25T12:00:00.000Z");
-    expect(panel.textContent).toContain("cannot sign or spend");
+    expect(panel.textContent).not.toContain("100 native token atoms");
   } finally {
     panel.remove();
   }
 });
 
 it("drops an in-flight read when its gateway client changes", async () => {
-  const panel = document.createElement("wen-economy-panel") as WenEconomyPanel;
+  const panel = document.createElement("wen-economy-panel");
   let resolve!: (value: unknown) => void;
   panel.client = {
     request: vi.fn().mockReturnValue(
@@ -78,7 +78,7 @@ it("drops an in-flight read when its gateway client changes", async () => {
 });
 
 it("lets the replacement gateway refresh while an old read remains pending", async () => {
-  const panel = document.createElement("wen-economy-panel") as WenEconomyPanel;
+  const panel = document.createElement("wen-economy-panel");
   let resolveOld!: (value: unknown) => void;
   const oldRequest = vi.fn().mockReturnValue(
     new Promise((resolve) => {
@@ -115,7 +115,7 @@ it("lets the replacement gateway refresh while an old read remains pending", asy
 });
 
 it("does not display a reported value without provenance", async () => {
-  const panel = document.createElement("wen-economy-panel") as WenEconomyPanel;
+  const panel = document.createElement("wen-economy-panel");
   panel.client = {
     request: vi.fn().mockResolvedValue({
       signingEnabled: false,
@@ -132,7 +132,7 @@ it("does not display a reported value without provenance", async () => {
     await vi.waitFor(() =>
       expect(panel.textContent).toContain("Verified WEN economy read unavailable"),
     );
-    expect(panel.textContent).not.toContain("100 atoms");
+    expect(panel.textContent).not.toContain("0.000000001 SAT");
   } finally {
     panel.remove();
   }
@@ -152,7 +152,7 @@ it("expires displayed facts without another read and refreshes only on request",
         id: "issuedSupply",
         status: "reported",
         value: "100",
-        unit: "atoms",
+        unit: "native token atoms",
         evidence: "onchain",
         source: "account",
         scope: "custody",
@@ -161,18 +161,18 @@ it("expires displayed facts without another read and refreshes only on request",
     ],
   };
   const request = vi.fn().mockResolvedValue(snapshot);
-  const panel = document.createElement("wen-economy-panel") as WenEconomyPanel;
+  const panel = document.createElement("wen-economy-panel");
   panel.client = { request };
   panel.connected = true;
   document.body.append(panel);
   await panel.updateComplete;
   await panel.refresh();
   await panel.updateComplete;
-  expect(panel.textContent).toContain("100 atoms");
+  expect(panel.textContent).toContain("0.000000001 SAT");
   await vi.advanceTimersByTimeAsync(101);
   await panel.updateComplete;
   expect(panel.snapshot).toBeNull();
-  expect(panel.textContent).not.toContain("100 atoms");
+  expect(panel.textContent).not.toContain("0.000000001 SAT");
   expect(panel.textContent).toContain("WEN facts expired");
   expect(request).toHaveBeenCalledTimes(1);
   request.mockResolvedValue({
@@ -183,7 +183,7 @@ it("expires displayed facts without another read and refreshes only on request",
   });
   await panel.refresh();
   await panel.updateComplete;
-  expect(panel.textContent).toContain("100 atoms");
+  expect(panel.textContent).toContain("0.000000001 SAT");
   expect(request).toHaveBeenCalledTimes(2);
   panel.remove();
   expect(vi.getTimerCount()).toBe(0);
@@ -200,7 +200,7 @@ it("rejects an already-expired response and clears a disconnected snapshot", asy
     rows: [],
   };
   const request = vi.fn().mockResolvedValue(response);
-  const panel = document.createElement("wen-economy-panel") as WenEconomyPanel;
+  const panel = document.createElement("wen-economy-panel");
   panel.client = { request };
   panel.connected = true;
   document.body.append(panel);
@@ -236,7 +236,7 @@ it("clears expired facts on visibility return even when the expiry timer was thr
       { id: "economicNav", status: "unavailable", value: null, reason: "Coverage incomplete" },
     ],
   });
-  const panel = document.createElement("wen-economy-panel") as WenEconomyPanel;
+  const panel = document.createElement("wen-economy-panel");
   panel.client = { request };
   panel.connected = true;
   document.body.append(panel);

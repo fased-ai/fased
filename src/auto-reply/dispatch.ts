@@ -3,7 +3,6 @@ import {
   executeOffersChatCommand,
   parseOffersChatCommand,
 } from "../federation/marketplace-chat-command.js";
-import { executeMiningChatCommand, parseMiningChatCommand } from "../mining/chat-command.js";
 import { executeWalletChatCommand, parseWalletChatCommand } from "../wallet/chat-command.js";
 import { executeTradeChatCommand, parseTradeChatCommand } from "../wallet/trade-chat-command.js";
 import type { DispatchFromConfigResult } from "./reply/dispatch-from-config.js";
@@ -43,39 +42,6 @@ function hasInboundAttachments(ctx: FinalizedMsgContext): boolean {
     (Array.isArray(ctx.MediaPaths) && ctx.MediaPaths.length > 0) ||
     (Array.isArray(ctx.MediaUrls) && ctx.MediaUrls.length > 0),
   );
-}
-
-async function maybeDispatchMiningCommand(params: {
-  ctx: FinalizedMsgContext;
-  cfg: FasedAgentConfig;
-  dispatcher: ReplyDispatcher;
-}): Promise<DispatchFromConfigResult | null> {
-  if (hasInboundAttachments(params.ctx)) {
-    return null;
-  }
-  if (hasSlashCommandContext(params.ctx)) {
-    return null;
-  }
-  const command = parseMiningChatCommand(deterministicCommandTextFromContext(params.ctx));
-  if (!command) {
-    return null;
-  }
-  if (!params.ctx.CommandAuthorized) {
-    const queuedFinal = params.dispatcher.sendFinalReply({
-      text: "@mining control is only available to approved command senders.",
-    });
-    return { queuedFinal, counts: params.dispatcher.getQueuedCounts() };
-  }
-  try {
-    const { replyText } = await executeMiningChatCommand({ cfg: params.cfg, command });
-    const queuedFinal = params.dispatcher.sendFinalReply({ text: replyText });
-    return { queuedFinal, counts: params.dispatcher.getQueuedCounts() };
-  } catch (err) {
-    const queuedFinal = params.dispatcher.sendFinalReply({
-      text: `@mining command failed: ${String(err)}`,
-    });
-    return { queuedFinal, counts: params.dispatcher.getQueuedCounts() };
-  }
 }
 
 async function maybeDispatchWalletCommand(params: {
@@ -213,14 +179,6 @@ export async function dispatchInboundMessage(params: {
   return await withReplyDispatcher({
     dispatcher: params.dispatcher,
     run: async () => {
-      const miningResult = await maybeDispatchMiningCommand({
-        ctx: finalized,
-        cfg: params.cfg,
-        dispatcher: params.dispatcher,
-      });
-      if (miningResult) {
-        return miningResult;
-      }
       const tradeResult = await maybeDispatchTradeCommand({
         ctx: finalized,
         cfg: params.cfg,

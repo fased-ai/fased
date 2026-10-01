@@ -121,13 +121,8 @@ export const TASK_POLICY_PRESET_OPTIONS: Array<{ id: TaskPolicyPreset; label: st
 ];
 
 export type TaskTemplatePreset =
-  | "aom-strategy"
-  | "mining-status"
-  | "aom-strategy-ab"
   | "wallet-reserve-watch"
-  | "staking-rewards-watch"
   | "provider-health-check"
-  | "marketplace-order-followup"
   | "rpc-pressure-report";
 
 export const TASK_TEMPLATE_PRESET_OPTIONS: Array<{
@@ -136,51 +131,23 @@ export const TASK_TEMPLATE_PRESET_OPTIONS: Array<{
   description: string;
 }> = [
   {
-    id: "aom-strategy",
-    label: "Mining strategy review",
-    description:
-      "Mining strategy-only task. Reads @mining, may change strategy, never changes capital.",
-  },
-  {
-    id: "mining-status",
-    label: "Mining status report",
-    description: "Read-only mining health report for status, cycle, balances, capital, and claims.",
-  },
-  {
-    id: "aom-strategy-ab",
-    label: "Strategy A/B review",
-    description:
-      "Strategy-only comparison across balanced, top_k, ranked, crowd_aware, and adaptive.",
-  },
-  {
     id: "wallet-reserve-watch",
     label: "Wallet reserve watch",
-    description: "Read-only wallet reserve alert for mining, agent, and vault balances.",
+    description: "Read-only wallet reserve alert for wallet balances.",
   },
-  {
-    id: "staking-rewards-watch",
-    label: "Staking rewards watch",
-    description: "Read-only Fased Network staking report for bond, claimable SAT, and reward pool.",
-  },
+
   {
     id: "provider-health-check",
     label: "Provider health check",
     description: "Recurring provider, channel, tool, signer, and RPC health check.",
   },
-  {
-    id: "marketplace-order-followup",
-    label: "Marketplace follow-up",
-    description:
-      "Checks open marketplace orders for stuck payment, delivery, receipt, or dispute state.",
-  },
+
   {
     id: "rpc-pressure-report",
     label: "RPC pressure report",
     description: "Internal operator report for RPC call pressure, failover, and expensive labels.",
   },
 ];
-
-const MINING_STRATEGY_TASK_PROMPT = `Every cycle, inspect @mining status/history only. You may change strategyPreset, strategyExecution, and strategyMode. Do not use wallet, payment, send, swap, bond, or web-search tools. Do not change active commit, target max, capital, funding, withdraw, claim mode, or sweep policy. Report old strategy, new strategy, reason, and whether active commit changed.`;
 
 type TaskTemplatePatchDefinition = {
   name: string;
@@ -196,70 +163,20 @@ type TaskTemplatePatchDefinition = {
 };
 
 const TASK_TEMPLATE_PATCHES: Record<TaskTemplatePreset, TaskTemplatePatchDefinition> = {
-  "aom-strategy": {
-    name: "Mining strategy review",
-    description: "Strategy-only SAT mining review with capital risk locked.",
-    everyAmount: "30",
-    everyUnit: "minutes",
-    objective: "Improve mining strategy selection without changing capital risk.",
-    success:
-      "Report old strategy, new strategy, reason, and confirm active commit stayed unchanged.",
-    allowedSkills: "mining",
-    prompt: MINING_STRATEGY_TASK_PROMPT,
-    budgetMaxRunsPerHour: "4",
-  },
-  "mining-status": {
-    name: "Mining status report",
-    description: "Read-only SAT mining health report.",
-    everyAmount: "15",
-    everyUnit: "minutes",
-    objective: "Report live mining state without changing runtime or funds.",
-    success:
-      "Report running/stopped/clearing state, current cycle, wallet SOL/SAT, capital, locked, claimable, and blockers.",
-    allowedSkills: "mining",
-    prompt:
-      "Inspect @mining status, readiness, current cycle, and recent history only. Do not mutate any mining, wallet, bond, funding, claim, sweep, or strategy state. Report status, current cycle, wallet SOL/SAT, miner capital, locked capital, claimable rewards, clearing/recovery state, and blockers.",
-    budgetMaxRunsPerHour: "6",
-  },
-  "aom-strategy-ab": {
-    name: "Strategy A/B review",
-    description: "Strategy-only SAT mining comparison with active commit locked.",
-    everyAmount: "1",
-    everyUnit: "hours",
-    objective: "Compare mining strategies while keeping capital risk unchanged.",
-    success:
-      "Compare balanced/top_k/ranked/crowd_aware/adaptive evidence, report the selected strategy and fallback reason, and confirm active commit stayed unchanged.",
-    allowedSkills: "mining",
-    prompt:
-      "Inspect @mining status/history only. Compare recent evidence for balanced, top_k, ranked, crowd_aware, and adaptive. You may change strategyPreset, strategyExecution, and strategyMode only. Do not change active commit, target max, capital, funding, withdraw, claim mode, sweep policy, start/stop state, wallet sends, bond actions, or web-search sources. Report old strategy, new strategy, evidence, fallback reason, and whether active commit changed.",
-    budgetMaxRunsPerHour: "2",
-  },
   "wallet-reserve-watch": {
     name: "Wallet reserve watch",
-    description: "Read-only reserve alert for Agent, Vault, and Mining wallets.",
+    description: "Read-only reserve alert for wallets.",
     everyAmount: "30",
     everyUnit: "minutes",
-    objective: "Detect low SOL reserves before wallet, mining, or federation actions fail.",
+    objective: "Detect low SOL reserves before wallet actions fail.",
     success:
       "Report each wallet's SOL/SAT balances, reserve status, and any action needed; do not create transactions.",
-    allowedSkills: "wallet,mining",
+    allowedSkills: "wallet",
     prompt:
-      "Read wallet and mining balances only. Check Agent, Vault, and Mining wallets for SOL fee reserve and relevant SAT balances. Do not create approvals, sends, swaps, funding, withdrawals, claims, bond actions, key-management changes, or mining control actions. Report low-reserve wallets and suggested manual top-up amount.",
+      "Read wallet balances only. Check wallets for SOL fee reserve and relevant SAT balances. Do not create approvals, sends, swaps, funding, withdrawals, claims, bond actions, key-management changes, or mining control actions. Report low-reserve wallets and suggested manual top-up amount.",
     budgetMaxRunsPerHour: "4",
   },
-  "staking-rewards-watch": {
-    name: "Staking rewards watch",
-    description: "Read-only Fased Network bond staking reward report.",
-    everyAmount: "30",
-    everyUnit: "minutes",
-    objective: "Report staking reward state without claiming or changing bond state.",
-    success:
-      "Report bond amount, staking weight, claimable SAT, pending reward pool, vault balance, and eligibility.",
-    allowedSkills: "mining,wallet",
-    prompt:
-      "Inspect Fased Network staking and wallet balances only. Do not top up, unlock, sync, claim, send, fund, withdraw, or change bond/mining settings. Report bond amount, staking weight, claimable SAT, pending reward pool, vault SAT/SOL balance, eligibility state, and whether a manual Claim button is available.",
-    budgetMaxRunsPerHour: "4",
-  },
+
   "provider-health-check": {
     name: "Provider health check",
     description: "Recurring model/provider/channel/tool/signer/RPC health report.",
@@ -270,24 +187,11 @@ const TASK_TEMPLATE_PATCHES: Record<TaskTemplatePreset, TaskTemplatePatchDefinit
       "Report unhealthy providers, disconnected channels, missing tools, signer readiness, RPC failover state, and next manual fix.",
     allowedSkills: "providers,status",
     prompt:
-      "Check provider, model, channel, tool, signer, and RPC readiness. Do not change config, install tools, rotate keys, send wallet transactions, or start/stop mining. Report unhealthy components, last known error, and recommended manual fix.",
+      "Check provider, model, channel, tool, signer, and RPC readiness. Do not change config, install tools, rotate keys, send wallet transactions,. Report unhealthy components, last known error, and recommended manual fix.",
     budgetMaxRunsPerHour: "2",
     memoryScope: "session-summary",
   },
-  "marketplace-order-followup": {
-    name: "Marketplace order follow-up",
-    description: "Read-only follow-up for open marketplace order state.",
-    everyAmount: "1",
-    everyUnit: "hours",
-    objective: "Find stuck marketplace payment, delivery, receipt, or dispute states.",
-    success:
-      "Report open/stuck orders, missing payment/delivery/receipt/dispute steps, and next manual action.",
-    allowedSkills: "marketplace",
-    prompt:
-      "Inspect marketplace requests and orders only. Do not pay, refund, deliver, accept receipts, open disputes, send wallet transactions, or change listings. Report stuck payment, delivery, receipt, and dispute states with next manual action.",
-    budgetMaxRunsPerHour: "2",
-    memoryScope: "session-summary",
-  },
+
   "rpc-pressure-report": {
     name: "RPC pressure report",
     description: "Internal operator report for expensive RPC labels and failover state.",
@@ -296,9 +200,9 @@ const TASK_TEMPLATE_PATCHES: Record<TaskTemplatePreset, TaskTemplatePatchDefinit
     objective: "Track RPC pressure and identify expensive labels before costs climb.",
     success:
       "Report total calls, getAccountInfo count, expensive labels, failover status, and reduction target.",
-    allowedSkills: "mining,status",
+    allowedSkills: "status",
     prompt:
-      "Inspect local runtime RPC metrics only. Do not mutate mining, wallet, bond, or config state. Report total RPC calls, getAccountInfo calls, highest labels, active/settlement/claim/cleanup phase if visible, failover state, and the next reduction target.",
+      "Inspect local runtime RPC metrics only. Do not mutate wallet or config state. Report total RPC calls, getAccountInfo calls, highest labels, active/settlement/claim/cleanup phase if visible, failover state, and the next reduction target.",
     budgetMaxRunsPerHour: "2",
   },
 };

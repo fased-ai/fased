@@ -19,7 +19,6 @@ import * as walletProviderResolver from "./wallet-provider-resolver.js";
 import { resolveWalletRuntimeConfig, resolveWalletStatePaths } from "./wallet-runtime-config.js";
 import {
   approveWalletSendRequest,
-  isDevnetCapitalOwnerConfirmation,
   createOrExecuteWalletSend,
   createSignerReviewApprovalRequest,
   createWalletSendApprovalRequest,
@@ -49,102 +48,6 @@ vi.mock("./wallet-approval-auth.js", () => ({
 }));
 
 let tempDir = "";
-
-it("limits no-passkey Capital confirmation to exact Devnet lifecycle roles", () => {
-  const review = {
-    intentType: "solana.agentCapitalAction" as const,
-    requiredRole: "profile" as const,
-    semanticIntent: {
-      type: "solana.agentCapitalAction" as const,
-      cluster: "devnet" as const,
-      action: "initialize_capital_offer" as const,
-      programId: "FASJ6eaNMEe6K3DdXBT6ZbkfDFSjGBtxbNTVn9htXFKz", // pragma: allowlist secret -- public program ID
-      dataBase64: "AA==",
-      keys: [],
-    },
-  };
-  expect(isDevnetCapitalOwnerConfirmation(review)).toBe(true);
-  for (const action of [
-    "cancel_capital_offer",
-    "succeed_empty_capital_offer",
-    "activate_capital_offer",
-    "record_vault_result",
-  ] as const) {
-    expect(
-      isDevnetCapitalOwnerConfirmation({
-        ...review,
-        semanticIntent: { ...review.semanticIntent, action },
-      }),
-    ).toBe(true);
-    expect(
-      isDevnetCapitalOwnerConfirmation({
-        ...review,
-        requiredRole: "vault",
-        semanticIntent: { ...review.semanticIntent, action },
-      }),
-    ).toBe(false);
-  }
-  const deposit = {
-    ...review,
-    requiredRole: "vault" as const,
-    semanticIntent: {
-      ...review.semanticIntent,
-      action: "deposit_capital_offer_generation" as const,
-    },
-  };
-  expect(isDevnetCapitalOwnerConfirmation(deposit)).toBe(true);
-  for (const action of [
-    "claim_vault_sat",
-    "request_vault_exit",
-    "finalize_vault_exit",
-    "refund_cancelled_position",
-  ] as const) {
-    const candidate = { ...deposit, semanticIntent: { ...deposit.semanticIntent, action } };
-    expect(isDevnetCapitalOwnerConfirmation(candidate)).toBe(true);
-    expect(isDevnetCapitalOwnerConfirmation({ ...candidate, requiredRole: "profile" })).toBe(false);
-    expect(
-      isDevnetCapitalOwnerConfirmation({
-        ...candidate,
-        semanticIntent: { ...candidate.semanticIntent, cluster: "mainnet-beta" },
-      }),
-    ).toBe(false);
-    expect(
-      isDevnetCapitalOwnerConfirmation({
-        ...candidate,
-        semanticIntent: {
-          ...candidate.semanticIntent,
-          programId: "11111111111111111111111111111111",
-        },
-      }),
-    ).toBe(false);
-  }
-  expect(isDevnetCapitalOwnerConfirmation({ ...deposit, requiredRole: "profile" })).toBe(false);
-  expect(
-    isDevnetCapitalOwnerConfirmation({
-      ...deposit,
-      semanticIntent: { ...deposit.semanticIntent, cluster: "mainnet-beta" },
-    }),
-  ).toBe(false);
-  expect(
-    isDevnetCapitalOwnerConfirmation({
-      ...deposit,
-      semanticIntent: { ...deposit.semanticIntent, programId: "11111111111111111111111111111111" },
-    }),
-  ).toBe(false);
-  expect(isDevnetCapitalOwnerConfirmation({ ...review, requiredRole: "vault" })).toBe(false);
-  expect(
-    isDevnetCapitalOwnerConfirmation({
-      ...review,
-      semanticIntent: { ...review.semanticIntent, cluster: "mainnet-beta" },
-    }),
-  ).toBe(false);
-  expect(
-    isDevnetCapitalOwnerConfirmation({
-      ...review,
-      semanticIntent: { ...review.semanticIntent, action: "deposit_capital_offer" },
-    }),
-  ).toBe(false);
-});
 
 function testConfig(cfg: unknown): FasedAgentConfig {
   return cfg as FasedAgentConfig;
@@ -342,58 +245,6 @@ describe("wallet-send-approvals", () => {
     expect(await fs.readFile(paths.sendApprovalsPath, "utf8")).toBe("{corrupt");
   });
 
-  it("keeps domain-separated federation reviews recoverable without a transaction digest", () => {
-    const createdAtMs = Date.now();
-    const issuedAt = new Date(createdAtMs).toISOString();
-    const expiresAt = new Date(createdAtMs + 60_000).toISOString();
-    const review: WalletProviderJupiterReviewV2 = {
-      requestId: "federation-review-recovery-123",
-      walletId: "vault",
-      walletPublicKey: "Vault11111111111111111111111111111111111111",
-      intentType: "federation.bondChallenge",
-      intentDigest: `sha256:${"a".repeat(64)}`,
-      policyHash: `sha256:${"b".repeat(64)}`,
-      mode: "reviewed",
-      nonce: "c".repeat(64),
-      semanticIntent: {
-        type: "federation.bondChallenge",
-        federation: {
-          challengeId: "challenge-123",
-          federationOrigin: "https://federation.example.test",
-          handle: "@vault@example.test",
-          nodeId: "node-123",
-          tokenId: "token-123",
-          bondId: "bond-123",
-          tier: "basic-bond",
-          amountRaw: "1",
-          expiresAt,
-          payloadBase64: Buffer.from("challenge", "utf8").toString("base64"),
-        },
-      },
-      artifactKind: "domain-separated-message",
-      artifactDigest: `sha256:${"d".repeat(64)}`,
-      messageBase64: Buffer.from("challenge", "utf8").toString("base64"),
-      asset: "federation:bond-challenge",
-      amount: "1",
-      destination: "Vault11111111111111111111111111111111111111",
-      policyOperation: "federation.bondChallenge",
-      requiredPrograms: ["domain:fased:federation-bond-challenge-v1"],
-      requiredRole: "vault",
-      issuedAt,
-      state: "prepared",
-      preparedAt: issuedAt,
-      expiresAt,
-      updatedAt: issuedAt,
-    };
-    const request = createSignerReviewApprovalRequest({ review, role: "vault" });
-    expect(request.payload.signerTransactionDigest).toBeUndefined();
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(createdAtMs + 2 * 60_000);
-    expect(listWalletSendApprovalRequests()).toMatchObject([
-      { id: review.requestId, status: "pending" },
-    ]);
-    nowSpy.mockRestore();
-  });
-
   it("recovers an expired signed review once but expires an unsigned review", async () => {
     const createdAtMs = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(createdAtMs);
@@ -430,7 +281,7 @@ describe("wallet-send-approvals", () => {
       destination,
       policyOperation: "solana.nativeTransfer",
       requiredPrograms: [systemProgram],
-      requiredRole: "vault",
+      requiredRole: "agent",
       issuedAt: now,
       state: "prepared",
       preparedAt: now,
@@ -438,8 +289,8 @@ describe("wallet-send-approvals", () => {
       updatedAt: now,
       transactionDigest: `sha256:${"d".repeat(64)}`,
     };
-    const pending = createSignerReviewApprovalRequest({ review, role: "vault" });
-    const duplicate = createSignerReviewApprovalRequest({ review, role: "vault" });
+    const pending = createSignerReviewApprovalRequest({ review, role: "agent" });
+    const duplicate = createSignerReviewApprovalRequest({ review, role: "agent" });
     expect(duplicate.id).toBe(pending.id);
     expect(listWalletSendApprovalRequests({ status: "all" })).toHaveLength(1);
     expect(pending.expiresAt).toBe(expiresAt);
@@ -467,7 +318,7 @@ describe("wallet-send-approvals", () => {
     const binding = {
       requestId: review.requestId,
       walletId: review.walletId,
-      role: "vault" as const,
+      role: "agent" as const,
       walletPublicKey: review.walletPublicKey,
       intentType: review.intentType,
       intentDigest: review.intentDigest,
@@ -511,7 +362,7 @@ describe("wallet-send-approvals", () => {
             lamports: "43",
           },
         },
-        role: "vault",
+        role: "agent",
       }),
     ).toThrow("collides with different persisted metadata");
 
@@ -522,7 +373,7 @@ describe("wallet-send-approvals", () => {
     };
     const unsignedPending = createSignerReviewApprovalRequest({
       review: unsignedReview,
-      role: "vault",
+      role: "agent",
     });
     const swapReview: WalletProviderJupiterReviewV2 = {
       ...review,
@@ -1036,7 +887,7 @@ describe("wallet-send-approvals", () => {
         destination: request.destination,
         policyOperation: "solana.nativeTransfer",
         requiredPrograms: [systemProgram],
-        requiredRole: "vault" as const,
+        requiredRole: "agent" as const,
         issuedAt: reviewIssuedAt,
         state: "prepared" as const,
         preparedAt: reviewIssuedAt,
@@ -1223,293 +1074,6 @@ describe("wallet-send-approvals", () => {
     });
     expect(executeSignerReview).toHaveBeenCalledTimes(1);
     expect(sendTx).not.toHaveBeenCalled();
-  });
-
-  it("allows reviewed operator SOL sends from the mining wallet but blocks generic automation", async () => {
-    const cfg = {
-      wallet: {
-        provider: { id: "local-socket-signer" },
-        execution: { mode: "manual" },
-        runtime: {
-          enabled: true,
-          mode: "external",
-          runtime: "external-custom",
-          service: { host: "127.0.0.1", port: 19444 },
-          policy: { directSigning: true },
-        },
-      },
-      plugins: {
-        entries: {
-          "sat-mining": {
-            config: {
-              walletId: "wallet-mining",
-            },
-          },
-        },
-      },
-    } as const;
-    const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
-    const miningReviewIssuedAt = new Date().toISOString();
-    const miningReviewExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
-    const providerSpy = vi
-      .spyOn(walletProviderResolver, "createWalletProviderAdapter")
-      .mockReturnValue({
-        id: "local-socket-signer",
-        displayName: "Local Socket Signer",
-        capabilities: {
-          custodyModel: "self-hosted",
-          supportsCreateWallet: false,
-          supportsPrepare: false,
-          supportsSend: true,
-          supportsRotateKeys: false,
-          supportsResetKeys: false,
-          supportsPasskeyGate: false,
-          supportedExecutionModes: ["manual", "autonomous"],
-          supportedChains: ["solana"],
-        },
-        supportsChain: () => true,
-        health: async () => ({
-          ok: true,
-          provider: "local-socket-signer",
-          configured: true,
-          checkedAt: new Date().toISOString(),
-        }),
-        getAddresses: async () => ({ solana: "miner-address" }),
-        getBalance: async () => ({
-          ok: true,
-          chain: "solana",
-          address: "miner-address",
-          balance: "1",
-          unit: "lamports",
-        }),
-        sendTx: vi.fn(),
-        prepareTypedTransferReview: async (request) => ({
-          requestId: request.requestId,
-          walletId: request.walletId,
-          intentType: "solana.nativeTransfer",
-          intentDigest: `sha256:${"a".repeat(64)}`,
-          policyHash: `sha256:${"b".repeat(64)}`,
-          mode: "reviewed",
-          nonce: "c".repeat(64),
-          semanticIntent: {
-            type: "solana.nativeTransfer",
-            destination: request.destination,
-            lamports: request.amount,
-          },
-          walletPublicKey: "Miner11111111111111111111111111111111111",
-          artifactKind: "solana-transaction",
-          artifactDigest: `sha256:${"d".repeat(64)}`,
-          transaction: {
-            serializedTxBase64: "AA==",
-            programs: ["11111111111111111111111111111111"],
-            writableAccounts: [request.destination],
-            submission: "rpc",
-          },
-          asset: "solana:native",
-          amount: request.amount,
-          destination: request.destination,
-          policyOperation: "solana.nativeTransfer",
-          requiredPrograms: ["11111111111111111111111111111111"],
-          requiredRole: "mining",
-          issuedAt: miningReviewIssuedAt,
-          state: "prepared",
-          preparedAt: miningReviewIssuedAt,
-          expiresAt: miningReviewExpiresAt,
-          updatedAt: miningReviewIssuedAt,
-          transactionDigest: `sha256:${"d".repeat(64)}`,
-        }),
-      } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);
-
-    const reviewed = await createOrExecuteWalletSend({
-      payload: {
-        chain: "solana",
-        walletId: "wallet-mining",
-        providerId: "local-socket-signer",
-        to: "So11111111111111111111111111111111111111112",
-        amount: "1000000000",
-      },
-      requestedBy: "control-ui",
-      sendPath: "reviewed",
-      config: walletCfg,
-      runtimeConfig: cfg as unknown as FasedAgentConfig,
-    });
-
-    expect(reviewed.ok).toBe(true);
-    expect(reviewed.ok && reviewed.mode).toBe("manual");
-
-    const automation = await createOrExecuteWalletSend({
-      payload: {
-        chain: "solana",
-        walletId: "wallet-mining",
-        providerId: "local-socket-signer",
-        to: "So11111111111111111111111111111111111111112",
-        amount: "1",
-      },
-      requestedBy: "agent",
-      executionIntentId: "test:mining-generic-native:1",
-      sendPath: "automation",
-      config: walletCfg,
-      runtimeConfig: cfg as unknown as FasedAgentConfig,
-    });
-    providerSpy.mockRestore();
-
-    expect(automation.ok).toBe(false);
-    if (!automation.ok) {
-      expect(automation.code).toBe("wallet_role_not_allowed");
-    }
-  });
-
-  it("allows SAT mining auto-sweep without a generic token cap but rejects generic mining-wallet SPL automation", async () => {
-    vi.stubEnv("FASED_SAT_PROGRAM_ID", "SatProgram1111111111111111111111111111111111");
-    vi.stubEnv("FASED_SAT_BOND_PROGRAM_ID", "SatBond1111111111111111111111111111111111111");
-    vi.stubEnv("FASED_SAT_MINT_ADDRESS", "SatMint1111111111111111111111111111111111111");
-    vi.stubEnv("FASED_SAT_MINT_PROGRAM_ID", "SatMintProgram111111111111111111111111111111");
-    const cfg = {
-      wallet: {
-        provider: { id: "local-socket-signer" },
-        execution: { mode: "manual" },
-        runtime: {
-          enabled: true,
-          mode: "external",
-          runtime: "external-custom",
-          service: { host: "127.0.0.1", port: 19444 },
-          policy: { directSigning: true },
-        },
-      },
-      plugins: {
-        entries: {
-          "sat-mining": {
-            config: {
-              walletId: "wallet-mining",
-              automation: {
-                satSweep: {
-                  enabled: true,
-                  destinationAddress: "Vault11111111111111111111111111111111111111",
-                  mode: "all",
-                  keepRaw: "0",
-                  minRaw: "1",
-                  percentage: 100,
-                },
-              },
-            },
-          },
-        },
-      },
-    } as const;
-    const walletCfg = resolveWalletRuntimeConfigForTest(cfg);
-    const registry = readWalletProviderRegistry(process.env);
-    registry.wallets = [
-      {
-        id: "wallet-mining",
-        name: "Mining",
-        providerId: "local-socket-signer",
-        addresses: { solana: "Miner11111111111111111111111111111111111111" },
-        metadata: { role: "mining" },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-    registry.defaultWalletId = "wallet-mining";
-    writeWalletProviderRegistry(registry, process.env);
-    const sendTx = vi.fn(async () => ({
-      ok: true,
-      chain: "solana" as const,
-      txHash: "sat-sweep-tx",
-      signer: "miner-address",
-    }));
-    const providerSpy = vi
-      .spyOn(walletProviderResolver, "createWalletProviderAdapter")
-      .mockReturnValue({
-        id: "local-socket-signer",
-        displayName: "Local Socket Signer",
-        capabilities: {
-          custodyModel: "self-hosted",
-          supportsCreateWallet: false,
-          supportsPrepare: false,
-          supportsSend: true,
-          supportsRotateKeys: false,
-          supportsResetKeys: false,
-          supportsPasskeyGate: false,
-          supportedExecutionModes: ["manual", "autonomous"],
-          supportedChains: ["solana"],
-        },
-        supportsChain: () => true,
-        health: async () => ({
-          ok: true,
-          provider: "local-socket-signer",
-          configured: true,
-          checkedAt: new Date().toISOString(),
-        }),
-        getAddresses: async () => ({ solana: "miner-address" }),
-        getBalance: async () => ({
-          ok: true,
-          chain: "solana",
-          address: "miner-address",
-          balance: "1",
-          unit: "lamports",
-        }),
-        sendTx,
-      } as ReturnType<typeof walletProviderResolver.createWalletProviderAdapter>);
-
-    const sweep = await createOrExecuteWalletSend({
-      payload: {
-        chain: "solana",
-        walletId: "wallet-mining",
-        providerId: "local-socket-signer",
-        to: "Vault11111111111111111111111111111111111111",
-        amount: "250",
-        program: "SatMint1111111111111111111111111111111111111",
-      },
-      requestedBy: "sat-mining:auto-sweep",
-      executionIntentId: "sat-auto-sweep:wallet-mining:claim-cycle-1",
-      satSweepAuthorization: {
-        kind: "sat-auto-sweep-v1",
-        occurrenceId: "claim-cycle-1",
-        walletId: "wallet-mining",
-        destination: "Vault11111111111111111111111111111111111111",
-        mint: "SatMint1111111111111111111111111111111111111",
-        sourceBalanceRaw: "250",
-        amountRaw: "250",
-        keepRaw: "0",
-        minRaw: "1",
-        mode: "all",
-        percentage: 100,
-      },
-      sendPath: "automation",
-      config: walletCfg,
-      runtimeConfig: cfg as unknown as FasedAgentConfig,
-    });
-
-    expect(sweep.ok).toBe(true);
-    expect(sendTx).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chain: "solana",
-        walletId: "wallet-mining",
-        program: "SatMint1111111111111111111111111111111111111",
-      }),
-    );
-
-    const generic = await createOrExecuteWalletSend({
-      payload: {
-        chain: "solana",
-        walletId: "wallet-mining",
-        providerId: "local-socket-signer",
-        to: "Vault11111111111111111111111111111111111111",
-        amount: "250",
-        program: "SatMint1111111111111111111111111111111111111",
-      },
-      requestedBy: "agent",
-      executionIntentId: "test:mining-generic-spl:1",
-      sendPath: "automation",
-      config: walletCfg,
-      runtimeConfig: cfg as unknown as FasedAgentConfig,
-    });
-    providerSpy.mockRestore();
-
-    expect(generic.ok).toBe(false);
-    if (!generic.ok) {
-      expect(generic.code).toBe("wallet_role_not_allowed");
-    }
   });
 
   it("ignores removed custody flags and sends autonomous transfers only through the typed provider API", async () => {

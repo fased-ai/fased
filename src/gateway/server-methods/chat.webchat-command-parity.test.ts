@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { dispatchReplyFromConfig } from "../../auto-reply/reply/dispatch-from-config.js";
 import type { FasedAgentConfig } from "../../config/config.js";
 import { executeOffersChatCommand } from "../../federation/marketplace-chat-command.js";
-import { executeMiningChatCommand } from "../../mining/chat-command.js";
 import { executeWalletChatCommand } from "../../wallet/chat-command.js";
 import type { GatewayRequestContext } from "./types.js";
 
@@ -34,17 +33,6 @@ vi.mock("../session-utils.js", async (importOriginal) => {
       },
       canonicalKey: "main",
     }),
-  };
-});
-
-vi.mock("../../mining/chat-command.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../mining/chat-command.js")>();
-  return {
-    ...actual,
-    executeMiningChatCommand: vi.fn(async () => ({
-      result: { ok: true },
-      replyText: "mining command ok",
-    })),
   };
 });
 
@@ -161,14 +149,6 @@ function extractFirstTextBlock(payload: unknown): string | undefined {
   return typeof firstText === "string" ? firstText : undefined;
 }
 
-function extractErrorMessage(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") {
-    return undefined;
-  }
-  const message = (payload as { errorMessage?: unknown }).errorMessage;
-  return typeof message === "string" ? message : undefined;
-}
-
 async function sendWebChatCommand(params: {
   message: string;
   idempotencyKey: string;
@@ -223,65 +203,10 @@ async function sendWebChatCommand(params: {
 
 describe("WebChat deterministic command parity", () => {
   afterEach(() => {
-    vi.mocked(executeMiningChatCommand).mockClear();
     vi.mocked(executeWalletChatCommand).mockClear();
     vi.mocked(executeOffersChatCommand).mockClear();
     vi.mocked(dispatchReplyFromConfig).mockClear();
     tradeWalletActionExecute.mockReset();
-  });
-
-  it("routes @mining from WebChat through deterministic command handling before the model", async () => {
-    const context = await sendWebChatCommand({
-      message: "Stop @mining.",
-      idempotencyKey: "webchat-mining",
-    });
-
-    expect(executeMiningChatCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        command: expect.objectContaining({ action: "stop" }),
-      }),
-    );
-    expect(dispatchReplyFromConfig).not.toHaveBeenCalled();
-    expect(extractFirstTextBlock(vi.mocked(context.broadcast).mock.calls.at(-1)?.[1])).toBe(
-      "mining command ok",
-    );
-  });
-
-  it("routes exact @mining status from WebChat before the model", async () => {
-    const context = await sendWebChatCommand({
-      message: "@mining status",
-      idempotencyKey: "webchat-mining-status",
-    });
-
-    expect(executeMiningChatCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        command: expect.objectContaining({ action: "status" }),
-      }),
-    );
-    expect(dispatchReplyFromConfig).not.toHaveBeenCalled();
-    expect(extractFirstTextBlock(vi.mocked(context.broadcast).mock.calls.at(-1)?.[1])).toBe(
-      "mining command ok",
-    );
-  });
-
-  it("broadcasts deterministic command failures as chat errors instead of model replies", async () => {
-    vi.mocked(executeMiningChatCommand).mockRejectedValueOnce(new Error("mining offline"));
-
-    const context = await sendWebChatCommand({
-      message: "@mining status",
-      idempotencyKey: "webchat-mining-error",
-      expectedState: "error",
-    });
-
-    expect(executeMiningChatCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        command: expect.objectContaining({ action: "status" }),
-      }),
-    );
-    expect(dispatchReplyFromConfig).not.toHaveBeenCalled();
-    expect(extractErrorMessage(vi.mocked(context.broadcast).mock.calls.at(-1)?.[1])).toBe(
-      "Error: mining offline",
-    );
   });
 
   it("routes @wallet from WebChat through deterministic command handling before the model", async () => {

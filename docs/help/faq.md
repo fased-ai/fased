@@ -29,14 +29,6 @@ fased logs --follow
 
 Then open the owner page for the thing that failed:
 
-- Agent > Models for model/provider issues.
-- Agent > Channels for chat app routes.
-- Agent > Services for external APIs.
-- Agent > Skills and Agent > Tools for capability issues.
-- Agent > Memory for saved context, archive, and session-memory state.
-- Agent > Tasks for saved task definitions and runs.
-- Wallets, Mining, or Fased Network for crypto and network state.
-
 ## I'm Stuck - What's The Fastest Way To Get Unstuck?
 
 <a id="im-stuck--whats-the-fastest-way-to-get-unstuck"></a>
@@ -47,15 +39,7 @@ Then open the owner page for the thing that failed:
 4. Run `fased doctor`.
 5. If it is a channel issue, run `fased channels status --probe`.
 
-For wallet/mining/network issues:
-
-```bash
-fased wallet status --json
-fased wallet signer doctor --json
-fased mining readiness --wallet mining
-fased mining status --json
-fased federation status --json
-```
+For wallet/network issues:
 
 ## Install And First Run
 
@@ -68,13 +52,13 @@ Use [Getting Started](/start/getting-started). The normal path is:
 3. Open the Control UI.
 4. Configure a model provider.
 5. Send a first chat.
-6. Add channels, skills, tasks, wallets, mining, or Fased Network only when you
+6. Add channels, skills, tasks, wallets, or Fased Network only when you
    need them.
 
 ### What does onboarding do?
 
 Onboarding creates the local baseline: state directory, config,
-workspace, Gateway, dashboard access, and optional initial wallet/mining setup.
+workspace, Gateway, dashboard access, and optional initial wallet setup.
 
 It does not fully configure every model, channel, skill, task, service, wallet,
 or network role. Those belong in the Control UI after the base install works.
@@ -229,40 +213,13 @@ fased task runs --id <task-id>
 fased task cancel-run <run-id>
 ```
 
-## Wallets, Mining, And Fased Network
-
 ### Which docs should I read?
-
-- [Wallet page](/plugins/crypto/wallet-page)
-- [Wallet roles and policies](/plugins/crypto/wallet-roles-and-policies)
-- [Mining page](/plugins/crypto/mining-page)
-- [Mining troubleshooting](/plugins/crypto/mining-troubleshooting)
-- [Fased Network](/start/federation)
-- [Bond operator](/start/bond-operator-economy)
 
 ### How should I split wallets?
 
 Use separate roles where possible:
 
-- Agent wallet for normal Agent wallet actions.
-- Mining wallet for SAT mining.
-- Vault wallet for bond and operator funds.
-
 This makes wallet roles, screenshots, and recovery easier to reason about.
-
-### What do I need before SAT mining?
-
-You need:
-
-- a configured mining wallet;
-- signer reachable;
-- RPC reachable;
-- SOL wallet balance for fees;
-- funded miner capital;
-- readiness checks passing.
-
-Mining outcomes vary by cycle, commit, strategy, rebates, fees, and mining
-state. Use small first runs until readiness and recovery are understood.
 
 ### Why can a submitted commit be lower than my target?
 

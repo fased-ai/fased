@@ -308,7 +308,6 @@ public struct Snapshot: Codable, Sendable {
     public let statedir: String?
     public let sessiondefaults: [String: AnyCodable]?
     public let authmode: AnyCodable?
-    public let updateavailable: [String: AnyCodable]?
 
     public init(
         presence: [PresenceEntry],
@@ -318,8 +317,7 @@ public struct Snapshot: Codable, Sendable {
         configpath: String?,
         statedir: String?,
         sessiondefaults: [String: AnyCodable]?,
-        authmode: AnyCodable?,
-        updateavailable: [String: AnyCodable]?)
+        authmode: AnyCodable?)
     {
         self.presence = presence
         self.health = health
@@ -329,7 +327,6 @@ public struct Snapshot: Codable, Sendable {
         self.statedir = statedir
         self.sessiondefaults = sessiondefaults
         self.authmode = authmode
-        self.updateavailable = updateavailable
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -341,7 +338,6 @@ public struct Snapshot: Codable, Sendable {
         case statedir = "stateDir"
         case sessiondefaults = "sessionDefaults"
         case authmode = "authMode"
-        case updateavailable = "updateAvailable"
     }
 }
 
@@ -2307,19 +2303,22 @@ public struct AgentsCreateParams: Codable, Sendable {
     public let model: String?
     public let emoji: String?
     public let avatar: String?
+    public let personatemplateid: AnyCodable?
 
     public init(
         name: String,
         workspace: String,
         model: String?,
         emoji: String?,
-        avatar: String?)
+        avatar: String?,
+        personatemplateid: AnyCodable?)
     {
         self.name = name
         self.workspace = workspace
         self.model = model
         self.emoji = emoji
         self.avatar = avatar
+        self.personatemplateid = personatemplateid
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2328,6 +2327,7 @@ public struct AgentsCreateParams: Codable, Sendable {
         case model
         case emoji
         case avatar
+        case personatemplateid = "personaTemplateId"
     }
 }
 
@@ -2337,19 +2337,22 @@ public struct AgentsCreateResult: Codable, Sendable {
     public let name: String
     public let workspace: String
     public let model: String?
+    public let personatemplateid: AnyCodable
 
     public init(
         ok: Bool,
         agentid: String,
         name: String,
         workspace: String,
-        model: String?)
+        model: String?,
+        personatemplateid: AnyCodable)
     {
         self.ok = ok
         self.agentid = agentid
         self.name = name
         self.workspace = workspace
         self.model = model
+        self.personatemplateid = personatemplateid
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2358,6 +2361,7 @@ public struct AgentsCreateResult: Codable, Sendable {
         case name
         case workspace
         case model
+        case personatemplateid = "personaTemplateId"
     }
 }
 

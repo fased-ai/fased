@@ -14,61 +14,13 @@ x-i18n:
 
 # Fased
 
-<p align="center">
-  <strong>自托管个人智能体运行时。</strong><br />
-  在自己的机器或服务器上运行 Gateway，通过浏览器 Control UI 管理 Agent、模型、Skills、工具、消息渠道，以及可选的钱包、SAT Mining 和 Fased Network 模块。
-</p>
-
-<Columns>
-  <Card title="入门指南" href="/start/getting-started" icon="rocket">
-    安装 Fased 并在几分钟内启动 Gateway 网关。
-  </Card>
-  <Card title="运行向导" href="/start/wizard" icon="sparkles">
-    通过 `fased onboard` 和配对流程进行引导式设置。
-  </Card>
-  <Card title="打开控制界面" href="/web/control-ui" icon="layout-dashboard">
-    打开 Dashboard、Chat、Agents、Usage 和 Advanced；按需启用 Wallets、Mining 和 Network。
-  </Card>
-</Columns>
-
 Fased 通过单个 Gateway 进程连接模型、工具、消息渠道、节点、钱包、任务和浏览器 Control UI。默认入口是浏览器，不需要先配置 Telegram 或 WhatsApp 才能聊天。
 
 ## 工作原理
 
-```mermaid
-flowchart LR
-  A["Control UI + Chat"] --> B["Gateway"]
-  C["Chat apps + plugins"] --> B
-  B --> D["Agents + sessions"]
-  B --> E["Tools + Skills"]
-  B --> F["Wallets + Mining"]
-  B --> G["Nodes + mobile/mac apps"]
-```
-
 Gateway 是会话、路由、工具访问、渠道连接和运行时状态的事实来源。
 
 ## 核心功能
-
-<Columns>
-  <Card title="Agent-first 工作台" icon="bot">
-    在 Agents 页面为每个 Agent 管理 Models、Channels、Skills、Tools、Memory、Services、Tasks 和 Sessions。
-  </Card>
-  <Card title="浏览器 Control UI" icon="layout-dashboard">
-    Dashboard、Chat、Wallets、Mining、Usage、Extensions、Notifications 和 Advanced 都在同一个本地 UI 中。
-  </Card>
-  <Card title="多渠道路由" icon="message-square">
-    Telegram、Discord、WhatsApp、Slack、Signal 和扩展渠道都路由到选定 Agent。
-  </Card>
-  <Card title="Skills + 工具" icon="sparkles">
-    创建、安装、审查和授权 Skills；再用 Agent > Tools 控制可用工具。
-  </Card>
-  <Card title="可选钱包与 SAT Mining" icon="shield">
-    分离 Agent、Mining、Vault 钱包角色，并通过审批、caps 和 Skill Grants 控制资金访问。
-  </Card>
-  <Card title="移动节点" icon="smartphone">
-    配对 iOS、Android、macOS 或无头节点；节点状态在 Advanced > Nodes 中查看。
-  </Card>
-</Columns>
 
 ## 快速开始
 

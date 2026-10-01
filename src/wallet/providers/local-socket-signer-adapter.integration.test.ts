@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../../mining/sat-vnext-release-contract.generated.js";
 import { invokeNativeSignerOperatorCapabilities } from "../native-signer-operator-client.js";
 import { SIGNER_PROTOCOL_V2 } from "../signer-protocol-v2.generated.js";
 import {
@@ -104,66 +103,9 @@ describe("compiled fased-signerd protocol-v2 compatibility", () => {
     const result = await callLocalSocketSigner<{
       ready: boolean;
       capabilities: typeof SIGNER_PROTOCOL_V2;
-      satRelease: typeof SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT;
     }>(socketPath, { op: "v2.capabilities" });
     expect(result.ready).toBe(true);
     expect(result.capabilities).toEqual(SIGNER_PROTOCOL_V2);
-    expect(result.satRelease).toEqual(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT);
-
-    await callLocalSocketSigner(socketPath, {
-      op: "v2.wallet.create",
-      walletId: "mining",
-      request: {
-        expectedPolicyVersion: 0,
-        policy: {
-          role: "mining",
-          operations: [],
-          programs: [],
-          assets: [],
-        },
-      },
-    });
-    const allocationFp = Array.from({ length: 16 }, () => 62_500);
-    const commitmentRequest = {
-      cluster: "devnet" as const,
-      programId: "H79sGVMLFSHX14rAj7gBxNS31V1984Br3d6PZKP4jNhF", // pragma: allowlist secret
-      protocolGeneration: SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.interfaceContractSha256,
-      cycleId: "5959753",
-      committedLamports: "1000000000",
-      allocationFp,
-    };
-    const commitment = await callLocalSocketSigner<{
-      reference: string;
-      commitmentHex: string;
-      cycleId: string;
-      committedLamports: string;
-      allocationCount: number;
-      protocolGeneration: string;
-    }>(socketPath, {
-      op: "v2.satCommitment.allocate",
-      walletId: "mining",
-      request: commitmentRequest,
-    });
-    expect(commitment).toMatchObject({
-      cycleId: commitmentRequest.cycleId,
-      committedLamports: commitmentRequest.committedLamports,
-      allocationCount: allocationFp.length,
-      protocolGeneration: commitmentRequest.protocolGeneration,
-    });
-    expect(commitment.reference).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(commitment.commitmentHex).toMatch(/^[0-9a-f]{64}$/u);
-
-    const binding = await callLocalSocketSigner<typeof commitment>(socketPath, {
-      op: "v2.satCommitment.binding.get",
-      walletId: "mining",
-      request: {
-        cluster: commitmentRequest.cluster,
-        programId: commitmentRequest.programId,
-        protocolGeneration: commitmentRequest.protocolGeneration,
-        cycleId: commitmentRequest.cycleId,
-      },
-    });
-    expect(binding).toEqual(commitment);
 
     const operatorResult = invokeNativeSignerOperatorCapabilities({
       signerBinPath: binary,

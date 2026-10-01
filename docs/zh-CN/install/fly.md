@@ -11,12 +11,6 @@ read_when:
 Fased 当前不支持在 Fly.io 上运行完整 Gateway。`deploy/hosting/fly*.toml` 只作为历史
 参考保留，不是维护或发布测试覆盖的安装路径。
 
-<Warning>
-不要用归档 Fly manifest 创建新部署。它缺少受支持 Hosting profile 所需的 root 管理
-原生签名器/更新器、独立应用与控制 socket、Tailscale-first 主机加固、协调回滚和冷启动
-验证。不得在该路径启用 Wallet、Vault 或 SAT Mining。
-</Warning>
-
 - 常驻服务器：创建普通 Linux VPS，并使用[受维护的 VPS Hosting 安装器](/install/vps)。
 - 自己电脑上的容器化 Gateway：使用[本地 Docker](/install/docker)。
 

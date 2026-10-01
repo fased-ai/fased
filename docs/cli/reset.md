@@ -10,12 +10,6 @@ title: "reset"
 
 Reset local config and state while keeping the CLI itself installed on the machine.
 
-This is the destructive admin path. It can remove `fased.json`, gateway
-token/password, gateway settings, model/auth config refs, plugin config,
-wallet assignments, Fased Network settings, and mining attachment config depending
-on scope. It preserves wallet material, but you may need to rerun onboarding to
-regain dashboard access or reconnect runtime services.
-
 For normal repair, prefer:
 
 ```bash
@@ -23,7 +17,7 @@ fased onboard --reset
 ```
 
 That onboarding repair path only clears selected auth/session state and keeps
-gateway, wallet, mining, Fased Network, plugin, Tailscale, and firewall setup.
+gateway, wallet, Fased Network, plugin, Tailscale, and firewall setup.
 
 ```bash
 fased reset

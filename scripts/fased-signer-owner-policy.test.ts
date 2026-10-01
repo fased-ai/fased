@@ -143,28 +143,6 @@ async function successfulFlow(options: {
 }
 
 describe("strict owner policy input", () => {
-  it("keeps every program-bound SAT action synchronized with the native generated manifest", async () => {
-    const manifest = JSON.parse(
-      await fsp.readFile(
-        path.join(process.cwd(), "extensions", "sat-mining", "signer-codec-schema.v1.json"),
-        "utf8",
-      ),
-    ) as { codecs: Array<{ action: string; family: "main" | "bond" }> };
-    const main = manifest.codecs
-      .filter((codec) => codec.family === "main")
-      .map((codec) => codec.action);
-    const bond = manifest.codecs
-      .filter((codec) => codec.family === "bond")
-      .map((codec) => codec.action);
-    const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
-    expect(
-      [...__testing.SAT_MINING_ACTIONS]
-        .filter((action) => action !== "cleanupBatch")
-        .toSorted(compare),
-    ).toEqual(main.toSorted(compare));
-    expect([...__testing.VAULT_BOND_ACTIONS].toSorted(compare)).toEqual(bond.toSorted(compare));
-  });
-
   it("accepts only explicit WEN Buy permissions with matching pool budgets", () => {
     const buy = validPolicy({
       operations: ["wen.market.buy.v1"],
@@ -200,24 +178,7 @@ describe("strict owner policy input", () => {
     );
   });
 
-  it("normalizes a typed policy deterministically and preserves the federation signer domain", () => {
-    const federation = normalizeOwnerPolicy({
-      walletId: "vault",
-      role: "vault",
-      operations: ["federation.bondChallenge"],
-      programs: [__testing.FEDERATION_POLICY_DOMAIN],
-      assets: [
-        {
-          asset: "federation:bond-challenge",
-          destinations: [destination],
-          maxPerTx: "1",
-          maxDaily: "1",
-        },
-      ],
-    });
-    expect(federation.programs).toEqual([__testing.FEDERATION_POLICY_DOMAIN]);
-    expect(federation.assets[0]?.asset).toBe("federation:bond-challenge");
-
+  it("normalizes a typed policy deterministically", () => {
     const unsorted = validPolicy({
       operations: ["solana.splTransferChecked", "solana.nativeTransfer"],
       programs: [__testing.TOKEN_PROGRAM, __testing.SYSTEM_PROGRAM],
@@ -244,152 +205,23 @@ describe("strict owner policy input", () => {
     ]);
   });
 
-  it("accepts only exact role- and program-bound Mining and Vault bond operations", () => {
-    const mining = normalizeOwnerPolicy({
-      walletId: "mining",
-      role: "mining",
-      operations: [`sat.depositMinerCapital@${destination}`],
-      programs: [__testing.SYSTEM_PROGRAM, destination],
-      assets: [
-        {
-          asset: "solana:native",
-          destinations: [__testing.SYSTEM_PROGRAM],
-          maxPerTx: "6500000",
-          maxDaily: "10000000",
-        },
-      ],
-    });
-    expect(mining.operations).toEqual([`sat.depositMinerCapital@${destination}`]);
-
-    const vault = normalizeOwnerPolicy({
-      walletId: "vault",
-      role: "vault",
-      operations: [`vaultBond.openBondPosition@${destination}`],
-      programs: [__testing.ASSOCIATED_TOKEN_PROGRAM, destination],
-      assets: [
-        {
-          asset: `solana:spl:${destination}`,
-          destinations: [__testing.SYSTEM_PROGRAM],
-          maxPerTx: "1",
-          maxDaily: "2",
-        },
-        {
-          asset: "solana:native",
-          destinations: [__testing.SYSTEM_PROGRAM],
-          maxPerTx: "6500000",
-          maxDaily: "10000000",
-        },
-      ],
-    });
-    expect(vault.operations).toEqual([`vaultBond.openBondPosition@${destination}`]);
-
-    const lookup = normalizeOwnerPolicy({
-      walletId: "mining",
-      role: "mining",
-      operations: [`satLookup.create@${__testing.ADDRESS_LOOKUP_TABLE_PROGRAM}`],
-      programs: [__testing.ADDRESS_LOOKUP_TABLE_PROGRAM, __testing.SYSTEM_PROGRAM],
-      assets: [
-        {
-          asset: "sat:action",
-          destinations: [__testing.ADDRESS_LOOKUP_TABLE_PROGRAM],
-          maxPerTx: "1",
-          maxDaily: "4",
-        },
-        {
-          asset: "solana:native",
-          destinations: [__testing.ADDRESS_LOOKUP_TABLE_PROGRAM],
-          maxPerTx: "25000000",
-          maxDaily: "100000000",
-        },
-      ],
-    });
-    expect(lookup.operations).toEqual([
-      `satLookup.create@${__testing.ADDRESS_LOOKUP_TABLE_PROGRAM}`,
-    ]);
-
-    expect(() =>
-      normalizeOwnerPolicy({
-        ...validPolicy(),
-        role: "mining",
-        operations: [`sat.rawInstruction@${destination}`],
-        programs: [destination],
-      }),
-    ).toThrow("not an allowed program-bound Mining action");
-    expect(() =>
-      normalizeOwnerPolicy({
-        ...validPolicy(),
-        role: "mining",
-        operations: [`sat.depositMinerCapital@${destination}`],
-      }),
-    ).toThrow("requires the same program");
-    expect(() =>
-      normalizeOwnerPolicy({ ...validPolicy(), operations: ["solana.satAction"] }),
-    ).toThrow("exact action bound");
-    expect(() =>
-      normalizeOwnerPolicy({
-        ...validPolicy(),
-        role: "mining",
-        operations: [`satLookup.create@${destination}`],
-        programs: [destination],
-      }),
-    ).toThrow("not an allowed typed Mining lookup-table action");
-    expect(() =>
-      normalizeOwnerPolicy({
-        ...vault,
-        programs: [destination],
-      }),
-    ).toThrow("requires the Associated Token program");
+  it("rejects retired SAT mining, lookup, and bond operations", () => {
+    for (const operation of [
+      "sat.depositMinerCapital",
+      "satLookup.create",
+      "vaultBond.openBondPosition",
+    ]) {
+      expect(() =>
+        normalizeOwnerPolicy({
+          ...validPolicy(),
+          operations: [`${operation}@${destination}`],
+          programs: [destination],
+        }),
+      ).toThrow("not a supported typed signer operation");
+    }
   });
 
-  it("accepts exact role-bound Agent Capital actions and rejects cross-role grants", () => {
-    const program = destination;
-    const assets = [
-      {
-        asset: "agent-capital:action",
-        destinations: [program],
-        maxPerTx: "1",
-        maxDaily: "4",
-      },
-      {
-        asset: "solana:native",
-        destinations: [program],
-        maxPerTx: "6500000",
-        maxDaily: "26000000",
-      },
-    ];
-    const profile = normalizeOwnerPolicy({
-      walletId: "profile",
-      role: "profile",
-      operations: [`agentCapital.initialize_capital_offer@${program}`],
-      programs: [program],
-      assets,
-    });
-    expect(profile.operations).toEqual([`agentCapital.initialize_capital_offer@${program}`]);
-
-    expect(() =>
-      normalizeOwnerPolicy({
-        ...profile,
-        role: "vault",
-      }),
-    ).toThrow("not an allowed program-bound Agent Capital action for vault");
-    expect(() =>
-      normalizeOwnerPolicy({
-        ...profile,
-        operations: [`agentCapital.unknown_action@${program}`],
-      }),
-    ).toThrow("not an allowed program-bound Agent Capital action for profile");
-
-    const vault = normalizeOwnerPolicy({
-      walletId: "vault",
-      role: "vault",
-      operations: [`agentCapital.request_vault_exit@${program}`],
-      programs: [program],
-      assets,
-    });
-    expect(vault.operations).toEqual([`agentCapital.request_vault_exit@${program}`]);
-  });
-
-  it("requires the fixed native fee reserve for on-chain policies but not federation-only proof signing", () => {
+  it("requires the fixed native fee reserve for on-chain policies", () => {
     expect(() =>
       normalizeOwnerPolicy({
         ...validPolicy(),
@@ -449,7 +281,7 @@ describe("strict owner policy input", () => {
       validPolicy({ operations: ["solana.nativeTransfer", "solana.nativeTransfer"] }),
       "duplicate",
     ],
-    ["invalid role", validPolicy({ role: "reserve" }), "policy role"],
+    ["invalid role", validPolicy({ role: "reserve" }), "ordinary wallet discriminator"],
     ["invalid program", validPolicy({ programs: ["not-a-public-key"] }), "Solana public key"],
     [
       "noncanonical cap",

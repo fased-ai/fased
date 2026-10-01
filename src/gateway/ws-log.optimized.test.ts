@@ -27,24 +27,6 @@ describe("gateway ws optimized logging", () => {
     mocks.error.mockClear();
   });
 
-  test("suppresses optional missing SAT mining method responses", () => {
-    logWs("in", "req", {
-      connId: "conn-1",
-      id: "req-1",
-      method: "sat.getMiningStatus",
-    });
-    logWs("out", "res", {
-      connId: "conn-1",
-      id: "req-1",
-      ok: false,
-      method: "sat.getMiningStatus",
-      errorCode: "INVALID_REQUEST",
-      errorMessage: "unknown method: sat.getMiningStatus",
-    });
-
-    expect(mocks.info).not.toHaveBeenCalled();
-  });
-
   test("still logs other failed gateway responses", () => {
     logWs("in", "req", {
       connId: "conn-1",

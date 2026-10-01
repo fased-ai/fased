@@ -150,19 +150,6 @@ Telegram owns the hourly task
 
 UI implications:
 
-- **Agent > Tasks** creates and manages saved definitions for the selected
-  Agent: Tasks, Triggers, Workflows, Graphs, Programs, and Templates.
-- **Agent > Sessions** shows sessions and task contexts for that Agent.
-- **Agent > Channels** assigns routes and delivery permissions; it does not own
-  tasks.
-- Chat and channel commands can create tasks, but the created task is still
-  owned by the active Agent/session.
-- Domain pages remain control owners. Wallets approves/signs, Marketplace owns
-  order review, Mining owns start/stop and cycle controls, Channels owns
-  routing, and Services owns service setup.
-- Wallet, Marketplace, and Mining records may appear in run history, but they
-  are not saved Task definitions.
-
 ## Helper Agents and coordination
 
 A helper Agent is either a temporary subagent session or another configured
@@ -188,7 +175,7 @@ Local multi-Agent collaboration is explicit:
 - one Agent spawns a helper/subagent run
 - parent task receives the evidence and final result
 
-Cross-Agent access requires policy. Helper Agents do not bypass wallet, mining,
+Cross-Agent access requires policy. Helper Agents do not bypass wallet,
 marketplace, tool, service, memory, or delivery rules.
 
 ## Future network task rooms

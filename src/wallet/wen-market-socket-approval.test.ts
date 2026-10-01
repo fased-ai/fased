@@ -120,7 +120,12 @@ it("verifies review, approval and one Buy attempt through SDK operation/result c
   await f.session.finish({ id: "assertion" });
   expect((await f.session.execute()).outcome).toBe("finalized-success");
   await expect(f.session.execute()).rejects.toThrow();
-  expect(f.call.mock.calls.filter(([, r]) => r.op === "v2.wenMarket.journey")).toHaveLength(1);
+  expect(
+    f.call.mock.calls.filter(
+      (pair): pair is [string, Extract<(typeof pair)[1], { op: "v2.wenMarket.journey" }>] =>
+        pair[1].op === "v2.wenMarket.journey",
+    ),
+  ).toHaveLength(1);
 });
 it("lost execution reply only recovers after transport recreation, even when review expires", async () => {
   const f = await fixture();
@@ -137,7 +142,7 @@ it("lost execution reply only recovers after transport recreation, even when rev
   expect(
     f.call.mock.calls
       .filter(([, r]) => r.op === "v2.wenMarket.journey")
-      .map(([, r]) => r.request.action),
+      .map(([, r]) => (r.op === "v2.wenMarket.journey" ? r.request.action : undefined)),
   ).toEqual(["execute", "recover"]);
 });
 it("rejects approval artifact replacement and changed host before dispatch", async () => {

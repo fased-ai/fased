@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withEnv } from "../test-utils/env.js";
 import { canonicalPluginLock, writePluginReadinessReceipt } from "./readiness-receipt.js";
+import { createEmptyPluginRegistry } from "./registry.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -32,10 +33,26 @@ function fixture(status: "loaded" | "disabled" | "error" = "loaded") {
   const lockPath = path.join(root, "plugin.lock.json");
   fs.writeFileSync(lockPath, `${JSON.stringify(lock)}\n`, { mode: 0o600 });
   const outputPath = path.join(root, "cache", "plugin-readiness.json");
-  const registry = {
-    plugins: [{ id: "demo", status }],
-    diagnostics: [],
-  } as never;
+  const registry = createEmptyPluginRegistry();
+  registry.plugins.push({
+    id: "demo",
+    name: "Demo",
+    source: root,
+    origin: "global",
+    enabled: true,
+    status,
+    toolNames: [],
+    hookNames: [],
+    channelIds: [],
+    providerIds: [],
+    gatewayMethods: [],
+    cliCommands: [],
+    services: [],
+    commands: [],
+    httpHandlers: 0,
+    hookCount: 0,
+    configSchema: false,
+  });
   return { root, lock, lockPath, outputPath, registry };
 }
 
@@ -102,8 +119,11 @@ describe("managed plugin readiness receipt", () => {
     const current = fixture();
     const registry = {
       ...current.registry,
-      plugins: [...current.registry.plugins, { id: "rogue", origin: "global", status: "loaded" }],
-    } as never;
+      plugins: [
+        ...current.registry.plugins,
+        { ...current.registry.plugins[0], id: "rogue", origin: "global" as const },
+      ],
+    };
     withEnv({ FASED_PLUGIN_CODE_ROOT: path.join(current.root, "plugin-code") }, () => {
       expect(() =>
         writePluginReadinessReceipt({

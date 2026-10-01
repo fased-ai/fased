@@ -181,7 +181,7 @@ describe("run-node script", () => {
         const extensionDate = new Date("2026-01-01T00:20:00.000Z");
         const paths = {
           src: path.join(tmp, "src", "index.ts"),
-          extension: path.join(tmp, "extensions", "sat-mining", "index.ts"),
+          extension: path.join(tmp, "extensions", "wen", "index.ts"),
           tsconfig: path.join(tmp, "tsconfig.json"),
           packageJson: path.join(tmp, "package.json"),
           distEntry: path.join(tmp, "dist", "entry.js"),

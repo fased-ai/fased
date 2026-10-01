@@ -24,7 +24,7 @@ func prepareWENBTCMessageV1(intent signerWENBTCMessageIntentV1, pins []signerWEN
 		return nil, errors.New("invalid WEN BTC preparation")
 	}
 	intent.data = append([]byte(nil), intent.data...)
-	intent.accounts = append([]signerSATAccountV2(nil), intent.accounts...)
+	intent.accounts = append([]signerTypedAccountV2(nil), intent.accounts...)
 	pins = append([]signerWENBTCLookupPinV1(nil), pins...)
 	tables, err := verifiedWENBTCLookupTablesV1(pins, snapshots, life)
 	if err != nil {

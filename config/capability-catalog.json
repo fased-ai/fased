@@ -28,24 +28,23 @@
       "description": "Wallet creation, custody, policy, balances, and Solana actions."
     },
     {
-      "id": "sat-mining",
-      "label": "SAT Mining",
+      "id": "wen",
+      "label": "WEN",
       "category": "crypto",
       "delivery": "core",
-      "pluginId": "sat-mining",
-      "docsPath": "/plugins/crypto/mining-page",
-      "surface": "Mining",
-      "description": "Bundled Satcoin mining runtime, readiness, capital, cycles, and history."
+      "pluginId": "wen",
+      "docsPath": "/wen/index",
+      "surface": "WEN",
+      "description": "WEN economy, acquisitions, mining approvals, campaigns, and market actions."
     },
     {
       "id": "fased-network",
       "label": "Fased Network",
       "category": "crypto",
       "delivery": "core",
-      "pluginId": "fased-federation",
       "docsPath": "/start/federation",
       "surface": "Fased Network",
-      "description": "Offers, requests, trust, bond, and Agent marketplace controls."
+      "description": "Network identity, discovery, and relay controls."
     },
     {
       "id": "telegram",

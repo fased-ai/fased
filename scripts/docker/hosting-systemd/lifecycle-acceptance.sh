@@ -860,29 +860,8 @@ assert_healthy() {
   ! ss -H -ltn | awk -v port=":${gateway_port}" '$4 ~ port "$" && ($4 ~ /^0\.0\.0\.0:/ || $4 ~ /^\[::\]:/ || $4 ~ /^\*:/) { found=1 } END { exit found ? 0 : 1 }'
 }
 
-install_fixture_sat_runtime_environment() {
-  local dropin_dir=/etc/systemd/system/fased-gateway.service.d
-  install -d -m 0755 -o root -g root "$dropin_dir"
-  cat >"$dropin_dir/95-fixture-sat-runtime.conf" <<'EOF_SAT_RUNTIME'
-[Service]
-Environment=FASED_SAT_PROGRAM_ID=11111111111111111111111111111111
-Environment=FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111
-Environment=FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112
-Environment=FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
-EOF_SAT_RUNTIME
-  chmod 0644 "$dropin_dir/95-fixture-sat-runtime.conf"
-  systemctl daemon-reload
-}
-
-configure_fixture_sat_runtime() {
-  install_fixture_sat_runtime_environment
-  systemctl restart fased-gateway.service
-  assert_healthy
-}
-
 run_operator_acceptance() {
   local cli=/home/app/.fased/bin/fased
-  configure_fixture_sat_runtime
   runuser -u app -- env HOME=/home/app "$cli" wallet status --json \
     >/tmp/fased-hosting-wallet-status.json
   jq -e '.ok == true' /tmp/fased-hosting-wallet-status.json >/dev/null
@@ -894,17 +873,6 @@ run_operator_acceptance() {
     /tmp/fased-hosting-signer-doctor.json >/dev/null
   acceptance_mark wallet-signer-doctor /tmp/fased-hosting-signer-doctor.json \
     "wallet signer doctor verified"
-
-  runuser -u app -- env \
-    HOME=/home/app \
-    FASED_SAT_PROGRAM_ID=11111111111111111111111111111111 \
-    FASED_SAT_BOND_PROGRAM_ID=ComputeBudget111111111111111111111111111111 \
-    FASED_SAT_MINT_ADDRESS=So11111111111111111111111111111111111111112 \
-    FASED_SAT_MINT_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA \
-    "$cli" mining status --json \
-    >/tmp/fased-hosting-mining-status.json
-  jq -e 'type == "object"' /tmp/fased-hosting-mining-status.json >/dev/null
-  acceptance_mark mining-status /tmp/fased-hosting-mining-status.json "mining status verified"
 
   runuser -u app -- env HOME=/home/app "$cli" federation status --json \
     >/tmp/fased-hosting-network-status.json
@@ -1065,7 +1033,6 @@ case "$phase" in
     install_release_transport_fixture
     install_hosting_package_fixtures
     prepare_provider_access_fixture
-    install_fixture_sat_runtime_environment
     prepare_interrupted_legacy_updater_fixture
     interrupt_actual_onboarding_child
     run_public_installer >/tmp/fased-hosting-install.out 2>/tmp/fased-hosting-install.err
@@ -1135,7 +1102,6 @@ case "$phase" in
     prepare_provider_access_fixture
     install_tailscale_fixture
     prepare_legacy_host_security_fixture
-    install_fixture_sat_runtime_environment
     test "$(jq -er .profile /home/app/.fased/install.json)" = hosting
     test "$(jq -er .runtime.activeVersion /home/app/.fased/install.json)" = "$predecessor_version"
     sha256sum \

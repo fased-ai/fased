@@ -145,11 +145,6 @@ Local、WSL2、macOS 和 Hosting 从匹配的 GitHub Release 下载 native signe
 ~/.fased/plugin.lock.json
 ```
 
-Updater 在线解析精确 target，验证 checksums 和 archive paths，staging 并
-smoke-test candidate，原子切换 `current`，再验证 Gateway identity、signer 和
-plugins。设置、凭证、钱包、signer state、Mining、sessions 和 memory 都位于
-state directory，不属于 release swap。
-
 支持的 Linux artifact 使用 application/dependency layers。dependency build
 hash 未变化时只替换 application layer；lockfile 或 dependency recipe 变化时
 才替换 dependency layer。

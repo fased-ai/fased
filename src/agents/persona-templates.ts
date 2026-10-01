@@ -7,11 +7,7 @@ import {
   type AgentProfilePayloadByKind,
 } from "./agent-profile-contracts.js";
 
-export const PERSONA_TEMPLATE_IDS = [
-  "private-operator",
-  "mining-operator",
-  "market-researcher",
-] as const;
+export const PERSONA_TEMPLATE_IDS = ["private-operator", "market-researcher"] as const;
 
 export type PersonaTemplateId = (typeof PERSONA_TEMPLATE_IDS)[number];
 
@@ -71,7 +67,6 @@ const PERSONA_TEMPLATES: Readonly<Record<PersonaTemplateId, PersonaTemplate>> = 
     },
     strategy: {
       schema: "fased.agent.strategy-profile.v1",
-      miningAllocationMethod: "owner-controlled",
       watchlists: [],
       hypotheses: [],
       entryExitRules: [],
@@ -82,46 +77,6 @@ const PERSONA_TEMPLATES: Readonly<Record<PersonaTemplateId, PersonaTemplate>> = 
       "AGENTS.md":
         "# AGENTS.md\n\nThis private Agent follows owner instructions and durable Fased policy.\n",
       "SOUL.md": "# SOUL.md\n\nBe direct, careful, concise, and private by default.\n",
-      "TOOLS.md": COMMON_TOOLS,
-    },
-  }),
-  "mining-operator": PersonaTemplateSchema.parse({
-    schema: "fased.agent.persona-template.v1",
-    id: "mining-operator",
-    version: 1,
-    label: "Mining Operator",
-    description:
-      "A Satcoin mining-focused Agent that explains evidence and proposes bounded actions.",
-    persona: {
-      schema: "fased.agent.persona-profile.v1",
-      displayName: "Mining Agent",
-      biography: "An owner-governed Agent focused on reliable Satcoin mining.",
-      tone: "measured, competitive, and evidence-led",
-      interests: ["Satcoin mining", "runway", "reliability"],
-      socialBoundaries: ["Never present projected mining outcomes as guaranteed returns."],
-    },
-    research: {
-      schema: "fased.agent.research-profile.v1",
-      sourceAllowlist: [],
-      horizons: ["cycle", "daily", "economic epoch"],
-      methods: ["Use finalized receipts and reconciled balances."],
-      citationRequired: true,
-      uncertaintyRequired: true,
-    },
-    strategy: {
-      schema: "fased.agent.strategy-profile.v1",
-      miningAllocationMethod: "owner-approved channel allocation",
-      watchlists: [],
-      hypotheses: [],
-      entryExitRules: ["Propose actions before requesting typed execution."],
-      capabilityPacks: ["miner", "risk-officer", "allocator", "public-host"],
-      taskModelRoutes: {},
-    },
-    workspaceFiles: {
-      "AGENTS.md":
-        "# AGENTS.md\n\nThis Agent analyzes Satcoin mining, preserves recovery paths, and reports only reconciled outcomes.\n",
-      "SOUL.md":
-        "# SOUL.md\n\nBe competitive but measured. Explain mining risk without promising profit.\n",
       "TOOLS.md": COMMON_TOOLS,
     },
   }),
@@ -150,7 +105,6 @@ const PERSONA_TEMPLATES: Readonly<Record<PersonaTemplateId, PersonaTemplate>> = 
     },
     strategy: {
       schema: "fased.agent.strategy-profile.v1",
-      miningAllocationMethod: "owner-controlled",
       watchlists: [],
       hypotheses: [],
       entryExitRules: [],

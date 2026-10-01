@@ -45,5 +45,3 @@ pnpm release:check
 pnpm check:strict:baseline
 pnpm check:strict:scoped
 ```
-
-`check:strict:baseline` 写入 `.artifacts/strict/` 报告。`check:strict:scoped` 仍运行 `pnpm tsgo`，但只在钱包、Marketplace、mining 和最近 touched UI/tool files 的 strict errors 上 fail。

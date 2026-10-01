@@ -292,7 +292,6 @@ export function createLegacyProfilePayloads(params: {
     },
     strategy: {
       schema: "fased.agent.strategy-profile.v1",
-      miningAllocationMethod: "owner-controlled",
       watchlists: [],
       hypotheses: [],
       entryExitRules: [],

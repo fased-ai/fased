@@ -192,7 +192,7 @@ describe("resolveEffectiveEnableState", () => {
 
     expect(
       resolveEffectiveEnableState({
-        id: "sat-mining",
+        id: "wen",
         origin: "bundled",
         config: normalized,
         rootConfig: {},

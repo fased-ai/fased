@@ -1,7 +1,6 @@
 package execution
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -153,12 +152,6 @@ func TestSigningAndStoredArtifactPrimitives(t *testing.T) {
 	}, []byte{1})}, solana.Hash{}, privateKey, map[solana.PublicKey]solana.PublicKeySlice{table: {lookup}})
 	if err != nil || v0.Message.GetVersion() != solana.MessageVersionV0 || len(v0.Message.GetAddressTableLookups()) != 1 {
 		t.Fatalf("v0 typed signing failed: tx=%#v err=%v", v0, err)
-	}
-	message := []byte("fased:federation exact message")
-	signatureBase64, err := SignDomainMessageBase64(privateKey, message)
-	signature, decodeErr := base64.StdEncoding.DecodeString(signatureBase64)
-	if err != nil || decodeErr != nil || !ed25519.Verify(ed25519.PublicKey(privateKey.PublicKey().Bytes()), message, signature) {
-		t.Fatalf("domain message signing failed: sign=%v decode=%v", err, decodeErr)
 	}
 	raw, err := legacy.MarshalBinary()
 	if err != nil {

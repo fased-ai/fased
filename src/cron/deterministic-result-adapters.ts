@@ -124,85 +124,6 @@ function adaptWalletResult(params: {
   };
 }
 
-function adaptMiningResult(params: {
-  job: CronJob;
-  rawResult?: unknown;
-  outputText: string;
-}): DeterministicTaskResultAdapterOutput | undefined {
-  const input = asRecord(params.job.executionPolicy?.skillAction?.input);
-  const action = asString(input?.action);
-  if (
-    action !== "status" &&
-    action !== "readiness" &&
-    action !== "history" &&
-    action !== "recovery" &&
-    action !== "wallets" &&
-    action !== "wallet_attachment"
-  ) {
-    return undefined;
-  }
-  const details = extractResultDetails(params);
-  if (!details) {
-    return undefined;
-  }
-  const payload = unwrapResultRecord(details);
-  if (action === "status") {
-    const status = asRecord(payload.status) ?? payload;
-    const lines = ["Mining status"];
-    pushField(lines, "running", asBoolean(status.running));
-    pushField(lines, "enabled", asBoolean(status.enabledWanted ?? status.enabled));
-    pushField(lines, "drain only", asBoolean(status.drainOnly));
-    pushField(lines, "risk mode", status.activeRiskMode ?? status.riskMode);
-    pushField(lines, "next action", status.nextAction ?? status.nextActionDetail);
-    pushField(lines, "blocked", status.blockedReason ?? status.bootstrapReason);
-    pushField(lines, "commit", status.activeCommitSol ?? status.commitSol ?? status.commitLamports);
-    pushField(lines, "cycle", status.cycleId ?? status.epochId ?? status.roundId);
-    if (lines.length > 1) {
-      const outputText = lines.join("\n");
-      return {
-        adapterId: "mining:status",
-        outputText,
-        summary: firstLine(outputText),
-        directDelivery: true,
-      };
-    }
-  }
-  const collection =
-    action === "wallets"
-      ? asArray(payload.wallets)
-      : action === "history"
-        ? asArray(payload.actions ?? payload.entries ?? payload.history)
-        : [];
-  const lines = [`Mining ${action.replace(/_/g, " ")}`];
-  if (collection.length > 0) {
-    lines.push(`${collection.length} item${collection.length === 1 ? "" : "s"}`);
-    for (const item of collection.slice(0, 5)) {
-      const record = asRecord(item);
-      const label =
-        asString(record?.name) ??
-        asString(record?.id) ??
-        asString(record?.walletId) ??
-        asString(record?.action) ??
-        "item";
-      lines.push(`- ${label}`);
-    }
-  } else {
-    pushField(lines, "ok", asBoolean(payload.ok));
-    pushField(lines, "status", payload.status);
-    pushField(lines, "message", payload.message ?? payload.reason);
-  }
-  if (lines.length <= 1) {
-    return undefined;
-  }
-  const outputText = lines.join("\n");
-  return {
-    adapterId: `mining:${action}`,
-    outputText,
-    summary: firstLine(outputText),
-    directDelivery: true,
-  };
-}
-
 function formatProviderStatusLabel(status: unknown): string {
   return asString(status) ?? "unknown";
 }
@@ -378,9 +299,7 @@ export function adaptDeterministicSkillResult(params: {
   if (params.toolName === "wallet") {
     return adaptWalletResult(params) ?? adaptPlainTextResult(params);
   }
-  if (params.toolName === "mining") {
-    return adaptMiningResult(params) ?? adaptPlainTextResult(params);
-  }
+
   if (params.toolName === "gateway") {
     return adaptProviderHealthResult(params) ?? adaptPlainTextResult(params);
   }

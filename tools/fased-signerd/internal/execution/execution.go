@@ -4,7 +4,6 @@ package execution
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -303,56 +302,6 @@ func NewSignedTypedTransactionWithFeePayer(
 	return tx, nil
 }
 
-// NewSignedTypedKeeperCapabilityTransaction builds a transaction in which the
-// bounded keeper capability is both the transaction payer and the only allowed
-// instruction signer. Generation-2 SAT keeper instructions intentionally do
-// not involve the mining-principal authority.
-func NewSignedTypedKeeperCapabilityTransaction(
-	instructions []solana.Instruction,
-	blockhash solana.Hash,
-	feePayer solana.PrivateKey,
-	addressTables map[solana.PublicKey]solana.PublicKeySlice,
-) (*solana.Transaction, error) {
-	feePayerPublicKey := feePayer.PublicKey()
-	hasInstructionSignature := false
-	for _, instruction := range instructions {
-		for _, account := range instruction.Accounts() {
-			if !account.IsSigner {
-				continue
-			}
-			hasInstructionSignature = true
-			if !account.PublicKey.Equals(feePayerPublicKey) {
-				return nil, errors.New("keeper capability transaction rejects another instruction signer")
-			}
-		}
-	}
-	if !hasInstructionSignature {
-		return nil, errors.New("keeper capability transaction requires its instruction signer")
-	}
-	options := []solana.TransactionOption{solana.TransactionPayer(feePayerPublicKey)}
-	if len(addressTables) > 0 {
-		options = append(options, solana.TransactionAddressTables(addressTables))
-	}
-	tx, err := solana.NewTransaction(instructions, blockhash, options...)
-	if err != nil {
-		return nil, err
-	}
-	if len(addressTables) > 0 && (tx.Message.GetVersion() != solana.MessageVersionV0 || len(tx.Message.GetAddressTableLookups()) != 1 || tx.Message.NumLookups() == 0) {
-		return nil, errors.New("typed SAT keeper capability transaction did not compile to the required single-table v0 transaction")
-	}
-	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
-		if key.Equals(feePayerPublicKey) {
-			copy := feePayer
-			return &copy
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return tx, nil
-}
-
 func SignValidatedJupiterTransaction(tx *solana.Transaction, walletSignerIndex int, privateKey solana.PrivateKey) ([]byte, solana.Signature, error) {
 	if tx == nil {
 		return nil, solana.Signature{}, errors.New("validated transaction is missing")
@@ -384,82 +333,6 @@ func SignValidatedJupiterTransaction(tx *solana.Transaction, walletSignerIndex i
 		return nil, solana.Signature{}, errors.New("signed transaction is too large")
 	}
 	return raw, tx.Signatures[walletSignerIndex], nil
-}
-
-// SignValidatedMoneyFoundationTransaction is deliberately separate from the
-// Jupiter signer. Pool creation requires one ephemeral position-mint signer;
-// this function accepts exactly that pre-existing signature, verifies it over
-// the reviewed message, and preserves it while adding the Vault signature.
-func SignValidatedMoneyFoundationTransaction(
-	tx *solana.Transaction,
-	walletSignerIndex int,
-	ephemeralSignerIndex int,
-	privateKey solana.PrivateKey,
-) ([]byte, solana.Signature, error) {
-	if tx == nil {
-		return nil, solana.Signature{}, errors.New("validated money-foundation transaction is missing")
-	}
-	if walletSignerIndex < 0 || walletSignerIndex >= len(tx.Signatures) || walletSignerIndex >= len(tx.Message.AccountKeys) {
-		return nil, solana.Signature{}, errors.New("money-foundation Vault signer index is invalid")
-	}
-	if !tx.Message.AccountKeys[walletSignerIndex].Equals(privateKey.PublicKey()) || !tx.Signatures[walletSignerIndex].IsZero() {
-		return nil, solana.Signature{}, errors.New("money-foundation Vault signer slot is not exact and empty")
-	}
-	message, err := tx.Message.MarshalBinary()
-	if err != nil {
-		return nil, solana.Signature{}, fmt.Errorf("marshal money-foundation message: %w", err)
-	}
-	if ephemeralSignerIndex >= 0 {
-		if ephemeralSignerIndex >= len(tx.Signatures) || ephemeralSignerIndex >= len(tx.Message.AccountKeys) || ephemeralSignerIndex == walletSignerIndex {
-			return nil, solana.Signature{}, errors.New("money-foundation ephemeral signer index is invalid")
-		}
-		ephemeralSignature := tx.Signatures[ephemeralSignerIndex]
-		ephemeralKey := tx.Message.AccountKeys[ephemeralSignerIndex]
-		if ephemeralSignature.IsZero() || !ed25519.Verify(ed25519.PublicKey(ephemeralKey[:]), message, ephemeralSignature[:]) {
-			return nil, solana.Signature{}, errors.New("money-foundation ephemeral position-mint signature is invalid")
-		}
-	}
-	for index, signature := range tx.Signatures {
-		if index == walletSignerIndex || index == ephemeralSignerIndex {
-			continue
-		}
-		if !signature.IsZero() {
-			return nil, solana.Signature{}, errors.New("money-foundation transaction contains an unreviewed signer")
-		}
-	}
-	preserved := solana.Signature{}
-	if ephemeralSignerIndex >= 0 {
-		preserved = tx.Signatures[ephemeralSignerIndex]
-	}
-	_, err = tx.PartialSign(func(key solana.PublicKey) *solana.PrivateKey {
-		if key.Equals(privateKey.PublicKey()) {
-			copy := privateKey
-			return &copy
-		}
-		return nil
-	})
-	if err != nil || tx.Signatures[walletSignerIndex].IsZero() {
-		return nil, solana.Signature{}, fmt.Errorf("sign reviewed money-foundation transaction: %w", err)
-	}
-	if ephemeralSignerIndex >= 0 && tx.Signatures[ephemeralSignerIndex] != preserved {
-		return nil, solana.Signature{}, errors.New("money-foundation position-mint signature changed")
-	}
-	if err := tx.VerifySignatures(); err != nil {
-		return nil, solana.Signature{}, fmt.Errorf("verify reviewed money-foundation signatures: %w", err)
-	}
-	raw, err := tx.MarshalBinary()
-	if err != nil || len(raw) > 1232 || len(raw) > math.MaxUint16 {
-		return nil, solana.Signature{}, errors.New("signed money-foundation transaction is invalid or too large")
-	}
-	return raw, tx.Signatures[walletSignerIndex], nil
-}
-
-func SignDomainMessageBase64(privateKey solana.PrivateKey, message []byte) (string, error) {
-	signature, err := privateKey.Sign(message)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(signature[:]), nil
 }
 
 func DecodeStoredSignedOperation(signedTxBase64, transactionDigest, signature string) ([]byte, *solana.Transaction, error) {

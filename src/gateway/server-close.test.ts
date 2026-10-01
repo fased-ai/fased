@@ -305,7 +305,9 @@ describe("createGatewayCloseHandler", () => {
             events.push("plugin.stop");
             throw stopFailure;
           },
-          checkpointForLifecycle: async () => events.push("plugin.checkpoint"),
+          checkpointForLifecycle: async () => {
+            events.push("plugin.checkpoint");
+          },
         },
       },
       events,
@@ -338,7 +340,9 @@ describe("createGatewayCloseHandler", () => {
     const { close } = createCloseFixture(
       {
         pluginServices: {
-          stop: async () => events.push("plugin.stop"),
+          stop: async () => {
+            events.push("plugin.stop");
+          },
           checkpointForLifecycle: async () => {
             events.push("plugin.checkpoint");
             throw checkpointFailure;

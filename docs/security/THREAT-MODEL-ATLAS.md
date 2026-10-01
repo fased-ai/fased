@@ -4,6 +4,8 @@ summary: "MITRE ATLAS-style threat model for Fased Agent, gateway, skills, walle
 sidebarTitle: "Threat model"
 ---
 
+> Historical assessment: references to the retired Satcoin miner and wallet roles describe the assessed version only. They are not current setup instructions or evidence for WEN.
+
 # Fased Threat Model v1.0
 
 ## MITRE ATLAS Framework
@@ -435,7 +437,7 @@ audits of those external systems.
 - **Attack vector:** skill code reads environment variables and config files.
 - **Affected components:** skill execution environment.
 - **Current mitigations:** skill install/config is separate from Agent access;
-  service credentials belong in Services/skill config; wallet and mining grants
+  service credentials belong in Services/skill config; wallet grants
   are separate.
 - **Residual risk:** High - a malicious allowed skill can still influence the
   Agent to reveal or misuse available context/tools.
@@ -537,7 +539,7 @@ Fased has two different control layers:
   permissions, and dependency plan. Effectiveness: Medium - makes source,
   warnings, and dependencies visible before install.
 - **Grant Separation:** Agent Skills / Tools / Wallet Skill Grants.
-  Effectiveness: High - install does not grant Agent, tool, wallet, mining, or
+  Effectiveness: High - install does not grant Agent, tool, wallet, or
   vault access.
 - **Dependency Verification:** installer result plus requirement check.
   Effectiveness: Medium - command success is not enough; required binaries must
@@ -621,7 +623,7 @@ T-PERSIST-001 → T-EVADE-001 → T-EXFIL-003
 
 ```
 T-PERSIST-001 → T-EXEC-001 → T-IMPACT-004
-(Install malicious skill) → (Steer Agent behavior) → (Over-granted wallet/mining action)
+(Install malicious skill) → (Steer Agent behavior) → (Over-granted wallet action)
 ```
 
 **Attack Chain 2: Prompt Injection to RCE**

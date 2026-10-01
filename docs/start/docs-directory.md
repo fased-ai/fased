@@ -42,15 +42,6 @@ For a complete map of the docs, see [Docs hubs](/start/hubs).
 
 ## Wallets, SAT, and Fased Network
 
-- [Operator glossary](/start/operator-glossary)
-- [Wallets](/plugins/crypto/wallet-page)
-- [Mining](/plugins/crypto/mining-page)
-- [Fased Network](/start/federation)
-- [Bond operator](/start/bond-operator-economy)
-- [Offers and Marketplace](/start/offers-marketplace)
-- [Self-hosted wallet signer](/plugins/crypto/wallet-self-hosted)
-- [Wallet passkey](/plugins/crypto/wallet-control-passkey)
-
 ## Agent setup and UX
 
 - [Models to Agents to Chat](/start/provider-agent-chat-flow)

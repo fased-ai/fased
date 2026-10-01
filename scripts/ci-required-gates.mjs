@@ -96,8 +96,8 @@ export function assertApplicableGates(input) {
   if (enabled(input.runCodeqlPython)) {
     requireSuccess(results, "CodeQL Python");
   }
-  if (enabled(input.runUiMining)) {
-    requireSuccess(results, "Mining browser");
+  if (enabled(input.runUiWen)) {
+    requireSuccess(results, "WEN browser");
   }
   if (enabled(input.runUi)) {
     requireSuccess(results, "Control UI");
@@ -137,7 +137,7 @@ export function gateInputFromEnv(env = process.env) {
     runCodeqlJavascript: env.RUN_CODEQL_JAVASCRIPT,
     runCodeqlGo: env.RUN_CODEQL_GO,
     runCodeqlPython: env.RUN_CODEQL_PYTHON,
-    runUiMining: env.RUN_UI_MINING,
+    runUiWen: env.RUN_UI_WEN,
     runUi: env.RUN_UI,
     runSkills: env.RUN_SKILLS,
     runMacosRuntime: env.RUN_MACOS_RUNTIME,
@@ -168,7 +168,7 @@ export function gateInputFromEnv(env = process.env) {
       "CodeQL JavaScript": env.CODEQL_JAVASCRIPT,
       "CodeQL Go": env.CODEQL_GO,
       "CodeQL Python": env.CODEQL_PYTHON,
-      "Mining browser": env.UI_MINING,
+      "WEN browser": env.UI_MINING,
       "Control UI": env.UI,
       skills: env.SKILLS,
       "macOS runtime": env.MACOS_RUNTIME,

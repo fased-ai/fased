@@ -36,10 +36,6 @@ Do not store secrets in these files.
 
 ## Connect Later
 
-If the user wants channels, providers, skills, services, memory, tasks, wallet,
-or mining setup, guide them to the selected Agent tabs in the UI. Use raw config
-only when the user asks for advanced config.
-
 ## Finish
 
 After identity setup is complete, delete `BOOTSTRAP.md`. Fased should not recreate it after onboarding is complete.

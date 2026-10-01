@@ -10,7 +10,6 @@ export function createCliDeps(overrides: Partial<CliDeps> = {}): CliDeps {
     sendMessageWhatsApp: vi.fn(),
     sendMessageTelegram: vi.fn(),
     sendMessageDiscord: vi.fn(),
-    sendMessageSignal: vi.fn(),
     sendMessageIMessage: vi.fn(),
     ...overrides,
   };

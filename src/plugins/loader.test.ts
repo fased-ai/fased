@@ -59,16 +59,16 @@ it("keeps every signed mandatory managed plugin enabled with an explicit allowli
           required: false,
         },
         {
-          id: "sat-mining",
-          origin: "bundled",
-          digest: `sha256:${"b".repeat(64)}`,
+          id: "stable-bridge",
+          origin: "store",
+          digest: `sha256:${"c".repeat(64)}`,
           apiCapability: "fased.plugin.v1",
           required: true,
         },
         {
-          id: "stable-bridge",
-          origin: "store",
-          digest: `sha256:${"c".repeat(64)}`,
+          id: "wen",
+          origin: "bundled",
+          digest: `sha256:${"b".repeat(64)}`,
           apiCapability: "fased.plugin.v1",
           required: true,
         },
@@ -86,7 +86,7 @@ it("keeps every signed mandatory managed plugin enabled with an explicit allowli
     },
     { FASED_PLUGIN_LOCK_PATH: lockPath },
   );
-  expect(normalized.allow).toEqual(["fixture-transaction-plugin", "sat-mining", "stable-bridge"]);
+  expect(normalized.allow).toEqual(["fixture-transaction-plugin", "stable-bridge", "wen"]);
 });
 
 function makeTempDir() {
@@ -955,6 +955,25 @@ describe("loadFasedAgentPlugins", () => {
           diag.message.includes("coerced to operator.admin"),
       ),
     ).toBe(true);
+  });
+
+  it("bounds registry retention while reusing the most recently accessed registry", () => {
+    process.env.FASED_BUNDLED_PLUGINS_DIR = "/nonexistent/bundled/plugins";
+    const options = Array.from({ length: 5 }, () => ({
+      config: { plugins: { enabled: false } },
+      workspaceDir: makeTempDir(),
+    }));
+    const first = loadFasedAgentPlugins(options[0]);
+    const second = loadFasedAgentPlugins(options[1]);
+    loadFasedAgentPlugins(options[2]);
+    loadFasedAgentPlugins(options[3]);
+    expect(loadFasedAgentPlugins(options[0])).toBe(first);
+    const newest = loadFasedAgentPlugins(options[4]);
+    expect(loadFasedAgentPlugins(options[4])).toBe(newest);
+    expect(loadFasedAgentPlugins(options[0])).toBe(first);
+    expect(loadFasedAgentPlugins(options[1])).not.toBe(second);
+    // Eviction does not mutate a retained registry or invoke plugin services.
+    expect(first.plugins).toEqual([]);
   });
 
   it("does not reuse cached registry when core gateway methods change", () => {

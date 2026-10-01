@@ -12,18 +12,11 @@ import (
 
 const policyTestKey = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" // pragma: allowlist secret
 
-func TestVaultMiningActionRequiresExactExplicitBudget(t *testing.T) {
-	input := Policy{WalletID: "executor", Role: "agent", Assets: []Asset{{Asset: "vault-mining:action", Destinations: []string{policyTestKey}, MaxPerTx: "1", MaxDaily: "2"}}}
-	got, err := Normalize(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Assets[0].Asset != "vault-mining:action" || len(got.Operations) != 0 || len(got.Programs) != 0 {
-		t.Fatal("asset normalization granted execution authority")
-	}
-	input.Assets[0].Asset = "vault-mining:any"
-	if _, err := Normalize(input); err == nil {
-		t.Fatal("accepted unrecognized Vault budget")
+func TestRetiredSATPolicyAssetsRejected(t *testing.T) {
+	for _, asset := range []string{"sat:action", "sat:capital:lamports", "sat:mint:" + policyTestKey, "vault-mining:action", "agent-capital:action"} {
+		if _, err := Normalize(Policy{WalletID: "agent", Role: "agent", Assets: []Asset{{Asset: asset, MaxPerTx: "1", MaxDaily: "2"}}}); err == nil {
+			t.Fatalf("retired asset accepted: %s", asset)
+		}
 	}
 }
 
@@ -60,39 +53,34 @@ func TestPolicyTypeJSONShapeAndCanonicalEmptyArrays(t *testing.T) {
 
 func TestNormalizeGoldenAndAllAssetFamilies(t *testing.T) {
 	input := Policy{
-		WalletID: " Agent Primary ", Role: " AGENT ", Version: 9, BaselineVersion: 3, TypedSATPrograms: true,
+		WalletID: " Agent Primary ", Role: " AGENT ", Version: 9, BaselineVersion: 3,
 		Operations: []string{" transfer ", "bond", "transfer"},
-		Programs:   []string{policyTestKey, FederationBondProgramDomain, " " + policyTestKey + " ", FederationBondProgramDomain},
+		Programs:   []string{policyTestKey, solana.SystemProgramID.String(), " " + policyTestKey + " ", solana.SystemProgramID.String()},
 		Assets: []Asset{
-			{Asset: "agent-capital:action", Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "1", MaxDaily: "1"},
 			{Asset: " solana:spl:" + policyTestKey, Destinations: []string{policyTestKey, solana.SystemProgramID.String(), policyTestKey}, MaxPerTx: "0002", MaxDaily: "0003"},
-			{Asset: "sat:mint:" + policyTestKey, Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "4", MaxDaily: "5"},
-			{Asset: "sat:capital:lamports", Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "6", MaxDaily: "7"},
-			{Asset: "sat:action", Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "8", MaxDaily: "9", TypedSATDestinations: true},
 			{Asset: "solana:native", Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "10", MaxDaily: "11", ReviewedDestinations: true},
-			{Asset: "federation:bond-challenge", Destinations: []string{solana.SystemProgramID.String()}, MaxPerTx: "1", MaxDaily: "1"},
 		},
 	}
 	got, err := Normalize(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Hash != "sha256:3a020d772af4855845a6dd9cf0a7f603fe662a52c905ced6f509ae06a050c357" {
+	if got.Hash != "sha256:e22a3e72ec4ab3c92c8b387940e93455dee16c227562131b788fa21dee3ee400" {
 		t.Fatalf("canonical policy hash changed: %s", got.Hash)
 	}
-	if !reflect.DeepEqual(got.Operations, []string{"bond", "transfer"}) || !reflect.DeepEqual(got.Programs, []string{policyTestKey, FederationBondProgramDomain}) {
+	if !reflect.DeepEqual(got.Operations, []string{"bond", "transfer"}) || !reflect.DeepEqual(got.Programs, []string{solana.SystemProgramID.String(), policyTestKey}) {
 		t.Fatalf("operations/programs were not sorted and deduplicated: %#v", got)
 	}
-	if got.Assets[0].Asset != "agent-capital:action" || got.Assets[6].Asset != "solana:spl:"+policyTestKey {
+	if got.Assets[0].Asset != "solana:native" || got.Assets[1].Asset != "solana:spl:"+policyTestKey {
 		t.Fatalf("assets were not sorted: %#v", got.Assets)
 	}
-	if got.Assets[6].MaxPerTx != "2" || got.Assets[6].MaxDaily != "3" || !reflect.DeepEqual(got.Assets[6].Destinations, []string{solana.SystemProgramID.String(), policyTestKey}) {
-		t.Fatalf("asset was not canonicalized: %#v", got.Assets[6])
+	if got.Assets[1].MaxPerTx != "2" || got.Assets[1].MaxDaily != "3" || !reflect.DeepEqual(got.Assets[1].Destinations, []string{solana.SystemProgramID.String(), policyTestKey}) {
+		t.Fatalf("asset was not canonicalized: %#v", got.Assets[1])
 	}
 
 	permuted := input
 	permuted.Operations = []string{"transfer", "bond"}
-	permuted.Programs = []string{FederationBondProgramDomain, policyTestKey}
+	permuted.Programs = []string{solana.SystemProgramID.String(), policyTestKey}
 	permuted.Assets = append([]Asset(nil), input.Assets...)
 	for left, right := 0, len(permuted.Assets)-1; left < right; left, right = left+1, right-1 {
 		permuted.Assets[left], permuted.Assets[right] = permuted.Assets[right], permuted.Assets[left]
@@ -124,13 +112,12 @@ func TestNormalizeFailures(t *testing.T) {
 		want string
 	}{
 		{"wallet required", func(p *Policy) { p.WalletID = " " }, "walletId is required"},
-		{"role", func(p *Policy) { p.Role = "operator" }, "policy role must be agent, mining, vault, profile, strategy, or keeper"},
+		{"role", func(p *Policy) { p.Role = "operator" }, "policy role must use the ordinary wallet discriminator agent"},
 		{"operation", func(p *Policy) { p.Operations = []string{" "} }, "policy operation cannot be empty"},
 		{"program required", func(p *Policy) { p.Programs = []string{" "} }, "policy program is required"},
 		{"program invalid", func(p *Policy) { p.Programs = []string{"not-a-key"} }, "invalid policy program"},
 		{"unsupported asset", func(p *Policy) { p.Assets = []Asset{{Asset: "other", MaxPerTx: "1", MaxDaily: "1"}} }, `unsupported policy asset "other"`},
 		{"invalid spl mint", func(p *Policy) { p.Assets = []Asset{{Asset: "solana:spl:not-a-key", MaxPerTx: "1", MaxDaily: "1"}} }, "invalid policy asset mint"},
-		{"invalid SAT mint", func(p *Policy) { p.Assets = []Asset{{Asset: "sat:mint:not-a-key", MaxPerTx: "1", MaxDaily: "1"}} }, "invalid SAT policy asset mint"},
 		{"duplicate asset", func(p *Policy) {
 			p.Assets = []Asset{{Asset: "solana:native", MaxPerTx: "1", MaxDaily: "1"}, {Asset: "solana:native", MaxPerTx: "1", MaxDaily: "1"}}
 		}, "duplicate policy asset solana:native"},
@@ -163,8 +150,8 @@ func TestNormalizeFailures(t *testing.T) {
 
 func TestRequireTightening(t *testing.T) {
 	current := Policy{
-		WalletID: "agent", Role: "agent", BaselineVersion: 4, TypedSATPrograms: true,
-		Operations: []string{"one", "two"}, Programs: []string{policyTestKey, FederationBondProgramDomain},
+		WalletID: "agent", Role: "agent", BaselineVersion: 4,
+		Operations: []string{"one", "two"}, Programs: []string{policyTestKey, solana.SystemProgramID.String()},
 		Assets: []Asset{{Asset: "solana:native", Destinations: []string{solana.SystemProgramID.String(), policyTestKey}, MaxPerTx: "10", MaxDaily: "20"}},
 	}
 	clone := func() Policy {
@@ -186,13 +173,13 @@ func TestRequireTightening(t *testing.T) {
 		{"wallet identity", func(p *Policy) { p.WalletID = "other" }, "cannot alter wallet identity or role"},
 		{"role", func(p *Policy) { p.Role = "vault" }, "cannot alter wallet identity or role"},
 		{"baseline version", func(p *Policy) { p.BaselineVersion++ }, "cannot alter signer-owned baseline authority"},
-		{"typed SAT programs", func(p *Policy) { p.TypedSATPrograms = false }, "cannot alter signer-owned baseline authority"},
 		{"operation", func(p *Policy) { p.Operations = append(p.Operations, "three") }, "cannot add operations"},
 		{"program", func(p *Policy) { p.Programs = append(p.Programs, "new") }, "cannot add programs"},
-		{"asset", func(p *Policy) { p.Assets = append(p.Assets, Asset{Asset: "sat:action", MaxPerTx: "1", MaxDaily: "1"}) }, "cannot add asset sat:action"},
+		{"asset", func(p *Policy) {
+			p.Assets = append(p.Assets, Asset{Asset: "solana:spl:" + policyTestKey, MaxPerTx: "1", MaxDaily: "1"})
+		}, "cannot add asset solana:spl:" + policyTestKey},
 		{"destination", func(p *Policy) { p.Assets[0].Destinations = append(p.Assets[0].Destinations, "new") }, "cannot add destinations for solana:native"},
 		{"reviewed destination mode", func(p *Policy) { p.Assets[0].ReviewedDestinations = true }, "cannot add reviewed destinations for solana:native"},
-		{"typed SAT destination mode", func(p *Policy) { p.Assets[0].TypedSATDestinations = true }, "cannot add typed SAT destinations for solana:native"},
 		{"per transaction cap", func(p *Policy) { p.Assets[0].MaxPerTx = "11" }, "cannot raise per-transaction cap for solana:native"},
 		{"daily cap", func(p *Policy) { p.Assets[0].MaxDaily = "21" }, "cannot raise daily cap for solana:native"},
 	}

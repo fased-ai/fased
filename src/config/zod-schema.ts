@@ -1156,12 +1156,6 @@ export const FasedAgentSchema = z
           })
           .strict()
           .optional(),
-        bond: z
-          .object({
-            walletId: z.string().optional(),
-          })
-          .strict()
-          .optional(),
       })
       .strict()
       .optional(),

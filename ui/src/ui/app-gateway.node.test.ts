@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GATEWAY_EVENT_MINING_CHANGED } from "../../../src/gateway/events.js";
 import { ConnectErrorDetailCodes } from "../../../src/gateway/protocol/connect-error-details.js";
 import type { GatewayHelloOk } from "./gateway.ts";
 
@@ -393,37 +392,6 @@ describe("connectGateway", () => {
     expect(host.eventLog.some((entry) => readPayloadField(entry, "component") === "frame-49")).toBe(
       false,
     );
-  });
-
-  it("applies mining status when a mining.changed event arrives", () => {
-    const { host, client } = connectHostGateway();
-    host.tab = "mining";
-
-    const payload = {
-      method: "sat.startMining",
-      atMs: 1,
-      status: { running: true, enabledWanted: true },
-    };
-    client.emitEvent({
-      event: GATEWAY_EVENT_MINING_CHANGED,
-      payload,
-    });
-
-    expect(applyMiningChangedEventMock).toHaveBeenCalledWith(host, payload);
-    expect(loadMiningMock).not.toHaveBeenCalled();
-  });
-
-  it("reloads the mining tab when mining.changed has no status payload", () => {
-    applyMiningChangedEventMock.mockReturnValueOnce(false);
-    const { host, client } = connectHostGateway();
-    host.tab = "mining";
-
-    client.emitEvent({
-      event: GATEWAY_EVENT_MINING_CHANGED,
-      payload: { method: "sat.startMining", atMs: 1 },
-    });
-
-    expect(loadMiningMock).toHaveBeenCalledWith(host, { quiet: true });
   });
 
   it("ignores stale client onClose callbacks after reconnect", () => {

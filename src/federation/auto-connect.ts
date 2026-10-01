@@ -1,15 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { FasedAgentConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { isTruthyEnvValue } from "../infra/env.js";
-import {
-  FEDERATION_BOND_SIGNATURE_DOMAIN,
-  federationBondSigningMessageBase64,
-  resolveFederationBondWallet,
-  signFederationBondChallenge,
-} from "../wallet/solana-bond-signing.js";
-import type { WalletProviderJupiterReviewV2 } from "../wallet/wallet-provider-adapter.js";
 import { buildAttestation } from "./attestation.js";
 import {
   enforceFederationStateFileMode,
@@ -19,7 +11,6 @@ import {
 import {
   resolveAgentPublicOrigin,
   resolveFederationBaseUrl,
-  resolveFederationBondWalletId,
   resolveFederationHandle,
 } from "./runtime.js";
 
@@ -47,17 +38,6 @@ type FederationAccessToken = {
   zrokToken?: string;
   agentSlug?: string;
   publicUrl?: string;
-  bondId?: string;
-  bondWallet?: {
-    chain: string;
-    address: string;
-  };
-  bondStatus?: "missing" | "active" | "unlocking" | "unlocked";
-  bondTier?: "none" | "basic-bond" | "operator-bond";
-  bondAmountRaw?: string;
-  bondUnlockAvailableAt?: string;
-  bondQuotaBand?: "standard" | "boosted" | "operator";
-  bondDerivedScopes?: string[];
 };
 
 type AutoConnectResult = {
@@ -73,54 +53,6 @@ type PostResult = {
   status: number;
   bodyText: string;
   json?: unknown;
-};
-
-type FederationBondChallengeResult = {
-  status?: string;
-  challengeId?: string;
-  nonce?: string;
-  expiresAt?: string;
-  payload?: string;
-  payloadBase64?: string;
-};
-
-type FederationBondVerifyResult = {
-  status?: string;
-  reason?: string;
-  token?: unknown;
-  binding?: {
-    verifiedAt?: string;
-    status?: "missing" | "active" | "unlocking" | "unlocked";
-    tier?: "none" | "basic-bond" | "operator-bond";
-    amountRaw?: string;
-    unlockAvailableAt?: string;
-    quotaBand?: "standard" | "boosted" | "operator";
-    derivedScopes?: string[];
-  };
-};
-
-export type PersistedFederationBondProof = {
-  challengeId: string;
-  bondId: string;
-  walletId: string;
-  walletAddress: string;
-  handle: string;
-  nodeId: string;
-  federationBaseUrl: string;
-  expiresAt: string;
-  payload: string;
-  payloadBase64: string;
-  signatureDomain: typeof FEDERATION_BOND_SIGNATURE_DOMAIN;
-  signedMessageBase64: string;
-  signatureBase64: string;
-  signedAt: string;
-  verifiedAt?: string;
-  bondStatus?: "missing" | "active" | "unlocking" | "unlocked";
-  bondTier?: "none" | "basic-bond" | "operator-bond";
-  bondAmountRaw?: string;
-  bondUnlockAvailableAt?: string;
-  bondQuotaBand?: "standard" | "boosted" | "operator";
-  bondDerivedScopes?: string[];
 };
 
 function buildAuthHeaders(apiToken?: string): Record<string, string> {
@@ -210,42 +142,6 @@ function parseIssuedToken(value: unknown): FederationAccessToken | null {
     publicUrl:
       ((body as Record<string, unknown>).publicUrl as string | undefined) ??
       ((token as Record<string, unknown>).publicUrl as string | undefined),
-    bondId: typeof token.bondId === "string" ? token.bondId : undefined,
-    bondWallet:
-      token.bondWallet &&
-      typeof token.bondWallet === "object" &&
-      typeof (token.bondWallet as { chain?: unknown }).chain === "string" &&
-      typeof (token.bondWallet as { address?: unknown }).address === "string"
-        ? {
-            chain: (token.bondWallet as { chain: string }).chain,
-            address: (token.bondWallet as { address: string }).address,
-          }
-        : undefined,
-    bondStatus:
-      token.bondStatus === "missing" ||
-      token.bondStatus === "active" ||
-      token.bondStatus === "unlocking" ||
-      token.bondStatus === "unlocked"
-        ? token.bondStatus
-        : undefined,
-    bondTier:
-      token.bondTier === "none" ||
-      token.bondTier === "basic-bond" ||
-      token.bondTier === "operator-bond"
-        ? token.bondTier
-        : undefined,
-    bondAmountRaw: typeof token.bondAmountRaw === "string" ? token.bondAmountRaw : undefined,
-    bondUnlockAvailableAt:
-      typeof token.bondUnlockAvailableAt === "string" ? token.bondUnlockAvailableAt : undefined,
-    bondQuotaBand:
-      token.bondQuotaBand === "standard" ||
-      token.bondQuotaBand === "boosted" ||
-      token.bondQuotaBand === "operator"
-        ? token.bondQuotaBand
-        : undefined,
-    bondDerivedScopes: Array.isArray(token.bondDerivedScopes)
-      ? token.bondDerivedScopes.filter((scope): scope is string => typeof scope === "string")
-      : undefined,
   };
 }
 
@@ -266,86 +162,6 @@ function resolveFederationTokenPath(env: NodeJS.ProcessEnv): string {
     return explicitPath;
   }
   return path.join(resolveStateDir(env), "federation", "access-token.json");
-}
-
-function resolveFederationBondProofPath(env: NodeJS.ProcessEnv): string {
-  const explicitPath = env.FASED_FEDERATION_BOND_PROOF_PATH?.trim();
-  if (explicitPath) {
-    return explicitPath;
-  }
-  return path.join(resolveStateDir(env), "federation", "bond-proof.json");
-}
-
-export async function loadPersistedFederationBondProof(
-  env: NodeJS.ProcessEnv,
-): Promise<PersistedFederationBondProof | null> {
-  const proofPath = resolveFederationBondProofPath(env);
-  try {
-    const raw = await fs.readFile(proofPath, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<PersistedFederationBondProof>;
-    if (
-      typeof parsed.challengeId !== "string" ||
-      typeof parsed.bondId !== "string" ||
-      typeof parsed.walletId !== "string" ||
-      typeof parsed.walletAddress !== "string" ||
-      typeof parsed.handle !== "string" ||
-      typeof parsed.nodeId !== "string" ||
-      typeof parsed.federationBaseUrl !== "string" ||
-      typeof parsed.expiresAt !== "string" ||
-      typeof parsed.payload !== "string" ||
-      typeof parsed.payloadBase64 !== "string" ||
-      parsed.signatureDomain !== FEDERATION_BOND_SIGNATURE_DOMAIN ||
-      typeof parsed.signedMessageBase64 !== "string" ||
-      typeof parsed.signatureBase64 !== "string" ||
-      typeof parsed.signedAt !== "string"
-    ) {
-      return null;
-    }
-    return {
-      challengeId: parsed.challengeId,
-      bondId: parsed.bondId,
-      walletId: parsed.walletId,
-      walletAddress: parsed.walletAddress,
-      handle: parsed.handle,
-      nodeId: parsed.nodeId,
-      federationBaseUrl: parsed.federationBaseUrl,
-      expiresAt: parsed.expiresAt,
-      payload: parsed.payload,
-      payloadBase64: parsed.payloadBase64,
-      signatureDomain: FEDERATION_BOND_SIGNATURE_DOMAIN,
-      signedMessageBase64: parsed.signedMessageBase64,
-      signatureBase64: parsed.signatureBase64,
-      signedAt: parsed.signedAt,
-      verifiedAt: typeof parsed.verifiedAt === "string" ? parsed.verifiedAt : undefined,
-      bondStatus:
-        parsed.bondStatus === "missing" ||
-        parsed.bondStatus === "active" ||
-        parsed.bondStatus === "unlocking" ||
-        parsed.bondStatus === "unlocked"
-          ? parsed.bondStatus
-          : undefined,
-      bondTier:
-        parsed.bondTier === "none" ||
-        parsed.bondTier === "basic-bond" ||
-        parsed.bondTier === "operator-bond"
-          ? parsed.bondTier
-          : undefined,
-      bondAmountRaw: typeof parsed.bondAmountRaw === "string" ? parsed.bondAmountRaw : undefined,
-      bondUnlockAvailableAt:
-        typeof parsed.bondUnlockAvailableAt === "string" ? parsed.bondUnlockAvailableAt : undefined,
-      bondQuotaBand:
-        parsed.bondQuotaBand === "standard" ||
-        parsed.bondQuotaBand === "boosted" ||
-        parsed.bondQuotaBand === "operator"
-          ? parsed.bondQuotaBand
-          : undefined,
-      bondDerivedScopes: Array.isArray(parsed.bondDerivedScopes)
-        ? parsed.bondDerivedScopes.filter((scope): scope is string => typeof scope === "string")
-        : undefined,
-    };
-  } catch {
-    return null;
-  }
 }
 
 async function loadPersistedFederationToken(
@@ -402,22 +218,6 @@ async function persistFederationToken(
   await fs.rename(tmpPath, tokenPath);
   await enforceFederationStateFileMode(tokenPath, env);
   return tokenToPersist;
-}
-
-async function persistFederationBondProof(
-  env: NodeJS.ProcessEnv,
-  proof: PersistedFederationBondProof,
-): Promise<PersistedFederationBondProof> {
-  const proofPath = resolveFederationBondProofPath(env);
-  const dir = path.dirname(proofPath);
-  const tmpPath = `${proofPath}.tmp`;
-  await ensureFederationStateDirectory(dir, env);
-  await fs.writeFile(tmpPath, `${JSON.stringify(proof, null, 2)}\n`, {
-    mode: federationStateFileMode(env),
-  });
-  await fs.rename(tmpPath, proofPath);
-  await enforceFederationStateFileMode(proofPath, env);
-  return proof;
 }
 
 async function syncHostedEndpointOverride(params: {
@@ -569,284 +369,6 @@ async function runChallengeEnroll(params: {
   });
   params.log?.info?.(`Enrollment confirmed: ${params.handle} -> ${params.nodeEndpoint}`);
   return { ok: true, token };
-}
-
-export async function createFederationBondProof(opts?: {
-  env?: NodeJS.ProcessEnv;
-  cfg?: FasedAgentConfig;
-  log?: FederationLogger;
-  bondId?: string;
-  walletId?: string;
-  amountRaw?: string;
-  tier?: "none" | "basic-bond" | "operator-bond";
-}): Promise<PersistedFederationBondProof> {
-  const env = opts?.env ?? process.env;
-  const baseUrl = resolveFederationBaseUrl(env);
-  if (!baseUrl) {
-    throw new Error("invalid federation base URL");
-  }
-  const federationToken = await loadPersistedFederationToken(env);
-  if (!federationToken?.tokenId) {
-    throw new Error("missing federation access token");
-  }
-  const walletId =
-    opts?.walletId?.trim() || resolveFederationBondWalletId({ env, cfg: opts?.cfg }) || "default";
-  const resolvedWallet = await resolveFederationBondWallet({
-    env,
-    cfg: opts?.cfg,
-    walletId,
-  });
-  const bondId =
-    opts?.bondId?.trim() ||
-    env.FASED_FEDERATION_BOND_ID?.trim() ||
-    env.FASED_BOND_ID?.trim() ||
-    `bond:${resolvedWallet.walletAddress}`;
-  const challenge = await postJson({
-    url: `${baseUrl}/api/federation/bond/challenge`,
-    apiToken: federationToken.tokenId,
-    body: {
-      bondId,
-      wallet: {
-        chain: "solana",
-        address: resolvedWallet.walletAddress,
-      },
-      ...(opts?.amountRaw?.trim() ? { amountRaw: opts.amountRaw.trim() } : {}),
-      ...(opts?.tier ? { tier: opts.tier } : {}),
-    },
-  });
-  if (!challenge.ok) {
-    throw new Error(
-      describeHttpError("federation bond challenge failed", challenge.status, challenge.bodyText),
-    );
-  }
-  const challengeBody = (challenge.json ?? {}) as FederationBondChallengeResult;
-  const challengeId = challengeBody.challengeId?.trim();
-  const expiresAt = challengeBody.expiresAt?.trim();
-  let payloadBase64 = challengeBody.payloadBase64?.trim() ?? "";
-  let payload = challengeBody.payload ?? "";
-  if (payloadBase64) {
-    const decoded = Buffer.from(payloadBase64, "base64");
-    if (decoded.toString("base64") !== payloadBase64) {
-      throw new Error("federation bond challenge failed: payloadBase64 is not canonical");
-    }
-    const decodedPayload = decoded.toString("utf-8");
-    if (payload && payload !== decodedPayload) {
-      throw new Error("federation bond challenge failed: payload encodings disagree");
-    }
-    payload = decodedPayload;
-  } else if (payload) {
-    payloadBase64 = Buffer.from(payload, "utf-8").toString("base64");
-  }
-  if (!challengeId || !expiresAt || !payload || !payloadBase64) {
-    throw new Error("federation bond challenge failed: incomplete challenge payload");
-  }
-  if (!opts?.tier) {
-    throw new Error("federation bond challenge requires the locally reviewed bond tier");
-  }
-  const signedWallet = await signFederationBondChallenge({
-    challengeId,
-    federationOrigin: baseUrl,
-    payloadBase64,
-    handle: federationToken.handle,
-    nodeId: federationToken.nodeId,
-    tokenId: federationToken.tokenId,
-    bondId,
-    tier: opts.tier,
-    ...(opts.amountRaw?.trim() ? { amountRaw: opts.amountRaw.trim() } : {}),
-    expiresAt,
-    env,
-    cfg: opts?.cfg,
-    walletId: resolvedWallet.walletId,
-  });
-  const proof: PersistedFederationBondProof = {
-    challengeId,
-    bondId,
-    walletId: signedWallet.walletId,
-    walletAddress: signedWallet.walletAddress,
-    handle: federationToken.handle,
-    nodeId: federationToken.nodeId,
-    federationBaseUrl: baseUrl,
-    expiresAt,
-    payload,
-    payloadBase64,
-    signatureDomain: FEDERATION_BOND_SIGNATURE_DOMAIN,
-    signedMessageBase64: federationBondSigningMessageBase64({
-      challengeId,
-      federationOrigin: baseUrl,
-      payloadBase64,
-    }),
-    signatureBase64: signedWallet.signatureBase64,
-    signedAt: new Date().toISOString(),
-    ...(opts?.amountRaw?.trim() ? { bondAmountRaw: opts.amountRaw.trim() } : {}),
-    ...(opts?.tier ? { bondTier: opts.tier } : {}),
-  };
-  await persistFederationBondProof(env, proof);
-  opts?.log?.info?.(
-    `federation bond proof prepared (${proof.handle} -> ${proof.walletAddress}, bond=${proof.bondId})`,
-  );
-  return proof;
-}
-
-export async function persistFederationBondProofFromSignerReview(params: {
-  review: WalletProviderJupiterReviewV2;
-  signatureBase64: string;
-  walletId: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<PersistedFederationBondProof> {
-  const env = params.env ?? process.env;
-  const review = params.review;
-  if (
-    review.state !== "signed" ||
-    review.intentType !== "federation.bondChallenge" ||
-    review.semanticIntent.type !== "federation.bondChallenge" ||
-    review.artifactKind !== "domain-separated-message" ||
-    review.asset !== "federation:bond-challenge" ||
-    review.amount !== "1" ||
-    review.policyOperation !== "federation.bondChallenge" ||
-    review.requiredRole !== "vault" ||
-    review.requiredPrograms.length !== 1 ||
-    review.requiredPrograms[0] !== "domain:fased:federation-bond-challenge-v1"
-  ) {
-    throw new Error("signed signer review is not an exact federation bond challenge");
-  }
-  const federation = review.semanticIntent.federation;
-  const signedMessageBase64 = federationBondSigningMessageBase64(federation);
-  if (
-    !review.walletPublicKey ||
-    review.destination !== review.walletPublicKey ||
-    review.messageBase64 !== signedMessageBase64 ||
-    review.signature !== params.signatureBase64
-  ) {
-    throw new Error("signed federation review artifact does not match its wallet or payload");
-  }
-  const signature = Buffer.from(params.signatureBase64, "base64");
-  if (signature.length !== 64 || signature.toString("base64") !== params.signatureBase64) {
-    throw new Error("signed federation review returned a non-canonical Ed25519 signature");
-  }
-  const payloadBytes = Buffer.from(federation.payloadBase64, "base64");
-  if (payloadBytes.toString("base64") !== federation.payloadBase64) {
-    throw new Error("signed federation review payload is not canonical base64");
-  }
-  const payload = payloadBytes.toString("utf8");
-  if (!Buffer.from(payload, "utf8").equals(payloadBytes)) {
-    throw new Error("signed federation review payload is not valid UTF-8");
-  }
-  const challengeExpiresAt = Date.parse(federation.expiresAt);
-  if (!Number.isFinite(challengeExpiresAt) || challengeExpiresAt <= Date.now()) {
-    throw new Error("signed federation review challenge has expired");
-  }
-  const token = await loadPersistedFederationToken(env, { includeExpired: true });
-  if (
-    !token ||
-    token.tokenId !== federation.tokenId ||
-    token.nodeId !== federation.nodeId ||
-    token.handle !== federation.handle
-  ) {
-    throw new Error("signed federation review does not match the persisted federation identity");
-  }
-  const configuredOrigin = resolveFederationBaseUrl(env);
-  if (!configuredOrigin || new URL(configuredOrigin).origin !== federation.federationOrigin) {
-    throw new Error("signed federation review does not match the configured federation origin");
-  }
-  return await persistFederationBondProof(env, {
-    challengeId: federation.challengeId,
-    bondId: federation.bondId,
-    walletId: params.walletId,
-    walletAddress: review.walletPublicKey,
-    handle: federation.handle,
-    nodeId: federation.nodeId,
-    federationBaseUrl: federation.federationOrigin,
-    expiresAt: federation.expiresAt,
-    payload,
-    payloadBase64: federation.payloadBase64,
-    signatureDomain: FEDERATION_BOND_SIGNATURE_DOMAIN,
-    signedMessageBase64,
-    signatureBase64: params.signatureBase64,
-    signedAt: review.updatedAt,
-  });
-}
-
-export async function submitFederationBondProof(opts?: {
-  env?: NodeJS.ProcessEnv;
-  cfg?: FasedAgentConfig;
-  log?: FederationLogger;
-  proof?: PersistedFederationBondProof;
-}): Promise<{ proof: PersistedFederationBondProof; token: FederationAccessToken }> {
-  const env = opts?.env ?? process.env;
-  const proof = opts?.proof ?? (await loadPersistedFederationBondProof(env));
-  if (!proof) {
-    throw new Error("missing federation bond proof");
-  }
-  const federationToken = await loadPersistedFederationToken(env);
-  if (!federationToken?.tokenId) {
-    throw new Error("missing federation access token");
-  }
-  const verify = await postJson({
-    url: `${proof.federationBaseUrl}/api/federation/bond/verify`,
-    apiToken: federationToken.tokenId,
-    body: {
-      challengeId: proof.challengeId,
-      payloadBase64: proof.payloadBase64,
-      signatureDomain: proof.signatureDomain,
-      signedMessageBase64: proof.signedMessageBase64,
-      signatureBase64: proof.signatureBase64,
-    },
-  });
-  if (!verify.ok) {
-    throw new Error(
-      describeHttpError("federation bond verify failed", verify.status, verify.bodyText),
-    );
-  }
-  const verifyBody = (verify.json ?? {}) as FederationBondVerifyResult;
-  if (verifyBody.status !== "accepted") {
-    throw new Error(
-      verifyBody.reason?.trim() || "federation bond verify failed: missing acceptance result",
-    );
-  }
-  const issuedToken = parseIssuedToken({
-    status: verifyBody.status,
-    token: verifyBody.token,
-  });
-  if (!issuedToken) {
-    throw new Error("federation bond verify failed: missing updated token");
-  }
-  const persistedToken = await persistFederationToken(env, issuedToken);
-  const verifiedProof: PersistedFederationBondProof = {
-    ...proof,
-    verifiedAt: verifyBody.binding?.verifiedAt ?? new Date().toISOString(),
-    bondStatus: verifyBody.binding?.status,
-    bondTier: verifyBody.binding?.tier,
-    bondAmountRaw: verifyBody.binding?.amountRaw,
-    bondUnlockAvailableAt: verifyBody.binding?.unlockAvailableAt,
-    bondQuotaBand: verifyBody.binding?.quotaBand,
-    bondDerivedScopes: verifyBody.binding?.derivedScopes,
-  };
-  await persistFederationBondProof(env, verifiedProof);
-  opts?.log?.info?.(
-    `federation bond proof verified (${verifiedProof.handle} -> ${verifiedProof.walletAddress}, tier=${verifiedProof.bondTier ?? "none"})`,
-  );
-  return {
-    proof: verifiedProof,
-    token: persistedToken,
-  };
-}
-
-export async function createAndSubmitFederationBondProof(opts?: {
-  env?: NodeJS.ProcessEnv;
-  cfg?: FasedAgentConfig;
-  log?: FederationLogger;
-  bondId?: string;
-  walletId?: string;
-  amountRaw?: string;
-  tier?: "none" | "basic-bond" | "operator-bond";
-}): Promise<{ proof: PersistedFederationBondProof; token: FederationAccessToken }> {
-  const proof = await createFederationBondProof(opts);
-  return await submitFederationBondProof({
-    env: opts?.env,
-    cfg: opts?.cfg,
-    log: opts?.log,
-    proof,
-  });
 }
 
 export async function runFederationAutoConnectOnce(opts?: {

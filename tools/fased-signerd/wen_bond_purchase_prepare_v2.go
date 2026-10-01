@@ -29,7 +29,7 @@ func prepareWENBondPurchaseMessageV2(p wenBondPurchasePinsV2, quote wenBondAccou
 	p.PolicyBytes = append([]byte(nil), p.PolicyBytes...)
 	quote.Data = append([]byte(nil), quote.Data...)
 	route.Data = append([]byte(nil), route.Data...)
-	route.Accounts = append([]signerSATAccountV2(nil), route.Accounts...)
+	route.Accounts = append([]signerTypedAccountV2(nil), route.Accounts...)
 	pins = append([]signerWENBTCLookupPinV1(nil), pins...)
 	q, e := inspectWENBondQuoteV2(p.Bond, quote, nonce)
 	if e != nil {

@@ -10,7 +10,7 @@ description: "Official Fased and Fcode ecosystem links for Fased Agent, Fased Ne
 # Official Links
 
 Use this page to verify Fased links before installing software, connecting
-wallets, mining, or joining community rooms.
+wallets, or joining community rooms.
 
 Primary ecosystem link hub: [docs.fcode.ai/links](https://docs.fcode.ai/links)
 
@@ -46,9 +46,6 @@ Primary ecosystem link hub: [docs.fcode.ai/links](https://docs.fcode.ai/links)
 | Satcoin site | [satcoin.app](https://satcoin.app)           |
 | Satcoin docs | [docs.satcoin.app](https://docs.satcoin.app) |
 | Satcoin on X | [x.com/SatcoinHQ](https://x.com/SatcoinHQ)   |
-
-Use Satcoin docs for the current launch state, official program addresses,
-manifest hashes, IDL hashes, and mining status.
 
 ## Community
 

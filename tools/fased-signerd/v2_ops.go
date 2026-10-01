@@ -41,21 +41,20 @@ type signerPolicySummaryV2 struct {
 }
 
 type signerHealthResultV2 struct {
-	Details      string                            `json:"details"`
-	ReadOnly     bool                              `json:"readOnly"`
-	KeystoreType string                            `json:"keystoreType"`
-	Chains       []string                          `json:"chains"`
-	Ready        bool                              `json:"ready"`
-	Release      signerReleaseIdentityV2           `json:"release"`
-	Schema       signerSchemaHealthV2              `json:"schema"`
-	Network      signerNetworkHealthV2             `json:"network"`
-	Capabilities signerCapabilitiesV2              `json:"capabilities"`
-	SATRelease   frozenSATReleaseAcknowledgementV2 `json:"satRelease"`
-	Policies     []signerPolicySummaryV2           `json:"policies"`
-	WebAuthn     signerWebAuthnHealthV2            `json:"webAuthn"`
-	Jupiter      signerJupiterHealthV2             `json:"jupiter"`
-	Audit        signerAuditHealthV2               `json:"audit"`
-	State        signerStateHealthV2               `json:"state"`
+	Details      string                  `json:"details"`
+	ReadOnly     bool                    `json:"readOnly"`
+	KeystoreType string                  `json:"keystoreType"`
+	Chains       []string                `json:"chains"`
+	Ready        bool                    `json:"ready"`
+	Release      signerReleaseIdentityV2 `json:"release"`
+	Schema       signerSchemaHealthV2    `json:"schema"`
+	Network      signerNetworkHealthV2   `json:"network"`
+	Capabilities signerCapabilitiesV2    `json:"capabilities"`
+	Policies     []signerPolicySummaryV2 `json:"policies"`
+	WebAuthn     signerWebAuthnHealthV2  `json:"webAuthn"`
+	Jupiter      signerJupiterHealthV2   `json:"jupiter"`
+	Audit        signerAuditHealthV2     `json:"audit"`
+	State        signerStateHealthV2     `json:"state"`
 }
 
 type signerJupiterHealthV2 struct {
@@ -127,7 +126,6 @@ func (s *signerServiceV2) health(cfg signerConfig) (signerHealthResultV2, error)
 		Schema:       schemaHealth,
 		Network:      networkHealth,
 		Capabilities: signerV2Capabilities,
-		SATRelease:   signerSATReleaseAcknowledgementGeneration2,
 		Policies:     summaries,
 		WebAuthn:     webauthnHealth,
 		Jupiter:      signerJupiterHealthV2{TriggerConfigured: s.trigger != nil, LiveEnabled: cfg.jupiterLive},
@@ -203,29 +201,6 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			}
 			return marshalSignerResultV2(map[string]any{"transactionId": body.TransactionID, "phase": "aborted"})
 		}
-	case "v2.ownerCeremony.prepare", "v2.ownerCeremony.execute":
-		if cfg.readOnly {
-			return nil, errors.New("read-only signer mode")
-		}
-		if err := requireControlSocketV2(control); err != nil {
-			return nil, err
-		}
-		var body ownerCeremonyRequestV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		if req.Op == "v2.ownerCeremony.prepare" {
-			result, err := s.prepareOwnerCeremonyV1(body)
-			if err != nil {
-				return nil, err
-			}
-			return marshalSignerResultV2(result)
-		}
-		result, err := s.executeOwnerCeremonyV1(body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(result)
 	case "getAddresses":
 		wallet, err := s.keys.PublicRecord(req.WalletID)
 		if err != nil {
@@ -478,32 +453,6 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(policy)
-	case "v2.policy.activateBaseline":
-		if cfg.readOnly {
-			return nil, errors.New("read-only signer mode")
-		}
-		if err := requireControlSocketV2(control); err != nil {
-			return nil, err
-		}
-		var body signerRoleBaselineActivationRequestV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		wallet, err := s.keys.PublicRecord(req.WalletID)
-		if err != nil {
-			return nil, err
-		}
-		policy, err := s.store.activateRoleBaselineV1(
-			req.WalletID,
-			body.ExpectedVersion,
-			body.Baseline,
-			wallet.PublicKey,
-			signerRoleBaselineRuntimeFromEnvV1(),
-		)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(policy)
 	case "v2.wallet.get":
 		wallet, err := s.keys.PublicRecord(req.WalletID)
 		if err != nil {
@@ -516,34 +465,6 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, err
 		}
 		return marshalSignerResultV2(readiness)
-	case "v2.keeperFeePayer.get":
-		capability, err := s.keeperFeePayerCapabilityV2(req.WalletID)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(capability)
-	case "v2.keeperFeePayer.ensure":
-		if cfg.readOnly {
-			return nil, errors.New("read-only signer mode")
-		}
-		if err := requireControlSocketV2(control); err != nil {
-			return nil, err
-		}
-		var body signerKeeperFeePayerEnsureRequestV2
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		var capability signerKeeperFeePayerCapabilityV2
-		var err error
-		if body.Standalone {
-			capability, err = s.ensureStandaloneKeeperCapabilityV2(req.WalletID)
-		} else {
-			capability, err = s.ensureKeeperFeePayerCapabilityV2(req.WalletID)
-		}
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(capability)
 	case "v2.wallet.create":
 		if cfg.readOnly {
 			return nil, errors.New("read-only signer mode")
@@ -554,9 +475,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		}
 		body.WalletID = req.WalletID
 		if body.Baseline != nil {
-			if strings.EqualFold(strings.TrimSpace(body.Baseline.Role), "keeper") {
-				return nil, errors.New("Keeper fee-payer keys are created only through v2.keeperFeePayer.ensure")
-			}
+
 			if body.Policy.Role != "" || body.Policy.Version != 0 || body.Policy.BaselineVersion != 0 ||
 				len(body.Policy.Operations) != 0 || len(body.Policy.Programs) != 0 || len(body.Policy.Assets) != 0 {
 				return nil, errors.New("wallet creation must select exactly one policy or signer-owned role baseline")
@@ -824,29 +743,6 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 			return nil, errors.New("signer operation wallet mismatch")
 		}
 		return marshalSignerResultV2(operation)
-	case "v2.satLookup.binding.get":
-		var body signerSATLookupBindingRequestV2
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		binding, err := s.store.getSATLookupBindingV2(req.WalletID, body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(binding)
-	case "v2.satCommitment.allocate":
-		if cfg.readOnly {
-			return nil, errors.New("read-only signer mode")
-		}
-		var body signerSATCommitmentAllocateRequestV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		commitment, err := s.keys.allocateSATCommitmentV1(req.WalletID, body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(commitment)
 	case "v2.wenBTCClaim.prepare":
 		intent, err := decodeWENBTCClaimIntentV1(req.Request)
 		if err != nil {
@@ -933,58 +829,6 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 		return s.installWENBTCRouteServiceV1(req, cfg, control)
 	case "v2.wenBtc.route.preview", "v2.wenBtc.inspect", "v2.wenBtc.prepare":
 		return s.inspectWENBTCV1(req, cfg)
-	case "v2.vaultMining.binding.inspect":
-		var body vaultMiningBindingRequestV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		policy, err := s.store.getPolicy(req.WalletID)
-		if err != nil {
-			return nil, err
-		}
-		if policy.Role != "agent" || policy.ApprovalMode != "" {
-			return nil, errors.New("Vault inspection requires Agent executor wallet")
-		}
-		wallet, err := s.keys.PublicRecord(req.WalletID)
-		if err != nil {
-			return nil, err
-		}
-		address, err := solana.PublicKeyFromBase58(wallet.PublicKey)
-		if err != nil {
-			return nil, err
-		}
-		urls, err := s.keys.SolanaRPCURLsV2(req.WalletID)
-		if err != nil {
-			return nil, errSignerNetworkPendingV2
-		}
-		result, err := inspectVaultMiningBindingV1(urls, address, body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(result)
-	case "v2.vaultMining.commitment.allocate":
-		if cfg.readOnly {
-			return nil, errors.New("read-only signer mode")
-		}
-		var body signerVaultMiningAllocateV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		result, err := s.allocateReviewedVaultCommitmentV1(req.WalletID, body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(result)
-	case "v2.satCommitment.binding.get":
-		var body signerSATCommitmentBindingRequestV1
-		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
-			return nil, err
-		}
-		commitment, err := s.keys.getSATCommitmentBindingV1(req.WalletID, body)
-		if err != nil {
-			return nil, err
-		}
-		return marshalSignerResultV2(commitment)
 	case "v2.operation.reconcile":
 		var body signerOperationLookupV2
 		if err := decodeSignerRequestV2(req.Request, &body); err != nil {
@@ -1002,8 +846,7 @@ func (s *signerServiceV2) handle(req request, cfg signerConfig, control bool) ([
 
 func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2, error) {
 	switch strings.TrimSpace(req.Intent.Type) {
-	case intentSolanaVaultBondAction, intentSolanaAgentCapitalAction, intentSolanaVaultMining, intentSolanaMoneyFoundation, intentFederationBondChallenge:
-		return signerOperationV2{}, errors.New("Vault bond, Agent Capital, money-foundation, and federation intents require signer-owned reviewed authorization")
+
 	}
 	walletRecord, err := s.keys.PublicRecord(req.IntentWalletID())
 	if err != nil {
@@ -1013,44 +856,11 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if err != nil {
 		return signerOperationV2{}, errors.New("signer-owned wallet record has an invalid public key")
 	}
-	hydratedIntent, err := s.hydrateSATCommitmentIntentV1(req.Intent, req.IntentWalletID())
+	hydratedIntent, err := s.hydrateTypedTransferIntentV2(req.Intent, req.IntentWalletID())
 	if err != nil {
 		return signerOperationV2{}, err
 	}
-	hydratedIntent, err = s.hydrateTypedTransferIntentV2(hydratedIntent, req.IntentWalletID())
-	if err != nil {
-		return signerOperationV2{}, err
-	}
-	var authorityWalletID string
-	var authorityPublicKey solana.PublicKey
-	var authorityPolicy signerPolicyV2
-	if strings.TrimSpace(hydratedIntent.Type) == intentSolanaSATKeeperAction {
-		authorityWalletID = normalizeWalletID(hydratedIntent.AuthorityWalletID)
-		standaloneKeeper := isVNextKeeperActionV2(hydratedIntent) && authorityWalletID == normalizeWalletID(req.IntentWalletID())
-		authorityRecord, authorityErr := s.keys.PublicRecord(authorityWalletID)
-		if authorityErr != nil {
-			return signerOperationV2{}, errors.New("typed SAT keeper authority wallet is unavailable")
-		}
-		authorityPublicKey, authorityErr = solana.PublicKeyFromBase58(authorityRecord.PublicKey)
-		if authorityErr != nil {
-			return signerOperationV2{}, errors.New("typed SAT keeper authority has an invalid public key")
-		}
-		authorityPolicy, authorityErr = s.store.getPolicy(authorityWalletID)
-		if authorityErr != nil || (!standaloneKeeper && authorityPolicy.Role != "mining") || (standaloneKeeper && authorityPolicy.Role != "keeper") {
-			return signerOperationV2{}, errors.New("typed SAT keeper authority has the wrong bounded role")
-		}
-	}
-	var intent normalizedIntentV2
-	if strings.TrimSpace(hydratedIntent.Type) == intentSolanaSATKeeperAction {
-		intent, err = normalizeKeeperFeePayerIntentV2(
-			hydratedIntent,
-			walletPublicKey,
-			authorityWalletID,
-			authorityPublicKey,
-		)
-	} else {
-		intent, err = normalizeSignerIntentForWalletV2(hydratedIntent, &walletPublicKey)
-	}
+	intent, err := normalizeSignerIntentForWalletV2(hydratedIntent, &walletPublicKey)
 	if err != nil {
 		return signerOperationV2{}, err
 	}
@@ -1060,26 +870,6 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	}
 	if strings.TrimSpace(req.PolicyHash) == "" || req.PolicyHash != policy.Hash {
 		return signerOperationV2{}, errors.New("signer policy hash mismatch")
-	}
-	if intent.ParentIntent != nil {
-		parentPolicy := policy
-		parentLabel := "SAT lookup-table parent distribution"
-		if intent.Intent.Type == intentSolanaSATKeeperAction {
-			parentPolicy = authorityPolicy
-			parentLabel = "SAT keeper operational authority"
-		}
-		if roleErr := requireAutonomousRoleV2(parentPolicy, *intent.ParentIntent); roleErr != nil {
-			return signerOperationV2{}, fmt.Errorf("%s is not authorized: %w", parentLabel, roleErr)
-		}
-		if _, policyErr := policyAssetForIntentV2(parentPolicy, *intent.ParentIntent); policyErr != nil {
-			return signerOperationV2{}, fmt.Errorf("%s is not authorized: %w", parentLabel, policyErr)
-		}
-	}
-	if policy.Role == "vault" {
-		return signerOperationV2{}, errors.New("Vault direct execution requires signer-reviewed authorization through review.prepare, signer-owned WebAuthn, and review.execute")
-	}
-	if policy.Role == "keeper" && intent.Intent.Type != intentSolanaSATKeeperAction {
-		return signerOperationV2{}, errors.New("Keeper fee-payer keys cannot execute as general wallets")
 	}
 	operation, lookupErr := s.store.getOperation(req.RequestID)
 	existing := lookupErr == nil
@@ -1106,25 +896,11 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if isSignerOwnedTriggerIntentV2(intent) {
 		return s.executeAutonomousJupiterTriggerV2(req, intent, policy, walletPublicKey)
 	}
-	networkWalletID := req.IntentWalletID()
-	if intent.Intent.Type == intentSolanaSATKeeperAction {
-		networkWalletID = authorityWalletID
-	}
-	network, err := s.keys.SolanaNetworkV2(networkWalletID)
+	network, err := s.keys.SolanaNetworkV2(req.IntentWalletID())
 	if err != nil {
 		return signerOperationV2{}, errSignerNetworkPendingV2
 	}
 	rpcURLs := signerExecutionRPCURLsV2(network)
-	if err := validateSATRewardEntryRPCV2(rpcURLs, intent); err != nil {
-		return signerOperationV2{}, err
-	}
-	var verificationRPCURLs []string
-	if intent.Intent.Type == intentSolanaSATLookupTable || len(intent.AddressLookupTables) > 0 {
-		verificationRPCURLs, err = resolveSATLookupVerificationRPCURLsV2(network)
-		if err != nil {
-			return signerOperationV2{}, err
-		}
-	}
 	if !existing {
 		operation, _, err = s.store.reserveOperation(req, intent)
 		if err != nil {
@@ -1138,38 +914,13 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 	if !claimed {
 		return operation, nil
 	}
-	if err := s.store.acquireSATLookupMutationLeaseV2(req.IntentWalletID(), operation.RequestID, intent); err != nil {
-		if errors.Is(err, errSATLookupMutationInProgressV2) || errors.Is(err, errSATLookupMutationReconciliationV2) {
-			released, releaseErr := s.store.releaseReservedOperationClaim(operation.RequestID, executionAttempt, err)
-			if releaseErr != nil {
-				return signerOperationV2{}, fmt.Errorf("release blocked SAT lookup-table execution claim: %w", releaseErr)
-			}
-			return released, nil
-		}
-		failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
-		if markErr != nil {
-			return signerOperationV2{}, fmt.Errorf("acquire SAT lookup-table mutation lease: %v; persist signer failure: %w", err, markErr)
-		}
-		return failed, err
-	}
-
 	privateKey, _, err := s.keys.privateKey(req.IntentWalletID())
 	if err != nil {
 		_, _ = s.store.markFailedClaim(operation.RequestID, executionAttempt, err)
 		return signerOperationV2{}, err
 	}
 	defer zeroBytes(privateKey)
-	operationalPrivateKeys := []solana.PrivateKey(nil)
-	if intent.Intent.Type == intentSolanaSATKeeperAction && intent.ParentIntent != nil {
-		authorityPrivateKey, _, authorityErr := s.keys.privateKey(authorityWalletID)
-		if authorityErr != nil {
-			_, _ = s.store.markFailedClaim(operation.RequestID, executionAttempt, authorityErr)
-			return signerOperationV2{}, errors.New("typed SAT keeper operational key is unavailable")
-		}
-		defer zeroBytes(authorityPrivateKey)
-		operationalPrivateKeys = []solana.PrivateKey{authorityPrivateKey}
-	}
-	tx, err := buildTypedTransactionV2(rpcURLs, verificationRPCURLs, privateKey, operationalPrivateKeys, intent)
+	tx, err := buildTypedTransactionV2(rpcURLs, nil, privateKey, nil, intent)
 	if err != nil {
 		safeErr := errors.New("signer-owned Solana RPC transaction preparation failed")
 		failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, safeErr)
@@ -1201,23 +952,11 @@ func (s *signerServiceV2) execute(req signerExecuteRequestV2) (signerOperationV2
 		}
 		return failed, safeErr
 	}
-	if intent.Intent.Type == intentSolanaSATKeeperAction && intent.Intent.Action == keeperAtomicOpenCommitActionV2 {
-		if err := simulateSignedAtomicOpenCommitV2(rpcURLs, tx); err != nil {
-			safeErr := fmt.Errorf("signed atomic SAT open-and-commit simulation failed: %w", err)
-			failed, markErr := s.store.markFailedClaim(operation.RequestID, executionAttempt, safeErr)
-			if markErr != nil {
-				return signerOperationV2{}, fmt.Errorf("%v; persist signer failure: %w", safeErr, markErr)
-			}
-			return failed, safeErr
-		}
-	}
 	digest := sha256.Sum256(raw)
 	signature := tx.Signatures[0].String()
 	signedTxBase64 := base64.StdEncoding.EncodeToString(raw)
 	operationRequestID := operation.RequestID
-	operation, err = s.store.validateBindAndMarkBroadcastClaimV2(
-		req.IntentWalletID(),
-		intent,
+	operation, err = s.store.markBroadcastClaim(
 		operationRequestID,
 		executionAttempt,
 		signature,
@@ -1318,38 +1057,11 @@ func buildTypedTransactionV2(
 	if err != nil {
 		return nil, err
 	}
-	if intent.Intent.Type == intentSolanaSATLookupTable {
-		if err := validateSATLookupTableOperationStateV2(verificationRPCURLs, from, intent); err != nil {
-			return nil, err
-		}
-	}
-	addressTables, err := loadSATDistributionAddressTablesV2(verificationRPCURLs, from, intent)
-	if err != nil {
-		return nil, err
-	}
-
 	blockhash, err := signerLatestBlockhashWithFallbackV2(rpcURLs)
 	if err != nil {
 		return nil, err
 	}
-	if intent.Intent.Type == intentSolanaSATKeeperAction {
-		if intent.ParentIntent == nil {
-			return execution.NewSignedTypedKeeperCapabilityTransaction(
-				instructions,
-				blockhash,
-				privateKey,
-				addressTables,
-			)
-		}
-		return execution.NewSignedTypedTransactionWithFeePayer(
-			instructions,
-			blockhash,
-			privateKey,
-			operationalPrivateKeys,
-			addressTables,
-		)
-	}
-	return newSignedTypedTransactionV2(instructions, blockhash, privateKey, addressTables)
+	return newSignedTypedTransactionV2(instructions, blockhash, privateKey, nil)
 }
 
 func signerExecutionRPCURLsV2(config signerNetworkSecretV2) []string {
@@ -1366,7 +1078,7 @@ func newSignedTypedTransactionV2(
 	privateKey solana.PrivateKey,
 	addressTables map[solana.PublicKey]solana.PublicKeySlice,
 ) (*solana.Transaction, error) {
-	return execution.NewSignedTypedTransaction(instructions, blockhash, privateKey, addressTables)
+	return execution.NewSignedTypedTransaction(instructions, blockhash, privateKey, nil)
 }
 
 func buildTypedInstructionsV2(
@@ -1448,11 +1160,6 @@ func buildTypedInstructionsV2(
 			transferData,
 		)
 		return appendMemo([]solana.Instruction{createDestinationATA, transfer}), nil
-	case intentSolanaSATAction, intentSolanaSATKeeperAction, intentSolanaSATLookupTable, intentSolanaVaultBondAction, intentSolanaAgentCapitalAction:
-		if len(intent.Instructions) == 0 || len(intent.Instructions) > 6 {
-			return nil, errors.New("typed SAT action has an invalid instruction count")
-		}
-		return intent.Instructions, nil
 	default:
 		return nil, errors.New("unsupported typed signer intent")
 	}
@@ -1659,7 +1366,7 @@ func validateSignerNativeSpendV2(
 		return err
 	}
 	principal := big.NewInt(0)
-	if intent.Asset == "solana:native" && intent.Intent.Type != intentSolanaSATKeeperAction {
+	if intent.Asset == "solana:native" {
 		principal.Set(intent.Amount)
 	}
 	maximum := new(big.Int).Add(principal, feeCeiling)
@@ -1725,12 +1432,12 @@ func validateSignerNativeSpendV2(
 	return errors.New("signer-owned Solana RPC native spend validation failed")
 }
 
-func simulateSignedAtomicOpenCommitV2(rpcURLs []string, tx *solana.Transaction) error {
+func simulateSignedTransactionV2(rpcURLs []string, tx *solana.Transaction) error {
 	if tx == nil {
-		return errors.New("signed atomic SAT transaction is missing")
+		return errors.New("signed transaction is missing")
 	}
 	if err := tx.VerifySignatures(); err != nil {
-		return fmt.Errorf("verify both atomic SAT signatures: %w", err)
+		return fmt.Errorf("verify transaction signatures: %w", err)
 	}
 	active, err := activeSolanaWriteRPCURLs(rpcURLs)
 	if err != nil {
@@ -1746,20 +1453,20 @@ func simulateSignedAtomicOpenCommitV2(rpcURLs []string, tx *solana.Transaction) 
 		cancel()
 		if requestErr != nil || response == nil || response.Value == nil {
 			if requestErr == nil {
-				requestErr = errors.New("signed atomic SAT simulation returned no result")
+				requestErr = errors.New("signed simulation returned no result")
 			}
 			markSolanaWriteRPCFailure(rpcURL, requestErr)
 			continue
 		}
 		if response.Value.Err != nil {
-			simulationErr := fmt.Errorf("program rejected signed atomic SAT transaction: %v", response.Value.Err)
+			simulationErr := fmt.Errorf("program rejected signed transaction: %v", response.Value.Err)
 			markSolanaWriteRPCFailure(rpcURL, simulationErr)
 			return simulationErr
 		}
 		markSolanaWriteRPCSuccess(rpcURL)
 		return nil
 	}
-	return errors.New("signer-owned Solana RPC could not verify the signed atomic SAT transaction")
+	return errors.New("signer-owned Solana RPC could not verify the signed transaction")
 }
 
 func broadcastSignedOnceV2(rpcURLs []string, signedRaw []byte, expectedSignature solana.Signature) error {
@@ -1772,163 +1479,6 @@ func lookupSignatureStatusV2(rpcURLs []string, signature solana.Signature) (stri
 
 func decodeStoredSignedOperationV2(operation signerOperationV2) ([]byte, *solana.Transaction, error) {
 	return execution.DecodeStoredSignedOperation(operation.SignedTxBase64, operation.TransactionDigest, operation.Signature)
-}
-
-func verifySignedBlockhashAcrossSATWitnessesV2(rpcURLs []string, blockhash solana.Hash) (string, error) {
-	independent, err := independentSATLookupRPCURLsV2(rpcURLs)
-	if err != nil {
-		return "unknown", err
-	}
-	successes := 0
-	for _, rpcURL := range independent {
-		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
-		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
-		result, requestErr := client.IsBlockhashValid(ctx, blockhash, rpc.CommitmentConfirmed)
-		cancel()
-		if requestErr != nil || result == nil {
-			continue
-		}
-		successes++
-		if result.Value {
-			return "valid", nil
-		}
-	}
-	if successes == len(independent) && successes >= 2 {
-		return "expired", nil
-	}
-	return "unknown", errors.New("independent Solana RPC origins could not prove signed blockhash state")
-}
-
-type signedSATLookupMutationV2 struct {
-	Action    string
-	Address   solana.PublicKey
-	Addresses []solana.PublicKey
-}
-
-func satLookupMutationFromSignedTransactionV2(tx *solana.Transaction) (signedSATLookupMutationV2, error) {
-	if tx == nil {
-		return signedSATLookupMutationV2{}, errors.New("signed SAT lookup-table transaction is missing")
-	}
-	for _, instruction := range tx.Message.Instructions {
-		programID, err := tx.ResolveProgramIDIndex(instruction.ProgramIDIndex)
-		if err != nil {
-			return signedSATLookupMutationV2{}, err
-		}
-		if !programID.Equals(satAddressLookupTableProgramIDV2) {
-			continue
-		}
-		accounts, err := instruction.ResolveInstructionAccounts(&tx.Message)
-		if err != nil || len(accounts) == 0 {
-			return signedSATLookupMutationV2{}, errors.New("signed SAT lookup-table mutation accounts are invalid")
-		}
-		if len(instruction.Data) < 4 {
-			return signedSATLookupMutationV2{}, errors.New("signed SAT lookup-table mutation data is invalid")
-		}
-		mutation := signedSATLookupMutationV2{Address: accounts[0].PublicKey}
-		switch binary.LittleEndian.Uint32(instruction.Data[:4]) {
-		case 0:
-			mutation.Action = "create"
-		case 2:
-			if len(instruction.Data) < 12 {
-				return signedSATLookupMutationV2{}, errors.New("signed SAT lookup-table extend data is invalid")
-			}
-			count := binary.LittleEndian.Uint64(instruction.Data[4:12])
-			if count == 0 || count > maxSATLookupTableExtendAddressesV2 || uint64(len(instruction.Data)) != 12+count*32 {
-				return signedSATLookupMutationV2{}, errors.New("signed SAT lookup-table extend data is invalid")
-			}
-			mutation.Action = "extend"
-			for offset := 12; offset < len(instruction.Data); offset += 32 {
-				mutation.Addresses = append(mutation.Addresses, solana.PublicKeyFromBytes(instruction.Data[offset:offset+32]))
-			}
-		case 3:
-			mutation.Action = "deactivate"
-		case 4:
-			mutation.Action = "close"
-		default:
-			return signedSATLookupMutationV2{}, errors.New("signed SAT lookup-table mutation action is invalid")
-		}
-		return mutation, nil
-	}
-	return signedSATLookupMutationV2{}, errors.New("signed transaction has no SAT lookup-table mutation")
-}
-
-func proveSATLookupTableAbsentV2(rpcURLs []string, address solana.PublicKey) error {
-	independent, err := independentSATLookupRPCURLsV2(rpcURLs)
-	if err != nil {
-		return err
-	}
-	absent := 0
-	for _, rpcURL := range independent {
-		client := newSignerOwnedSolanaRPCClientV2(rpcURL)
-		ctx, cancel := context.WithTimeout(context.Background(), solanaWriteRPCRequestTimeout())
-		account, requestErr := client.GetAccountInfoWithOpts(ctx, address, &rpc.GetAccountInfoOpts{
-			Encoding: solana.EncodingBase64, Commitment: rpc.CommitmentConfirmed,
-		})
-		cancel()
-		if errors.Is(requestErr, rpc.ErrNotFound) {
-			absent++
-			continue
-		}
-		if requestErr != nil {
-			continue
-		}
-		if account != nil && account.Value != nil {
-			return errors.New("SAT lookup-table account exists on a verified RPC origin")
-		}
-		absent++
-	}
-	if absent < 2 || absent != len(independent) {
-		return errors.New("independent Solana RPC origins could not prove SAT lookup-table absence")
-	}
-	return nil
-}
-
-func reconcileSATLookupMutationEffectV2(
-	rpcURLs []string,
-	wallet solana.PublicKey,
-	mutation signedSATLookupMutationV2,
-) (bool, bool, error) {
-	state, stateErr := loadSATLookupTableStateV2(rpcURLs, mutation.Address)
-	if stateErr != nil {
-		return false, false, stateErr
-	}
-	if state == nil {
-		if mutation.Action == "create" || mutation.Action == "close" {
-			return mutation.Action == "close", mutation.Action == "create", nil
-		}
-		return false, false, errors.New("bound SAT lookup table is unexpectedly absent")
-	}
-	if state.Authority == nil || !state.Authority.Equals(wallet) {
-		return false, false, errors.New("SAT lookup-table authority does not match signer-owned wallet during reconciliation")
-	}
-	switch mutation.Action {
-	case "create":
-		return true, false, nil
-	case "extend":
-		existing := make(map[string]bool, len(state.Addresses))
-		for _, address := range state.Addresses {
-			existing[address.String()] = true
-		}
-		present := 0
-		for _, address := range mutation.Addresses {
-			if existing[address.String()] {
-				present++
-			}
-		}
-		if present == len(mutation.Addresses) {
-			return true, false, nil
-		}
-		if present == 0 {
-			return false, true, nil
-		}
-		return false, false, errors.New("SAT lookup-table extend effect is only partially visible")
-	case "deactivate":
-		return !state.IsActive(), state.IsActive(), nil
-	case "close":
-		return false, true, nil
-	default:
-		return false, false, errors.New("unsupported SAT lookup-table mutation during reconciliation")
-	}
 }
 
 func signerLatestBlockhashWithFallbackV2(rpcURLs []string) (solana.Hash, error) {
@@ -2007,71 +1557,12 @@ func (s *signerServiceV2) reconcile(requestID, walletID string) (signerOperation
 		return s.store.markFailed(requestID, errors.New("Solana transaction failed on chain"))
 	}
 	var raw []byte
-	var signedTx *solana.Transaction
 	var artifactErr error
-	if operation.IntentType == intentSolanaVaultMining {
-		if _, err := signerVaultReleaseContextV1("devnet", solanaDevnetGenesisHashV2); err != nil {
-			return operation, err
-		}
-		rpcURLs, err = solanaRPCURLsForClusterV2(rpcURLs, "devnet")
-		if err != nil {
-			return operation, err
-		}
-		raw, signedTx, artifactErr = s.keys.decodeVaultBroadcastV1(operation)
-	} else {
-		raw, signedTx, artifactErr = decodeStoredSignedOperationV2(operation)
-	}
-	defer zeroBytes(raw)
+
+	raw, _, artifactErr = decodeStoredSignedOperationV2(operation)
+
 	if artifactErr != nil {
 		return s.store.markUnknown(requestID, artifactErr)
-	}
-	if operation.IntentType == intentSolanaSATLookupTable {
-		network, networkErr := s.keys.SolanaNetworkV2(walletID)
-		if networkErr != nil {
-			return operation, errSignerNetworkPendingV2
-		}
-		verificationRPCURLs, verificationErr := resolveSATLookupVerificationRPCURLsV2(network)
-		if verificationErr != nil {
-			return operation, verificationErr
-		}
-		mutation, mutationErr := satLookupMutationFromSignedTransactionV2(signedTx)
-		if mutationErr != nil {
-			return s.store.markUnknown(requestID, mutationErr)
-		}
-		walletRecord, walletErr := s.keys.PublicRecord(walletID)
-		if walletErr != nil {
-			return operation, walletErr
-		}
-		walletPublicKey, walletErr := solana.PublicKeyFromBase58(walletRecord.PublicKey)
-		if walletErr != nil {
-			return operation, errors.New("signer-owned wallet record has an invalid public key")
-		}
-		effectApplied, effectAbsent, effectErr := reconcileSATLookupMutationEffectV2(
-			verificationRPCURLs,
-			walletPublicKey,
-			mutation,
-		)
-		if effectApplied {
-			return s.store.markConfirmed(requestID)
-		}
-		blockhashState, blockhashErr := verifySignedBlockhashAcrossSATWitnessesV2(verificationRPCURLs, signedTx.Message.RecentBlockhash)
-		if blockhashState == "expired" {
-			if effectErr != nil || !effectAbsent {
-				if effectErr == nil {
-					effectErr = errors.New("expired SAT lookup-table mutation effect remains ambiguous")
-				}
-				return s.store.markUnknown(requestID, effectErr)
-			}
-			return s.store.failExpiredSATLookupMutationV2(
-				walletID,
-				requestID,
-				mutation.Address.String(),
-				mutation.Action == "create",
-			)
-		}
-		if blockhashErr != nil && blockhashState != "valid" {
-			return s.store.markUnknown(requestID, blockhashErr)
-		}
 	}
 	if err := broadcastSignedOnceV2(rpcURLs, raw, signature); err == nil {
 		if status, statusErr := lookupSignatureStatusV2(rpcURLs, signature); statusErr == nil {

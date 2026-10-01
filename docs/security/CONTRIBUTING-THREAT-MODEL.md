@@ -4,6 +4,8 @@ summary: "How to propose threats, mitigations, attack chains, and corrections fo
 sidebarTitle: "Threat contributions"
 ---
 
+> Historical assessment: references to the retired Satcoin miner and wallet roles describe the assessed version only. They are not current setup instructions or evidence for WEN.
+
 # Contributing to the Fased Threat Model
 
 Thanks for helping make Fased more secure. This threat model is a living

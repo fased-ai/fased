@@ -30,7 +30,6 @@ const required = [
   "wallet/wen-btc-inspection.js",
   "wallet/wen-btc-route-preview.js",
   "wallet/external-submission-ledger.js",
-  "agents/agent-capital-runtime.js",
   "tasks/task-ledger-store.js",
   "memory/manager.js",
 ];
@@ -74,9 +73,7 @@ if (process.argv.includes("--import-runtime")) {
       JSON.stringify([
         ...modules.map((relative) => path.join(dist, relative)),
         ...(importCorePlugins
-          ? ["memory-core", "sat-mining"].map((id) =>
-              path.join(dist, "..", "extensions", id, "index.js"),
-            )
+          ? ["memory-core", "wen"].map((id) => path.join(dist, "..", "extensions", id, "index.js"))
           : []),
       ]),
       JSON.stringify(bondReview),

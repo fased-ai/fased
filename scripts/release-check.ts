@@ -31,8 +31,8 @@ const requiredPathGroups = [
   "dist/plugin-sdk/device-pair.d.ts",
   "dist/plugin-sdk/discord.js",
   "dist/plugin-sdk/discord.d.ts",
-  "dist/plugin-sdk/sat-runtime.js",
-  "dist/plugin-sdk/sat-runtime.d.ts",
+  "dist/plugin-sdk/wen-runtime.js",
+  "dist/plugin-sdk/wen-runtime.d.ts",
   "dist/plugin-sdk/slack.js",
   "dist/plugin-sdk/slack.d.ts",
   "dist/plugin-sdk/telegram.js",
@@ -57,10 +57,19 @@ const requiredPathGroups = [
   "scripts/hosted-release-manifest.mjs",
   "release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.json",
   "release/lifecycle-trust/root-v1/fased-lifecycle-root-v1.sha256",
-  "shared/sat-hash-v1.json",
 ];
 const requiredExactDependencies = new Map<string, string>();
-const forbiddenPrefixes = ["dist/FasedAgent.app/", "src/", "extensions/node_modules/"];
+const forbiddenPrefixes = [
+  "dist/FasedAgent.app/",
+  "dist/mining/",
+  "dist/plugin-sdk/sat-runtime.",
+  "dist/cli/mining-cli.",
+  "dist/cli/mining-cli/",
+  "dist/cli/program/register.mining.",
+  "extensions/sat-mining/",
+  "src/",
+  "extensions/node_modules/",
+];
 const allowedDocsPrefixes = ["docs/reference/templates/"];
 const extensionSourceFileRe = /\.(?:c|m)?(?:t|j)sx?$/;
 const extensionSrcImportRe = /(?:from\s+|import\s*\(\s*)["']((?:\.\.\/)+src\/[^"']+)["']/g;
@@ -552,14 +561,10 @@ function checkExactReleaseDependencies() {
 }
 
 function checkRuntimeBuildExports() {
-  const satRuntimePath = resolve("dist/plugin-sdk/sat-runtime.js");
-  const source = readFileSync(satRuntimePath, "utf8");
+  const wenRuntimePath = resolve("dist/plugin-sdk/wen-runtime.js");
+  const source = readFileSync(wenRuntimePath, "utf8");
   const exportBlocks = [...source.matchAll(/export\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
-  const requiredExports = [
-    "createSubsystemLogger",
-    "fetchWithSsrFGuard",
-    "resolvePreferredFasedAgentTmpDir",
-  ];
+  const requiredExports = ["buildWenAcquisitionHandoff", "readWenEconomyLocal"];
   const missing = requiredExports.filter(
     (name) => !exportBlocks.some((block) => new RegExp(`\\b${name}\\b`).test(block)),
   );

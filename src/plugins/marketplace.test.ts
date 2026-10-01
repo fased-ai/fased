@@ -92,6 +92,7 @@ function createLifecycleReport(): PluginLifecycleReport {
     typedHooks: [],
     channels: [],
     providers: [],
+    runtimeProviders: {},
     webSearchProviders: [],
     imageGenerationProviders: [],
     videoGenerationProviders: [],

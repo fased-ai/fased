@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
-import plugin from "../../extensions/sat-mining/index.js";
+import plugin from "../../extensions/wen/index.js";
 import { createEmptyPluginRegistry } from "../plugins/registry.js";
 import {
   connectReq,

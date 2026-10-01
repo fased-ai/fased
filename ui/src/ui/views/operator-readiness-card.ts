@@ -4,7 +4,6 @@ import {
   type OperatorReadinessChecklistItem,
 } from "../../../../src/operator/operator-readiness.js";
 import type { FederationStatus, FederationToken } from "../federation-api.js";
-import type { SatMinerProfile, SatMiningReadiness, SatMiningRuntimeStatus } from "../mining-api.js";
 import type { WalletStatus } from "../wallet-api.js";
 
 export type OperatorReadinessContext = {
@@ -32,10 +31,6 @@ export type OperatorReadinessContext = {
     };
   }>;
   defaultWalletId: string | null;
-  miningAttachedWalletId: string | null;
-  miningProfile: SatMinerProfile | null;
-  miningReadiness: SatMiningReadiness | null;
-  miningStatus: SatMiningRuntimeStatus | null;
 };
 
 export type OperatorReadinessItem = OperatorReadinessChecklistItem & {
@@ -49,7 +44,6 @@ export type OperatorReadinessCardProps = OperatorReadinessContext & {
   intro: string;
   onOpenAdminControl?: () => void;
   onOpenTaskPayment?: () => void;
-  onOpenMining?: () => void;
   onOpenFederationReview?: () => void;
 };
 
@@ -64,14 +58,6 @@ export function describeOperatorReadiness(
   const joined = props.managedMode
     ? props.status?.joined === true && Boolean(managedToken)
     : Boolean(props.token);
-  const miningWalletId =
-    String(
-      props.miningAttachedWalletId ||
-        props.miningProfile?.walletId ||
-        props.miningStatus?.walletId ||
-        props.miningReadiness?.selectedWalletId ||
-        "",
-    ).trim() || null;
   return describeOperatorReadinessChecklist({
     walletStatus: props.walletStatus
       ? {
@@ -87,7 +73,6 @@ export function describeOperatorReadiness(
       name: wallet.name,
     })),
     defaultWalletId: props.defaultWalletId,
-    miningAttachedWalletId: miningWalletId,
     joined,
     trustState: activeTrustState,
     hostedState: activeHostedState,
@@ -97,23 +82,19 @@ export function describeOperatorReadiness(
     actionLabel:
       item.title === "Wallet Control Passkey ready"
         ? "Open Wallet Access"
-        : item.title === "Agent wallet set"
-          ? "Set Agent"
-          : item.title === "Mining wallet separate"
-            ? "Open Mining"
-            : item.title === "Fased Network joined / trusted"
-              ? "Open Fased Network review"
-              : undefined,
+        : item.title === "Wallet available"
+          ? "Open Wallet"
+          : item.title === "Fased Network joined / trusted"
+            ? "Open Fased Network review"
+            : undefined,
     actionKey:
       item.title === "Wallet Control Passkey ready"
         ? "admin"
-        : item.title === "Agent wallet set"
+        : item.title === "Wallet available"
           ? "payment"
-          : item.title === "Mining wallet separate"
-            ? "mining"
-            : item.title === "Fased Network joined / trusted"
-              ? "federation-review"
-              : undefined,
+          : item.title === "Fased Network joined / trusted"
+            ? "federation-review"
+            : undefined,
   }));
 }
 
@@ -126,8 +107,6 @@ function resolveReadinessAction(
       return props.onOpenAdminControl ?? null;
     case "payment":
       return props.onOpenTaskPayment ?? null;
-    case "mining":
-      return props.onOpenMining ?? null;
     case "federation-review":
       return props.onOpenFederationReview ?? null;
     default:

@@ -29,7 +29,6 @@ const wenClientEntries = {
   "wallet/wen-campaign-review-contract": "src/wallet/wen-campaign-review-contract.ts",
   "wallet/wen-mining-recovery-profile": "src/wallet/wen-mining-recovery-profile.ts",
   "wallet/wen-claim-journey-contract": "src/wallet/wen-claim-journey-contract.ts",
-  "agents/agent-capital-runtime": "src/agents/agent-capital-runtime.ts",
   "wallet/wen-native-claim-preparation": "src/wallet/wen-native-claim-preparation.ts",
   "wallet/wen-native-claim-preparation-contract":
     "src/wallet/wen-native-claim-preparation-contract.ts",
@@ -77,13 +76,15 @@ const baseEntries = [
 
 const pluginSdkEntryMap = {
   index: "src/plugin-sdk/index.ts",
+  config: "src/plugin-sdk/config.ts",
+  line: "src/plugin-sdk/line.ts",
   "account-id": "src/plugin-sdk/account-id.ts",
   "channel-plugin-common": "src/plugin-sdk/channel-plugin-common.ts",
   "command-status": "src/plugin-sdk/command-status.ts",
   "device-pair": "src/plugin-sdk/device-pair.ts",
   discord: "src/plugin-sdk/discord.ts",
   "provider-web-search-config-contract": "src/plugin-sdk/provider-web-search-config-contract.ts",
-  "sat-runtime": "src/plugin-sdk/sat-runtime.ts",
+  "wen-runtime": "src/plugin-sdk/wen-runtime.ts",
   slack: "src/plugin-sdk/slack.ts",
   telegram: "src/plugin-sdk/telegram.ts",
   whatsapp: "src/plugin-sdk/whatsapp.ts",
@@ -120,7 +121,7 @@ const preservedCoreConfig = {
     // Bundled core plugins are compiled separately and need the public SDK
     // exports even when no application entry imports those exports directly.
     "plugin-sdk/index": "src/plugin-sdk/index.ts",
-    "plugin-sdk/sat-runtime": "src/plugin-sdk/sat-runtime.ts",
+    "plugin-sdk/wen-runtime": "src/plugin-sdk/wen-runtime.ts",
     "plugin-sdk/device-pair": "src/plugin-sdk/device-pair.ts",
     index: "src/index.ts",
     entry: "src/entry.ts",

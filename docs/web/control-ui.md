@@ -1,5 +1,5 @@
 ---
-summary: "Browser-based Control UI for chat, wallets, mining, Fased Network, config, and operations."
+summary: "Browser-based Control UI for chat, wallets, Fased Network, config, and operations."
 read_when:
   - You want to operate the Gateway from a browser
   - You want Tailnet access without SSH tunnels
@@ -17,19 +17,6 @@ It speaks **directly to the Gateway WebSocket** on the same port.
 
 For first-run product setup after onboarding, see
 [Control UI Setup Model](/start/control-ui-setup). The short version:
-
-- `/dash` is the compact widget dashboard.
-- `/chat` is the live browser chat surface.
-- `/agents` is the normal setup workbench: Setup, Models, Channels, Skills,
-  Tools, Memory, Sessions, Services, Tasks, and Files
-  for the selected Agent.
-- Agent Tasks shows saved work definitions first. Task templates create scheduled
-  tasks; workflow/graph templates create review flows; run history is audit, not
-  the task itself.
-- `/wallet`, `/mining`, `/federation`, and `/marketplace` own their focused workflows.
-- `/extensions` owns global plugin lifecycle; chat app account routing still belongs in Agents/Channels.
-- `/notifications`, `/usage`, and `/logs` are monitoring pages.
-- `/config` is **Advanced**. It now groups raw Config, Debug, and Nodes under one advanced surface.
 
 The older global provider/channel/service/skills/task routes remain routable for
 compatibility, deep links, or admin views. They are hidden or demoted from the
@@ -91,24 +78,7 @@ you revoke it with `fased devices revoke --device <id> --role <role>`. See
 
 The Control UI operates Fased without requiring a messaging app first.
 
-- **Dashboard**: compact widget board for Agents, Usage, Wallets, Mining, and
-  Fased Network state.
-- **Chat**: browser chat for the selected Agent/session, with session switching,
-  model overrides, stats, task/session panels, and streamed tool cards.
-- **Agents**: setup workbench for Models, Channels, Skills, Tools, Memory,
-  Sessions, Services, Tasks, and Files.
-- **Wallet, Mining, Fased Network, Marketplace**: focused pages for the
-  actions and records owned by those domains.
-- **Usage, Notifications, Logs**: monitoring and recent activity.
-- **Advanced**: Config, Debug, Nodes, exec approvals, raw RPC tools, and
-  read-only update status. Run `fased update` from the terminal.
-
 ## Tasks and history boundary
-
-**Agent > Tasks is the saved-work control surface; domain pages keep authority.**
-Agent > Tasks manages definitions and can open run history. Wallets, Mining,
-Marketplace, Channels, and Services still own actions that can sign, mine,
-deliver, send externally, or change external state.
 
 - Use **Task** for scheduled work.
 - Use **Trigger** for external HTTP entrypoints.

@@ -430,7 +430,8 @@ describe("renderAgents", () => {
     expect(text).toContain("Channels");
     expect(text).toContain("Tasks");
     expect(text).toContain("Sessions");
-    expect(text).not.toContain("Wallet");
+    expect(text).toContain("Wallets");
+    expect(text).toContain("Open WEN");
     expect(text).not.toContain("Mining");
     expect(text).not.toContain("Network");
   });
@@ -1055,12 +1056,13 @@ describe("renderAgents", () => {
     expect(text).toContain("Tools");
     expect(text).toContain("available now");
     expect(text).not.toContain("allowed ·");
-    expect(text).toContain("Extensions");
+    expect(text).toContain("Modules");
     expect(text).toContain("Runtime ok");
     expect(text).toContain("History and restore points");
     expect(text).toContain("Channels");
     expect(text).toContain("Discord");
-    expect(text).not.toContain("Wallet");
+    expect(text).toContain("Wallets");
+    expect(text).toContain("Open WEN");
     expect(text).not.toContain("Mining");
     expect(text).not.toContain("Network");
   });

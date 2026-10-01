@@ -6,8 +6,8 @@ export const LEGACY_EMBEDDED_KEYSTORE_MIGRATION_MESSAGE =
   "embedded-keystore was retired so normal production Fased code no longer reads wallet private keys in Node or the Gateway. " +
   "On Local, the signer and Gateway share an OS account, so this code-path separation is not a hard compromise boundary; Hosting uses a separate signer account for OS isolation. " +
   "Migrate one way with the verified native fased-signerd through its signer-only control socket. " +
-  "For a legacy encrypted keystore, run `fased-signerd admin wallet import-legacy --control-socket <absolute-control.sock> --wallet-id <wallet-id> --locked-role <agent|mining|vault> --keystore-path <absolute-0600-keystore> --passphrase-path <absolute-0600-passphrase-file>`. " +
-  "For a Solana CLI keypair, run `fased-signerd admin wallet import --control-socket <absolute-control.sock> --wallet-id <wallet-id> --locked-role <agent|mining|vault> < /absolute/path/to/solana-keypair.json`. " +
+  "For a legacy encrypted keystore, run `fased-signerd admin wallet import-legacy --control-socket <absolute-control.sock> --wallet-id <wallet-id> --keystore-path <absolute-0600-keystore> --passphrase-path <absolute-0600-passphrase-file>`. " +
+  "For a Solana CLI keypair, run `fased-signerd admin wallet import --control-socket <absolute-control.sock> --wallet-id <wallet-id> < /absolute/path/to/solana-keypair.json`. " +
   "After the native import succeeds, run `fased wallet finalize-legacy-migration --wallet-id <wallet-id>`; it verifies the protocol-v2 signer public key before replacing legacy config/registry references without reading the old key files. " +
   "Run the native command as the signer/control-socket owner; do not pass a private key or passphrase to Fased CLI, Gateway, UI, argv, or environment variables.";
 

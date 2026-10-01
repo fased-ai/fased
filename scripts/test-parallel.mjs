@@ -85,7 +85,6 @@ const unitIsolatedFiles = unitIsolatedFilesRaw.filter((file) => fs.existsSync(fi
 const extensionIsolatedFiles = [
   // Spawns a second TypeScript process to prove durable recovery after process exit.
   // Running it beside the transform-heavy extension pool can starve that child for minutes.
-  "extensions/sat-mining/src/submission-ledger.test.ts",
 ].filter((file) => fs.existsSync(file));
 
 const children = new Set();

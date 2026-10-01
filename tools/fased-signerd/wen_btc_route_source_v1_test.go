@@ -19,7 +19,7 @@ func TestWENBTCProviderRouteCandidate(t *testing.T) {
 			slip := uint64(binary.LittleEndian.Uint16(route.Data[at+16:]))
 			floor := (out/10000)*(10000-slip) + (out%10000)*(10000-slip)/10000
 			q := map[string]any{"inputMint": a.keys[3].String(), "outputMint": a.keys[4].String(), "inAmount": strconv.FormatUint(a.numbers[10], 10), "outAmount": strconv.FormatUint(out, 10), "otherAmountThreshold": strconv.FormatUint(floor, 10), "swapMode": "ExactIn", "slippageBps": slip, "contextSlot": 150}
-			ix := signerWENBTCProviderInstructionV1{ProgramID: route.Program.String(), Accounts: append([]signerSATAccountV2(nil), route.Accounts...), Data: base64.StdEncoding.EncodeToString(route.Data)}
+			ix := signerWENBTCProviderInstructionV1{ProgramID: route.Program.String(), Accounts: append([]signerTypedAccountV2(nil), route.Accounts...), Data: base64.StdEncoding.EncodeToString(route.Data)}
 			r := signerWENBTCReviewV1{WalletPublicKey: wallet.String(), Pins: signerWENBTCPinsV1{ProgramID: a.program.String(), OfferSHA256: wenHashV1(a.offer[:])}, Intent: signerWENBTCIntentV1{Operation: "acquisition", MinFinalizedSlot: "100", ExpiresSlot: "200"}, MaxSlotLag: 5, RouteValidity: &signerWENBTCRouteValidityV1{ObservedSlot: 150, ExpiresSlot: 156}}
 			switch name {
 			case "authority-ata", "ata-alias", "ata-bad-flags":

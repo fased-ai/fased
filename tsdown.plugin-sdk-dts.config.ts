@@ -3,13 +3,15 @@ import { defineConfig } from "tsdown";
 export default defineConfig({
   entry: {
     index: "src/plugin-sdk/index.ts",
+    config: "src/plugin-sdk/config.ts",
+    line: "src/plugin-sdk/line.ts",
     "account-id": "src/plugin-sdk/account-id.ts",
     "channel-plugin-common": "src/plugin-sdk/channel-plugin-common.ts",
     "command-status": "src/plugin-sdk/command-status.ts",
     "device-pair": "src/plugin-sdk/device-pair.ts",
     discord: "src/plugin-sdk/discord.ts",
     "provider-web-search-config-contract": "src/plugin-sdk/provider-web-search-config-contract.ts",
-    "sat-runtime": "src/plugin-sdk/sat-runtime.ts",
+    "wen-runtime": "src/plugin-sdk/wen-runtime.ts",
     slack: "src/plugin-sdk/slack.ts",
     telegram: "src/plugin-sdk/telegram.ts",
     whatsapp: "src/plugin-sdk/whatsapp.ts",

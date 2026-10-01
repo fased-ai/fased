@@ -37,7 +37,7 @@ jobs:
       run_macos_runtime: ${{ steps.scope.outputs.run_macos_runtime }}
       run_macos_app: ${{ steps.scope.outputs.run_macos_app }}
       run_ui: ${{ steps.scope.outputs.run_ui }}
-      run_ui_mining: ${{ steps.scope.outputs.run_ui_mining }}
+      run_ui_wen: ${{ steps.scope.outputs.run_ui_wen }}
       run_skills: ${{ steps.scope.outputs.run_skills }}
     steps:
       - name: Checkout proposed tree
@@ -243,7 +243,7 @@ jobs:
           --maxWorkers=1
 
       - name: Install Chromium for selected UI browser tests
-        if: needs.classify.outputs.run_ui_mining == 'true' || (needs.classify.outputs.run_ui == 'true' && needs.classify.outputs.changed_ui_browser_tests == 'true')
+        if: needs.classify.outputs.run_ui_wen == 'true' || (needs.classify.outputs.run_ui == 'true' && needs.classify.outputs.changed_ui_browser_tests == 'true')
         run: pnpm --dir ui exec playwright install chromium
 
       - name: Run selected Control UI tests
@@ -253,8 +253,8 @@ jobs:
         run: node scripts/ci-run-changed-tests.mjs ui
 
       - name: Run Mining UI tests
-        if: needs.classify.outputs.run_ui_mining == 'true'
-        run: pnpm test:ui:mining
+        if: needs.classify.outputs.run_ui_wen == 'true'
+        run: pnpm test:ui:wen
 
       - name: Setup Python for skill tests
         if: needs.classify.outputs.run_skills == 'true'

@@ -17,15 +17,12 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 )
 
-const FederationBondProgramDomain = "domain:fased:federation-bond-challenge-v1"
-
 type Asset struct {
 	Asset                string   `json:"asset"`
 	Destinations         []string `json:"destinations"`
 	MaxPerTx             string   `json:"maxPerTx"`
 	MaxDaily             string   `json:"maxDaily"`
 	ReviewedDestinations bool     `json:"reviewedDestinations,omitempty"`
-	TypedSATDestinations bool     `json:"typedSatDestinations,omitempty"`
 }
 
 type Delegation struct {
@@ -35,18 +32,17 @@ type Delegation struct {
 }
 
 type Policy struct {
-	Delegation       *Delegation `json:"delegation,omitempty"`
-	ApprovalMode     string      `json:"approvalMode,omitempty"`
-	RequirePasskey   bool        `json:"requirePasskey,omitempty"`
-	WalletID         string      `json:"walletId"`
-	Role             string      `json:"role"`
-	Version          uint64      `json:"version"`
-	BaselineVersion  uint64      `json:"baselineVersion,omitempty"`
-	Operations       []string    `json:"operations"`
-	Programs         []string    `json:"programs"`
-	TypedSATPrograms bool        `json:"typedSatPrograms,omitempty"`
-	Assets           []Asset     `json:"assets"`
-	Hash             string      `json:"hash"`
+	Delegation      *Delegation `json:"delegation,omitempty"`
+	ApprovalMode    string      `json:"approvalMode,omitempty"`
+	RequirePasskey  bool        `json:"requirePasskey,omitempty"`
+	WalletID        string      `json:"walletId"`
+	Role            string      `json:"role"`
+	Version         uint64      `json:"version"`
+	BaselineVersion uint64      `json:"baselineVersion,omitempty"`
+	Operations      []string    `json:"operations"`
+	Programs        []string    `json:"programs"`
+	Assets          []Asset     `json:"assets"`
+	Hash            string      `json:"hash"`
 }
 
 func NormalizeWalletID(walletID string) string {
@@ -77,23 +73,22 @@ func NormalizeWalletID(walletID string) string {
 
 func Normalize(input Policy) (Policy, error) {
 	policy := Policy{
-		ApprovalMode:     input.ApprovalMode,
-		Delegation:       input.Delegation,
-		RequirePasskey:   input.RequirePasskey,
-		WalletID:         NormalizeWalletID(input.WalletID),
-		Version:          input.Version,
-		BaselineVersion:  input.BaselineVersion,
-		Role:             strings.TrimSpace(strings.ToLower(input.Role)),
-		TypedSATPrograms: input.TypedSATPrograms,
-		Assets:           make([]Asset, 0, len(input.Assets)),
+		ApprovalMode:    input.ApprovalMode,
+		Delegation:      input.Delegation,
+		RequirePasskey:  input.RequirePasskey,
+		WalletID:        NormalizeWalletID(input.WalletID),
+		Version:         input.Version,
+		BaselineVersion: input.BaselineVersion,
+		Role:            strings.TrimSpace(strings.ToLower(input.Role)),
+		Assets:          make([]Asset, 0, len(input.Assets)),
 	}
 	if strings.TrimSpace(input.WalletID) == "" {
 		return Policy{}, errors.New("walletId is required")
 	}
 	switch policy.Role {
-	case "agent", "mining", "vault", "profile", "strategy", "keeper":
+	case "agent":
 	default:
-		return Policy{}, errors.New("policy role must be agent, mining, vault, profile, strategy, or keeper")
+		return Policy{}, errors.New("policy role must use the ordinary wallet discriminator agent")
 	}
 	if policy.ApprovalMode != "automatic" && policy.Delegation != nil {
 		return Policy{}, errors.New("delegation requires automatic mode")
@@ -133,9 +128,6 @@ func Normalize(input Policy) (Policy, error) {
 		return Policy{}, err
 	}
 	policy.Programs, err = normalizeSortedStrings(input.Programs, func(raw string) (string, error) {
-		if strings.TrimSpace(raw) == FederationBondProgramDomain {
-			return FederationBondProgramDomain, nil
-		}
 		return normalizePublicKey(raw, "policy program")
 	})
 	if err != nil {
@@ -147,9 +139,8 @@ func Normalize(input Policy) (Policy, error) {
 		asset := Asset{
 			Asset:                strings.TrimSpace(rawAsset.Asset),
 			ReviewedDestinations: rawAsset.ReviewedDestinations,
-			TypedSATDestinations: rawAsset.TypedSATDestinations,
 		}
-		if asset.Asset == "solana:native" || asset.Asset == "sat:action" || asset.Asset == "sat:capital:lamports" || asset.Asset == "agent-capital:action" || asset.Asset == "vault-mining:action" || asset.Asset == "federation:bond-challenge" {
+		if asset.Asset == "solana:native" {
 			// canonical as-is
 		} else if strings.HasPrefix(asset.Asset, "solana:spl:") {
 			mint, err := normalizePublicKey(strings.TrimPrefix(asset.Asset, "solana:spl:"), "policy asset mint")
@@ -157,12 +148,6 @@ func Normalize(input Policy) (Policy, error) {
 				return Policy{}, err
 			}
 			asset.Asset = "solana:spl:" + mint
-		} else if strings.HasPrefix(asset.Asset, "sat:mint:") {
-			mint, err := normalizePublicKey(strings.TrimPrefix(asset.Asset, "sat:mint:"), "SAT policy asset mint")
-			if err != nil {
-				return Policy{}, err
-			}
-			asset.Asset = "sat:mint:" + mint
 		} else {
 			return Policy{}, fmt.Errorf("unsupported policy asset %q", asset.Asset)
 		}
@@ -210,7 +195,7 @@ func RequireTightening(current, candidate Policy) error {
 	if current.WalletID != candidate.WalletID || current.Role != candidate.Role {
 		return errors.New("application policy change cannot alter wallet identity or role")
 	}
-	if candidate.BaselineVersion != current.BaselineVersion || candidate.TypedSATPrograms != current.TypedSATPrograms {
+	if candidate.BaselineVersion != current.BaselineVersion {
 		return errors.New("application policy change cannot alter signer-owned baseline authority")
 	}
 	if !stringSetSubset(candidate.Operations, current.Operations) {
@@ -233,9 +218,6 @@ func RequireTightening(current, candidate Policy) error {
 		}
 		if candidateAsset.ReviewedDestinations && !currentAsset.ReviewedDestinations {
 			return fmt.Errorf("application policy change cannot add reviewed destinations for %s", candidateAsset.Asset)
-		}
-		if candidateAsset.TypedSATDestinations && !currentAsset.TypedSATDestinations {
-			return fmt.Errorf("application policy change cannot add typed SAT destinations for %s", candidateAsset.Asset)
 		}
 		if !policyAmountAtMost(candidateAsset.MaxPerTx, currentAsset.MaxPerTx) {
 			return fmt.Errorf("application policy change cannot raise per-transaction cap for %s", candidateAsset.Asset)

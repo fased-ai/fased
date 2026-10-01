@@ -52,7 +52,6 @@ export const SOURCE_REPAIR_NODE_IDS: Record<CronTaskGraphRepairPlan["toolName"],
   web_fetch: "source-fetch-repair-web-fetch",
   gateway: "source-fetch-repair-gateway",
   wallet: "source-fetch-repair-wallet",
-  mining: "source-fetch-repair-mining",
   offers: "source-fetch-repair-offers",
   web_search: "source-fetch-repair-web-search",
 };
@@ -158,54 +157,6 @@ function normalizeText(params: TaskPlannerInput) {
 
 function hasAny(text: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(text));
-}
-
-function isMiningSourceTask(text: string): boolean {
-  return /(?:^|\s)@?mining\b|\bsat mining\b|\bminers?\b|\baom\b/.test(text);
-}
-
-function isMiningStrategyTask(text: string): boolean {
-  return (
-    isMiningSourceTask(text) &&
-    hasAny(text, [
-      /\bstrategy\b/,
-      /\ballocation\b/,
-      /\bscore\b/,
-      /\bbenchmark\b/,
-      /\bperformance rebate\b/,
-      /\bnet sol cost\b/,
-      /\bskill\b/,
-      /\baom\b/,
-    ])
-  );
-}
-
-function forbidsExternalSearch(text: string): boolean {
-  return hasAny(text, [
-    /\b(?:do not|don't|dont|never|no|without) (?:use |call |run |add )?(?:live )?(?:web )?search\b/,
-    /\b(?:do not|don't|dont|never|no|without) (?:use |call |run |add )?(?:external|remote|online|internet) sources?\b/,
-  ]);
-}
-
-function asksForExternalSearch(text: string): boolean {
-  if (forbidsExternalSearch(text)) {
-    return false;
-  }
-  return hasAny(text, [
-    /\bweb\b/,
-    /\binternet\b/,
-    /\bonline\b/,
-    /\bexternal\b/,
-    /\bremote\b/,
-    /\bsearch\b/,
-    /\bfind (?:online|on the web|sources?)\b/,
-    /\bnews\b/,
-    /\bheadlines?\b/,
-    /\bprice\b/,
-    /\bweather\b/,
-    /\bbtc\b/,
-    /\bmarket (?:news|price|data|source|sources)\b/,
-  ]);
 }
 
 function firstUrlFromText(value: string): string | undefined {
@@ -435,20 +386,6 @@ function sourceFetchGraphSpecs(
     });
   }
 
-  if (isMiningSourceTask(text)) {
-    add({
-      id: "source-fetch-mining",
-      label: "Mining state",
-      toolName: "mining",
-      description: "Read mining state before model analysis.",
-      sourceRole: "primary",
-      sourcePriority: 20,
-      sourceFreshness: "runtime",
-      sourceExpectedOutputType: "mining-state",
-      checkpointKeys: ["miningState", "sourceOutput"],
-    });
-  }
-
   if (/\boffers?\b|\bmarketplace\b|\borders?\b|\brequests?\b/.test(text)) {
     add({
       id: "source-fetch-offers",
@@ -492,11 +429,7 @@ function sourceFetchGraphSpecs(
   const asksForExplicitSearch = /\bsearch\b|\bfind\b|\bnews\b|\bheadlines?\b|\bweather\b/.test(
     text,
   );
-  const localMiningSourceOnly =
-    specs.some((spec) => spec.id === "source-fetch-mining") && !asksForExternalSearch(text);
-
   if (
-    !localMiningSourceOnly &&
     /\bweb\b|\bsearch\b|\bsource\b|\bmarket\b|\bbtc\b|\bsol\b|\brisk\b|\bnews\b|\bheadline|\bprice\b|\bweather\b|\blive\b|\bavailability\b|\bexternal\b|\bremote\b/.test(
       text,
     )
@@ -601,7 +534,6 @@ function needsToolPassNode(text: string, policy: CronTaskExecutionPolicy | undef
       /\bservice\b/,
       /\bapi\b/,
       /\bwallet\b/,
-      /\bmining\b/,
       /\bprovider\b/,
       /\bgateway\b/,
       /\boffers?\b/,
@@ -988,11 +920,9 @@ function repairSourceNode(repair: CronTaskGraphRepairPlan): CronTaskWorkflowGrap
         ? "provider-status"
         : repair.toolName === "wallet"
           ? "wallet-state"
-          : repair.toolName === "mining"
-            ? "mining-state"
-            : repair.toolName === "offers"
-              ? "offers-state"
-              : "search-results";
+          : repair.toolName === "offers"
+            ? "offers-state"
+            : "search-results";
   const label =
     repair.toolName === "web_fetch"
       ? "Repair URL fetch"
@@ -1000,11 +930,9 @@ function repairSourceNode(repair: CronTaskGraphRepairPlan): CronTaskWorkflowGrap
         ? "Repair provider catalog"
         : repair.toolName === "wallet"
           ? "Repair wallet state"
-          : repair.toolName === "mining"
-            ? "Repair mining state"
-            : repair.toolName === "offers"
-              ? "Repair offers state"
-              : "Repair live search";
+          : repair.toolName === "offers"
+            ? "Repair offers state"
+            : "Repair live search";
   return {
     id: repair.nodeId,
     label,
@@ -1279,27 +1207,6 @@ function walletAction(text: string): CronTaskSkillAction | undefined {
   return { toolName: "wallet", input: { action } };
 }
 
-function miningAction(text: string): CronTaskSkillAction | undefined {
-  if (!/(?:^|\s)@?mining\b|\bsat mining\b|\bminers?\b/.test(text)) {
-    return undefined;
-  }
-  if (
-    /\b(?:start|stop|claim|withdraw|deposit|fund|commit|set|update|clear|resolve|finalize|submit)\b/.test(
-      text,
-    )
-  ) {
-    return undefined;
-  }
-  const action = /\breadiness\b/.test(text)
-    ? "readiness"
-    : /\bhistory\b/.test(text)
-      ? "history"
-      : /\bprofile\b/.test(text)
-        ? "profile"
-        : "status";
-  return { toolName: "mining", input: { action } };
-}
-
 function providerHealthAction(text: string): CronTaskSkillAction | undefined {
   const providerIntent = hasAny(text, [
     /\bproviders?\b/,
@@ -1345,9 +1252,7 @@ function offersAction(text: string): CronTaskSkillAction | undefined {
 }
 
 function chooseSkillAction(text: string): CronTaskSkillAction | undefined {
-  return (
-    walletAction(text) ?? miningAction(text) ?? providerHealthAction(text) ?? offersAction(text)
-  );
+  return walletAction(text) ?? providerHealthAction(text) ?? offersAction(text);
 }
 
 function isStrongReasoningTask(text: string) {
@@ -1464,30 +1369,6 @@ export function planTaskExecutionPolicy(input: TaskPlannerInput): CronTaskExecut
         signals: ["reminder"],
         steps: workflowSteps("no-model"),
         graph: buildWorkflowGraph({ kind: "no-model", text, policy }),
-      }),
-    );
-  }
-
-  if (isMiningStrategyTask(text)) {
-    const plannedPolicy: CronTaskExecutionPolicy = {
-      ...policy,
-      executionMode: "agent-turn",
-      memoryScope: policy.memoryScope ?? "none",
-      skillScope: "selected",
-      allowedSkills: ["mining"],
-      modelPolicy: { ...policy.modelPolicy, mode: "auto" },
-      evaluator: undefined,
-    };
-    return planned(
-      plannedPolicy,
-      decision({
-        strategy: "strong-model",
-        rationale:
-          "SAT mining strategy tasks should use local mining state and the mining tool, without unrelated web search or broad memory.",
-        confidence: "high",
-        signals: ["mining-strategy"],
-        steps: workflowSteps("model"),
-        graph: buildWorkflowGraph({ kind: "model", text, policy: plannedPolicy }),
       }),
     );
   }

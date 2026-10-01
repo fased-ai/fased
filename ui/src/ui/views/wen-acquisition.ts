@@ -1,4 +1,16 @@
 import { LitElement, html, nothing, type PropertyValues } from "lit";
+export function satQuantityToAtoms(quantity: string): string {
+  if (!/^(0|[1-9][0-9]*)(\.[0-9]{1,11})?$/.test(quantity)) {
+    throw Error("Enter a SAT amount with up to 11 decimal places.");
+  }
+  const [whole, fraction = ""] = quantity.split(".");
+  const atoms = BigInt(whole) * 100000000000n + BigInt(fraction.padEnd(11, "0"));
+  if (atoms <= 0n || atoms > 0xffffffffffffffffn) {
+    throw Error("SAT amount is outside the supported range.");
+  }
+  return atoms.toString();
+}
+
 type Handoff = {
   mode: "manual-owner-handoff";
   signingEnabled: false;
@@ -12,6 +24,7 @@ export class WenAcquisitionPanel extends LitElement {
     owner: { state: true },
     action: { state: true },
     netAtoms: { state: true },
+    quantity: { state: true },
     nonce: { state: true },
     handoff: { state: true },
     busy: { state: true },
@@ -22,6 +35,7 @@ export class WenAcquisitionPanel extends LitElement {
   owner = "";
   action = "buy";
   netAtoms = "";
+  quantity = "";
   nonce = "";
   handoff: Handoff | null = null;
   busy = false;
@@ -32,7 +46,9 @@ export class WenAcquisitionPanel extends LitElement {
   }
   protected willUpdate(changed: PropertyValues) {
     if (
-      ["client", "connected", "owner", "action", "netAtoms", "nonce"].some((k) => changed.has(k))
+      ["client", "connected", "owner", "action", "netAtoms", "quantity", "nonce"].some((k) =>
+        changed.has(k),
+      )
     ) {
       this.generation++;
       this.handoff = null;
@@ -55,10 +71,11 @@ export class WenAcquisitionPanel extends LitElement {
     this.handoff = null;
     this.error = "";
     try {
+      const netAtoms = this.quantity ? satQuantityToAtoms(this.quantity) : this.netAtoms;
       const result = await client.request<Handoff>("wen.acquisition.handoff", {
         owner: this.owner,
         action: this.action,
-        netAtoms: this.netAtoms,
+        netAtoms,
         ...(this.action === "bond" ? { nonce: this.nonce } : {}),
       });
       if (generation !== this.generation || client !== this.client || !this.connected) {
@@ -97,16 +114,17 @@ export class WenAcquisitionPanel extends LitElement {
       this.handoff && Date.now() < this.handoff.request.expiresAtMs ? this.handoff : null;
     return html`<section class="wen-desk__card" aria-label="WEN acquisition handoff"><span class="wen-desk__eyebrow">02 · Plan</span><h3>Acquire a position</h3>
       <p>Plan a Buy or Bond purchase, then review the current terms and approve with your wallet in WEN.</p>
-      <label>Owner public address <input .value=${this.owner} @input=${(e: Event) => {
+      <label>Wallet address <input .value=${this.owner} @input=${(e: Event) => {
         this.owner = (e.target as HTMLInputElement).value;
       }} /></label>
       <label>Product <select .value=${this.action} @change=${(e: Event) => {
         this.action = (e.target as HTMLSelectElement).value;
       }}><option value="buy">Buy</option><option value="bond">Bonds</option></select></label>
-      <label>Quantity (base units) <input .value=${this.netAtoms} inputmode="numeric" @input=${(
+      <label>Amount (SAT) <input .value=${this.quantity} inputmode="decimal" @input=${(
         e: Event,
       ) => {
-        this.netAtoms = (e.target as HTMLInputElement).value;
+        this.quantity = (e.target as HTMLInputElement).value;
+        this.netAtoms = "";
       }} /></label>
       ${
         this.action === "bond"
@@ -118,7 +136,7 @@ export class WenAcquisitionPanel extends LitElement {
           : nothing
       }
       <button ?disabled=${!this.connected || this.busy} @click=${() => void this.prepare()}>${this.busy ? "Checking…" : "Prepare request"}</button>
-      <details class="wen-desk__details"><summary>How approval works</summary><p>This request cannot sign, spend or reserve a price. Quantity uses the asset’s smallest units; WEN verifies the connected wallet and shows the final terms before approval.</p></details>
+      <details class="wen-desk__details"><summary>How approval works</summary><p>This request cannot sign, spend or reserve a price. WEN verifies your connected wallet and shows the current terms before approval.</p></details>
       ${this.error ? html`<p role="status">${this.error}</p>` : nothing}
       ${
         handoff

@@ -1,6 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT } from "../mining/sat-vnext-release-contract.generated.js";
 import { SIGNER_PROTOCOL_V2 } from "./signer-protocol-v2.generated.js";
 import { WenBondClaimStoredReviewSchema } from "./wen-bond-claim-review-contract.js";
 import { WenBondPurchaseStoredReviewSchema } from "./wen-bond-purchase-review-contract.js";
@@ -71,14 +70,7 @@ const WalletChainSchema = Type.Literal("solana");
 export const LOCAL_SIGNER_NATIVE_FEE_RESERVATION_LAMPORTS_V2 =
   SIGNER_PROTOCOL_V2.nativeFeeReservationLamports;
 
-const SignerWalletRoleSchema = Type.Union([
-  Type.Literal("agent"),
-  Type.Literal("mining"),
-  Type.Literal("vault"),
-  Type.Literal("profile"),
-  Type.Literal("strategy"),
-  Type.Literal("keeper"),
-]);
+const SignerWalletRoleSchema = Type.Literal("agent");
 
 const SignerProtocolRangeV2Schema = Type.Object(
   {
@@ -99,41 +91,6 @@ export const LocalSocketSignerCapabilitiesV2Schema = Type.Object(
   },
   { additionalProperties: false },
 );
-
-export const LocalSocketSignerSatReleaseAcknowledgementSchema = Type.Object(
-  {
-    schema: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.schema),
-    state: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.state),
-    componentGenerations: Type.Object(
-      {
-        bond: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.bond),
-        cycle: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.cycle),
-        economics: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.economics),
-        penalty: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.penalty),
-        protocol: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.protocol),
-        keeper: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.keeper),
-        receipt: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.receipt),
-        schema: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.schema),
-        signerCapability: Type.Literal(
-          SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.componentGenerations.signerCapability,
-        ),
-      },
-      { additionalProperties: false },
-    ),
-    interfaceContractSha256: Type.Literal(
-      SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.interfaceContractSha256,
-    ),
-    idlSha256: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.idlSha256),
-    accountOrderSha256: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.accountOrderSha256),
-    stateLayoutsSha256: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.stateLayoutsSha256),
-    signerCodecsSha256: Type.Literal(SAT_VNEXT_RELEASE_ACKNOWLEDGEMENT.signerCodecsSha256),
-  },
-  { additionalProperties: false },
-);
-
-export type LocalSocketSignerSatReleaseAcknowledgement = Static<
-  typeof LocalSocketSignerSatReleaseAcknowledgementSchema
->;
 
 export const LocalSocketSignerReleaseIdentityV2Schema = Type.Union([
   Type.Object(
@@ -232,28 +189,6 @@ export const LocalSocketSignerPolicyV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
-export const LocalSocketSignerKeeperFeePayerCapabilityV2Schema = Type.Object(
-  {
-    miningWalletId: Type.String({ minLength: 1 }),
-    feePayerWalletId: Type.String({ minLength: 1 }),
-    feePayerPublicKey: Type.String({ minLength: 1 }),
-    policyHash: Type.String({ minLength: 1 }),
-    maxPerTransactionLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
-    maxDailyLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
-    state: Type.Literal("ready"),
-  },
-  { additionalProperties: false },
-);
-
-const SignerSatAccountV2Schema = Type.Object(
-  {
-    pubkey: Type.String(),
-    isSigner: Type.Boolean(),
-    isWritable: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
-
 const SignerJupiterTriggerIntentV2Schema = Type.Object(
   {
     operation: Type.Union([Type.Literal("create"), Type.Literal("cancel")]),
@@ -269,33 +204,6 @@ const SignerJupiterTriggerIntentV2Schema = Type.Object(
       }),
     ),
     expectedOrderState: Type.Union([Type.Literal("new"), Type.Literal("open")]),
-  },
-  { additionalProperties: false },
-);
-
-const SignerSatContextV2Schema = Type.Object(
-  {
-    targetAuthority: Type.Optional(Type.String()),
-    disputeAuthority: Type.Optional(Type.String()),
-    intervalStartCycleId: Type.Optional(Type.String()),
-    registryPageIndex: Type.Optional(Type.String()),
-    minerAuthorities: Type.Optional(Type.Array(Type.String())),
-    permanentMiningIds: Type.Optional(Type.Array(Type.String())),
-    frontCycleIds: Type.Optional(Type.Array(Type.String())),
-    backCycleIds: Type.Optional(Type.Array(Type.String())),
-  },
-  { additionalProperties: false },
-);
-
-const SignerSatCommitmentIntentV1Schema = Type.Object(
-  {
-    reference: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
-    cluster: Type.Union([
-      Type.Literal("local"),
-      Type.Literal("devnet"),
-      Type.Literal("mainnet-beta"),
-    ]),
-    protocolGeneration: Type.String({ minLength: 1, maxLength: 128 }),
   },
   { additionalProperties: false },
 );
@@ -317,74 +225,7 @@ const SignerJupiterIntentV2Schema = Type.Object(
   { additionalProperties: false },
 );
 
-const SignerSatInstructionV2Schema = Type.Object(
-  {
-    action: Type.String({ minLength: 1 }),
-    programId: Type.String(),
-    dataBase64: Type.String(),
-    keys: Type.Array(SignerSatAccountV2Schema),
-    context: Type.Optional(SignerSatContextV2Schema),
-  },
-  { additionalProperties: false },
-);
-
-const SignerSatLookupTableV2Schema = Type.Object(
-  {
-    address: Type.String(),
-    cycleId: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
-    pageIndex: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
-    recentSlot: Type.Optional(Type.String({ pattern: "^(0|[1-9][0-9]*)$" })),
-    addresses: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),
-    parent: Type.Optional(SignerSatInstructionV2Schema),
-  },
-  { additionalProperties: false },
-);
-
-const SignerFederationBondChallengeV2Schema = Type.Object(
-  {
-    challengeId: Type.String({ minLength: 1, maxLength: 256 }),
-    federationOrigin: Type.String({ minLength: 1, maxLength: 2048 }),
-    handle: Type.String({ minLength: 1, maxLength: 512 }),
-    nodeId: Type.String({ minLength: 1, maxLength: 512 }),
-    tokenId: Type.String({ minLength: 1, maxLength: 512 }),
-    bondId: Type.String({ minLength: 1, maxLength: 512 }),
-    tier: Type.Union([
-      Type.Literal("none"),
-      Type.Literal("basic-bond"),
-      Type.Literal("operator-bond"),
-    ]),
-    amountRaw: Type.Optional(Type.String({ pattern: "^(0|[1-9][0-9]*)$" })),
-    expiresAt: Type.String({ minLength: 1, maxLength: 512 }),
-    payloadBase64: Type.String({ minLength: 4, maxLength: 24 * 1024 }),
-  },
-  { additionalProperties: false },
-);
-
 export const SignerIntentV2Schema = Type.Union([
-  Type.Object(
-    {
-      type: Type.Literal("solana.vaultMining"),
-      cluster: Type.Literal("devnet"),
-      action: Type.Union([Type.Literal("commit_vault_cycle"), Type.Literal("reveal_vault_cycle")]),
-      vaultMining: Type.Object(
-        {
-          profile: Type.String({ minLength: 1 }),
-          permanentMining: Type.String({ minLength: 1 }),
-          reference: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
-          cycleId: Type.String({ pattern: "^[1-9][0-9]*$" }),
-          committedLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
-          authorityGeneration: Type.String({ pattern: "^[1-9][0-9]*$" }),
-          bindingGeneration: Type.String({ pattern: "^[1-9][0-9]*$" }),
-          activationGeneration: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
-          maxRentLamports: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
-          maxFeeLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
-          minFinalizedSlot: Type.String({ pattern: "^[1-9][0-9]*$" }),
-        },
-        { additionalProperties: false },
-      ),
-    },
-    { additionalProperties: false },
-  ),
   Type.Object(
     {
       type: Type.Literal("solana.nativeTransfer"),
@@ -406,193 +247,6 @@ export const SignerIntentV2Schema = Type.Union([
       memo: Type.Optional(
         Type.String({ pattern: "^fased:a2a-(?:payment|refund):v1:[0-9a-f]{64}$" }),
       ),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      type: Type.Literal("solana.satAction"),
-      action: Type.String({ minLength: 1 }),
-      programId: Type.Optional(Type.String()),
-      dataBase64: Type.Optional(Type.String()),
-      keys: Type.Optional(Type.Array(SignerSatAccountV2Schema)),
-      context: Type.Optional(SignerSatContextV2Schema),
-      satCommitment: Type.Optional(SignerSatCommitmentIntentV1Schema),
-      instructions: Type.Optional(
-        Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
-      ),
-      addressLookupTables: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 1 })),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Union([
-    Type.Object(
-      {
-        type: Type.Literal("solana.satKeeperAction"),
-        authorityWalletId: Type.String({ minLength: 1 }),
-        action: Type.String({ minLength: 1 }),
-        programId: Type.String(),
-        dataBase64: Type.String(),
-        keys: Type.Array(SignerSatAccountV2Schema),
-        context: Type.Optional(SignerSatContextV2Schema),
-        addressLookupTables: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 1 })),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        type: Type.Literal("solana.satKeeperAction"),
-        authorityWalletId: Type.String({ minLength: 1 }),
-        action: Type.Literal("cleanupBatch"),
-        instructions: Type.Array(SignerSatInstructionV2Schema, { minItems: 1, maxItems: 6 }),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        type: Type.Literal("solana.satKeeperAction"),
-        authorityWalletId: Type.String({ minLength: 1 }),
-        action: Type.Literal("openAndCommitCycleV2"),
-        instructions: Type.Tuple([
-          Type.Object(
-            {
-              action: Type.Literal("openCycleV2"),
-              programId: Type.String(),
-              dataBase64: Type.String(),
-              keys: Type.Array(SignerSatAccountV2Schema),
-              context: Type.Optional(SignerSatContextV2Schema),
-            },
-            { additionalProperties: false },
-          ),
-          Type.Object(
-            {
-              action: Type.Literal("snapshotKeeperCapabilitiesV2"),
-              programId: Type.String(),
-              dataBase64: Type.String(),
-              keys: Type.Array(SignerSatAccountV2Schema),
-              context: Type.Optional(SignerSatContextV2Schema),
-            },
-            { additionalProperties: false },
-          ),
-          Type.Object(
-            {
-              action: Type.Literal("commitCycleV2"),
-              programId: Type.String(),
-              dataBase64: Type.String(),
-              keys: Type.Array(SignerSatAccountV2Schema),
-              context: Type.Optional(SignerSatContextV2Schema),
-            },
-            { additionalProperties: false },
-          ),
-        ]),
-      },
-      { additionalProperties: false },
-    ),
-  ]),
-  Type.Object(
-    {
-      type: Type.Literal("solana.satLookupTable"),
-      action: Type.Union([
-        Type.Literal("create"),
-        Type.Literal("extend"),
-        Type.Literal("deactivate"),
-        Type.Literal("close"),
-      ]),
-      lookupTable: SignerSatLookupTableV2Schema,
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      type: Type.Literal("solana.vaultBondAction"),
-      cluster: Type.Union([
-        Type.Literal("local"),
-        Type.Literal("devnet"),
-        Type.Literal("mainnet-beta"),
-      ]),
-      action: Type.String({ minLength: 1 }),
-      programId: Type.String(),
-      dataBase64: Type.String(),
-      keys: Type.Array(SignerSatAccountV2Schema),
-      context: Type.Optional(SignerSatContextV2Schema),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      type: Type.Literal("solana.agentCapitalAction"),
-      cluster: Type.Union([
-        Type.Literal("local"),
-        Type.Literal("devnet"),
-        Type.Literal("mainnet-beta"),
-      ]),
-      action: Type.String({ minLength: 1 }),
-      programId: Type.String(),
-      dataBase64: Type.String(),
-      keys: Type.Array(SignerSatAccountV2Schema),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      type: Type.Literal("solana.moneyFoundationAction"),
-      cluster: Type.Literal("devnet"),
-      moneyFoundation: Type.Object(
-        {
-          contractGeneration: Type.Literal(1),
-          policyGeneration: Type.String({ pattern: "^[1-9][0-9]{0,19}$" }),
-          policyDigestSha256: Type.String({ pattern: "^[0-9a-f]{64}$" }),
-          action: Type.Union([Type.Literal("ADD_POL"), Type.Literal("EMERGENCY_UNWIND")]),
-          sourceClass: Type.Union([
-            Type.Literal("OWNER_SEED"),
-            Type.Literal("PROTOCOL_SURPLUS"),
-            Type.Literal("EMERGENCY_TREASURY"),
-          ]),
-          sourceOwner: Type.String(),
-          destinationOwner: Type.String(),
-          lifecycle: Type.Union([
-            Type.Literal("DISABLED"),
-            Type.Literal("ENABLED"),
-            Type.Literal("PAUSED"),
-            Type.Literal("RETIRED"),
-          ]),
-          fundingAuthorized: Type.Boolean(),
-          publicEntryEnabled: Type.Boolean(),
-          liquidityTreasury: Type.String(),
-          emergencyAuthority: Type.String(),
-          emergencyUnwindNotBeforeSlot: Type.String({ pattern: "^(0|[1-9][0-9]{0,19})$" }),
-          satMint: Type.String(),
-          satTokenProgram: Type.String(),
-          wrappedSolMint: Type.String(),
-          venueProgram: Type.String(),
-          poolConfig: Type.String(),
-          pool: Type.String(),
-          positionMint: Type.String(),
-          positionTokenAccount: Type.String(),
-          satVault: Type.String(),
-          solVault: Type.String(),
-          initialSatRaw: Type.String({ pattern: "^[1-9][0-9]{0,19}$" }),
-          initialSolLamports: Type.String({ pattern: "^[1-9][0-9]{0,19}$" }),
-          inputRaw: Type.String({ pattern: "^[1-9][0-9]{0,19}$" }),
-          minimumSatRaw: Type.String({ pattern: "^(0|[1-9][0-9]{0,19})$" }),
-          minimumSolLamports: Type.String({ pattern: "^(0|[1-9][0-9]{0,19})$" }),
-          maxSlippageBps: Type.Integer({ minimum: 0, maximum: 1000 }),
-          maxPriceImpactBps: Type.Integer({ minimum: 0, maximum: 1000 }),
-          maxCombinedFeeBps: Type.Integer({ minimum: 0, maximum: 1000 }),
-          simulationSlot: Type.String({ pattern: "^[1-9][0-9]{0,19}$" }),
-          expiresSlot: Type.String({ pattern: "^[1-9][0-9]{0,19}$" }),
-          sourceDescriptorSha256: Type.String({ pattern: "^[0-9a-f]{64}$" }),
-          protectedCapitalAddresses: Type.Array(Type.String(), { minItems: 1, maxItems: 64 }),
-        },
-        { additionalProperties: false },
-      ),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      type: Type.Literal("federation.bondChallenge"),
-      federation: SignerFederationBondChallengeV2Schema,
     },
     { additionalProperties: false },
   ),
@@ -689,27 +343,11 @@ export type LocalSocketSignerJupiterTriggerHistoryV2 = Static<
   typeof LocalSocketSignerJupiterTriggerHistoryV2Schema
 >;
 
-const SignerRoleBaselineV1Schema = Type.Object(
-  {
-    approvalMode: Type.Optional(Type.Literal("read-only")),
-    version: Type.Literal(1),
-    role: SignerWalletRoleSchema,
-  },
-  { additionalProperties: false },
-);
-
 const SignerWalletPolicyCreateV2Schema = Type.Union([
   Type.Object(
     {
       expectedPolicyVersion: Type.Literal(0),
       policy: SignerPolicyInputV2Schema,
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      expectedPolicyVersion: Type.Literal(0),
-      baseline: SignerRoleBaselineV1Schema,
     },
     { additionalProperties: false },
   ),
@@ -719,137 +357,6 @@ const SignerOperationLookupV2Schema = Type.Object(
   { requestId: Type.String() },
   { additionalProperties: false },
 );
-
-const SignerSatLookupBindingRequestV2Schema = Type.Object(
-  {
-    cycleId: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
-    pageIndex: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
-  },
-  { additionalProperties: false },
-);
-
-const SignerSatCommitmentClusterV1Schema = Type.Union([
-  Type.Literal("local"),
-  Type.Literal("devnet"),
-  Type.Literal("mainnet-beta"),
-]);
-
-const SignerSatCommitmentProgramIdV1Schema = Type.String({
-  pattern: "^[1-9A-HJ-NP-Za-km-z]{32,44}$",
-});
-
-const SignerSatCommitmentProtocolGenerationV1Schema = Type.String({
-  minLength: 1,
-  maxLength: 128,
-  pattern: "^[^\\u0000-\\u001f\\u007f]+$",
-});
-
-const VaultMiningBindingRequestV1Schema = Type.Object(
-  {
-    cluster: Type.Literal("devnet"),
-    profile: SignerSatCommitmentProgramIdV1Schema,
-    permanentMining: SignerSatCommitmentProgramIdV1Schema,
-    minFinalizedSlot: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-  },
-  { additionalProperties: false },
-);
-const VaultMiningBindingResultV1Schema = Type.Object(
-  {
-    verification: Type.Literal("account-bindings-only"),
-    scope: Type.Object(
-      {
-        profile: SignerSatCommitmentProgramIdV1Schema,
-        permanentMining: SignerSatCommitmentProgramIdV1Schema,
-        binding: SignerSatCommitmentProgramIdV1Schema,
-        authority: SignerSatCommitmentProgramIdV1Schema,
-        executor: SignerSatCommitmentProgramIdV1Schema,
-        keeper: SignerSatCommitmentProgramIdV1Schema,
-        authorityGeneration: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-        bindingGeneration: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-      },
-      { additionalProperties: false },
-    ),
-    finalizedSlot: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-    stateDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
-    fundedLamports: Type.String({ pattern: "^[0-9]+$" }),
-    activeCommitLamports: Type.String({ pattern: "^[0-9]+$" }),
-    entryPaused: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
-
-const SignerSatCommitmentAllocationV1Schema = Type.Union([
-  Type.Array(Type.Integer({ minimum: 0, maximum: 0xffff_ffff }), {
-    minItems: 16,
-    maxItems: 16,
-  }),
-  Type.Array(Type.Integer({ minimum: 0, maximum: 0xffff_ffff }), {
-    minItems: 25,
-    maxItems: 25,
-  }),
-]);
-
-const SignerSatCommitmentBindingRequestV1Schema = Type.Object(
-  {
-    cluster: SignerSatCommitmentClusterV1Schema,
-    programId: SignerSatCommitmentProgramIdV1Schema,
-    protocolGeneration: SignerSatCommitmentProtocolGenerationV1Schema,
-    cycleId: Type.String({ pattern: "^[1-9][0-9]*$" }),
-  },
-  { additionalProperties: false },
-);
-
-const SignerSatCommitmentAllocateRequestV1Schema = Type.Object(
-  {
-    cluster: SignerSatCommitmentClusterV1Schema,
-    programId: SignerSatCommitmentProgramIdV1Schema,
-    protocolGeneration: SignerSatCommitmentProtocolGenerationV1Schema,
-    cycleId: Type.String({ pattern: "^[1-9][0-9]*$" }),
-    committedLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
-    allocationFp: SignerSatCommitmentAllocationV1Schema,
-  },
-  { additionalProperties: false },
-);
-
-export const LocalSocketSignerSatLookupBindingV2Schema = Type.Object(
-  {
-    cycleId: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
-    pageIndex: Type.String({ pattern: "^(0|[1-9][0-9]*)$" }),
-    address: Type.Optional(Type.String({ minLength: 1 })),
-    bound: Type.Boolean(),
-    mutationRequestId: Type.Optional(Type.String({ minLength: 8, maxLength: 128 })),
-    mutationState: Type.Optional(
-      Type.Union([
-        Type.Literal("reserved"),
-        Type.Literal("broadcast"),
-        Type.Literal("confirmed"),
-        Type.Literal("failed"),
-        Type.Literal("unknown"),
-      ]),
-    ),
-  },
-  { additionalProperties: false },
-);
-
-export type LocalSocketSignerSatLookupBindingV2 = Static<
-  typeof LocalSocketSignerSatLookupBindingV2Schema
->;
-
-export const LocalSocketSignerSatCommitmentBindingV1Schema = Type.Object(
-  {
-    reference: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
-    commitmentHex: Type.String({ pattern: "^[0-9a-f]{64}$" }),
-    cycleId: Type.String({ pattern: "^[1-9][0-9]*$" }),
-    committedLamports: Type.String({ pattern: "^[1-9][0-9]*$" }),
-    allocationCount: Type.Union([Type.Literal(16), Type.Literal(25)]),
-    protocolGeneration: SignerSatCommitmentProtocolGenerationV1Schema,
-  },
-  { additionalProperties: false },
-);
-
-export type LocalSocketSignerSatCommitmentBindingV1 = Static<
-  typeof LocalSocketSignerSatCommitmentBindingV1Schema
->;
 
 export const LocalSocketSignerNetworkSummaryV2Schema = Type.Object(
   {
@@ -1019,32 +526,7 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       { op: Type.Literal("v2.wallet.readiness"), walletId: Type.String() },
       { additionalProperties: false },
     ),
-    Type.Object(
-      { op: Type.Literal("v2.keeperFeePayer.get"), walletId: Type.String({ minLength: 1 }) },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        op: Type.Literal("v2.keeperFeePayer.ensure"),
-        walletId: Type.String({ minLength: 1 }),
-        request: Type.Object({}, { additionalProperties: false }),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        op: Type.Literal("v2.policy.activateBaseline"),
-        walletId: Type.String(),
-        request: Type.Object(
-          {
-            expectedPolicyVersion: Type.Integer({ minimum: 1 }),
-            baseline: SignerRoleBaselineV1Schema,
-          },
-          { additionalProperties: false },
-        ),
-      },
-      { additionalProperties: false },
-    ),
+
     Type.Object(
       {
         op: Type.Literal("v2.wallet.create"),
@@ -1053,28 +535,19 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       },
       { additionalProperties: false },
     ),
+
     Type.Object(
       {
         op: Type.Literal("v2.wallet.import"),
         walletId: Type.String(),
-        request: Type.Union([
-          Type.Object(
-            {
-              expectedPolicyVersion: Type.Literal(0),
-              policy: SignerPolicyInputV2Schema,
-              path: Type.String(),
-            },
-            { additionalProperties: false },
-          ),
-          Type.Object(
-            {
-              expectedPolicyVersion: Type.Literal(0),
-              baseline: SignerRoleBaselineV1Schema,
-              path: Type.String(),
-            },
-            { additionalProperties: false },
-          ),
-        ]),
+        request: Type.Object(
+          {
+            expectedPolicyVersion: Type.Literal(0),
+            policy: SignerPolicyInputV2Schema,
+            path: Type.String(),
+          },
+          { additionalProperties: false },
+        ),
       },
       { additionalProperties: false },
     ),
@@ -1082,26 +555,15 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       {
         op: Type.Literal("v2.wallet.importLegacy"),
         walletId: Type.String(),
-        request: Type.Union([
-          Type.Object(
-            {
-              expectedPolicyVersion: Type.Literal(0),
-              policy: SignerPolicyInputV2Schema,
-              path: Type.String(),
-              passphrasePath: Type.String(),
-            },
-            { additionalProperties: false },
-          ),
-          Type.Object(
-            {
-              expectedPolicyVersion: Type.Literal(0),
-              baseline: SignerRoleBaselineV1Schema,
-              path: Type.String(),
-              passphrasePath: Type.String(),
-            },
-            { additionalProperties: false },
-          ),
-        ]),
+        request: Type.Object(
+          {
+            expectedPolicyVersion: Type.Literal(0),
+            policy: SignerPolicyInputV2Schema,
+            path: Type.String(),
+            passphrasePath: Type.String(),
+          },
+          { additionalProperties: false },
+        ),
       },
       { additionalProperties: false },
     ),
@@ -1192,14 +654,6 @@ export const LocalSocketSignerRequestSchema = Type.Union(
     ),
     Type.Object(
       {
-        op: Type.Literal("v2.satLookup.binding.get"),
-        walletId: Type.String(),
-        request: SignerSatLookupBindingRequestV2Schema,
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
         op: Type.Literal("v2.wenBTCClaim.prepare"),
         walletId: Type.String({ minLength: 1 }),
         request: WenBtcClaimIntentSchema,
@@ -1251,6 +705,20 @@ export const LocalSocketSignerRequestSchema = Type.Union(
         ]),
         walletId: Type.String({ minLength: 1 }),
         request: WenCampaignReviewRequestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("v2.wenMarket.ownerProof.inspect"),
+        walletId: Type.String({ minLength: 1 }),
+        request: Type.Object(
+          {
+            requestId: Type.String({ minLength: 1 }),
+            proofId: Type.String({ pattern: "^[A-Za-z0-9_-]{43}$" }),
+          },
+          { additionalProperties: false },
+        ),
       },
       { additionalProperties: false },
     ),
@@ -1342,45 +810,6 @@ export const LocalSocketSignerRequestSchema = Type.Union(
       { additionalProperties: false },
     ),
     Type.Object(
-      {
-        op: Type.Literal("v2.vaultMining.binding.inspect"),
-        walletId: Type.String({ minLength: 1 }),
-        request: VaultMiningBindingRequestV1Schema,
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        op: Type.Literal("v2.satCommitment.allocate"),
-        walletId: Type.String({ minLength: 1 }),
-        request: SignerSatCommitmentAllocateRequestV1Schema,
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        op: Type.Literal("v2.vaultMining.commitment.allocate"),
-        walletId: Type.String({ minLength: 1 }),
-        request: Type.Object(
-          {
-            binding: VaultMiningBindingRequestV1Schema,
-            commitment: SignerSatCommitmentAllocateRequestV1Schema,
-            activationGeneration: Type.String({ pattern: "^[1-9][0-9]*$" }),
-          },
-          { additionalProperties: false },
-        ),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        op: Type.Literal("v2.satCommitment.binding.get"),
-        walletId: Type.String({ minLength: 1 }),
-        request: SignerSatCommitmentBindingRequestV1Schema,
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
       { op: Type.Literal("getAddresses"), walletId: Type.String({ minLength: 1 }) },
       { additionalProperties: false },
     ),
@@ -1452,7 +881,6 @@ export const LocalSocketSignerHealthResultSchema = Type.Object(
       ),
     ),
     capabilities: Type.Optional(LocalSocketSignerCapabilitiesV2Schema),
-    satRelease: Type.Optional(LocalSocketSignerSatReleaseAcknowledgementSchema),
     policies: Type.Optional(
       Type.Array(
         Type.Object(
@@ -1635,21 +1063,8 @@ export const LocalSocketSignerReviewV2Schema = Type.Object(
       Type.Literal("solana-transaction"),
       Type.Literal("domain-separated-message"),
       Type.Literal("jupiter-trigger-state"),
-      Type.Literal("vault-commitment-reference"),
     ]),
     artifactDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
-    vaultReference: Type.Optional(
-      Type.Object(
-        {
-          scope: VaultMiningBindingResultV1Schema.properties.scope,
-          commitment: SignerSatCommitmentBindingRequestV1Schema,
-          reference: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
-          blockhash: Type.String({ minLength: 1 }),
-          transactionDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
-        },
-        { additionalProperties: false },
-      ),
-    ),
     transaction: Type.Optional(SignerSolanaTransactionEnvelopeV2Schema),
     messageBase64: Type.Optional(Type.String()),
     stateDigest: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$" })),
@@ -1694,7 +1109,6 @@ const LocalSocketSignerReviewBindingV2Schema = Type.Object(
       Type.Literal("solana-transaction"),
       Type.Literal("domain-separated-message"),
       Type.Literal("jupiter-trigger-state"),
-      Type.Literal("vault-commitment-reference"),
     ]),
     artifactDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
     transactionDigest: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$" })),
@@ -1758,9 +1172,6 @@ export const LocalSocketSignerWalletReadinessV2Schema = Type.Object(
     operationLane: Type.Union([
       Type.Literal("blocked"),
       Type.Literal("agent-reviewed-and-autonomous"),
-      Type.Literal("mining-reviewed-only"),
-      Type.Literal("mining-typed-sat"),
-      Type.Literal("vault-reviewed-only"),
     ]),
     ready: Type.Boolean(),
   },
@@ -1877,53 +1288,6 @@ export function parseLocalSocketSignerRequest(input: unknown): LocalSocketSigner
   ) {
     validateWenBtcIntentCandidate(input.request);
   }
-  if (input.op === "v2.vaultMining.commitment.allocate") {
-    const { binding, commitment } = input.request;
-    if (
-      binding.cluster !== commitment.cluster ||
-      commitment.cluster !== "devnet" ||
-      commitment.protocolGeneration !== "2" ||
-      commitment.allocationFp.length !== 16 ||
-      commitment.allocationFp.reduce((sum, value) => sum + value, 0) !== 1_000_000
-    ) {
-      throw new Error(
-        "invalid signer request: Vault allocation requires the exact generation-2 domain",
-      );
-    }
-  }
-  if (
-    (input.op === "v2.execute" || input.op === "v2.review.prepare") &&
-    input.request.intent.type === "solana.vaultMining" &&
-    (input.op !== "v2.review.prepare" ||
-      input.request.mode !== "reviewed" ||
-      input.request.transaction !== undefined)
-  ) {
-    throw new Error(
-      "invalid signer request: Vault mining requires signer-owned reviewed preparation",
-    );
-  }
-  if (
-    input.op === "v2.satCommitment.allocate" &&
-    input.request.allocationFp.reduce((sum, value) => sum + value, 0) !== 1_000_000
-  ) {
-    throw new Error("invalid signer request: SAT commitment allocation must sum to 1000000");
-  }
-  if (
-    (input.op === "v2.execute" || input.op === "v2.review.prepare") &&
-    input.request.intent.type === "solana.satAction" &&
-    input.request.intent.satCommitment !== undefined &&
-    (input.request.intent.action !== "revealCycle" ||
-      input.request.intent.instructions !== undefined)
-  ) {
-    if (
-      input.request.intent.action !== "revealCycleV2" ||
-      input.request.intent.instructions !== undefined
-    ) {
-      throw new Error(
-        "invalid signer request: signer-owned SAT commitment references require one revealCycle generation",
-      );
-    }
-  }
   if (
     input.op === "v2.review.prepare" &&
     (input.request.intent.type === "solana.jupiter.trigger.create" ||
@@ -1950,20 +1314,6 @@ export function parseLocalSocketSignerResponseEnvelope(
   return input;
 }
 
-function validVaultReviewPayload(review: Static<typeof LocalSocketSignerReviewV2Schema>): boolean {
-  if (review.artifactKind === "vault-commitment-reference") {
-    return (
-      review.intentType === "solana.vaultMining" &&
-      review.vaultReference !== undefined &&
-      review.transaction === undefined &&
-      review.messageBase64 === undefined &&
-      review.stateDigest !== undefined &&
-      review.stateSlot !== undefined
-    );
-  }
-  return review.vaultReference === undefined && review.intentType !== "solana.vaultMining";
-}
-
 export function validateLocalSocketSignerResult(
   op: LocalSocketSignerRequest["op"],
   result: unknown,
@@ -1987,16 +1337,12 @@ export function validateLocalSocketSignerResult(
     case "v2.policy.get":
     case "v2.policy.put":
     case "v2.policy.tighten":
-    case "v2.policy.activateBaseline":
       return Value.Check(LocalSocketSignerPolicyV2Schema, result);
     case "v2.wallet.get":
     case "v2.wallet.reencrypt":
       return Value.Check(LocalSocketSignerWalletV2Schema, result);
     case "v2.wallet.readiness":
       return Value.Check(LocalSocketSignerWalletReadinessV2Schema, result);
-    case "v2.keeperFeePayer.get":
-    case "v2.keeperFeePayer.ensure":
-      return Value.Check(LocalSocketSignerKeeperFeePayerCapabilityV2Schema, result);
     case "v2.wallet.create":
     case "v2.wallet.import":
     case "v2.wallet.importLegacy":
@@ -2005,8 +1351,6 @@ export function validateLocalSocketSignerResult(
     case "v2.operation.get":
     case "v2.operation.reconcile":
       return Value.Check(LocalSocketSignerOperationV2Schema, result);
-    case "v2.satLookup.binding.get":
-      return Value.Check(LocalSocketSignerSatLookupBindingV2Schema, result);
     case "v2.wenBtc.route.preview":
       return isWenBtcRoutePreview(result);
     case "v2.wenBTCClaim.prepare":
@@ -2021,6 +1365,20 @@ export function validateLocalSocketSignerResult(
       return Value.Check(WenBondClaimStoredReviewSchema, result);
     case "v2.wenBondPurchase.review.prepare":
       return Value.Check(WenBondPurchaseStoredReviewSchema, result);
+    case "v2.wenMarket.ownerProof.inspect":
+      return Value.Check(
+        Type.Object(
+          {
+            proofId: Type.String({ pattern: "^[A-Za-z0-9_-]{43}$" }),
+            requestId: Type.String({ minLength: 1 }),
+            walletId: Type.String({ minLength: 1 }),
+            artifactDigest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+            expiresAt: Type.String({ minLength: 1 }),
+          },
+          { additionalProperties: false },
+        ),
+        result,
+      );
     case "v2.wenMarket.review.prepare":
       return Value.Check(WenMarketStoredReviewSchema, result);
     case "v2.wenCampaign.review.prepare":
@@ -2042,22 +1400,11 @@ export function validateLocalSocketSignerResult(
       return isWenBtcPreparation(result);
     case "v2.wenBtc.inspect":
       return isWenBtcInspection(result);
-    case "v2.vaultMining.binding.inspect":
-      return Value.Check(VaultMiningBindingResultV1Schema, result);
-    case "v2.satCommitment.allocate":
-    case "v2.vaultMining.commitment.allocate":
-    case "v2.satCommitment.binding.get":
-      return Value.Check(LocalSocketSignerSatCommitmentBindingV1Schema, result);
     case "v2.review.get":
     case "v2.review.prepare":
-      return (
-        Value.Check(LocalSocketSignerReviewV2Schema, result) && validVaultReviewPayload(result)
-      );
+      return Value.Check(LocalSocketSignerReviewV2Schema, result);
     case "v2.review.execute":
-      return (
-        Value.Check(LocalSocketSignerReviewExecutionV2Schema, result) &&
-        validVaultReviewPayload(result.review)
-      );
+      return Value.Check(LocalSocketSignerReviewExecutionV2Schema, result);
     case "v2.review.authorization.begin":
       return (
         Value.Check(LocalSocketSignerReviewAuthorizationBeginV2Schema, result) ||

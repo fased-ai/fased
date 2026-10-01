@@ -8,7 +8,6 @@ import {
 import { closeDialogOnBackdropClick, openDialogSafely } from "../dialog.ts";
 import type { FederationStatus, FederationToken } from "../federation-api.ts";
 import { icons } from "../icons.ts";
-import type { SatMinerProfile, SatMiningReadiness, SatMiningRuntimeStatus } from "../mining-api.ts";
 import { pathForTab, type Tab } from "../navigation.ts";
 import type {
   AgentIdentityResult,
@@ -2338,12 +2337,6 @@ export function renderAgentOverview(params: {
     namedWallets: WalletNamedWallet[];
     defaultWalletId: string | null;
   };
-  mining: {
-    attachedWalletId: string | null;
-    profile: SatMinerProfile | null;
-    readiness: SatMiningReadiness | null;
-    status: SatMiningRuntimeStatus | null;
-  };
   federation: {
     token: FederationToken | null;
     status: FederationStatus | null;
@@ -3863,25 +3856,8 @@ export function renderAgentOverview(params: {
           </div>
         </section>
 
-        <section class="agent-setup-card" aria-label="Agent skills">
-          <div class="agent-setup-card__figure">
-            ${skillsLoadedForAgent ? readySkills : "–"}
-          </div>
-          ${renderSetupTitleButton({ label: "Skills", onClick: () => params.onSelectPanel("skills") })}
-          <div class="agent-setup-card__detail">
-            ${skillsLoadedForAgent ? `${readySkills} ready for this Agent` : "Skills are loading."}
-          </div>
-          <div class="agent-setup-card__links">
-            ${renderSetupSummaryAction({
-              label: "Skill",
-              icon: icons.plus,
-              onClick: () => params.onNavigate("skills"),
-            })}
-          </div>
-        </section>
-
         <section class="agent-setup-card" aria-label="Provider models">
-          <div class="agent-setup-card__figure">${agentModelOptions.length}</div>
+          <div class="agent-setup-card__figure">${providerNames.length > 0 ? "Connected" : "Connect"}</div>
           ${renderSetupTitleButton({
             label: "Models",
             onClick: () => params.onSelectPanel("providers"),
@@ -3900,26 +3876,11 @@ export function renderAgentOverview(params: {
           </div>
         </section>
 
-        <section class="agent-setup-card" aria-label="Channels">
-          <div class="agent-setup-card__figure">${channelRoutes.length}</div>
-          ${renderSetupTitleButton({ label: "Channels", onClick: () => params.onSelectPanel("channels") })}
-          <div class="agent-setup-card__detail">
-            ${channelRouteLabels.length > 0 ? channelRouteLabels.join(", ") : channels.detail}
-          </div>
-          <div class="agent-setup-card__links">
-            ${renderSetupSummaryAction({
-              label: "Channels",
-              icon: icons.plus,
-              onClick: () => params.onSelectPanel("channels"),
-            })}
-          </div>
-        </section>
-
         <section class="agent-setup-card" aria-label="Tasks">
           <div class="agent-setup-card__figure">${workDefinitionCount}</div>
           ${renderSetupTitleButton({ label: "Tasks", onClick: () => params.onSelectPanel("cron") })}
           <div class="agent-setup-card__detail">
-            ${agentTasks.length} task${agentTasks.length === 1 ? "" : "s"} · ${agentTriggers} trigger${agentTriggers === 1 ? "" : "s"} · ${agentWorkflows} workflow${agentWorkflows === 1 ? "" : "s"} · ${agentGraphs} graph${agentGraphs === 1 ? "" : "s"} · ${agentPrograms} program${agentPrograms === 1 ? "" : "s"}
+            ${workDefinitionCount > 0 ? "Scheduled work and automation." : "No tasks yet."}
           </div>
           <div class="agent-setup-card__links">
             ${renderSetupSummaryAction({
@@ -3943,6 +3904,50 @@ export function renderAgentOverview(params: {
             ${renderSetupSummaryAction({
               label: "Sessions",
               onClick: () => params.onSelectPanel("sessions"),
+            })}
+          </div>
+        </section>
+        <section class="agent-setup-card" aria-label="WEN desk">
+          <div class="agent-setup-card__title">WEN</div>
+          <div class="agent-setup-card__detail">Explore opportunities and manage wallet permissions before enabling financial actions.</div>
+          <div class="agent-setup-card__links">
+            ${renderSetupSummaryAction({ label: "Open WEN", onClick: () => params.onNavigate("wen") })}
+            ${renderSetupSummaryAction({ label: "Wallets", onClick: () => params.onNavigate("wallet") })}
+            ${renderSetupSummaryAction({ label: "Chat", onClick: () => params.onNavigate("chat") })}
+          </div>
+        </section>
+      </div>
+      <details class="agent-advanced" style="margin-top: 20px">
+        <summary>Advanced</summary>
+        <div class="agent-setup-summary-grid" aria-label="Advanced agent configuration" style="margin-top: 16px">
+        <section class="agent-setup-card" aria-label="Agent skills">
+          <div class="agent-setup-card__figure">
+            ${skillsLoadedForAgent ? readySkills : "–"}
+          </div>
+          ${renderSetupTitleButton({ label: "Skills", onClick: () => params.onSelectPanel("skills") })}
+          <div class="agent-setup-card__detail">
+            ${skillsLoadedForAgent ? `${readySkills} ready for this Agent` : "Skills are loading."}
+          </div>
+          <div class="agent-setup-card__links">
+            ${renderSetupSummaryAction({
+              label: "Skill",
+              icon: icons.plus,
+              onClick: () => params.onNavigate("skills"),
+            })}
+          </div>
+        </section>
+
+        <section class="agent-setup-card" aria-label="Channels">
+          <div class="agent-setup-card__figure">${channelRoutes.length}</div>
+          ${renderSetupTitleButton({ label: "Channels", onClick: () => params.onSelectPanel("channels") })}
+          <div class="agent-setup-card__detail">
+            ${channelRouteLabels.length > 0 ? channelRouteLabels.join(", ") : channels.detail}
+          </div>
+          <div class="agent-setup-card__links">
+            ${renderSetupSummaryAction({
+              label: "Channels",
+              icon: icons.plus,
+              onClick: () => params.onSelectPanel("channels"),
             })}
           </div>
         </section>
@@ -4002,10 +4007,10 @@ export function renderAgentOverview(params: {
           </div>
         </section>
 
-        <section class="agent-setup-card" aria-label="Extensions">
+        <section class="agent-setup-card" aria-label="Modules">
           <div class="agent-setup-card__figure">${extensionsSummary.activeCount}</div>
           ${renderSetupTitleButton({
-            label: "Extensions",
+            label: "Modules",
             onClick: () => params.onNavigate("plugins"),
           })}
           <div class="agent-setup-card__detail">
@@ -4016,12 +4021,13 @@ export function renderAgentOverview(params: {
           </div>
           <div class="agent-setup-card__links">
             ${renderSetupSummaryAction({
-              label: "Extensions",
+              label: "Modules",
               onClick: () => params.onNavigate("plugins"),
             })}
           </div>
         </section>
-      </div>
+        </div>
+      </details>
 
       ${
         providersOnly

@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
-	"sort"
 	"testing"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -20,11 +19,11 @@ func TestWENBTCRejectsLegacySignerCapabilities(t *testing.T) {
 		SourceDigest   string `json:"sourceDigest"`
 		ContractDigest string `json:"contractDigest"`
 		Vectors        []struct {
-			Opcode     byte                 `json:"opcode"`
-			Name       string               `json:"name"`
-			ProgramID  string               `json:"programId"`
-			DataBase64 string               `json:"dataBase64"`
-			Keys       []signerSATAccountV2 `json:"keys"`
+			Opcode     byte                   `json:"opcode"`
+			Name       string                 `json:"name"`
+			ProgramID  string                 `json:"programId"`
+			DataBase64 string                 `json:"dataBase64"`
+			Keys       []signerTypedAccountV2 `json:"keys"`
 		} `json:"vectors"`
 	}
 	if err := json.Unmarshal(raw, &fixture); err != nil {
@@ -33,18 +32,7 @@ func TestWENBTCRejectsLegacySignerCapabilities(t *testing.T) {
 	if len(fixture.Vectors) != 2 || len(fixture.SourceDigest) != 64 || len(fixture.ContractDigest) != 64 {
 		t.Fatal("invalid WEN fixture")
 	}
-	actions := map[string]bool{}
-	for action := range signerSATCodecsV2 {
-		actions[action] = true
-	}
-	for action := range signerSATCodecsGeneration2 {
-		actions[action] = true
-	}
-	names := make([]string, 0, len(actions))
-	for action := range actions {
-		names = append(names, action)
-	}
-	sort.Strings(names)
+	names := []string{"commitCycle", "openCycle", "openBondPosition"}
 	checks := 0
 	for _, v := range fixture.Vectors {
 		data, err := base64.StdEncoding.Strict().DecodeString(v.DataBase64)
@@ -53,9 +41,9 @@ func TestWENBTCRejectsLegacySignerCapabilities(t *testing.T) {
 		}
 		wallet := solana.MustPublicKeyFromBase58(v.Keys[0].Pubkey)
 		for _, action := range names {
-			for _, kind := range []string{intentSolanaSATAction, intentSolanaVaultBondAction} {
+			for _, kind := range []string{"solana.satAction", "solana.vaultBondAction"} {
 				input := signerIntentV2{Type: kind, Action: action, ProgramID: v.ProgramID, DataBase64: v.DataBase64, Keys: v.Keys}
-				if kind == intentSolanaVaultBondAction {
+				if kind == "solana.vaultBondAction" {
 					input.Cluster = "devnet"
 				}
 				t.Run(v.Name+"/"+kind+"/"+action, func(t *testing.T) {

@@ -71,7 +71,7 @@ async function pluginTreeDigest(root) {
 
 export async function writeBundledPluginLock(runtimeRoot) {
   const extensionsRoot = path.join(runtimeRoot, "extensions");
-  const required = new Set(["memory-core", "sat-mining"]);
+  const required = new Set(["memory-core", "wen"]);
   const seenIds = new Set();
   const entries = [];
   for (const entry of (await fs.readdir(extensionsRoot, { withFileTypes: true })).toSorted((a, b) =>

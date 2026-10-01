@@ -23,8 +23,6 @@ export type OperatorReadinessInput = {
     metadata?: Record<string, unknown>;
   }>;
   defaultWalletId?: string | null;
-  miningAttachedWalletId?: string | null;
-  federationBondWalletId?: string | null;
   joined?: boolean;
   trustState?: FederationTrustState | null;
   hostedState?: FederationHostedState | null;
@@ -42,21 +40,6 @@ function findNamedWallet(
   return (wallets ?? []).find((wallet) => wallet.id === normalized);
 }
 
-function resolveWalletRole(
-  wallet: NonNullable<OperatorReadinessInput["walletNamedWallets"]>[number] | undefined,
-): "agent" | "vault" | "mining" | undefined {
-  const raw =
-    typeof wallet?.metadata?.purpose === "string"
-      ? wallet.metadata.purpose
-      : typeof wallet?.metadata?.role === "string"
-        ? wallet.metadata.role
-        : "";
-  const normalized = raw.trim().toLowerCase();
-  return normalized === "agent" || normalized === "vault" || normalized === "mining"
-    ? normalized
-    : undefined;
-}
-
 export function describeOperatorReadinessChecklist(
   input: OperatorReadinessInput,
 ): OperatorReadinessChecklistItem[] {
@@ -64,36 +47,12 @@ export function describeOperatorReadinessChecklist(
   const approvalMode = input.walletStatus?.approvalAuth?.mode ?? "none";
   const approvalReady = input.walletStatus?.approvalAuth?.ready ?? false;
   const defaultWalletId = String(input.defaultWalletId ?? "").trim() || null;
-  const defaultWalletCandidate = findNamedWallet(input.walletNamedWallets, defaultWalletId);
-  const defaultWallet =
-    defaultWalletCandidate && resolveWalletRole(defaultWalletCandidate) !== "vault"
-      ? defaultWalletCandidate
-      : undefined;
-  const firstAgentWallet = (input.walletNamedWallets ?? []).find(
-    (wallet) => resolveWalletRole(wallet) === "agent",
-  );
-  const agentWallet = defaultWallet ?? firstAgentWallet;
-  const miningWalletId = String(input.miningAttachedWalletId ?? "").trim() || null;
-  const miningWallet = findNamedWallet(input.walletNamedWallets, miningWalletId);
-  const bondWalletId = String(input.federationBondWalletId ?? "").trim() || null;
-  const explicitBondWallet = findNamedWallet(input.walletNamedWallets, bondWalletId);
-  const vaultWallet =
-    explicitBondWallet ??
-    (input.walletNamedWallets ?? []).find(
-      (wallet) => resolveWalletRole(wallet) === "vault" && wallet.id !== miningWalletId,
-    );
+  const defaultWallet = findNamedWallet(input.walletNamedWallets, defaultWalletId);
+  const agentWallet = defaultWallet ?? input.walletNamedWallets?.[0];
   const joined = input.joined === true;
   const trustState = input.trustState ?? "pending";
   const hostedState = input.hostedState ?? "disabled";
   const publicUrl = String(input.publicUrl ?? "").trim();
-  const miningSeparate =
-    Boolean(miningWalletId) &&
-    Boolean(agentWallet) &&
-    String(agentWallet?.id ?? "").trim() !== miningWalletId;
-  const sharedWalletWarning =
-    agentWallet && miningWallet && agentWallet.id === miningWallet.id
-      ? "Agent and Mining wallets must stay separate. They currently share one wallet, so switch the Agent wallet or reattach Mining to another wallet first."
-      : null;
 
   return [
     input.walletStatus
@@ -131,11 +90,8 @@ export function describeOperatorReadinessChecklist(
         },
     agentWallet
       ? {
-          title: "Agent wallet set",
-          summary:
-            defaultWallet && firstAgentWallet && defaultWallet.id !== firstAgentWallet.id
-              ? `${defaultWallet.name} · ${firstAgentWallet.name}`
-              : agentWallet.name,
+          title: "Wallet available",
+          summary: agentWallet.name,
           detail: defaultWallet
             ? "This Default Agent wallet is the final fallback for paid A2A sends, payment evidence publication, skill/plugin wallet actions, and routine transfers after explicit, skill, and Agent assignment routing."
             : "This Agent wallet can be selected explicitly or assigned to an Agent or skill. Set it as the optional fallback only when global fallback behavior is wanted.",
@@ -143,65 +99,19 @@ export function describeOperatorReadinessChecklist(
         }
       : defaultWalletId
         ? {
-            title: "Agent wallet set",
+            title: "Wallet available",
             summary: defaultWalletId,
             detail:
               "An Agent wallet is configured but not present in this wallet list right now. Refresh or repair the registry before paid Fased Network or skill wallet work.",
             tone: "warn" as const,
           }
         : {
-            title: "Agent wallet set",
+            title: "Wallet available",
             summary: "Not set",
             detail:
               "Pick one Agent wallet before paid Fased Network tasks, receipts, skill wallet actions, or routine sends use a clear wallet.",
             tone: "warn" as const,
           },
-    !miningWalletId
-      ? {
-          title: "Mining wallet separate",
-          summary: "Optional and not configured",
-          detail:
-            "Mining is optional. If you enable it later, create or import the singleton @wallet:mining wallet.",
-          tone: "neutral" as const,
-        }
-      : sharedWalletWarning
-        ? {
-            title: "Mining wallet separate",
-            summary: "Conflict",
-            detail: sharedWalletWarning,
-            tone: "warn" as const,
-          }
-        : miningWallet
-          ? {
-              title: "Mining wallet separate",
-              summary: miningSeparate ? miningWallet.name : "Attached",
-              detail: miningSeparate
-                ? "Mining is attached to a dedicated wallet, separate from the Agent wallet."
-                : "Mining wallet is present but could not be compared against the Agent wallet yet.",
-              tone: miningSeparate ? ("success" as const) : ("neutral" as const),
-            }
-          : {
-              title: "Mining wallet separate",
-              summary: miningWalletId,
-              detail:
-                "SAT runtime points at a wallet id that is not visible in the current wallet list. Refresh mining and wallet state before changing roles.",
-              tone: "warn" as const,
-            },
-    vaultWallet
-      ? {
-          title: "Vault wallet present",
-          summary: vaultWallet.name,
-          detail:
-            "Use this as the manual-first destination for longer-term SAT/SOL storage and mining sweeps.",
-          tone: "success" as const,
-        }
-      : {
-          title: "Vault wallet present",
-          summary: "Not set",
-          detail:
-            "Create or reserve a wallet that is not Agent or SAT Mining if you want a manual-first vault destination.",
-          tone: "neutral" as const,
-        },
     !joined
       ? {
           title: "Fased Network joined / trusted",

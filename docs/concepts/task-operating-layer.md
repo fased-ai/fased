@@ -79,7 +79,7 @@ Each Task carries policy so Fased can run only what the job needs.
 | Stop policy    | Stop on success, marker, max successful runs, or max total runs.              |
 | Delivery       | Internal only, channel announce, or webhook POST.                             |
 
-Task policy cannot bypass wallet, mining, marketplace, service, or tool policy.
+Task policy cannot bypass wallet, marketplace, service, or tool policy.
 Domain pages remain the control surface for their own actions.
 
 ## Execution modes
@@ -165,10 +165,6 @@ stronger follow-up. No cue means the task waits for the next normal schedule.
 
 ## Source and evidence handling
 
-Tasks that need outside or runtime evidence can collect sources before model
-analysis. Source nodes may include provider status, wallet state, mining state,
-offers, explicit URLs, or live search where policy allows it.
-
 When a workflow/source adapter records source evidence, run detail should show:
 
 - source id and source role
@@ -189,7 +185,7 @@ with authority by themselves.
 Program -> blocked proposal -> operator review -> Task or Workflow definition -> Run history
 ```
 
-A Program cannot grant wallet, mining, marketplace, tool, service, or credential
+A Program cannot grant wallet, marketplace, tool, service, or credential
 access. It only creates reviewable intent.
 
 ## Coordination evidence
@@ -202,7 +198,7 @@ Task -> helper Agent run -> evidence -> final result
 ```
 
 Helper rows are evidence, not authority. They do not bypass the parent task's
-model, memory, skill, wallet, mining, marketplace, or service policy.
+model, memory, skill, wallet, marketplace, or service policy.
 
 ## Queue and recovery
 
