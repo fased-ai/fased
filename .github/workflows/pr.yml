@@ -411,7 +411,7 @@ jobs:
               trap 'kill "$timer_pid" "$sample_pid" 2>/dev/null || true' EXIT
               trap 'exit 0' TERM INT
               while :; do
-                native_pids="$(ps -axo pid=,ppid=,comm= | awk '$3 ~ /(^|\/)swiftpm-testing$/ { print $1 }')"
+                native_pids="$(pgrep -x swiftpm-testing || true)"
                 if [ -n "$native_pids" ]; then break; fi
                 sleep 1 &
                 timer_pid=$!
@@ -427,7 +427,7 @@ jobs:
               ps -axo pid=,ppid=,comm= > "$diagnostics_dir/processes.txt"
               cat "$diagnostics_dir/processes.txt"
               while read -r native_pid; do
-                if ! ps -p "$native_pid" -o comm= | awk '/(^|\/)swiftpm-testing$/ { found=1 } END { exit !found }'; then
+                if ! pgrep -x swiftpm-testing | awk -v pid="$native_pid" '$0 == pid { found=1 } END { exit !found }'; then
                   continue
                 fi
                 sample_file="$diagnostics_dir/swiftpm-testing-$native_pid.sample.txt"
