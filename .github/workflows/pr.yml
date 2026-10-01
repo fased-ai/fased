@@ -410,15 +410,8 @@ jobs:
               sample_pid=""
               trap 'kill "$timer_pid" "$sample_pid" 2>/dev/null || true' EXIT
               trap 'exit 0' TERM INT
-              while :; do
-                native_pids="$(pgrep -x swiftpm-testing || true)"
-                if [ -n "$native_pids" ]; then break; fi
-                sleep 1 &
-                timer_pid=$!
-                wait "$timer_pid" || exit 0
-                timer_pid=""
-              done
-              sleep 120 &
+              diagnostic_pid="$(sh -c 'echo "$PPID"')"
+              sleep 180 &
               timer_pid=$!
               wait "$timer_pid" || exit 0
               timer_pid=""
@@ -426,11 +419,29 @@ jobs:
               mkdir -p "$diagnostics_dir"
               ps -axo pid=,ppid=,comm= > "$diagnostics_dir/processes.txt"
               cat "$diagnostics_dir/processes.txt"
+              native_pids="$(awk -v root="$$" -v skip="$diagnostic_pid" '
+                { parent[$1]=$2; order[NR]=$1 }
+                function under(pid, target, depth) {
+                  for (depth=0; depth<1000; depth++) {
+                    if (pid == target) return 1
+                    if (!(pid in parent)) return 0
+                    pid=parent[pid]
+                  }
+                  return 0
+                }
+                END {
+                  for (i=1; i<=NR; i++) {
+                    pid=order[i]
+                    if (pid != root && under(pid, root) && !under(pid, skip)) print pid
+                  }
+                }
+              ' "$diagnostics_dir/processes.txt")"
               while read -r native_pid; do
-                if ! pgrep -x swiftpm-testing | awk -v pid="$native_pid" '$0 == pid { found=1 } END { exit !found }'; then
-                  continue
-                fi
-                sample_file="$diagnostics_dir/swiftpm-testing-$native_pid.sample.txt"
+                if [ -z "$native_pid" ] || ! kill -0 "$native_pid" 2>/dev/null; then continue; fi
+                expected_parent="$(awk -v pid="$native_pid" '$1 == pid { print $2 }' "$diagnostics_dir/processes.txt")"
+                current_parent="$(ps -p "$native_pid" -o ppid= | tr -d ' ' || true)"
+                if [ "$current_parent" != "$expected_parent" ]; then continue; fi
+                sample_file="$diagnostics_dir/process-$native_pid.sample.txt"
                 /usr/bin/sample "$native_pid" 5 -file "$sample_file" &
                 sample_pid=$!
                 wait "$sample_pid" || true
