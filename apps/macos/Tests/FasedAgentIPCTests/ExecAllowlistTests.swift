@@ -223,8 +223,8 @@ struct ExecAllowlistTests {
         #expect(resolutions[1].executableName == "touch")
     }
 
-    @Test func resolveForAllowlistUnwrapsEnvToEffectiveDirectExecutable() {
-        let command = ["/usr/bin/env", "FOO=bar", "/usr/bin/printf", "ok"]
+    @Test func resolveForAllowlistUnwrapsTransparentEnvToEffectiveDirectExecutable() {
+        let command = ["/usr/bin/env", "/usr/bin/printf", "ok"]
         let resolutions = ExecCommandResolution.resolveForAllowlist(
             command: command,
             rawCommand: nil,

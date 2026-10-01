@@ -404,7 +404,43 @@ jobs:
           swiftformat --lint apps/shared/FasedAgentKit/Sources --config .swiftformat
           swiftformat --lint Swabble/Sources --config .swiftformat
           swift build --package-path apps/macos --configuration release
-          swift test --package-path apps/macos
+          (
+            swift test --package-path apps/macos &
+            swift_test_pid=$!
+            (
+              timer_pid=""
+              sample_pid=""
+              trap 'kill "$timer_pid" "$sample_pid" 2>/dev/null || true' EXIT
+              trap 'exit 0' TERM INT
+              sleep 120 &
+              timer_pid=$!
+              wait "$timer_pid" || exit 0
+              if kill -0 "$swift_test_pid" 2>/dev/null; then
+                diagnostics_dir="$RUNNER_TEMP/fased-macos-stall"
+                mkdir -p "$diagnostics_dir"
+                ps -axo pid=,ppid=,comm= > "$diagnostics_dir/processes.txt"
+                cat "$diagnostics_dir/processes.txt"
+                while read -r native_pid; do
+                  sample_file="$diagnostics_dir/swiftpm-testing-$native_pid.sample.txt"
+                  /usr/bin/sample "$native_pid" 5 -file "$sample_file" &
+                  sample_pid=$!
+                  wait "$sample_pid" || true
+                  if [ -f "$sample_file" ]; then cat "$sample_file"; fi
+                done < <(awk '$3 ~ /(^|\/)swiftpm-testing$/ { print $1 }' "$diagnostics_dir/processes.txt")
+              fi
+            ) &
+            sampler_pid=$!
+            stop_sampler() {
+              kill "$sampler_pid" 2>/dev/null || true
+              wait "$sampler_pid" 2>/dev/null || true
+            }
+            trap stop_sampler EXIT
+            swift_test_status=0
+            wait "$swift_test_pid" || swift_test_status=$?
+            stop_sampler
+            trap - EXIT
+            exit "$swift_test_status"
+          )
           swift test --package-path apps/shared/FasedAgentKit
           swift test --package-path Swabble
 
