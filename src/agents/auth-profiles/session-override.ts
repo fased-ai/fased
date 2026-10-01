@@ -66,6 +66,19 @@ export async function resolveSessionAuthProfileOverride(params: {
   const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
   const order = resolveAuthProfileOrder({ cfg, store, provider });
   let current = sessionEntry.authProfileOverride?.trim();
+  const explicitProfileId =
+    params.lockedProfileId?.trim() ??
+    (sessionEntry.authProfileOverrideSource === "user" ? current : undefined);
+  if (
+    explicitProfileId &&
+    (!store.profiles[explicitProfileId] ||
+      !isProfileForProvider({ provider, profileId: explicitProfileId, store }) ||
+      !order.includes(explicitProfileId))
+  ) {
+    throw new Error(
+      `Pinned account "${explicitProfileId}" is unavailable for ${provider}; no alternate account was used.`,
+    );
+  }
 
   if (current && !store.profiles[current]) {
     await clearSessionAuthProfileOverride({ sessionEntry, sessionStore, sessionKey, storePath });

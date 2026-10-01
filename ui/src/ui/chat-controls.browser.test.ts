@@ -1,5 +1,6 @@
 import { render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { deriveModelMetadata } from "../../../src/agents/model-metadata.ts";
 import { renderChatComposerControls } from "./app-render.helpers.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import {
@@ -158,6 +159,16 @@ describe("chat model controls", () => {
   it("closes the model popover after an asynchronous session patch", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
     const { request, state } = createState();
+    state.chatModelCatalog = state.chatModelCatalog.map((model) => ({
+      ...model,
+      metadata: {
+        ...deriveModelMetadata({
+          model: { id: model.id, name: model.name, provider: model.provider },
+          cfg: {},
+        }),
+        accountProfileId: "openai:work",
+      },
+    }));
     const container = document.createElement("div");
     document.body.append(container);
     render(renderChatComposerControls(state), container);
@@ -179,6 +190,7 @@ describe("chat model controls", () => {
     expect(request).toHaveBeenCalledWith("sessions.patch", {
       key: "main",
       model: "openai/gpt-5.4-mini",
+      authProfileId: "openai:work",
     });
     expect(details?.open).toBe(false);
   });

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { deriveModelMetadata } from "../../../src/agents/model-metadata.ts";
 import "../styles.css";
 import { DEFAULT_CRON_FORM } from "./app-defaults.ts";
 import { mountApp, registerAppMountHooks } from "./test-helpers/app-mount.ts";
@@ -90,7 +91,7 @@ describe("app task model inheritance", () => {
     expect(app.textContent).not.toContain("Sign in to Fased Agent");
   });
 
-  it("shows saved Agent task-role models instead of a generic default label", async () => {
+  it("uses the Agent default and offers account-discovered models without attaching them", async () => {
     const app = mountApp("/tasks");
     app.applySettings({ ...app.settings, token: "owner-token-for-task-models" });
     app.agentsList = {
@@ -123,6 +124,18 @@ describe("app task model inheritance", () => {
       },
     };
     app.chatModelCatalog = [
+      {
+        id: "account-new-model",
+        provider: "openai-codex",
+        name: "New account model",
+        metadata: {
+          ...deriveModelMetadata({
+            model: { id: "account-new-model", provider: "openai-codex", name: "New account model" },
+            cfg: {},
+          }),
+          accountProfileId: "openai-codex:work",
+        },
+      },
       { id: "gpt-5.4-mini", provider: "openrouter/openai", name: "GPT-5.4 Mini" },
       { id: "minimax-m2.7", provider: "openrouter/minimax", name: "MiniMax M2.7" },
     ];
@@ -143,10 +156,20 @@ describe("app task model inheritance", () => {
       '[data-test-id="agent-task-escalation-model"]',
     );
 
-    expect(cheap?.options[0]?.textContent?.trim()).toContain("gpt-5.4-mini");
+    expect(cheap?.options[0]?.textContent?.trim()).toContain("gpt-5.5");
+    expect(Array.from(cheap?.options ?? []).map((option) => option.value)).toContain(
+      "openai-codex/account-new-model",
+    );
     expect(escalation?.options[0]?.textContent?.trim()).toContain("minimax-m2.7");
     expect(cheap?.options[0]?.textContent?.trim()).not.toBe("Default");
     expect(escalation?.options[0]?.textContent?.trim()).not.toBe("Default");
+    cheap!.value = "openai-codex/account-new-model";
+    cheap!.dispatchEvent(new Event("change", { bubbles: true }));
+    await app.updateComplete;
+    expect(app.agentTaskForm.policyProfileId).toBe("openai-codex:work");
+    expect(app.querySelector<HTMLSelectElement>('[data-test-id="agent-task-account"]')?.value).toBe(
+      "openai-codex:work",
+    );
   });
 
   it("shows Agent skill inheritance and lets a task narrow selected skills", async () => {

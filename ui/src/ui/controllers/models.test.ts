@@ -20,6 +20,19 @@ describe("loadModels", () => {
     ]);
   });
 
+  it("passes explicit refresh and account scope without changing model IDs", async () => {
+    const request = vi.fn(async () => ({ models: [] }));
+    await loadModels({ request } as unknown as Parameters<typeof loadModels>[0], {
+      refresh: true,
+      profileId: "openai:work",
+    });
+    expect(request).toHaveBeenCalledWith("models.list", {
+      includeMetadata: true,
+      refresh: true,
+      profileId: "openai:work",
+    });
+  });
+
   it("omits an empty session key", async () => {
     const request = vi.fn(async () => ({ models: [] }));
 

@@ -1166,7 +1166,7 @@ export const modelsHandlers: GatewayRequestHandlers = {
     }
     try {
       const catalog = await context.loadGatewayModelCatalog();
-      const cfg = loadConfig();
+      let cfg = loadConfig();
       const defaultAgentId = resolveDefaultAgentId(cfg);
       const sessionKey =
         typeof params.sessionKey === "string" && params.sessionKey.trim()
@@ -1176,7 +1176,30 @@ export const modelsHandlers: GatewayRequestHandlers = {
         ? resolveSessionAgentId({ sessionKey, config: cfg })
         : defaultAgentId;
       const agentDir = resolveAgentDir(cfg, authAgentId);
-      const store = ensureAuthProfileStore(agentDir);
+      let store = ensureAuthProfileStore(agentDir);
+      if (typeof params.profileId === "string") {
+        const profile = store.profiles[params.profileId];
+        if (!profile) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.INVALID_REQUEST, "Selected account is unavailable."),
+          );
+          return;
+        }
+        store = {
+          ...store,
+          profiles: { [params.profileId]: profile },
+          order: { [profile.provider]: [params.profileId] },
+        };
+        cfg = {
+          ...cfg,
+          auth: {
+            ...cfg.auth,
+            order: { ...cfg.auth?.order, [profile.provider]: [params.profileId] },
+          },
+        };
+      }
       const snapshot = await resolveCanonicalModelCatalogSnapshot({
         cfg,
         store,
@@ -1184,6 +1207,7 @@ export const modelsHandlers: GatewayRequestHandlers = {
         defaultProvider: DEFAULT_PROVIDER,
         agentId: authAgentId,
         agentDir,
+        forceRefresh: params.refresh === true,
       });
       const providerFilter =
         typeof params.provider === "string" && params.provider.trim()

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import * as authProfiles from "../agents/auth-profiles.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import type { FasedAgentConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
@@ -56,6 +57,37 @@ function makeKimiSubagentCfg(params: {
 }
 
 describe("gateway sessions patch", () => {
+  test("pins an owned account and rejects a missing account without changing the session", async () => {
+    const spy = vi.spyOn(authProfiles, "ensureAuthProfileStore").mockReturnValue({
+      version: 1,
+      profiles: { "openai:work": { type: "api_key", provider: "openai", key: "test-key" } },
+    });
+    try {
+      const store: Record<string, SessionEntry> = {};
+      const cfg = {
+        agents: { defaults: { model: { primary: "openai/test-model" } } },
+      } as FasedAgentConfig;
+      const result = await applySessionsPatchToStore({
+        cfg,
+        store,
+        storeKey: "agent:main:main",
+        patch: { key: "agent:main:main", authProfileId: "openai:work" },
+      });
+      expect(result.ok).toBe(true);
+      expect(store["agent:main:main"].authProfileOverride).toBe("openai:work");
+      const rejected = await applySessionsPatchToStore({
+        cfg,
+        store,
+        storeKey: "agent:main:main",
+        patch: { key: "agent:main:main", authProfileId: "missing" },
+      });
+      expect(rejected.ok).toBe(false);
+      expect(store["agent:main:main"].authProfileOverride).toBe("openai:work");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test("persists thinkingLevel=off (does not clear)", async () => {
     const store: Record<string, SessionEntry> = {};
     const res = await applySessionsPatchToStore({

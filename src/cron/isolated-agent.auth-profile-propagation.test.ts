@@ -86,7 +86,10 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624)", () => {
           sendMessageDiscord: vi.fn(),
           sendMessageIMessage: vi.fn(),
         },
-        job: makeJob({ kind: "agentTurn", message: "check status", deliver: false }),
+        job: {
+          ...makeJob({ kind: "agentTurn", message: "check status", deliver: false }),
+          executionPolicy: { modelPolicy: { authProfileId: "openrouter:default" } },
+        },
         message: "check status",
         sessionKey: "cron:job-1",
         lane: "cron",
@@ -111,6 +114,28 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624)", () => {
 
       // This assertion will FAIL on main — proving the bug
       expect(callArgs?.authProfileId).toBe("openrouter:default");
+      expect(callArgs?.authProfileIdSource).toBe("user");
+      vi.mocked(runEmbeddedPiAgent).mockClear();
+      const rejected = await runCronIsolatedAgentTurn({
+        cfg,
+        deps: {
+          sendMessageSlack: vi.fn(),
+          sendMessageWhatsApp: vi.fn(),
+          sendMessageTelegram: vi.fn(),
+          sendMessageDiscord: vi.fn(),
+          sendMessageIMessage: vi.fn(),
+        },
+        job: {
+          ...makeJob({ kind: "agentTurn", message: "check status", deliver: false }),
+          executionPolicy: { modelPolicy: { authProfileId: "openrouter:missing" } },
+        },
+        message: "check status",
+        sessionKey: "cron:missing-account",
+        lane: "cron",
+      });
+      expect(rejected.status).toBe("error");
+      expect(rejected.error).toContain("no alternate account");
+      expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
     });
   });
 });

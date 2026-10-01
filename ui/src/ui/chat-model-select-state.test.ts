@@ -57,7 +57,7 @@ describe("chat-model-select-state", () => {
     expect(resolved.options.map((option) => option.value)).not.toContain("gpt-5.5");
   });
 
-  it("does not offer old OpenAI API models as normal chat picker choices", () => {
+  it("preserves older models returned by the authoritative account catalog", () => {
     const state = {
       sessionKey: "main",
       chatModelOverrides: {},
@@ -76,14 +76,12 @@ describe("chat-model-select-state", () => {
 
     const resolved = resolveChatModelSelectState(state);
     expect(resolved.options.map((option) => option.value)).toContain("openai/gpt-5.5");
-    expect(resolved.options.map((option) => option.value)).not.toContain(
-      "openrouter/openai/gpt-5.1",
-    );
-    expect(resolved.options.map((option) => option.value)).not.toContain("openai/gpt-5.1");
-    expect(resolved.options.map((option) => option.value)).not.toContain("openai-codex/gpt-5.1");
+    expect(resolved.options.map((option) => option.value)).toContain("openrouter/openai/gpt-5.1");
+    expect(resolved.options.map((option) => option.value)).toContain("openai/gpt-5.1");
+    expect(resolved.options.map((option) => option.value)).toContain("openai-codex/gpt-5.1");
   });
 
-  it("does not offer provider routes outside the shared provider registry", () => {
+  it("preserves configured routes returned by the authoritative gateway catalog", () => {
     const state = {
       sessionKey: "main",
       chatModelOverrides: {},
@@ -104,7 +102,7 @@ describe("chat-model-select-state", () => {
 
     const resolved = resolveChatModelSelectState(state);
     expect(resolved.options.map((option) => option.value)).toContain("openai/gpt-5.5");
-    expect(resolved.options.map((option) => option.value)).not.toContain(
+    expect(resolved.options.map((option) => option.value)).toContain(
       "amazon-bedrock/anthropic.claude-sonnet-4",
     );
   });
@@ -129,7 +127,7 @@ describe("chat-model-select-state", () => {
 
     const resolved = resolveChatModelSelectState(state);
     expect(resolved.defaultModel).toBe("openai/gpt-5.4-mini");
-    expect(resolved.defaultLabel).toContain("Default (gpt-5.4-mini · OpenAI)");
+    expect(resolved.defaultLabel).toContain("Use agent default (gpt-5.4-mini · OpenAI)");
   });
 
   it("does not restrict chat override options to the Agent default provider", () => {

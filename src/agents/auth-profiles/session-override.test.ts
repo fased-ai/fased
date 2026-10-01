@@ -21,6 +21,32 @@ async function writeAuthStore(agentDir: string) {
 }
 
 describe("resolveSessionAuthProfileOverride", () => {
+  it("rejects a missing pinned account without clearing it or choosing another", async () => {
+    await withStateDirEnv("fased-auth-", async ({ stateDir }) => {
+      const agentDir = path.join(stateDir, "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+      await writeAuthStore(agentDir);
+      const sessionEntry: SessionEntry = {
+        sessionId: "s",
+        updatedAt: 0,
+        authProfileOverride: "zai:missing",
+        authProfileOverrideSource: "user",
+      };
+      await expect(
+        resolveSessionAuthProfileOverride({
+          cfg: {},
+          provider: "zai",
+          agentDir,
+          sessionEntry,
+          sessionStore: { main: sessionEntry },
+          sessionKey: "main",
+          isNewSession: false,
+        }),
+      ).rejects.toThrow("no alternate account");
+      expect(sessionEntry.authProfileOverride).toBe("zai:missing");
+    });
+  });
+
   it("keeps user override when provider alias differs", async () => {
     await withStateDirEnv("fased-auth-", async ({ stateDir }) => {
       const agentDir = path.join(stateDir, "agent");

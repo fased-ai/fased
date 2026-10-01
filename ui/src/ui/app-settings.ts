@@ -536,7 +536,7 @@ export async function refreshActiveTab(host: SettingsHost) {
     await loadMemory(host as unknown as FasedAgentApp);
   }
   if (host.tab === "cron") {
-    await loadCron(host);
+    await Promise.all([loadCron(host), loadProviderModelCatalog(host)]);
   }
   if (host.tab === "federation") {
     await loadFederation(host as unknown as FasedAgentApp);
@@ -639,7 +639,7 @@ export async function refreshActiveTab(host: SettingsHost) {
   }
 }
 
-export async function loadProviderModelCatalog(host: SettingsHost) {
+export async function loadProviderModelCatalog(host: SettingsHost, refresh = false) {
   const app = host as unknown as FasedAgentApp;
   if (!app.client || !host.connected) {
     return;
@@ -647,7 +647,7 @@ export async function loadProviderModelCatalog(host: SettingsHost) {
   host.chatModelsLoading = true;
   try {
     const [snapshotResult, authStatusResult, catalogStatusResult] = await Promise.allSettled([
-      loadModelCatalogSnapshot(app.client, { all: true, sessionKey: host.sessionKey }),
+      loadModelCatalogSnapshot(app.client, { all: true, sessionKey: host.sessionKey, refresh }),
       app.client.request<ModelsAuthStatusResult>("models.auth.status", {}),
       app.client.request<ModelsCatalogStatusResult>("models.catalog.status", {}),
     ]);

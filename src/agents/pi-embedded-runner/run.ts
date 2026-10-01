@@ -416,7 +416,9 @@ export async function runEmbeddedPiAgent(
           !lockedProfile ||
           normalizeProviderId(lockedProfile.provider) !== normalizeProviderId(provider)
         ) {
-          lockedProfileId = undefined;
+          throw new Error(
+            `Pinned auth profile "${lockedProfileId}" is unavailable for ${provider}.`,
+          );
         }
       }
       const profileOrder = resolveAuthProfileOrder({
@@ -441,6 +443,7 @@ export async function runEmbeddedPiAgent(
       let apiKeyInfo: ApiKeyInfo | null = null;
       let resolvedApiKey: string | undefined;
       let lastProfileId: string | undefined;
+      let lastAuthMode: string | undefined;
 
       const resolveAuthProfileFailoverReason = (params: {
         allInCooldown: boolean;
@@ -521,6 +524,7 @@ export async function runEmbeddedPiAgent(
           authStorage.setRuntimeApiKey(model.provider, apiKeyInfo.apiKey);
         }
         lastProfileId = apiKeyInfo.profileId;
+        lastAuthMode = apiKeyInfo.mode;
       };
 
       const advanceAuthProfile = async (): Promise<boolean> => {
@@ -1233,6 +1237,8 @@ export async function runEmbeddedPiAgent(
           const lastCallUsage = normalizeUsage(lastAssistant?.usage as UsageLike);
           const promptTokens = derivePromptTokens(lastRunPromptUsage);
           const agentMeta: EmbeddedPiAgentMeta = {
+            authProfileId: lastProfileId,
+            authMode: lastAuthMode,
             sessionId: sessionIdUsed,
             provider: lastAssistant?.provider ?? provider,
             model: lastAssistant?.model ?? model.id,

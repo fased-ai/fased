@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __setProviderExtensionCatalogEntriesForTest } from "../../agents/provider-extension-catalog-index.js";
 import { listProviderBrandManifests } from "../../providers/registry.js";
+import { fixtureCredential } from "../../test-utils/fixture-credential.js";
 import { ErrorCodes } from "../protocol/index.js";
 import type { GatewayModelChoice } from "../server-model-catalog.js";
 import { modelsHandlers, resolveManifestInteractiveAuthChoice } from "./models.js";
@@ -129,7 +130,9 @@ const resolveAuthStorePathForDisplay = vi.hoisted(() => vi.fn(() => "~/.fased/au
 const resolveProfileUnusableUntilForDisplay = vi.hoisted(() => vi.fn(() => NOW + 120_000));
 const listProvidersWithStoredCredentials = vi.hoisted(() => vi.fn(() => ["openai"]));
 
-vi.mock("../../agents/auth-profiles.js", () => ({
+vi.mock("../../agents/auth-profiles.js", async (importOriginal) => ({
+  resolveAuthProfileOrder: (await importOriginal<typeof import("../../agents/auth-profiles.js")>())
+    .resolveAuthProfileOrder,
   ensureAuthProfileStore,
   listProvidersWithStoredCredentials,
   resolveAuthStorePathForDisplay,
@@ -728,6 +731,19 @@ describe("models.auth.status handler", () => {
     });
   });
 
+  it("rejects a missing explicitly selected account", async () => {
+    const { respond, invoke } = createInvoke(
+      "models.list",
+      { profileId: "missing:account", refresh: true },
+      createContext(),
+    );
+    await invoke();
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(respond.mock.calls[0]?.[2]).toMatchObject({
+      message: "Selected account is unavailable.",
+    });
+  });
+
   it("uses the same authenticated route catalog for normal and all model lists", async () => {
     listProvidersWithStoredCredentials.mockReturnValue(["openai"]);
     const context = createContext();
@@ -842,7 +858,7 @@ describe("models.auth.status handler", () => {
       profileId: "openai:api",
       provider: "openai",
       mode: "api_key",
-      secret: "sk-openai-test",
+      secret: fixtureCredential("sk-openai-test"),
       email: "ops@example.com",
     });
     await invoke();
@@ -860,7 +876,7 @@ describe("models.auth.status handler", () => {
         credential: expect.objectContaining({
           type: "api_key",
           provider: "openai",
-          key: "sk-openai-test",
+          key: fixtureCredential("sk-openai-test"),
         }),
       }),
     );
@@ -869,7 +885,7 @@ describe("models.auth.status handler", () => {
   it("configures a provider API key through the provider-specific setup path", async () => {
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "openai",
-      secret: "sk-openai-test",
+      secret: fixtureCredential("sk-openai-test"),
     });
     await invoke();
 
@@ -889,7 +905,7 @@ describe("models.auth.status handler", () => {
         agentId: "main",
         setDefaultModel: false,
         opts: expect.objectContaining({
-          token: "sk-openai-test",
+          token: fixtureCredential("sk-openai-test"),
           tokenProvider: "openai",
         }),
       }),
@@ -919,7 +935,7 @@ describe("models.auth.status handler", () => {
     }));
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "chutes",
-      secret: "cpk-chutes-test",
+      secret: fixtureCredential("cpk-chutes-test"),
     });
     await invoke();
 
@@ -939,7 +955,7 @@ describe("models.auth.status handler", () => {
         agentId: "main",
         setDefaultModel: false,
         opts: expect.objectContaining({
-          token: "cpk-chutes-test",
+          token: fixtureCredential("cpk-chutes-test"),
           tokenProvider: "chutes",
         }),
       }),
@@ -951,7 +967,7 @@ describe("models.auth.status handler", () => {
       {
         provider: "minimax",
         responseProvider: "minimax",
-        secret: "mm-api-test",
+        secret: fixtureCredential("mm-api-test"),
         authChoice: "minimax-api",
         tokenProvider: "minimax",
         defaultModel: "minimax/MiniMax-M2.7",
@@ -959,7 +975,7 @@ describe("models.auth.status handler", () => {
       {
         provider: "minimax-cn",
         responseProvider: "minimax-cn",
-        secret: "mm-cn-test",
+        secret: fixtureCredential("mm-cn-test"),
         authChoice: "minimax-api-key-cn",
         tokenProvider: "minimax-cn",
         defaultModel: "minimax-cn/MiniMax-M2.7",
@@ -967,7 +983,7 @@ describe("models.auth.status handler", () => {
       {
         provider: "minimax-lightning",
         responseProvider: "minimax",
-        secret: "mm-highspeed-test",
+        secret: fixtureCredential("mm-highspeed-test"),
         authChoice: "minimax-api-lightning",
         tokenProvider: "minimax",
         defaultModel: "minimax/MiniMax-M2.7-highspeed",
@@ -1014,7 +1030,7 @@ describe("models.auth.status handler", () => {
       {
         provider: "moonshot",
         responseProvider: "moonshot",
-        secret: "kimi-ai-test",
+        secret: fixtureCredential("kimi-ai-test"),
         authChoice: "moonshot-api-key",
         tokenProvider: "moonshot",
         defaultModel: "moonshot/kimi-k2.6",
@@ -1022,7 +1038,7 @@ describe("models.auth.status handler", () => {
       {
         provider: "moonshot-cn",
         responseProvider: "moonshot",
-        secret: "kimi-cn-test",
+        secret: fixtureCredential("kimi-cn-test"),
         authChoice: "moonshot-api-key-cn",
         tokenProvider: "moonshot",
         defaultModel: "moonshot/kimi-k2.6",
@@ -1030,7 +1046,7 @@ describe("models.auth.status handler", () => {
       {
         provider: "kimi-coding",
         responseProvider: "kimi-coding",
-        secret: "kimi-code-test",
+        secret: fixtureCredential("kimi-code-test"),
         authChoice: "kimi-code-api-key",
         tokenProvider: "kimi-coding",
         defaultModel: "kimi-coding/kimi-for-coding",
@@ -1079,7 +1095,7 @@ describe("models.auth.status handler", () => {
     }));
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "google",
-      secret: "gemini-api-test",
+      secret: fixtureCredential("gemini-api-test"),
     });
     await invoke();
 
@@ -1099,7 +1115,7 @@ describe("models.auth.status handler", () => {
         agentId: "main",
         setDefaultModel: false,
         opts: expect.objectContaining({
-          token: "gemini-api-test",
+          token: fixtureCredential("gemini-api-test"),
           tokenProvider: "google",
         }),
       }),
@@ -1113,7 +1129,7 @@ describe("models.auth.status handler", () => {
     }));
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "xai",
-      secret: "xai-key-test",
+      secret: fixtureCredential("xai-key-test"),
     });
     await invoke();
 
@@ -1133,7 +1149,7 @@ describe("models.auth.status handler", () => {
         agentId: "main",
         setDefaultModel: false,
         opts: expect.objectContaining({
-          xaiApiKey: "xai-key-test",
+          xaiApiKey: fixtureCredential("xai-key-test"),
         }),
       }),
     );
@@ -1146,7 +1162,7 @@ describe("models.auth.status handler", () => {
     }));
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "mistral",
-      secret: "mistral-key-test",
+      secret: fixtureCredential("mistral-key-test"),
     });
     await invoke();
 
@@ -1166,7 +1182,7 @@ describe("models.auth.status handler", () => {
         agentId: "main",
         setDefaultModel: false,
         opts: expect.objectContaining({
-          token: "mistral-key-test",
+          token: fixtureCredential("mistral-key-test"),
           tokenProvider: "mistral",
         }),
       }),
@@ -1180,7 +1196,7 @@ describe("models.auth.status handler", () => {
     }));
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "openrouter",
-      secret: "openrouter-key-test",
+      secret: fixtureCredential("openrouter-key-test"),
     });
     await invoke();
 
@@ -1200,7 +1216,7 @@ describe("models.auth.status handler", () => {
         agentId: "main",
         setDefaultModel: false,
         opts: expect.objectContaining({
-          token: "openrouter-key-test",
+          token: fixtureCredential("openrouter-key-test"),
           tokenProvider: "openrouter",
         }),
       }),
@@ -1220,7 +1236,7 @@ describe("models.auth.status handler", () => {
 
     const qwen = createInvoke("models.auth.configure", {
       provider: "qwen",
-      secret: "dashscope-key-test",
+      secret: fixtureCredential("dashscope-key-test"),
     });
     await qwen.invoke();
     expect((qwen.respond.mock.calls[0] as RespondCall | undefined)?.[1]).toMatchObject({
@@ -1235,7 +1251,7 @@ describe("models.auth.status handler", () => {
       expect.objectContaining({
         authChoice: "qwen-api-key",
         opts: expect.objectContaining({
-          token: "dashscope-key-test",
+          token: fixtureCredential("dashscope-key-test"),
           tokenProvider: "qwen",
         }),
       }),
@@ -1243,7 +1259,7 @@ describe("models.auth.status handler", () => {
 
     const codingPlan = createInvoke("models.auth.configure", {
       provider: "qwen-coding-plan",
-      secret: "coding-plan-key-test",
+      secret: fixtureCredential("coding-plan-key-test"),
     });
     await codingPlan.invoke();
     expect((codingPlan.respond.mock.calls[0] as RespondCall | undefined)?.[1]).toMatchObject({
@@ -1258,7 +1274,7 @@ describe("models.auth.status handler", () => {
       expect.objectContaining({
         authChoice: "qwen-coding-plan-api-key",
         opts: expect.objectContaining({
-          token: "coding-plan-key-test",
+          token: fixtureCredential("coding-plan-key-test"),
           tokenProvider: "qwen-coding-plan",
         }),
       }),
@@ -1272,7 +1288,7 @@ describe("models.auth.status handler", () => {
     }));
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "volcengine",
-      secret: "volcengine-key-test",
+      secret: fixtureCredential("volcengine-key-test"),
     });
     await invoke();
 
@@ -1292,7 +1308,7 @@ describe("models.auth.status handler", () => {
         agentId: "main",
         setDefaultModel: false,
         opts: expect.objectContaining({
-          volcengineApiKey: "volcengine-key-test",
+          volcengineApiKey: fixtureCredential("volcengine-key-test"),
         }),
       }),
     );
@@ -1305,7 +1321,7 @@ describe("models.auth.status handler", () => {
     }));
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "byteplus",
-      secret: "byteplus-key-test",
+      secret: fixtureCredential("byteplus-key-test"),
     });
     await invoke();
 
@@ -1325,7 +1341,7 @@ describe("models.auth.status handler", () => {
         agentId: "main",
         setDefaultModel: false,
         opts: expect.objectContaining({
-          byteplusApiKey: "byteplus-key-test",
+          byteplusApiKey: fixtureCredential("byteplus-key-test"),
         }),
       }),
     );
@@ -1334,7 +1350,7 @@ describe("models.auth.status handler", () => {
   it("configures Cloudflare AI Gateway when UI provides account, gateway, and key", async () => {
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "cloudflare-ai-gateway",
-      secret: "cf-key",
+      secret: fixtureCredential("cf-key"),
       accountId: "cf-account",
       gatewayId: "fased",
     });
@@ -1354,7 +1370,7 @@ describe("models.auth.status handler", () => {
         opts: expect.objectContaining({
           cloudflareAiGatewayAccountId: "cf-account",
           cloudflareAiGatewayGatewayId: "fased",
-          cloudflareAiGatewayApiKey: "cf-key",
+          cloudflareAiGatewayApiKey: fixtureCredential("cf-key"),
         }),
       }),
     );
@@ -1364,7 +1380,7 @@ describe("models.auth.status handler", () => {
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "vllm",
       baseUrl: "http://127.0.0.1:8000/v1",
-      secret: "local-key",
+      secret: fixtureCredential("local-key"),
       modelId: "qwen3-coder",
     });
     await invoke();
@@ -1381,7 +1397,10 @@ describe("models.auth.status handler", () => {
     expect(upsertAuthProfileWithLock).toHaveBeenCalledWith(
       expect.objectContaining({
         profileId: "vllm:default",
-        credential: expect.objectContaining({ provider: "vllm", key: "local-key" }),
+        credential: expect.objectContaining({
+          provider: "vllm",
+          key: fixtureCredential("local-key"),
+        }),
       }),
     );
     expect(applyAuthChoice).not.toHaveBeenCalledWith(
@@ -1418,7 +1437,7 @@ describe("models.auth.status handler", () => {
     const { respond, invoke } = createInvoke("models.auth.configure", {
       provider: "lmstudio",
       baseUrl: "http://127.0.0.1:1234",
-      secret: "lm-token",
+      secret: fixtureCredential("lm-token"),
       modelId: "qwen/qwen3.5-9b",
     });
     await invoke();
@@ -1435,7 +1454,10 @@ describe("models.auth.status handler", () => {
     expect(upsertAuthProfileWithLock).toHaveBeenCalledWith(
       expect.objectContaining({
         profileId: "lmstudio:default",
-        credential: expect.objectContaining({ provider: "lmstudio", key: "lm-token" }),
+        credential: expect.objectContaining({
+          provider: "lmstudio",
+          key: fixtureCredential("lm-token"),
+        }),
       }),
     );
   });
@@ -1449,7 +1471,7 @@ describe("models.auth.status handler", () => {
       customProviderId: "acme",
       alias: "frontier",
       allowPrivateNetwork: true,
-      secret: "acme-key",
+      secret: fixtureCredential("acme-key"),
     });
     await invoke();
 
@@ -1468,7 +1490,7 @@ describe("models.auth.status handler", () => {
           providers: expect.objectContaining({
             acme: expect.objectContaining({
               baseUrl: "https://models.example.com/v1",
-              apiKey: "acme-key",
+              apiKey: fixtureCredential("acme-key"),
               request: { allowPrivateNetwork: true },
             }),
           }),
@@ -1558,8 +1580,8 @@ describe("models.auth.status handler", () => {
       }
     }
 
-    expect(resolveManifestInteractiveAuthChoice("anthropic", "setup-token")).toBe("setup-token");
-    expect(resolveManifestInteractiveAuthChoice("anthropic", "oauth")).toBe("anthropic-oauth");
+    expect(resolveManifestInteractiveAuthChoice("anthropic", "setup-token")).toBeNull();
+    expect(resolveManifestInteractiveAuthChoice("anthropic", "oauth")).toBeNull();
     expect(resolveManifestInteractiveAuthChoice("openai", "openai-api-key")).toBeNull();
     expect(resolveManifestInteractiveAuthChoice("openai", "anthropic-oauth")).toBeNull();
   });
@@ -1710,83 +1732,26 @@ describe("models.auth.status handler", () => {
     );
   });
 
-  it("starts manifest Anthropic OAuth sign-in from the provider UI", async () => {
-    resolvePluginProviders.mockReturnValue([]);
-    applyAuthChoice.mockImplementationOnce(async ({ config, openUrl }) => {
-      if (!openUrl) {
-        throw new Error("expected openUrl");
-      }
-      await openUrl("https://claude.ai/oauth/authorize");
-      return { config };
-    });
-    const context = createContext();
+  it("rejects retired Anthropic anthropic-oauth credential imports", async () => {
     const { respond, invoke } = createInvoke(
       "models.auth.interactive.start",
       { provider: "anthropic", methodId: "anthropic-oauth" },
-      context,
+      createContext(),
     );
-
     await invoke();
-
-    const call = respond.mock.calls[0] as RespondCall | undefined;
-    expect(call?.[0]).toBe(true);
-    expect(call?.[1]).toMatchObject({
-      done: false,
-      status: "running",
-      step: {
-        type: "note",
-        title: "Open sign-in URL",
-        message: "https://claude.ai/oauth/authorize",
-      },
-    });
-    expect(applyAuthChoice).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authChoice: "anthropic-oauth",
-        agentDir: "/tmp/agents/main/agent",
-        agentId: "main",
-        openUrl: expect.any(Function),
-        setDefaultModel: false,
-      }),
-    );
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(applyAuthChoice).not.toHaveBeenCalled();
   });
 
-  it("starts manifest Anthropic setup-token from the provider UI", async () => {
-    resolvePluginProviders.mockReturnValue([]);
-    applyAuthChoice.mockImplementationOnce(async ({ config, prompter }) => {
-      if (!prompter) {
-        throw new Error("expected prompter");
-      }
-      await prompter.note("Run `claude setup-token` in your terminal.", "Anthropic setup-token");
-      return { config };
-    });
-    const context = createContext();
+  it("rejects retired Anthropic token credential imports", async () => {
     const { respond, invoke } = createInvoke(
       "models.auth.interactive.start",
       { provider: "anthropic", methodId: "token" },
-      context,
+      createContext(),
     );
-
     await invoke();
-
-    const call = respond.mock.calls[0] as RespondCall | undefined;
-    expect(call?.[0]).toBe(true);
-    expect(call?.[1]).toMatchObject({
-      done: false,
-      status: "running",
-      step: {
-        type: "note",
-        title: "Anthropic setup-token",
-        message: "Run `claude setup-token` in your terminal.",
-      },
-    });
-    expect(applyAuthChoice).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authChoice: "token",
-        agentDir: "/tmp/agents/main/agent",
-        agentId: "main",
-        setDefaultModel: false,
-      }),
-    );
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(applyAuthChoice).not.toHaveBeenCalled();
   });
 
   it("starts manifest Chutes OAuth sign-in from the provider UI", async () => {
@@ -1905,6 +1870,16 @@ describe("models.auth.status handler", () => {
     ] as const;
 
     for (const item of cases) {
+      if (!resolveManifestInteractiveAuthChoice(item.provider, item.methodId)) {
+        const { respond, invoke } = createInvoke(
+          "models.auth.interactive.start",
+          { provider: item.provider, methodId: item.methodId },
+          createContext(),
+        );
+        await invoke();
+        expect(respond.mock.calls[0]?.[0]).toBe(false);
+        continue;
+      }
       resolvePluginProviders.mockReturnValue([]);
       applyAuthChoice.mockReset();
       applyAuthChoice.mockImplementationOnce(async ({ config, openUrl }) => {

@@ -14,6 +14,7 @@ export async function resolveAuthenticatedModelCatalog(params: {
   catalog: ModelCatalogEntry[];
   defaultProvider: string;
   agentDir?: string;
+  forceRefresh?: boolean;
   /** Execution scopes discovery to its chosen route; interactive refresh omits this. */
   discoveryRoutes?: Iterable<string>;
 }) {
@@ -37,6 +38,7 @@ export async function resolveAuthenticatedModelCatalog(params: {
       routes: discoveryRoutes,
       catalog: initialScope.usableCatalog,
       agentDir: params.agentDir,
+      forceRefresh: params.forceRefresh,
     }),
     params.store,
   );

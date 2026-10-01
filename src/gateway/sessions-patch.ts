@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { resolveAgentDir } from "../agents/agent-scope.js";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { ensureAuthProfileStore, resolveAuthProfileOrder } from "../agents/auth-profiles.js";
 import { filterModelCatalogByProviders } from "../agents/model-catalog-access.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import {
@@ -343,6 +345,32 @@ export async function applySessionsPatchToStore(params: {
         },
         markLiveSwitchPending: true,
       });
+    }
+  }
+
+  if ("authProfileId" in patch) {
+    if (patch.authProfileId === null) {
+      delete next.authProfileOverride;
+      delete next.authProfileOverrideSource;
+      delete next.authProfileOverrideCompactionCount;
+    } else if (patch.authProfileId) {
+      const provider = next.providerOverride ?? resolvedDefault.provider;
+      const authStore = ensureAuthProfileStore(resolveAgentDir(cfg, sessionAgentId), {
+        allowKeychainPrompt: false,
+      });
+      const profile = authStore.profiles[patch.authProfileId];
+      if (
+        !profile ||
+        normalizeProviderId(profile.provider) !== normalizeProviderId(provider) ||
+        !resolveAuthProfileOrder({ cfg, store: authStore, provider }).includes(patch.authProfileId)
+      ) {
+        return invalid(
+          "Selected account is unavailable for this model; no alternate account was used.",
+        );
+      }
+      next.authProfileOverride = patch.authProfileId;
+      next.authProfileOverrideSource = "user";
+      next.authProfileOverrideCompactionCount = next.compactionCount ?? 0;
     }
   }
 

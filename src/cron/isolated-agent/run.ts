@@ -6,6 +6,7 @@ import {
   resolveAgentWorkspaceDir,
   resolveDefaultAgentId,
 } from "../../agents/agent-scope.js";
+import { ensureAuthProfileStore, resolveAuthProfileOrder } from "../../agents/auth-profiles.js";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import { runCliAgent } from "../../agents/cli-runner.js";
 import { getCliSessionId, setCliSessionId } from "../../agents/cli-session.js";
@@ -25,6 +26,7 @@ import {
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import { createFasedAgentCodingTools } from "../../agents/pi-tools.js";
 import type { AnyAgentTool } from "../../agents/pi-tools.types.js";
+import { normalizeProviderId } from "../../agents/provider-id.js";
 import type { SkillSnapshot } from "../../agents/skills.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage } from "../../agents/usage.js";
@@ -1690,6 +1692,25 @@ export async function runCronIsolatedAgentTurn(params: {
   // Resolve auth profile for the session, mirroring the inbound auto-reply path
   // (get-reply-run.ts). Without this, isolated cron sessions fall back to env-var
   // auth which may not match the configured auth-profiles, causing 401 errors.
+  const pinnedProfileId = params.job.executionPolicy?.modelPolicy?.authProfileId?.trim();
+  if (pinnedProfileId) {
+    const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+    const profile = store.profiles[pinnedProfileId];
+    if (
+      !profile ||
+      normalizeProviderId(profile.provider) !== normalizeProviderId(provider) ||
+      !resolveAuthProfileOrder({ cfg: cfgWithAgentDefaults, store, provider }).includes(
+        pinnedProfileId,
+      ) ||
+      isCliProvider(provider, cfgWithAgentDefaults)
+    ) {
+      return withRunSession({
+        status: "error",
+        error: `Pinned account "${pinnedProfileId}" is unavailable for ${provider}; no alternate account was used.`,
+        policy: policyTelemetryWithSkills,
+      });
+    }
+  }
   const authProfileId = await resolveSessionAuthProfileOverride({
     cfg: cfgWithAgentDefaults,
     provider,
@@ -1699,6 +1720,7 @@ export async function runCronIsolatedAgentTurn(params: {
     sessionKey: agentSessionKey,
     storePath: cronSession.storePath,
     isNewSession: cronSession.isNewSession && params.job.sessionTarget !== "isolated",
+    lockedProfileId: pinnedProfileId,
   });
   const authProfileIdSource = cronSession.sessionEntry.authProfileOverrideSource;
 
@@ -1722,7 +1744,9 @@ export async function runCronIsolatedAgentTurn(params: {
     const fallbacksOverride = resolveTaskFallbacks({
       job: params.job,
       agentFallbacks,
-      hasModelPin: Boolean(modelOverride || cronSession.sessionEntry.modelOverride?.trim()),
+      hasModelPin: Boolean(
+        pinnedProfileId || modelOverride || cronSession.sessionEntry.modelOverride?.trim(),
+      ),
     });
     const fallbackResult = await runWithModelFallback({
       cfg: cfgWithAgentDefaults,
@@ -1805,10 +1829,17 @@ export async function runCronIsolatedAgentTurn(params: {
   }
 
   const payloads = runResult.payloads ?? [];
-  const modelPolicyTelemetry = withResultSourceTelemetry(policyTelemetryWithSkills, {
-    resultSource: "model",
-    modelUsed: true,
-  });
+  const modelPolicyTelemetry = withResultSourceTelemetry(
+    {
+      ...policyTelemetryWithSkills,
+      accountProfileId: runResult.meta?.agentMeta?.authProfileId,
+      accessMethod: runResult.meta?.agentMeta?.authMode,
+    },
+    {
+      resultSource: "model",
+      modelUsed: true,
+    },
+  );
 
   // Update token+model fields in the session store.
   // Also collect best-effort telemetry for the cron run log.

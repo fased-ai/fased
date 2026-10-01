@@ -62,6 +62,24 @@ describe("renderProviders", () => {
     };
   }
 
+  it("counts every account-discovered model even when absent from curated recommendations", async () => {
+    const { renderProviders } = await import("./providers.ts");
+    const text = flattenTemplateText(
+      renderProviders(
+        createBaseProps({
+          authStatus: { providers: [{ provider: "openai-codex", status: "ok", profiles: [] }] },
+          modelCatalog: [
+            { provider: "openai-codex", id: "gpt-6-astra", name: "GPT-6 Astra" },
+            { provider: "openai-codex", id: "account-new-model", name: "New account model" },
+          ],
+        }),
+      ),
+    );
+    expect(text).toContain("2 models");
+    expect(text).toContain("Connected");
+    expect(text).not.toContain("1 model");
+  });
+
   function createEmptyCatalogStatus() {
     return {
       checkedAtMs: Date.now(),

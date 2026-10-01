@@ -4,6 +4,7 @@ import path from "node:path";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
+import { fixtureCredential } from "../test-utils/fixture-credential.js";
 import type { AuthProfileFailureReason } from "./auth-profiles.js";
 import type { EmbeddedRunAttemptResult } from "./pi-embedded-runner/run/types.js";
 
@@ -35,7 +36,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.useRealTimers();
-  runEmbeddedAttemptMock.mockClear();
+  runEmbeddedAttemptMock.mockReset();
 });
 
 const baseUsage = {
@@ -91,7 +92,7 @@ const makeConfig = (opts?: { fallbacks?: string[]; apiKey?: string }): FasedAgen
       providers: {
         openai: {
           api: "openai-responses",
-          apiKey: opts?.apiKey ?? "sk-test",
+          apiKey: opts?.apiKey ?? fixtureCredential("sk-test"),
           baseUrl: "https://example.com",
           models: [
             {
@@ -130,7 +131,7 @@ const makeAgentOverrideOnlyFallbackConfig = (agentId: string): FasedAgentConfig 
       providers: {
         openai: {
           api: "openai-responses",
-          apiKey: "sk-test",
+          apiKey: fixtureCredential("sk-test"),
           baseUrl: "https://example.com",
           models: [
             {
@@ -515,7 +516,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
     expect(usageStats["openai:p2"]?.lastUsed).toBe(2);
   });
 
-  it("ignores user-locked profile when provider mismatches", async () => {
+  it("rejects a user-locked profile when provider mismatches", async () => {
     await withAgentWorkspace(async ({ agentDir, workspaceDir }) => {
       await writeAuthStore(agentDir, { includeAnthropic: true });
 
@@ -529,23 +530,25 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         }),
       );
 
-      await runEmbeddedPiAgent({
-        sessionId: "session:test",
-        sessionKey: "agent:test:mismatch",
-        sessionFile: path.join(workspaceDir, "session.jsonl"),
-        workspaceDir,
-        agentDir,
-        config: makeConfig(),
-        prompt: "hello",
-        provider: "openai",
-        model: "mock-1",
-        authProfileId: "anthropic:default",
-        authProfileIdSource: "user",
-        timeoutMs: 5_000,
-        runId: "run:mismatch",
-      });
+      await expect(
+        runEmbeddedPiAgent({
+          sessionId: "session:test",
+          sessionKey: "agent:test:mismatch",
+          sessionFile: path.join(workspaceDir, "session.jsonl"),
+          workspaceDir,
+          agentDir,
+          config: makeConfig(),
+          prompt: "hello",
+          provider: "openai",
+          model: "mock-1",
+          authProfileId: "anthropic:default",
+          authProfileIdSource: "user",
+          timeoutMs: 5_000,
+          runId: "run:mismatch",
+        }),
+      ).rejects.toThrow("Pinned auth profile");
 
-      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(1);
+      expect(runEmbeddedAttemptMock).not.toHaveBeenCalled();
     });
   });
 

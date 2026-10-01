@@ -3281,7 +3281,7 @@ export function renderCron(props: CronProps) {
                         .value as CronFormState["modelRole"],
                     })}
                 >
-                  <option value="">Automatic / Agent default</option>
+                  <option value="">Use agent default</option>
                   <option value="cheapCheck">Cheap/check</option>
                   <option value="strong">Strong</option>
                   <option value="escalation">Escalation</option>
@@ -3292,14 +3292,22 @@ export function renderCron(props: CronProps) {
               </label>
               <label class="field">
                 ${renderFieldLabel("Exact task model")}
-                <input
+                <select
                   .value=${props.form.policyModel}
-                  list="cron-model-suggestions"
                   ?disabled=${props.form.executionMode === "no-model"}
-                  @input=${(e: Event) =>
-                    props.onFormChange({ policyModel: (e.target as HTMLInputElement).value })}
-                  placeholder="provider/model"
-                />
+                  @change=${(e: Event) =>
+                    props.onFormChange({ policyModel: (e.target as HTMLSelectElement).value })}
+                >
+                  <option value="">Use agent default</option>
+                  ${
+                    props.form.policyModel &&
+                    !props.modelSuggestions.includes(props.form.policyModel)
+                      ? html`<option value=${props.form.policyModel}>${props.form.policyModel} (saved selection; availability must be checked)</option>`
+                      : nothing
+                  }
+                  ${props.modelSuggestions.map((model) => html`<option value=${model}>${model}</option>`)}
+                </select>
+                <div class="cron-help">An exact selection stays pinned. It will not silently switch to another model or billing route.</div>
               </label>
               <label class="field">
                 ${renderFieldLabel("Escalation model")}

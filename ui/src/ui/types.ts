@@ -802,6 +802,7 @@ export type CronTaskExecutionPolicy = {
     mode?: "agent-default" | "task-override" | "auto" | "none";
     role?: "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
     model?: string;
+    authProfileId?: string;
     thinking?: string;
     escalationModel?: string;
   };
@@ -1271,6 +1272,8 @@ export type CronRunLogEntry = {
     modelOverride?: string;
     escalationModel?: string;
     modelSource?: string;
+    accountProfileId?: string;
+    accessMethod?: string;
     budget?: {
       maxTokensPerRun?: number;
       maxCostUsdPerRun?: number;
@@ -1530,6 +1533,8 @@ export type ModelCatalogEntry = {
     privateNetworkAllowed: boolean;
     recommended?: boolean;
     recommendationRank?: number;
+    accountProfileId?: string;
+    recommendationTiers?: Array<"fast" | "balanced" | "deep">;
     default?: boolean;
   };
 };

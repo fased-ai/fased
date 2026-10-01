@@ -12,8 +12,13 @@ import {
   renderTab,
   renderThemeToggle,
 } from "./app-render.helpers.ts";
+import { loadProviderModelCatalog } from "./app-settings.ts";
 import type { AppViewState } from "./app-view-state.ts";
-import { buildChatModelOption, formatChatModelDisplay } from "./chat-model-ref.ts";
+import {
+  buildCatalogModelOptions,
+  buildChatModelOption,
+  formatChatModelDisplay,
+} from "./chat-model-ref.ts";
 import { loadAgentFileContent, loadAgentFiles, saveAgentFile } from "./controllers/agent-files.ts";
 import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
 import { loadAgentSkills } from "./controllers/agent-skills.ts";
@@ -98,6 +103,7 @@ import {
   updateExecApprovalsFormValue,
 } from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
+import { loadModelCatalogSnapshot } from "./controllers/models.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import {
   installPluginMarketplaceEntry,
@@ -762,13 +768,26 @@ function agentTaskModelChoices(state: AppViewState, agentId: string) {
   ];
   return Array.from(
     new Set(
-      [primary, ...fallbacks, ...taskModels, ...providerModels].filter((entry): entry is string =>
-        Boolean(entry?.trim()),
-      ),
+      [
+        ...buildCatalogModelOptions(
+          state.agentTaskForm.accountModelCatalog ??
+            (state.providerModelCatalog?.length
+              ? state.providerModelCatalog
+              : (state.chatModelCatalog ?? [])),
+        ).map((option) => option.value),
+        primary,
+        ...fallbacks,
+        ...taskModels,
+        ...providerModels,
+      ].filter((entry): entry is string => Boolean(entry?.trim())),
     ),
   ).map((value) => ({
     value,
-    label: modelLabelForTask(value, state.chatModelCatalog ?? []),
+    label:
+      buildCatalogModelOptions(
+        state.agentTaskForm.accountModelCatalog ?? state.chatModelCatalog ?? [],
+      ).find((option) => option.value === value)?.label ??
+      modelLabelForTask(value, state.chatModelCatalog ?? []),
   }));
 }
 
@@ -1404,10 +1423,9 @@ function renderAgentTaskDialog(state: AppViewState) {
   const patch = (next: Partial<CronFormState>) => patchAgentTaskForm(state, next);
   const modelChoices = agentTaskModelChoices(state, form.agentId);
   const modelDefaults = agentTaskModelDefaults(state, form.agentId);
-  const cheapModelDefaultLabel = formatTaskModelDefaultOption(
-    state,
-    modelDefaults.cheapCheck ?? modelDefaults.main,
-  );
+  const cheapModelDefaultLabel = form.modelRole
+    ? "Use selected role"
+    : `Use agent default (${formatTaskModelDefaultOption(state, modelDefaults.main)})`;
   const escalationModelDefaultLabel = formatTaskModelDefaultOption(
     state,
     modelDefaults.escalation ?? modelDefaults.strong,
@@ -2053,7 +2071,7 @@ function renderAgentTaskDialog(state: AppViewState) {
                   modelRole: (event.target as HTMLSelectElement).value as typeof form.modelRole,
                 })}
             >
-              <option value="">Automatic / Agent default</option>
+              <option value="">Use agent default</option>
               <option value="cheapCheck">Cheap/check</option>
               <option value="strong">Strong</option>
               <option value="escalation">Escalation</option>
@@ -2074,7 +2092,17 @@ function renderAgentTaskDialog(state: AppViewState) {
               .value=${form.policyModel}
               ?disabled=${form.executionMode === "no-model"}
               @change=${(event: Event) =>
-                patch({ policyModel: (event.target as HTMLInputElement).value })}
+                (() => {
+                  const policyModel = (event.target as HTMLSelectElement).value;
+                  const entry = (form.accountModelCatalog ?? state.chatModelCatalog ?? []).find(
+                    (model) => buildChatModelOption(model).value === policyModel,
+                  );
+                  patch({
+                    policyModel,
+                    policyProfileId:
+                      entry?.metadata?.accountProfileId ?? form.policyProfileId ?? "",
+                  });
+                })()}
             >
               <option value="">${cheapModelDefaultLabel}</option>
               ${modelChoices.map(
@@ -2087,6 +2115,42 @@ function renderAgentTaskDialog(state: AppViewState) {
                   : nothing
               }
             </select>
+          </label>
+          <label class="field">
+            <span>Account</span>
+            <select data-test-id="agent-task-account"
+              @change=${async (event: Event) => {
+                const policyProfileId = (event.target as HTMLSelectElement).value;
+                patch({ policyProfileId, accountModelCatalog: undefined });
+                if (!policyProfileId || !state.client) {
+                  return;
+                }
+                const snapshot = await loadModelCatalogSnapshot(state.client, {
+                  all: true,
+                  refresh: true,
+                  profileId: policyProfileId,
+                  sessionKey: `agent:${resolveAgentTaskAgentId(state, form.agentId)}:main`,
+                });
+                if (state.agentTaskForm.policyProfileId === policyProfileId) {
+                  patch({ accountModelCatalog: snapshot.models });
+                }
+              }}>
+              <option value="" .selected=${!form.policyProfileId}>Use connection default</option>
+              ${(state.configAuthStatus?.providers ?? []).flatMap((connection) =>
+                connection.profiles
+                  .filter(
+                    (profile) =>
+                      ["ok", "expiring", "static"].includes(profile.status) &&
+                      (!form.policyModel || form.policyModel.startsWith(`${connection.provider}/`)),
+                  )
+                  .map(
+                    (profile) =>
+                      html`<option value=${profile.profileId} .selected=${profile.profileId === form.policyProfileId}>${connection.provider} · ${profile.label ?? profile.profileId}</option>`,
+                  ),
+              )}
+              ${form.policyProfileId && !(state.configAuthStatus?.providers ?? []).some((connection) => connection.profiles.some((profile) => profile.profileId === form.policyProfileId && ["ok", "expiring", "static"].includes(profile.status) && (!form.policyModel || form.policyModel.startsWith(`${connection.provider}/`)))) ? html`<option value=${form.policyProfileId} .selected=${true}>Saved account: ${form.policyProfileId}</option>` : nothing}
+            </select>
+            <div class="muted">A saved account stays pinned. If unavailable, the task stops.</div>
           </label>
           <label class="field">
             <span>Escalation model</span>
@@ -3469,7 +3533,9 @@ export function renderApp(state: AppViewState) {
                 runsSortDir: state.cronRunsSortDir,
                 agentSuggestions: state.agentsList?.agents?.map((a) => a.id) ?? [],
                 agentOptions: state.agentsList?.agents ?? [],
-                modelSuggestions: [],
+                modelSuggestions: buildCatalogModelOptions(
+                  state.providerModelCatalog ?? state.chatModelCatalog ?? [],
+                ).map((option) => option.value),
                 thinkingSuggestions: [],
                 timezoneSuggestions: [],
                 deliveryToSuggestions: [],
@@ -3680,7 +3746,7 @@ export function renderApp(state: AppViewState) {
                 providersPanel: providersView
                   ? providersView.renderProviders({
                       connected: state.connected,
-                      loading: state.configLoading,
+                      loading: state.configLoading || state.chatModelsLoading,
                       error: state.lastError,
                       formValue: state.configForm,
                       originalValue: state.configSnapshot?.config as Record<string, unknown> | null,
@@ -3691,7 +3757,15 @@ export function renderApp(state: AppViewState) {
                       configDirty: state.configFormDirty,
                       authActionBusyProfileId: state.configAuthActionBusyProfileId,
                       authAction: state.configAuthAction,
-                      onRefresh: () => loadConfig(state),
+                      onRefresh: async () => {
+                        await Promise.all([
+                          loadConfig(state),
+                          loadProviderModelCatalog(
+                            state as unknown as Parameters<typeof loadProviderModelCatalog>[0],
+                            true,
+                          ),
+                        ]);
+                      },
                       onOpenConfigSection: (section) => {
                         state.configActiveSection = section;
                         state.configActiveSubsection = null;
@@ -4985,7 +5059,7 @@ export function renderApp(state: AppViewState) {
             ? providersView
               ? providersView.renderProviders({
                   connected: state.connected,
-                  loading: state.configLoading,
+                  loading: state.configLoading || state.chatModelsLoading,
                   error: state.lastError,
                   formValue: state.configForm,
                   originalValue: state.configSnapshot?.config as Record<string, unknown> | null,
@@ -4996,7 +5070,15 @@ export function renderApp(state: AppViewState) {
                   configDirty: state.configFormDirty,
                   authActionBusyProfileId: state.configAuthActionBusyProfileId,
                   authAction: state.configAuthAction,
-                  onRefresh: () => loadConfig(state),
+                  onRefresh: async () => {
+                    await Promise.all([
+                      loadConfig(state),
+                      loadProviderModelCatalog(
+                        state as unknown as Parameters<typeof loadProviderModelCatalog>[0],
+                        true,
+                      ),
+                    ]);
+                  },
                   onOpenConfigSection: (section) => {
                     state.configActiveSection = section;
                     state.configActiveSubsection = null;

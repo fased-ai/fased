@@ -1272,6 +1272,7 @@ public struct SessionsPatchParams: Codable, Sendable {
     public let execask: AnyCodable?
     public let execnode: AnyCodable?
     public let model: AnyCodable?
+    public let authprofileid: AnyCodable?
     public let spawnedby: AnyCodable?
     public let spawndepth: AnyCodable?
     public let sendpolicy: AnyCodable?
@@ -1290,6 +1291,7 @@ public struct SessionsPatchParams: Codable, Sendable {
         execask: AnyCodable?,
         execnode: AnyCodable?,
         model: AnyCodable?,
+        authprofileid: AnyCodable?,
         spawnedby: AnyCodable?,
         spawndepth: AnyCodable?,
         sendpolicy: AnyCodable?,
@@ -1307,6 +1309,7 @@ public struct SessionsPatchParams: Codable, Sendable {
         self.execask = execask
         self.execnode = execnode
         self.model = model
+        self.authprofileid = authprofileid
         self.spawnedby = spawnedby
         self.spawndepth = spawndepth
         self.sendpolicy = sendpolicy
@@ -1326,6 +1329,7 @@ public struct SessionsPatchParams: Codable, Sendable {
         case execask = "execAsk"
         case execnode = "execNode"
         case model
+        case authprofileid = "authProfileId"
         case spawnedby = "spawnedBy"
         case spawndepth = "spawnDepth"
         case sendpolicy = "sendPolicy"
@@ -3240,6 +3244,8 @@ public struct ModelsCatalogStatusResult: Codable, Sendable {
 }
 
 public struct ModelsListParams: Codable, Sendable {
+    public let refresh: Bool?
+    public let profileid: String?
     public let all: Bool?
     public let available: Bool?
     public let provider: String?
@@ -3247,12 +3253,16 @@ public struct ModelsListParams: Codable, Sendable {
     public let includemetadata: Bool?
 
     public init(
+        refresh: Bool?,
+        profileid: String?,
         all: Bool?,
         available: Bool?,
         provider: String?,
         sessionkey: String?,
         includemetadata: Bool?)
     {
+        self.refresh = refresh
+        self.profileid = profileid
         self.all = all
         self.available = available
         self.provider = provider
@@ -3261,6 +3271,8 @@ public struct ModelsListParams: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case refresh
+        case profileid = "profileId"
         case all
         case available
         case provider

@@ -53,6 +53,7 @@ export type CronTaskModelPolicy = {
   mode?: "agent-default" | "task-override" | "auto" | "none";
   role?: "cheapCheck" | "strong" | "escalation" | "coding" | "summarizer";
   model?: string;
+  authProfileId?: string;
   thinking?: string;
   escalationModel?: string;
 };
@@ -521,6 +522,8 @@ export type CronRunPolicyTelemetry = {
   modelOverride?: string;
   escalationModel?: string;
   modelSource?: string;
+  accountProfileId?: string;
+  accessMethod?: string;
   budget?: CronTaskBudgetPolicy;
   stop?: CronTaskStopPolicy;
   planner?: CronTaskPlannerDecision;

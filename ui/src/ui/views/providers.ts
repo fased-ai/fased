@@ -30,11 +30,10 @@ import {
   ZAI_PROVIDER_MANIFEST,
   getProviderBrandManifest,
   getProviderBrandManifestForRoute,
-  isStandardProviderModelRef,
   type ProviderAuthMethodKind,
   type ProviderBrandManifest,
 } from "../../../../src/providers/registry.ts";
-import { buildChatModelOption } from "../chat-model-ref.ts";
+import { buildCatalogModelOptions } from "../chat-model-ref.ts";
 import type { ConfigAuthActionState } from "../controllers/config.ts";
 import { icons } from "../icons.ts";
 import type { Tab } from "../navigation.ts";
@@ -664,34 +663,16 @@ function formatAuthLinkHost(url: string | null | undefined) {
   }
 }
 
-function addModelOption(
-  options: Map<string, { value: string; label: string }>,
-  value: string,
-  label?: string,
-) {
-  const trimmed = value.trim();
-  if (!trimmed || options.has(trimmed) || !isStandardProviderModelRef(trimmed)) {
-    return;
-  }
-  options.set(trimmed, { value: trimmed, label: label?.trim() || trimmed });
-}
-
 function buildDefaultModelOptions(params: {
   config: Record<string, unknown> | null;
   modelCatalog: ModelCatalogEntry[];
   current: string | null;
 }) {
-  const options = new Map<string, { value: string; label: string }>();
-  for (const entry of params.modelCatalog) {
-    const option = buildChatModelOption(entry);
-    addModelOption(options, option.value, option.label);
+  const options = buildCatalogModelOptions(params.modelCatalog);
+  if (params.current && !options.some((option) => option.value === params.current)) {
+    options.unshift({ value: params.current, label: `Current (${params.current})` });
   }
-  if (params.current) {
-    addModelOption(options, params.current, `Current (${params.current})`);
-  }
-  return Array.from(options.values()).toSorted((left, right) =>
-    left.label.localeCompare(right.label),
-  );
+  return options;
 }
 
 function defaultProfileId(providerId: string) {
@@ -1198,7 +1179,7 @@ export function renderProviders(props: ProvidersProps) {
       runtimeProviders
         .map((runtimeProvider) => clearableProviderProfileId({ runtimeProvider }))
         .find((profileId): profileId is string => Boolean(profileId)) ?? null;
-    const modelCountLabel = `${modelCount} ${modelCount === 1 ? "model" : "models"}`;
+    const modelCountLabel = ready ? `${modelCount} ${modelCount === 1 ? "model" : "models"}` : "";
     const providerSetupExtra =
       props.providerSetupExtra?.({
         id: providerCard.id,
@@ -2592,7 +2573,7 @@ export function renderProviders(props: ProvidersProps) {
                     as custom base URLs, headers, model catalogs, and private-network options.
                   </div>
                   <div class="providers-card__actions">
-                    <button class="btn" @click=${() => props.onRefresh()}>Refresh</button>
+                    <button class="btn" ?disabled=${props.loading} @click=${() => props.onRefresh()}>${props.loading ? "Refreshing…" : "Refresh models"}</button>
                     <button class="btn" @click=${() => props.onOpenConfigSection("models")}>
                       Advanced Config
                     </button>
