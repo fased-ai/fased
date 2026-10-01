@@ -102,11 +102,21 @@ describe("describeWizardStepForConfigAction", () => {
         if (method === "models.auth.interactive.start") {
           return { sessionId: "session-1", done: true, status: "done" };
         }
+        if (method === "secrets.reload") {
+          return { ok: true, warningCount: 0 };
+        }
         if (method === "config.get") {
           return { raw: "{}", config: {}, valid: true, issues: [] };
         }
         if (method === "models.auth.status") {
-          return { storePath: "auth-profiles.json", warnAfterMs: 0, providers: [] };
+          return {
+            storePath: "auth-profiles.json",
+            warnAfterMs: 0,
+            providers: [
+              { provider: "openai-codex", status: "ok", profiles: [] },
+              { provider: "anthropic", status: "ok", profiles: [] },
+            ],
+          };
         }
         if (method === "models.catalog.status") {
           return {
@@ -178,11 +188,21 @@ describe("describeWizardStepForConfigAction", () => {
           }
           return { done: true, status: "done" };
         }
+        if (method === "secrets.reload") {
+          return { ok: true, warningCount: 0 };
+        }
         if (method === "config.get") {
           return { raw: "{}", config: {}, valid: true, issues: [] };
         }
         if (method === "models.auth.status") {
-          return { storePath: "auth-profiles.json", warnAfterMs: 0, providers: [] };
+          return {
+            storePath: "auth-profiles.json",
+            warnAfterMs: 0,
+            providers: [
+              { provider: "openai-codex", status: "ok", profiles: [] },
+              { provider: "anthropic", status: "ok", profiles: [] },
+            ],
+          };
         }
         if (method === "models.catalog.status") {
           return {
@@ -344,11 +364,21 @@ describe("describeWizardStepForConfigAction", () => {
           }
           return { done: true, status: "done" };
         }
+        if (method === "secrets.reload") {
+          return { ok: true, warningCount: 0 };
+        }
         if (method === "config.get") {
           return { raw: "{}", config: {}, valid: true, issues: [] };
         }
         if (method === "models.auth.status") {
-          return { storePath: "auth-profiles.json", warnAfterMs: 0, providers: [] };
+          return {
+            storePath: "auth-profiles.json",
+            warnAfterMs: 0,
+            providers: [
+              { provider: "openai-codex", status: "ok", profiles: [] },
+              { provider: "anthropic", status: "ok", profiles: [] },
+            ],
+          };
         }
         if (method === "models.catalog.status") {
           return {
@@ -498,4 +528,103 @@ describe("provider sign-in browser handoff", () => {
     expect(open).toHaveBeenCalledOnce();
     Reflect.deleteProperty(window, "open");
   });
+});
+
+describe("saved provider activation", () => {
+  it("refreshes auth status before reporting success", async () => {
+    const state = createConfigState(null);
+    const calls: string[] = [];
+    state.client = {
+      request: vi.fn(async (method: string) => {
+        calls.push(method);
+        if (method === "models.auth.interactive.start") {
+          return { sessionId: "session", done: true, status: "done" };
+        }
+        if (method === "secrets.reload") {
+          expect(state.configAuthAction?.tone).not.toBe("success");
+          return { ok: true, warningCount: 0 };
+        }
+        if (method === "config.get") {
+          return { raw: "{}", config: {}, valid: true, issues: [] };
+        }
+        if (method === "models.auth.status") {
+          return {
+            storePath: "auth-profiles.json",
+            warnAfterMs: 0,
+            providers: [
+              { provider: "openai-codex", status: "ok", profiles: [] },
+              { provider: "anthropic", status: "ok", profiles: [] },
+            ],
+          };
+        }
+        if (method === "models.catalog.status") {
+          return null;
+        }
+        throw new Error(method);
+      }),
+    } as unknown as ConfigState["client"];
+    expect(
+      await runInteractiveProviderAuthCredential(state, {
+        profileId: "openai-codex:default",
+        provider: "openai-codex",
+        promptMode: "modal",
+      }),
+    ).toBe(true);
+    expect(calls.indexOf("secrets.reload")).toBeLessThan(calls.indexOf("models.auth.status"));
+    expect(state.configAuthAction?.tone).toBe("success");
+  });
+  it("does not claim completion when saved-account activation fails", async () => {
+    const state = createConfigState({
+      request: vi.fn(async (method: string) => {
+        if (method === "models.auth.interactive.start") {
+          return { sessionId: "session", done: true, status: "done" };
+        }
+        if (method === "secrets.reload") {
+          throw new Error("Saved credential activation failed");
+        }
+        throw new Error(method);
+      }),
+    });
+    expect(
+      await runInteractiveProviderAuthCredential(state, {
+        profileId: "openai-codex:default",
+        provider: "openai-codex",
+        promptMode: "modal",
+      }),
+    ).toBe(false);
+    expect(state.configAuthAction?.tone).toBe("danger");
+    expect(state.configAuthAction?.detail).toContain("Saved credential activation failed");
+  });
+});
+
+it("rejects a completed wizard whose refreshed provider has no saved account", async () => {
+  const state = createConfigState({
+    request: vi.fn(async (method: string) => {
+      if (method === "models.auth.interactive.start") {
+        return { sessionId: "session", done: true, status: "done" };
+      }
+      if (method === "secrets.reload") {
+        return { ok: true, warningCount: 0 };
+      }
+      if (method === "config.get") {
+        return { raw: "{}", config: {}, valid: true, issues: [] };
+      }
+      if (method === "models.auth.status") {
+        return { storePath: "auth-profiles.json", warnAfterMs: 0, providers: [] };
+      }
+      if (method === "models.catalog.status") {
+        return null;
+      }
+      throw new Error(method);
+    }),
+  });
+  expect(
+    await runInteractiveProviderAuthCredential(state, {
+      profileId: "openai-codex:default",
+      provider: "openai-codex",
+      promptMode: "modal",
+    }),
+  ).toBe(false);
+  expect(state.configAuthAction?.tone).toBe("danger");
+  expect(state.configAuthAction?.detail).toContain("could not verify a connected account");
 });
