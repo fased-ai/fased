@@ -48,6 +48,7 @@ describe("control UI workflow navigation", () => {
       "Wallets",
       "Network",
       "Modules",
+      "Advanced",
     ]);
     expect(navLabels).not.toContain("Mining");
     expect(navLabels).not.toContain("Providers");
@@ -62,7 +63,7 @@ describe("control UI workflow navigation", () => {
     expect(app.textContent).not.toContain("Resources");
   });
 
-  it("keeps legacy Mining visible when its wallet role is registered", async () => {
+  it("does not restore retired Mining navigation from old wallet metadata", async () => {
     const app = mountApp("/overview");
     app.walletNamedWallets = [
       {
@@ -75,7 +76,8 @@ describe("control UI workflow navigation", () => {
       },
     ];
     await app.updateComplete;
-    expect(app.querySelector('a.nav-item[href="/mining"]')).not.toBeNull();
+    expect(app.querySelector('a.nav-item[href="/mining"]')).toBeNull();
+    expect(app.querySelector('a.nav-item[href="/wen"]')).not.toBeNull();
   });
 
   it("keeps Providers routable without showing it in the sidebar", async () => {
