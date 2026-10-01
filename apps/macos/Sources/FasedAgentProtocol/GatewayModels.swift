@@ -1391,6 +1391,8 @@ public struct SessionsCompactParams: Codable, Sendable {
     }
 }
 
+public typealias SessionCompactionCheckpointReason = String
+
 public struct SessionCompactionTranscriptReference: Codable, Sendable {
     public let sessionid: String
     public let sessionfile: String?
@@ -1728,6 +1730,12 @@ public struct ConfigSchemaResponse: Codable, Sendable {
         case generatedat = "generatedAt"
     }
 }
+
+public typealias CommandSource = String
+
+public typealias CommandScope = String
+
+public typealias CommandCategory = String
 
 public struct CommandArgChoice: Codable, Sendable {
     public let value: String
@@ -2721,6 +2729,8 @@ public struct ModelChoice: Codable, Sendable {
     }
 }
 
+public typealias ModelsAuthStoreMode = String
+
 public struct ModelsAuthStoreParams: Codable, Sendable {
     public let profileid: String
     public let provider: String
@@ -3289,6 +3299,12 @@ public struct ModelsListResult: Codable, Sendable {
     }
 }
 
+public typealias PluginMarketplaceAction = String
+
+public typealias PluginMarketplaceMutationAction = String
+
+public typealias PluginMarketplaceAdminRpcActionMethod = String
+
 public struct PluginMarketplaceAdminRpcActionGrantStatus: Codable, Sendable {
     public let method: PluginMarketplaceAdminRpcActionMethod
     public let granted: Bool
@@ -3486,6 +3502,8 @@ public struct PluginMarketplaceInstallRecord: Codable, Sendable {
         case verificationhasprovenance = "verificationHasProvenance"
     }
 }
+
+public typealias PluginMarketplaceInstallChoice = String
 
 public struct PluginMarketplaceInstallOptions: Codable, Sendable {
     public let npmspec: String?
@@ -4306,6 +4324,8 @@ public struct ToolsEffectiveParams: Codable, Sendable {
         case agentid = "agentId"
     }
 }
+
+public typealias ToolEffectiveSource = String
 
 public struct ToolEffectiveEntry: Codable, Sendable {
     public let id: String

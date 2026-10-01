@@ -9,6 +9,7 @@ type JsonSchema = {
   required?: string[];
   items?: JsonSchema;
   enum?: string[];
+  anyOf?: JsonSchema[];
   patternProperties?: Record<string, JsonSchema>;
 };
 
@@ -76,6 +77,10 @@ function safeName(name: string) {
     return `_${cc}`;
   }
   return cc;
+}
+
+function isStringUnion(schema: JsonSchema): boolean {
+  return Boolean(schema.anyOf?.length && schema.anyOf.every((member) => member.type === "string"));
 }
 
 // filled later once schemas are loaded
@@ -210,11 +215,16 @@ function emitGatewayFrame(): string {
   ].join("\n");
 }
 
-async function generate() {
-  const definitions = Object.entries(ProtocolSchemas) as Array<[string, JsonSchema]>;
+export function generateSwiftProtocol(
+  schemas: Record<string, JsonSchema> = ProtocolSchemas,
+): string {
+  const definitions = Object.entries(schemas);
+  schemaNameByObject.clear();
 
   for (const [name, schema] of definitions) {
-    schemaNameByObject.set(schema as object, name);
+    if (schema.type === "object" || isStringUnion(schema) || name === "GatewayFrame") {
+      schemaNameByObject.set(schema as object, name);
+    }
   }
 
   const parts: string[] = [];
@@ -227,13 +237,19 @@ async function generate() {
     }
     if (schema.type === "object") {
       parts.push(emitStruct(name, schema));
+    } else if (isStringUnion(schema)) {
+      parts.push(`public typealias ${name} = String\n`);
     }
   }
 
   // Frame enum must come after payload structs
   parts.push(emitGatewayFrame());
 
-  const content = parts.join("\n");
+  return parts.join("\n");
+}
+
+async function generate() {
+  const content = generateSwiftProtocol();
   for (const outPath of outPaths) {
     await fs.mkdir(path.dirname(outPath), { recursive: true });
     await fs.writeFile(outPath, content);
@@ -241,7 +257,9 @@ async function generate() {
   }
 }
 
-generate().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  generate().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

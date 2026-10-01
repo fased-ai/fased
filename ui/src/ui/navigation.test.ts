@@ -136,7 +136,7 @@ describe("inferBasePathFromPathname", () => {
     expect(inferBasePathFromPathname("/overview")).toBe("");
     expect(inferBasePathFromPathname("/memory")).toBe("");
     expect(inferBasePathFromPathname("/wallet")).toBe("");
-    expect(inferBasePathFromPathname("/mining")).toBe("");
+    expect(inferBasePathFromPathname("/wen")).toBe("");
   });
 
   it("infers base path from nested paths", () => {
