@@ -4,7 +4,7 @@ import os
 import Testing
 @testable import FasedAgent
 
-@Suite struct GatewayChannelConnectTests {
+struct GatewayChannelConnectTests {
     private enum FakeResponse {
         case helloOk(delayMs: Int)
         case invalid(delayMs: Int)
@@ -48,8 +48,10 @@ import Testing
             let msg: URLSessionWebSocketTask.Message
             switch self.response {
             case let .helloOk(ms):
+                guard let id = self.connectRequestID.withLock({ $0 }) else {
+                    return .data(GatewayWebSocketTestSupport.connectChallengeData())
+                }
                 delayMs = ms
-                let id = self.connectRequestID.withLock { $0 } ?? "connect"
                 msg = .data(GatewayWebSocketTestSupport.connectOkData(id: id))
             case let .invalid(ms):
                 delayMs = ms
@@ -66,7 +68,6 @@ import Testing
             // Tests only need the handshake receive; keep the loop idle.
             self.pendingReceiveHandler.withLock { $0 = completionHandler }
         }
-
     }
 
     private final class FakeWebSocketSession: WebSocketSessioning, @unchecked Sendable {
@@ -77,7 +78,9 @@ import Testing
             self.response = response
         }
 
-        func snapshotMakeCount() -> Int { self.makeCount.withLock { $0 } }
+        func snapshotMakeCount() -> Int {
+            self.makeCount.withLock { $0 }
+        }
 
         func makeWebSocketTask(url: URL) -> WebSocketTaskBox {
             _ = url
@@ -87,10 +90,10 @@ import Testing
         }
     }
 
-    @Test func concurrentConnectIsSingleFlightOnSuccess() async throws {
+    @Test func `concurrent connect is single flight on success`() async throws {
         let session = FakeWebSocketSession(response: .helloOk(delayMs: 200))
-        let channel = GatewayChannelActor(
-            url: URL(string: "ws://example.invalid")!,
+        let channel = try GatewayChannelActor(
+            url: #require(URL(string: "ws://example.invalid")),
             token: nil,
             session: WebSocketSessionBox(session: session))
 
@@ -103,10 +106,10 @@ import Testing
         #expect(session.snapshotMakeCount() == 1)
     }
 
-    @Test func concurrentConnectSharesFailure() async {
+    @Test func `concurrent connect shares failure`() async throws {
         let session = FakeWebSocketSession(response: .invalid(delayMs: 200))
-        let channel = GatewayChannelActor(
-            url: URL(string: "ws://example.invalid")!,
+        let channel = try GatewayChannelActor(
+            url: #require(URL(string: "ws://example.invalid")),
             token: nil,
             session: WebSocketSessionBox(session: session))
 
@@ -117,10 +120,18 @@ import Testing
         let r2 = await t2.result
 
         #expect({
-            if case .failure = r1 { true } else { false }
+            if case .failure = r1 {
+                true
+            } else {
+                false
+            }
         }())
         #expect({
-            if case .failure = r2 { true } else { false }
+            if case .failure = r2 {
+                true
+            } else {
+                false
+            }
         }())
         #expect(session.snapshotMakeCount() == 1)
     }

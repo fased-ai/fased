@@ -555,6 +555,7 @@ public actor GatewayChannelActor {
             operation: { [weak self] in
                 guard let self else { throw ConnectChallengeError.timeout }
                 while true {
+                    try Task.checkCancellation()
                     let msg = try await task.receive()
                     guard let data = self.decodeMessageData(msg) else { continue }
                     guard let frame = try? self.decoder.decode(GatewayFrame.self, from: data) else { continue }
@@ -577,6 +578,7 @@ public actor GatewayChannelActor {
                 userInfo: [NSLocalizedDescriptionKey: "connect failed (no response)"])
         }
         while true {
+            try Task.checkCancellation()
             let msg = try await task.receive()
             guard let data = self.decodeMessageData(msg) else { continue }
             guard let frame = try? self.decoder.decode(GatewayFrame.self, from: data) else {

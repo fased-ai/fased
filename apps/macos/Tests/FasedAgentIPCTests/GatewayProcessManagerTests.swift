@@ -60,7 +60,9 @@ struct GatewayProcessManagerTests {
         }
 
         func receive() async throws -> URLSessionWebSocketTask.Message {
-            let id = self.connectRequestID.withLock { $0 } ?? "connect"
+            guard let id = self.connectRequestID.withLock({ $0 }) else {
+                return .data(GatewayWebSocketTestSupport.connectChallengeData())
+            }
             return .data(GatewayWebSocketTestSupport.connectOkData(id: id))
         }
 
@@ -69,7 +71,6 @@ struct GatewayProcessManagerTests {
         {
             self.pendingReceiveHandler.withLock { $0 = completionHandler }
         }
-
     }
 
     private final class FakeWebSocketSession: WebSocketSessioning, @unchecked Sendable {
@@ -83,9 +84,9 @@ struct GatewayProcessManagerTests {
         }
     }
 
-    @Test func clearsLastFailureWhenHealthSucceeds() async {
+    @Test func `clears last failure when health succeeds`() async throws {
         let session = FakeWebSocketSession()
-        let url = URL(string: "ws://example.invalid")!
+        let url = try #require(URL(string: "ws://example.invalid"))
         let connection = GatewayConnection(
             configProvider: { (url: url, token: nil, password: nil) },
             sessionBox: WebSocketSessionBox(session: session))
