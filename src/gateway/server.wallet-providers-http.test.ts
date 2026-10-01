@@ -1122,7 +1122,7 @@ describe("wallet providers HTTP", () => {
     });
   });
 
-  test("keeps an existing deny-all signer wallet locked until explicit baseline activation", async () => {
+  test("keeps a read-only wallet locked until owner-approved permissions are granted", async () => {
     await withTempConfig({
       cfg: baseConfig,
       run: async () => {
@@ -1179,8 +1179,10 @@ describe("wallet providers HTTP", () => {
             settings?: { signerPolicy?: { state?: string; guidance?: string } };
           };
           expect(settingsPayload.settings?.signerPolicy?.state).toBe("locked");
-          expect(settingsPayload.settings?.signerPolicy?.guidance).toContain(
-            "wallet policy activate-role-baseline",
+          expect(settingsPayload.settings?.signerPolicy?.guidance).toContain("Wallet permissions");
+          expect(settingsPayload.settings?.signerPolicy?.guidance).toContain("owner approval");
+          expect(settingsPayload.settings?.signerPolicy?.guidance).not.toContain(
+            "activate-role-baseline",
           );
 
           const patchResponse = createResponse();

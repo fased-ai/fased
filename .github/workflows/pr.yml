@@ -389,6 +389,12 @@ jobs:
           src/wallet/providers/local-socket-signer-adapter.integration.test.ts
           src/wizard/onboarding.wallet.test.ts
           --pool=forks --maxWorkers=1
+      - name: Select Xcode 26.1
+        if: needs.classify.outputs.run_macos_app == 'true'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.1.app
+          xcodebuild -version
+          swift --version
       - name: Run macOS application checks
         if: needs.classify.outputs.run_macos_app == 'true'
         run: |
