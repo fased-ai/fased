@@ -178,12 +178,9 @@ function buildProfileHealth(params: {
     now,
     warnAfterMs,
   );
-  // A stored refresh token makes renewal possible, not proven. Report the
-  // transition honestly until a real provider request refreshes the profile.
-  const status =
-    hasRefreshToken && (rawStatus === "expired" || rawStatus === "expiring")
-      ? "refresh-required"
-      : rawStatus;
+  // A still-valid access token remains usable, even inside the warning window.
+  // A stored refresh token does not prove renewal of an already expired token.
+  const status = hasRefreshToken && rawStatus === "expired" ? "refresh-required" : rawStatus;
   return {
     profileId,
     provider,

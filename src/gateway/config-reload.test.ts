@@ -180,6 +180,13 @@ describe("buildGatewayReloadPlan", () => {
     expect(plan.noopPaths).toContain("gateway.remote.url");
   });
 
+  it("activates provider account registration and selection without restarting", () => {
+    const paths = ["auth.profiles.openai-codex:plan-test", "auth.order.openai-codex"];
+    const plan = buildGatewayReloadPlan(paths);
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.noopPaths).toEqual(paths);
+  });
+
   it("treats secrets config changes as no-op for gateway restart planning", () => {
     const plan = buildGatewayReloadPlan(["secrets.providers.default.path"]);
     expect(plan.restartGateway).toBe(false);
