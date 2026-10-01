@@ -4,6 +4,7 @@ import path from "node:path";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FasedAgentConfig } from "../config/config.js";
+import { fixtureCredential } from "../test-utils/fixture-credential.js";
 import type { AuthProfileFailureReason } from "./auth-profiles.js";
 import type { EmbeddedRunAttemptResult } from "./pi-embedded-runner/run/types.js";
 
@@ -91,7 +92,7 @@ const makeConfig = (opts?: { fallbacks?: string[]; apiKey?: string }): FasedAgen
       providers: {
         openai: {
           api: "openai-responses",
-          apiKey: opts?.apiKey ?? "sk-test",
+          apiKey: opts?.apiKey ?? fixtureCredential("sk-test"),
           baseUrl: "https://example.com",
           models: [
             {
@@ -130,7 +131,7 @@ const makeAgentOverrideOnlyFallbackConfig = (agentId: string): FasedAgentConfig 
       providers: {
         openai: {
           api: "openai-responses",
-          apiKey: "sk-test",
+          apiKey: fixtureCredential("sk-test"),
           baseUrl: "https://example.com",
           models: [
             {

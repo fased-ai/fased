@@ -1,4 +1,6 @@
+const NO_AUTH_CREDENTIAL = "n/a";
 import { describe, expect, it } from "vitest";
+import { fixtureCredential } from "../test-utils/fixture-credential.js";
 import {
   applyProviderRefreshToRegistrySource,
   buildProviderRefreshReport,
@@ -102,12 +104,12 @@ describe("provider refresh", () => {
 
     const recommended = await fetchOpenAIProviderRefreshSnapshot({
       fetch,
-      env: { OPENAI_API_KEY: "openai-key" },
+      env: { OPENAI_API_KEY: fixtureCredential("openai-key") },
     });
     const available = await fetchProviderRefreshSnapshotForRoutes({
       routes: ["openai"],
       fetch,
-      env: { OPENAI_API_KEY: "openai-key" },
+      env: { OPENAI_API_KEY: fixtureCredential("openai-key") },
     });
 
     expect(routeIds(recommended.providers?.openai?.routes?.openai)).toEqual(["gpt-5.6"]);
@@ -120,7 +122,7 @@ describe("provider refresh", () => {
   it("uses the authenticated OpenAI models endpoint when an API key is available", async () => {
     const calls: Array<{ url: string; authorization?: string }> = [];
     const snapshot = await fetchOpenAIProviderRefreshSnapshot({
-      env: { OPENAI_API_KEY: "sk-account" },
+      env: { OPENAI_API_KEY: fixtureCredential("sk-account") },
       fetch: async (url, init) => {
         calls.push({
           url: fetchUrlText(url),
@@ -134,7 +136,10 @@ describe("provider refresh", () => {
     });
 
     expect(calls).toEqual([
-      { url: "https://api.openai.com/v1/models", authorization: "Bearer sk-account" },
+      {
+        url: "https://api.openai.com/v1/models",
+        authorization: `Bearer ${fixtureCredential("sk-account")}`,
+      },
     ]);
     expect(routeIds(snapshot.providers?.openai?.routes?.openai)).toEqual(["gpt-5.6"]);
   });
@@ -143,9 +148,9 @@ describe("provider refresh", () => {
     const env = buildProviderRefreshEnvFromCredentials({
       env: {
         EXISTING: "keep",
-        ANTHROPIC_API_KEY: "env-anthropic",
+        ANTHROPIC_API_KEY: fixtureCredential("env-anthropic"),
         GEMINI_KEY: "gemini-ref",
-        CUSTOM_API_KEY: "custom-env-ref",
+        CUSTOM_API_KEY: fixtureCredential("custom-env-ref"),
       },
       authStores: [
         {
@@ -154,12 +159,12 @@ describe("provider refresh", () => {
             "openai:default": {
               type: "api_key",
               provider: "openai",
-              key: "openai-key",
+              key: fixtureCredential("openai-key"),
             },
             "chutes:default": {
               type: "api_key",
               provider: "chutes",
-              key: "chutes-key",
+              key: fixtureCredential("chutes-key"),
             },
             "chutes:oauth": {
               type: "oauth",
@@ -239,7 +244,7 @@ describe("provider refresh", () => {
             "openrouter:default": {
               type: "api_key",
               provider: "openrouter",
-              key: "openrouter-key",
+              key: fixtureCredential("openrouter-key"),
             },
             "xai:oauth": {
               type: "oauth",
@@ -251,12 +256,12 @@ describe("provider refresh", () => {
             "vercel-ai-gateway:default": {
               type: "api_key",
               provider: "vercel-ai-gateway",
-              key: "vercel-key",
+              key: fixtureCredential("vercel-key"),
             },
             "opencode:default": {
               type: "api_key",
               provider: "opencode",
-              key: "opencode-key",
+              key: fixtureCredential("opencode-key"),
             },
             "huggingface:default": {
               type: "api_key",
@@ -266,7 +271,7 @@ describe("provider refresh", () => {
             "venice:default": {
               type: "api_key",
               provider: "venice",
-              key: "venice-key",
+              key: fixtureCredential("venice-key"),
             },
           },
         },
@@ -274,23 +279,23 @@ describe("provider refresh", () => {
       modelProviders: {
         "copilot-proxy": {
           baseUrl: "http://127.0.0.1:4141/v1",
-          apiKey: "n/a",
+          apiKey: NO_AUTH_CREDENTIAL,
         },
         "kimi-coding": {
           baseUrl: "https://api.kimi.com/coding",
-          apiKey: "kimi-key",
+          apiKey: fixtureCredential("kimi-key"),
         },
         litellm: {
           baseUrl: "https://litellm.example.com",
-          apiKey: "litellm-key",
+          apiKey: fixtureCredential("litellm-key"),
         },
         ollama: {
           baseUrl: "http://172.28.64.1:11434",
-          apiKey: "ollama-local",
+          apiKey: fixtureCredential("ollama-local"),
         },
         lmstudio: {
           baseUrl: "http://172.28.64.1:1234/v1",
-          apiKey: "lmstudio-local",
+          apiKey: fixtureCredential("lmstudio-local"),
         },
         "custom-local": {
           baseUrl: "https://custom.example.com/v1",
@@ -300,9 +305,9 @@ describe("provider refresh", () => {
     });
 
     expect(env.EXISTING).toBe("keep");
-    expect(env.OPENAI_API_KEY).toBe("openai-key");
-    expect(env.CHUTES_API_KEY).toBe("chutes-key");
-    expect(env.ANTHROPIC_API_KEY).toBe("env-anthropic");
+    expect(env.OPENAI_API_KEY).toBe(fixtureCredential("openai-key"));
+    expect(env.CHUTES_API_KEY).toBe(fixtureCredential("chutes-key"));
+    expect(env.ANTHROPIC_API_KEY).toBe(fixtureCredential("env-anthropic"));
     expect(env.ANTHROPIC_OAUTH_TOKEN).toBe("anthropic-oauth-token");
     expect(env.GEMINI_API_KEY).toBe("gemini-ref");
     expect(env.GOOGLE_GEMINI_CLI_OAUTH_TOKEN).toBe("gemini-cli-access");
@@ -312,28 +317,28 @@ describe("provider refresh", () => {
     expect(env.BAILIAN_CODING_PLAN_API_KEY).toBe("qwen-plan-key");
     expect(env.COPILOT_PROXY_API_KEY).toBe("n/a");
     expect(env.COPILOT_PROXY_BASE_URL).toBe("http://127.0.0.1:4141/v1");
-    expect(env.KIMI_CODING_API_KEY).toBe("kimi-key");
+    expect(env.KIMI_CODING_API_KEY).toBe(fixtureCredential("kimi-key"));
     expect(env.KIMI_CODING_BASE_URL).toBe("https://api.kimi.com/coding");
     expect(env.XIAOMI_API_KEY).toBe("xiaomi-key");
     expect(env.SYNTHETIC_API_KEY).toBe("synthetic-key");
     expect(env.CLOUDFLARE_AI_GATEWAY_API_KEY).toBe("cf-key");
     expect(env.CLOUDFLARE_AI_GATEWAY_ACCOUNT_ID).toBe("cf-account");
     expect(env.CLOUDFLARE_AI_GATEWAY_GATEWAY_ID).toBe("cf-gateway");
-    expect(env.LITELLM_API_KEY).toBe("litellm-key");
+    expect(env.LITELLM_API_KEY).toBe(fixtureCredential("litellm-key"));
     expect(env.LITELLM_BASE_URL).toBe("https://litellm.example.com");
-    expect(env.OLLAMA_API_KEY).toBe("ollama-local");
+    expect(env.OLLAMA_API_KEY).toBe(fixtureCredential("ollama-local"));
     expect(env.OLLAMA_BASE_URL).toBe("http://172.28.64.1:11434");
-    expect(env.LMSTUDIO_API_KEY).toBe("lmstudio-local");
+    expect(env.LMSTUDIO_API_KEY).toBe(fixtureCredential("lmstudio-local"));
     expect(env.LMSTUDIO_BASE_URL).toBe("http://172.28.64.1:1234/v1");
-    expect(env.CUSTOM_PROVIDER_API_KEY).toBe("custom-env-ref");
+    expect(env.CUSTOM_PROVIDER_API_KEY).toBe(fixtureCredential("custom-env-ref"));
     expect(env.CUSTOM_PROVIDER_BASE_URL).toBe("https://custom.example.com/v1");
     expect(env.TOGETHER_API_KEY).toBe("together-key");
-    expect(env.OPENROUTER_API_KEY).toBe("openrouter-key");
+    expect(env.OPENROUTER_API_KEY).toBe(fixtureCredential("openrouter-key"));
     expect(env.XAI_API_KEY).toBe("xai-oauth-token");
-    expect(env.AI_GATEWAY_API_KEY).toBe("vercel-key");
-    expect(env.OPENCODE_API_KEY).toBe("opencode-key");
+    expect(env.AI_GATEWAY_API_KEY).toBe(fixtureCredential("vercel-key"));
+    expect(env.OPENCODE_API_KEY).toBe(fixtureCredential("opencode-key"));
     expect(env.HUGGINGFACE_HUB_TOKEN).toBe("huggingface-key");
-    expect(env.VENICE_API_KEY).toBe("venice-key");
+    expect(env.VENICE_API_KEY).toBe(fixtureCredential("venice-key"));
   });
 
   it("maps OAuth and token profiles into authenticated provider discovery", () => {
@@ -620,7 +625,9 @@ describe("provider refresh", () => {
   it("fetches Chutes official catalog into a refresh snapshot", async () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://llm.chutes.ai/v1/models");
-      expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer chutes-key");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe(
+        `Bearer ${fixtureCredential("chutes-key")}`,
+      );
       return {
         ok: true,
         json: async () => ({
@@ -654,7 +661,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchChutesProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
-      env: { CHUTES_API_KEY: "chutes-key" },
+      env: { CHUTES_API_KEY: fixtureCredential("chutes-key") },
     });
     const chutes = snapshot.providers?.chutes?.routes?.chutes;
     expect(routeIds(chutes)).toEqual([
@@ -759,7 +766,7 @@ describe("provider refresh", () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://api.anthropic.com/v1/models");
       expect(init?.headers).toMatchObject({
-        "x-api-key": "anthropic-test",
+        "x-api-key": fixtureCredential("anthropic-test"),
         "anthropic-version": "2023-06-01",
       });
       return {
@@ -791,7 +798,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchAnthropicProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
-      env: { ANTHROPIC_API_KEY: "anthropic-test" },
+      env: { ANTHROPIC_API_KEY: fixtureCredential("anthropic-test") },
     });
     expect(routeIds(snapshot.providers?.anthropic?.routes?.anthropic)).toEqual(["claude-opus-4-8"]);
     expect(snapshot.providers?.anthropic?.routes?.anthropic?.[0]).toMatchObject({
@@ -835,7 +842,7 @@ describe("provider refresh", () => {
       expect(`${parsed.origin}${parsed.pathname}`).toBe(
         "https://generativelanguage.googleapis.com/v1beta/models",
       );
-      expect(parsed.searchParams.get("key")).toBe("gemini-test");
+      expect(parsed.searchParams.get("key")).toBe(fixtureCredential("gemini-test"));
       return {
         ok: true,
         json: async () => ({
@@ -855,7 +862,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchGoogleGeminiProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
-      env: { GEMINI_API_KEY: "gemini-test" },
+      env: { GEMINI_API_KEY: fixtureCredential("gemini-test") },
     });
     expect(routeIds(snapshot.providers?.google?.routes?.google)).toEqual([
       "gemini-3.5-flash",
@@ -946,27 +953,27 @@ describe("provider refresh", () => {
     const [xai, mistral, minimax, moonshot, zai, qianfan] = await Promise.all([
       fetchXaiProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { XAI_API_KEY: "xai-test" },
+        env: { XAI_API_KEY: fixtureCredential("xai-test") },
       }),
       fetchMistralProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { MISTRAL_API_KEY: "mistral-test" },
+        env: { MISTRAL_API_KEY: fixtureCredential("mistral-test") },
       }),
       fetchMinimaxProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { MINIMAX_API_KEY: "minimax-test" },
+        env: { MINIMAX_API_KEY: fixtureCredential("minimax-test") },
       }),
       fetchMoonshotProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { MOONSHOT_API_KEY: "moonshot-test" },
+        env: { MOONSHOT_API_KEY: fixtureCredential("moonshot-test") },
       }),
       fetchZaiProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { ZAI_API_KEY: "zai-test" },
+        env: { ZAI_API_KEY: fixtureCredential("zai-test") },
       }),
       fetchQianfanProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { QIANFAN_API_KEY: "qianfan-test" },
+        env: { QIANFAN_API_KEY: fixtureCredential("qianfan-test") },
       }),
     ]);
 
@@ -999,11 +1006,11 @@ describe("provider refresh", () => {
       expect.arrayContaining([
         {
           url: "https://api.x.ai/v1/language-models",
-          headers: { Authorization: "Bearer xai-test" },
+          headers: { Authorization: `Bearer ${fixtureCredential("xai-test")}` },
         },
         {
           url: "https://api.mistral.ai/v1/models",
-          headers: { Authorization: "Bearer mistral-test" },
+          headers: { Authorization: `Bearer ${fixtureCredential("mistral-test")}` },
         },
       ]),
     );
@@ -1018,7 +1025,9 @@ describe("provider refresh", () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = fetchUrlText(url);
       if (requestUrl === "https://api.minimax.io/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer minimax-api-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("minimax-api-test")}`,
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1058,7 +1067,9 @@ describe("provider refresh", () => {
         } as Response;
       }
       if (requestUrl === "https://api.kimi.com/coding/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer kimi-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("kimi-test")}`,
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1081,13 +1092,13 @@ describe("provider refresh", () => {
       fetchMinimaxProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
         env: {
-          MINIMAX_API_KEY: "minimax-api-test",
+          MINIMAX_API_KEY: fixtureCredential("minimax-api-test"),
           MINIMAX_PORTAL_OAUTH_TOKEN: "minimax-portal-test",
         },
       }),
       fetchMoonshotProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { KIMI_CODING_API_KEY: "kimi-test" },
+        env: { KIMI_CODING_API_KEY: fixtureCredential("kimi-test") },
       }),
     ]);
 
@@ -1220,11 +1231,11 @@ describe("provider refresh", () => {
     const [volcengine, byteplus] = await Promise.all([
       fetchVolcengineProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { VOLCANO_ENGINE_API_KEY: "volc-test" },
+        env: { VOLCANO_ENGINE_API_KEY: fixtureCredential("volc-test") },
       }),
       fetchBytePlusProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { BYTEPLUS_API_KEY: "byte-test" },
+        env: { BYTEPLUS_API_KEY: fixtureCredential("byte-test") },
       }),
     ]);
 
@@ -1268,11 +1279,11 @@ describe("provider refresh", () => {
       expect.arrayContaining([
         {
           url: "https://ark.cn-beijing.volces.com/api/v3/models",
-          headers: { Authorization: "Bearer volc-test" },
+          headers: { Authorization: `Bearer ${fixtureCredential("volc-test")}` },
         },
         {
           url: "https://ark.ap-southeast.bytepluses.com/api/v3/models",
-          headers: { Authorization: "Bearer byte-test" },
+          headers: { Authorization: `Bearer ${fixtureCredential("byte-test")}` },
         },
       ]),
     );
@@ -1282,7 +1293,9 @@ describe("provider refresh", () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = fetchUrlText(url);
       if (requestUrl === "https://coding.dashscope.aliyuncs.com/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer qwen-plan-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("qwen-plan-test")}`,
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1294,7 +1307,9 @@ describe("provider refresh", () => {
         } as Response;
       }
       if (requestUrl === "https://dashscope.aliyuncs.com/compatible-mode/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer qwen-api-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("qwen-api-test")}`,
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1306,7 +1321,9 @@ describe("provider refresh", () => {
         } as Response;
       }
       if (requestUrl === "http://127.0.0.1:8000/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer vllm-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("vllm-test")}`,
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1323,11 +1340,15 @@ describe("provider refresh", () => {
         } as Response;
       }
       if (requestUrl === "http://localhost:4000/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer litellm-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("litellm-test")}`,
+        });
         return { ok: true, json: async () => ({ data: [{ id: "proxy-model" }] }) } as Response;
       }
       if (requestUrl === "https://models.example.com/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer custom-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("custom-test")}`,
+        });
         return { ok: true, json: async () => ({ data: [{ id: "custom-large" }] }) } as Response;
       }
       throw new Error(`Unexpected URL: ${requestUrl}`);
@@ -1337,23 +1358,23 @@ describe("provider refresh", () => {
       fetchQwenProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
         env: {
-          BAILIAN_CODING_PLAN_API_KEY: "qwen-plan-test",
-          DASHSCOPE_API_KEY: "qwen-api-test",
+          BAILIAN_CODING_PLAN_API_KEY: fixtureCredential("qwen-plan-test"),
+          DASHSCOPE_API_KEY: fixtureCredential("qwen-api-test"),
         },
       }),
       fetchVllmProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { VLLM_API_KEY: "vllm-test" },
+        env: { VLLM_API_KEY: fixtureCredential("vllm-test") },
       }),
       fetchLitellmProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { LITELLM_API_KEY: "litellm-test" },
+        env: { LITELLM_API_KEY: fixtureCredential("litellm-test") },
       }),
       fetchCustomProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
         env: {
           CUSTOM_PROVIDER_BASE_URL: "https://models.example.com/v1",
-          CUSTOM_PROVIDER_API_KEY: "custom-test",
+          CUSTOM_PROVIDER_API_KEY: fixtureCredential("custom-test"),
         },
       }),
     ]);
@@ -1391,7 +1412,9 @@ describe("provider refresh", () => {
         } as Response;
       }
       if (requestUrl === "https://api.xiaomimimo.com/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer xiaomi-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("xiaomi-test")}`,
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1408,7 +1431,9 @@ describe("provider refresh", () => {
         } as Response;
       }
       if (requestUrl === "https://api.synthetic.new/openai/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer synthetic-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("synthetic-test")}`,
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1421,7 +1446,9 @@ describe("provider refresh", () => {
         } as Response;
       }
       if (requestUrl === "https://api.together.xyz/v1/models") {
-        expect(init?.headers).toEqual({ Authorization: "Bearer together-test" });
+        expect(init?.headers).toEqual({
+          Authorization: `Bearer ${fixtureCredential("together-test")}`,
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1446,19 +1473,22 @@ describe("provider refresh", () => {
     const [copilot, xiaomi, synthetic, together] = await Promise.all([
       fetchCopilotProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { COPILOT_PROXY_BASE_URL: "http://127.0.0.1:4141/v1", COPILOT_PROXY_API_KEY: "n/a" },
+        env: {
+          COPILOT_PROXY_BASE_URL: "http://127.0.0.1:4141/v1",
+          COPILOT_PROXY_API_KEY: NO_AUTH_CREDENTIAL,
+        },
       }),
       fetchXiaomiProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { XIAOMI_API_KEY: "xiaomi-test" },
+        env: { XIAOMI_API_KEY: fixtureCredential("xiaomi-test") },
       }),
       fetchSyntheticProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { SYNTHETIC_API_KEY: "synthetic-test" },
+        env: { SYNTHETIC_API_KEY: fixtureCredential("synthetic-test") },
       }),
       fetchTogetherProviderRefreshSnapshot({
         fetch: fetchMock as typeof fetch,
-        env: { TOGETHER_API_KEY: "together-test" },
+        env: { TOGETHER_API_KEY: fixtureCredential("together-test") },
       }),
     ]);
 
@@ -1507,7 +1537,7 @@ describe("provider refresh", () => {
       );
       expect(init?.headers).toMatchObject({
         "anthropic-version": "2023-06-01",
-        "x-api-key": "cf-provider-key",
+        "x-api-key": fixtureCredential("cf-provider-key"),
         "cf-aig-authorization": "Bearer cf-gateway-token",
       });
       return {
@@ -1527,7 +1557,7 @@ describe("provider refresh", () => {
       env: {
         CLOUDFLARE_AI_GATEWAY_ACCOUNT_ID: "acc",
         CLOUDFLARE_AI_GATEWAY_GATEWAY_ID: "gw",
-        CLOUDFLARE_AI_GATEWAY_API_KEY: "cf-provider-key",
+        CLOUDFLARE_AI_GATEWAY_API_KEY: fixtureCredential("cf-provider-key"),
         CLOUDFLARE_AI_GATEWAY_TOKEN: "cf-gateway-token",
       },
     });
@@ -1584,7 +1614,7 @@ describe("provider refresh", () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://openrouter.ai/api/v1/models");
       expect((init?.headers as Record<string, string>)?.Authorization).toBe(
-        "Bearer openrouter-key",
+        `Bearer ${fixtureCredential("openrouter-key")}`,
       );
       return {
         ok: true,
@@ -1643,7 +1673,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchOpenRouterProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
-      env: { OPENROUTER_API_KEY: "openrouter-key" },
+      env: { OPENROUTER_API_KEY: fixtureCredential("openrouter-key") },
     });
     expect(routeIds(snapshot.providers?.openrouter?.routes?.openrouter)).toEqual([
       "openai/gpt-5.5",
@@ -1722,7 +1752,9 @@ describe("provider refresh", () => {
   it("fetches Vercel AI Gateway official catalog into a refresh snapshot", async () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://ai-gateway.vercel.sh/v1/models");
-      expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer vercel-key");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe(
+        `Bearer ${fixtureCredential("vercel-key")}`,
+      );
       return {
         ok: true,
         json: async () => ({
@@ -1744,7 +1776,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchVercelAiGatewayProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
-      env: { AI_GATEWAY_API_KEY: "vercel-key" },
+      env: { AI_GATEWAY_API_KEY: fixtureCredential("vercel-key") },
     });
     const route = snapshot.providers?.["ai-gateway"]?.routes?.["vercel-ai-gateway"];
     expect(routeIds(route)).toEqual([
@@ -1794,7 +1826,9 @@ describe("provider refresh", () => {
   it("fetches OpenCode Zen official catalog into a refresh snapshot", async () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://opencode.ai/zen/v1/models");
-      expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer opencode-key");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe(
+        `Bearer ${fixtureCredential("opencode-key")}`,
+      );
       return {
         ok: true,
         json: async () => ({
@@ -1812,7 +1846,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchOpencodeZenProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
-      env: { OPENCODE_API_KEY: "opencode-key" },
+      env: { OPENCODE_API_KEY: fixtureCredential("opencode-key") },
     });
     expect(routeIds(snapshot.providers?.["opencode-zen"]?.routes?.opencode)).toEqual([
       "gpt-5.5",
@@ -2029,7 +2063,9 @@ describe("provider refresh", () => {
   it("fetches Venice AI official catalog into a refresh snapshot", async () => {
     const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
       expect(fetchUrlText(url)).toBe("https://api.venice.ai/api/v1/models");
-      expect((init?.headers as Record<string, string>)?.Authorization).toBe("Bearer venice-key");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe(
+        `Bearer ${fixtureCredential("venice-key")}`,
+      );
       return {
         ok: true,
         json: async () => ({
@@ -2044,7 +2080,7 @@ describe("provider refresh", () => {
 
     const snapshot = await fetchVeniceProviderRefreshSnapshot({
       fetch: fetchMock as typeof fetch,
-      env: { VENICE_API_KEY: "venice-key" },
+      env: { VENICE_API_KEY: fixtureCredential("venice-key") },
     });
     expect(routeIds(snapshot.providers?.venice?.routes?.venice)).toEqual([
       "zai-org-glm-5-1",
@@ -2124,7 +2160,7 @@ describe("provider refresh", () => {
       fetch: fetchMock as typeof fetch,
       env: {
         HUGGINGFACE_HUB_TOKEN: "huggingface-key",
-        VENICE_API_KEY: "venice-key",
+        VENICE_API_KEY: fixtureCredential("venice-key"),
       },
     });
     expect(snapshot.providers?.openai?.routes?.openai).toEqual([
