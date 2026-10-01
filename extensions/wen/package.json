@@ -1,6 +1,6 @@
 {
   "name": "@fased/wen",
-  "version": "0.1.76-rc.168",
+  "version": "0.1.76-rc.169",
   "private": true,
   "description": "WEN economy and policy-controlled strategy engine",
   "type": "module",
