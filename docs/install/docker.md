@@ -235,14 +235,17 @@ Do not change the port mappings to `0.0.0.0`, add `network_mode: host`, mount
 security boundary. Do not change the services to root to work around
 permissions. Remote access and Docker VPS hosting are not covered by this guide.
 
-# Edit every REPLACE*WITH* value and review every line before continuing.
+### Wallet policies
 
+Review the wallet ID and policy file before continuing.
+
+```bash
 scripts/docker-signer-policy.sh \
  --initial-install \
  --wallet-id agent \
  --policy-file "$HOME/fased-agent-policy.json"
 
-````
+```
 
 The helper refuses placeholders, group/world-readable policy files, a policy
 owned by another user, an unhealthy signer, or a digest-confirmation mismatch.
@@ -261,7 +264,7 @@ docker compose --profile signer-admin run --rm --no-deps \
   fased-signer-admin policy get \
   --control-socket /run/fased-signerd-control/control.sock \
   --wallet-id agent
-````
+```
 
 This service is deliberately short-lived and networkless. Review every admin
 command and its input from the local owner terminal before running it.
@@ -295,10 +298,18 @@ docker compose --profile signer-admin run --rm -T --no-deps \
   fased-signer-admin jupiter api-key-remove \
   --output /var/lib/fased-signerd-secrets/jupiter-trigger-api.key
 docker compose restart fased-signerd
-bash
+```
+
+### Owner enrollment
+
+```bash
 docker compose --profile signer-admin run --rm --service-ports \
   fased-signer-enroll "Local Docker owner"
-bash
+```
+
+For an explicitly configured Compose override:
+
+```bash
 docker compose -f docker-compose.yml -f docker-compose.extra.yml <command>
 ```
 
