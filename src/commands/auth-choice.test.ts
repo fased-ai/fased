@@ -1270,7 +1270,7 @@ describe("applyAuthChoice", () => {
         runtime: createExitThrowingRuntime(),
         setDefaultModel: true,
       }),
-    ).rejects.toThrow("Unsupported provider auth choice");
+    ).rejects.toThrow("Qwen portal OAuth was discontinued");
     expect(pluginRun).not.toHaveBeenCalled();
   });
 
