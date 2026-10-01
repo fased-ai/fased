@@ -58,12 +58,32 @@ describe("buildAuthHealthSummary", () => {
     const statuses = profileStatuses(summary);
 
     expect(statuses["anthropic:ok"]).toBe("ok");
-    expect(statuses["anthropic:expiring"]).toBe("refresh-required");
+    expect(statuses["anthropic:expiring"]).toBe("expiring");
     expect(statuses["anthropic:expired"]).toBe("refresh-required");
     expect(statuses["anthropic:api"]).toBe("static");
 
     const provider = summary.providers.find((entry) => entry.provider === "anthropic");
     expect(provider?.status).toBe("ok");
+  });
+
+  it("keeps a newly issued one-hour OAuth credential usable", () => {
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const summary = buildAuthHealthSummary({
+      store: {
+        version: 1,
+        profiles: {
+          "openai-codex:plan-test": {
+            type: "oauth" as const,
+            provider: "openai-codex",
+            access: "current-access",
+            refresh: "stored-refresh",
+            expires: now + 60 * 60 * 1000,
+          },
+        },
+      },
+    });
+    expect(summary.profiles[0]?.status).toBe("expiring");
+    expect(summary.providers[0]?.status).toBe("expiring");
   });
 
   it("does not call an untested OAuth refresh ready", () => {

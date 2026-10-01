@@ -292,121 +292,127 @@ describe("renderProviders", () => {
     expect(text).not.toContain("Attach in Agents");
   });
 
-  it("shows provider auth profiles, runtime status, and model catalog coverage", async () => {
-    const { renderProviders } = await import("./providers.ts");
-    const text = flattenTemplateText(
-      renderProviders(
-        createBaseProps({
-          formValue: {
-            auth: {
-              profiles: {
-                "openai:api": { provider: "openai", mode: "api_key" },
-              },
-              order: { openai: ["openai:api"] },
-            },
-            models: {
-              providers: {
-                openai: { auth: "api-key", models: [{ id: "gpt-5.5" }] },
-              },
-            },
-          },
-          originalValue: null,
-          authStatus: {
-            storePath: "/tmp/fased/auth.json",
-            warnAfterMs: 3600000,
-            providers: [
-              {
-                provider: "openai",
-                status: "ok",
-                effective: { kind: "profiles", detail: "openai:api" },
-                profiles: [
-                  {
-                    profileId: "openai:api",
-                    provider: "openai",
-                    type: "api_key",
-                    status: "ok",
-                    label: "openai:api",
-                    source: "store",
-                  },
-                ],
-              },
-            ],
-          },
-          modelCatalogStatus: {
-            checkedAtMs: Date.now(),
-            cache: { modelCatalog: "shared-loader", providerExtensionCatalog: "fresh-status-load" },
-            totalProviders: 1,
-            totalModels: 1,
-            configuredProviders: 1,
-            availableProviders: 0,
-            reasoningModels: 1,
-            visionModels: 0,
-            capabilityCounts: {
-              textModels: 1,
-              visionModels: 0,
-              reasoningModels: 1,
-              toolsModels: 1,
-              jsonModels: 1,
-              audioModels: 0,
-            },
-            sourceCounts: { runtime: 1 },
-            providers: [
-              {
-                provider: "openai",
-                totalModels: 1,
-                configured: true,
-                reasoningModels: 1,
-                visionModels: 0,
-                sources: ["runtime"],
-                sourceConfidence: "runtime",
-                capabilityCounts: {
-                  textModels: 1,
-                  visionModels: 0,
-                  reasoningModels: 1,
-                  toolsModels: 1,
-                  jsonModels: 1,
-                  audioModels: 0,
+  it.each(["ok", "expiring"])(
+    "shows a connected provider with usable %s credentials",
+    async (status) => {
+      const { renderProviders } = await import("./providers.ts");
+      const text = flattenTemplateText(
+        renderProviders(
+          createBaseProps({
+            formValue: {
+              auth: {
+                profiles: {
+                  "openai:api": { provider: "openai", mode: "api_key" },
                 },
-                authModes: ["api-key"],
-                privateNetwork: { models: 0, allowed: 0, blocked: 0 },
-                probeStatus: "not-run",
+                order: { openai: ["openai:api"] },
               },
-            ],
-            providerExtensionCatalog: {
-              totalEntries: 0,
-              loadedEntries: 0,
-              skippedUntrustedEntries: 0,
-              emptyEntries: 0,
-              errorEntries: 0,
-              modelCount: 0,
-              loadedProviderIds: [],
-              warnings: [],
-              entries: [],
+              models: {
+                providers: {
+                  openai: { auth: "api-key", models: [{ id: "gpt-5.5" }] },
+                },
+              },
             },
-            providerExtensionManifest: {
-              upstreamProviderCount: 0,
-              mappedProviderCount: 0,
-              deferredProviderCount: 0,
-              mappedProviderIds: [],
-              deferredProviderIds: [],
-              missingMappedProviderIds: [],
+            originalValue: null,
+            authStatus: {
+              storePath: "/tmp/fased/auth.json",
+              warnAfterMs: 3600000,
+              providers: [
+                {
+                  provider: "openai",
+                  status,
+                  effective: { kind: "profiles", detail: "openai:api" },
+                  profiles: [
+                    {
+                      profileId: "openai:api",
+                      provider: "openai",
+                      type: "api_key",
+                      status,
+                      label: "openai:api",
+                      source: "store",
+                    },
+                  ],
+                },
+              ],
             },
-          },
-        }),
-      ),
-    );
+            modelCatalogStatus: {
+              checkedAtMs: Date.now(),
+              cache: {
+                modelCatalog: "shared-loader",
+                providerExtensionCatalog: "fresh-status-load",
+              },
+              totalProviders: 1,
+              totalModels: 1,
+              configuredProviders: 1,
+              availableProviders: 0,
+              reasoningModels: 1,
+              visionModels: 0,
+              capabilityCounts: {
+                textModels: 1,
+                visionModels: 0,
+                reasoningModels: 1,
+                toolsModels: 1,
+                jsonModels: 1,
+                audioModels: 0,
+              },
+              sourceCounts: { runtime: 1 },
+              providers: [
+                {
+                  provider: "openai",
+                  totalModels: 1,
+                  configured: true,
+                  reasoningModels: 1,
+                  visionModels: 0,
+                  sources: ["runtime"],
+                  sourceConfidence: "runtime",
+                  capabilityCounts: {
+                    textModels: 1,
+                    visionModels: 0,
+                    reasoningModels: 1,
+                    toolsModels: 1,
+                    jsonModels: 1,
+                    audioModels: 0,
+                  },
+                  authModes: ["api-key"],
+                  privateNetwork: { models: 0, allowed: 0, blocked: 0 },
+                  probeStatus: "not-run",
+                },
+              ],
+              providerExtensionCatalog: {
+                totalEntries: 0,
+                loadedEntries: 0,
+                skippedUntrustedEntries: 0,
+                emptyEntries: 0,
+                errorEntries: 0,
+                modelCount: 0,
+                loadedProviderIds: [],
+                warnings: [],
+                entries: [],
+              },
+              providerExtensionManifest: {
+                upstreamProviderCount: 0,
+                mappedProviderCount: 0,
+                deferredProviderCount: 0,
+                mappedProviderIds: [],
+                deferredProviderIds: [],
+                missingMappedProviderIds: [],
+              },
+            },
+          }),
+        ),
+      );
 
-    expect(text).toContain("Connected");
-    expect(text).not.toContain("Configured providers");
-    expect(text).toContain("openai");
-    expect(text).toContain("ok");
-    expect(text).not.toContain("1 reasoning");
-    expect(text).not.toContain("Effective:");
-    expect(text).toContain("Update API");
-    expect(text).toContain("× Clear");
-    expect(text).not.toContain("Default model");
-    expect(text).not.toContain("openai:api");
-  });
+      expect(text).toContain("Connected");
+      expect(text).not.toContain("Configured providers");
+      expect(text).toContain("openai");
+      expect(text).not.toContain("Refresh sign-in");
+      expect(text).not.toContain("1 reasoning");
+      expect(text).not.toContain("Effective:");
+      expect(text).toContain("Update API");
+      expect(text).toContain("× Clear");
+      expect(text).not.toContain("Default model");
+      expect(text).not.toContain("openai:api");
+    },
+  );
 
   it("keeps catalog source setup gaps out of normal provider cards", async () => {
     const { renderProviders } = await import("./providers.ts");

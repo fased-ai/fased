@@ -89,6 +89,8 @@ const BASE_RELOAD_RULES_TAIL: ReloadRule[] = [
   { prefix: "talk", kind: "none" },
   { prefix: "skills", kind: "none" },
   { prefix: "federation", kind: "none" },
+  // Provider account registrations/order are activated by the secrets runtime.
+  { prefix: "auth", kind: "none" },
   { prefix: "secrets", kind: "none" },
   { prefix: "plugins", kind: "restart" },
   { prefix: "ui", kind: "none" },

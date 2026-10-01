@@ -1,7 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { ConfigFileSnapshot, FasedAgentConfig } from "../config/config.js";
 import type { PreparedSecretsRuntimeSnapshot } from "../secrets/runtime.js";
 import { createGatewaySecretsRuntimeController } from "./server-secrets-runtime.js";
+
+const TEST_CREDENTIALS = Object.fromEntries(
+  ["a", "b", "c", "newest", "candidate"].map((name) => [name, randomUUID()]),
+);
 
 function configSnapshot(
   config: FasedAgentConfig,
@@ -87,7 +92,7 @@ const CONFIG_A = {
     providers: {
       openai: {
         baseUrl: "https://api.openai.com/v1",
-        apiKey: "key-a",
+        apiKey: TEST_CREDENTIALS.a,
         models: [],
       },
     },
@@ -106,6 +111,22 @@ describe("gateway secrets runtime controller", () => {
     });
     expect(harness.getActive()?.sourceConfig).toEqual(CONFIG_A);
 
+    await harness.controller.shutdown();
+  });
+
+  it("activates newly saved provider registration and account order without restart", async () => {
+    const configB: FasedAgentConfig = {
+      auth: {
+        profiles: { "openai-codex:plan-test": { provider: "openai-codex", mode: "oauth" } },
+        order: { "openai-codex": ["openai-codex:plan-test"] },
+      },
+    };
+    const startup = configSnapshot({}, "a");
+    const harness = createHarness({ initialDisk: startup });
+    await harness.controller.activateStartup(startup);
+    harness.setDisk(configSnapshot(configB, "b"));
+    await expect(harness.controller.reloadFromConfig()).resolves.toEqual({ warningCount: 0 });
+    expect(harness.getActive()?.sourceConfig).toEqual(configB);
     await harness.controller.shutdown();
   });
 
@@ -220,7 +241,7 @@ describe("gateway secrets runtime controller", () => {
         providers: {
           openai: {
             baseUrl: "https://api.openai.com/v1",
-            apiKey: "key-b",
+            apiKey: TEST_CREDENTIALS.b,
             models: [],
           },
         },
@@ -231,7 +252,7 @@ describe("gateway secrets runtime controller", () => {
         providers: {
           openai: {
             baseUrl: "https://api.openai.com/v1",
-            apiKey: "key-c",
+            apiKey: TEST_CREDENTIALS.c,
             models: [],
           },
         },
@@ -288,7 +309,7 @@ describe("gateway secrets runtime controller", () => {
     const configC = {
       models: {
         providers: {
-          openai: { ...CONFIG_A.models.providers.openai, apiKey: "key-newest" },
+          openai: { ...CONFIG_A.models.providers.openai, apiKey: TEST_CREDENTIALS.newest },
         },
       },
     };
@@ -341,7 +362,7 @@ describe("gateway secrets runtime controller", () => {
         providers: {
           openai: {
             ...CONFIG_A.models.providers.openai,
-            apiKey: "key-newest",
+            apiKey: TEST_CREDENTIALS.newest,
           },
         },
       },
@@ -380,14 +401,14 @@ describe("gateway secrets runtime controller", () => {
     const configB = {
       models: {
         providers: {
-          openai: { ...CONFIG_A.models.providers.openai, apiKey: "key-candidate" },
+          openai: { ...CONFIG_A.models.providers.openai, apiKey: TEST_CREDENTIALS.candidate },
         },
       },
     };
     const configC = {
       models: {
         providers: {
-          openai: { ...CONFIG_A.models.providers.openai, apiKey: "key-newest" },
+          openai: { ...CONFIG_A.models.providers.openai, apiKey: TEST_CREDENTIALS.newest },
         },
       },
     };
