@@ -14,6 +14,6 @@ Start with one model and one task. Add channels, automation or wallets when you 
 
 ## Fased and WEN
 
-WEN is a separate financial game. Fased's planned WEN integration adds optional research and automation; it is still in development. You do not need Fased to use WEN, or WEN to use Fased.
+WEN is a separate strategy game starting with asset mining: mine SAT and claim funded BTC. Fased's planned WEN integration adds optional research, bounded mining sessions and authorized reward management; it is still in development. You do not need Fased to use WEN, or WEN to use Fased.
 
 Read [Fased and WEN](/wen/index). For source code and releases, visit [GitHub](https://github.com/fased-ai/fased).
