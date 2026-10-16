@@ -5,6 +5,8 @@ title: "Wallet policies"
 
 # Wallet policies
 
+The planned WEN asset-mining integration requires supported tools and explicit permissions. Its later unnamed loss-mining arena needs separate support and authorization; a wallet policy does not activate an unreleased product. See [WEN](/wen/index).
+
 Create as many ordinary wallets as you need. Names such as Reserve or Trading are labels, not permanent wallet types. A wallet can serve WEN and another enabled trading module when its separate policies permit those operations.
 
 New wallets are read-only. Enabling an agent or installing a module does not grant spending authority. Assign the exact wallet, chain, programs, assets, permitted actions, positive amount and fee caps, and approval mode before enabling financial work.

@@ -139,6 +139,8 @@ remains deferred; source or companion-app code does not imply managed support.
 
 ## Wallet setup contract
 
+Wallet setup does not activate the new WEN asset-mining economy. Its complete financial journey and Fased integration remain in development; see [WEN](/wen/index).
+
 See [Wallet CLI](/cli/wallet), [roles and policies](/plugins/crypto/wallet-roles-and-policies),
 and [wallet selection](/plugins/crypto/wallet-selection-contract).
 

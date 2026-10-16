@@ -45,7 +45,7 @@ fased services install <component-id>
 A normal install includes:
 
 - Gateway, Control UI, browser Chat, Agents, Tasks, Tools, and provider clients
-- Solana wallet controls and current WEN SAT Devnet tools
+- Solana wallet controls and local/Devnet WEN integration tools; these do not establish public financial availability
 - Fased Network identity, directory, and relay functions
 - browser-control interfaces and the Fased browser extension files
 - file-backed memory and remote embedding-provider support

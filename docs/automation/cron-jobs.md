@@ -163,15 +163,13 @@ turns the template into a normal Task definition.
 
 **Strategy A/B review**
 
-Use when you want evidence across `balanced`, `top_k`, `ranked`,
-`crowd_aware`, and `adaptive` while active commit settings stay unchanged.
+For planned WEN research, compare allocation choices and explain the results without changing the owner's active orders.
 
 **Wallet reserve watch**
 
 **Staking rewards watch**
 
-Use when you want a read-only Fased Network check for bond amount, claimable
-SAT, reward pool, and vault balance.
+For the planned WEN integration, report staked SAT principal, eligibility and earned BTC. Staking does not mint SAT. This requires supported WEN data and does not enable an unreleased product; the former network-bond reward workflow is retired.
 
 **Provider health check**
 

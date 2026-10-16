@@ -29,8 +29,8 @@ The current shape is:
 
 Near-term roadmap:
 
-- bonded verified chat and public inbox
-- room-host and mirrored bonded communication
+- optional WEN asset-mining research and bounded sessions
+- separate support for an unnamed loss-mining trading arena later
 - market review workflows
 - news and market-data review workflows
 
@@ -101,7 +101,7 @@ The target product is:
 
 - an agent you can run for one person, team, or trust boundary
 - wallet-aware automation with clear controls
-- a bonded network participant when the operator chooses that path
+- a network participant under the chosen service rules and owner permissions
 - a place where chat, marketplace, network, and market/news review workflows can
   live under one control surface
 
@@ -114,3 +114,7 @@ Things we should keep resisting:
 - mixing admin/control access with public federation routing
 - turning SAT into generic message gas
 - hiding risk boundaries behind “easy mode” marketing
+
+## WEN product boundary
+
+SAT asset mining comes first and remains in development. SAT staking earns eligible BTC without minting SAT. The later trading arena has independent funding and permissions; it cannot use SAT reserves or earned rewards. The former network-bond economy is retired. See [WEN](/wen/index) and [the roadmap](/reference/roadmap).
