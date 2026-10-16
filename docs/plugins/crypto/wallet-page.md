@@ -9,7 +9,9 @@ Wallets is the same user-facing workflow in Local and Hosting. Create a wallet w
 
 Private keys are handled by the native signer. Browser creation returns public identity and readiness; private-key import and recovery use the documented native CLI path, not a browser text field.
 
-Choose the exact wallet when preparing a WEN action. Review its amounts, destination or pool, simulation, fees and expiry. The signer accepts only a request covered by the wallet policy and required owner approval or bounded delegation. A displayed balance is not permission to spend.
+The complete new WEN asset-mining journey remains in development. A wallet connection alone does not make financial participation available; check [WEN status](/wen/index).
+
+Choose the exact wallet when preparing a supported WEN action. Review its amounts, destination or pool, simulation, fees and expiry. The signer accepts only a request covered by the wallet policy and required owner approval or bounded delegation. A displayed balance is not permission to spend.
 
 If submission status is unknown, recover the existing request first. Do not create a replacement transaction until reconciliation establishes its outcome.
 

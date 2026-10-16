@@ -217,20 +217,15 @@ fased task cancel-run <run-id>
 
 ### How should I split wallets?
 
-Use separate roles where possible:
-
-This makes wallet roles, screenshots, and recovery easier to reason about.
+Create ordinary wallets and use clear names and separate permissions for different purposes. A label is not a permanent wallet type or authorization to spend. See [Wallets](/plugins/crypto/wallet-page).
 
 ### Why can a submitted commit be lower than my target?
 
-Fased caps actual commit by usable miner capital, locked/pending capital,
-fee reserve, erosion coverage, and recovery buffer. A lower submit can be
-correct when capital is clearing or fee headroom changes.
+For planned WEN asset mining, an order can accept less than its maximum when funding, execution or owner limits require it. An unacceptable quote is skipped; unused funds remain unspent and do not erode. The new integration remains in development. See [WEN](/wen/index).
 
 ### Does Fased Network require a bond?
 
-Some public/operator flows may use bond state as an eligibility or trust signal.
-The Wallet, Agent, and local Fased install do not require a bond for normal use.
+The former federation-bond workflow is retired. Network identity, directory and relay functions are separate from WEN ownership. SAT Bonds are quoted purchases; SAT staking shares eligible BTC and does not mint SAT. Neither grants a stronger Network role.
 
 ## Memory, Files, And Backup
 

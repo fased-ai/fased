@@ -87,8 +87,7 @@ only when that sequence needs branches.
 
 Fased ships starter Task templates for recurring work:
 
-Report running/stopped state, current cycle, wallet SOL/SAT, capital, locked
-capital, claimable SAT, and blockers.
+For the planned WEN integration, report round status, SOL spent, unused budget and earned SAT/BTC. Supported data and owner permission are required; this example does not enable an unreleased product.
 
 **Strategy A/B review**
 
@@ -96,7 +95,7 @@ capital, claimable SAT, and blockers.
 
 **Staking rewards watch**
 
-Watch bond amount, claimable SAT, reward pool, and vault balance.
+For the planned WEN integration, report staked SAT principal, eligibility and earned BTC. Staking does not mint SAT. The former network-bond reward workflow is retired.
 
 **Provider health check**
 

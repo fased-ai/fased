@@ -144,25 +144,29 @@ Useful links:
 - [Memory](/concepts/memory)
 - [Control UI Setup Model](/start/control-ui-setup)
 
-## Wallet, Network, And Satcoin
+## Wallets, Network, and WEN
 
-Fased works without wallets or Satcoin. Add wallets, Fased Network, or Satcoin
-modules only when they have a specific job:
+Fased works without wallets or WEN. Add wallet or Network features when they
+have a specific job. WEN's new asset-mining integration remains in development:
 
-| Path                   | When to use it                                                                                           |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- |
-| Wallet use             | When the Agent needs wallet roles, reviewed sends, balances, payment history, or wallet-connected skills |
-| Fased Network          | When the Agent needs a public handle, services, or trust                                                 |
-| planned WEN automation | When the Agent will mine, claim, and build mining history                                                |
-| Bond                   | When held SAT should support a stronger trust role                                                       |
+| Path                   | When to use it                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| Wallet use             | When the Agent needs reviewed sends, balances, payment history or wallet-connected skills         |
+| Fased Network          | When the Agent needs a public handle, services, or trust                                          |
+| Planned WEN automation | Compare asset-mining strategies, manage spending limits and collect earned SAT/BTC when supported |
+| SAT Bonds              | Compare a quoted SAT purchase with mining or market buying when supported                         |
+
+SAT Bonds are purchase agreements with delivery terms, not a trust-role upgrade.
+WEN plans a separate, unnamed loss-mining trading arena later. It will need its
+own supported tools and owner permissions; SAT reserves and earned rewards stay separate.
 
 Relevant pages:
 
 - [Wallet](/plugins/crypto/wallet-page)
 - [Fased Network](/start/federation)
-- [Mining](/plugins/crypto/mining-page)
-- [Advanced planned WEN automation](/plugins/crypto/mining-advanced)
-- [Bond overview](/start/bond-operator-economy)
+- [WEN asset mining](/wen/index)
+- [Planned WEN automation](/wen/automation)
+- [SAT Bonds](https://docs.satcoin.app/bonds)
 
 ## Chat Apps And Tasks
 

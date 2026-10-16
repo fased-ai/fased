@@ -1,5 +1,5 @@
 ---
-summary: "Current Fased roadmap after the wallet, Fased Network, SAT, and operator trust tranche."
+summary: "Fased foundations, optional WEN asset mining and a separate loss-mining arena later."
 read_when:
   - You want the next product direction
   - You need a public-facing roadmap summary
@@ -8,68 +8,28 @@ title: "Roadmap"
 
 # Roadmap
 
-This roadmap reflects the current Fased direction, not the earlier upstream project
-shape.
+Fased remains a personal agent for chat, research, tools and owner-controlled automation. WEN is optional: you do not need SAT or FCOD to run the agent.
 
-## Current completed tranche
+## 1. Keep the agent useful on its own
 
-The current tranche is centered on:
+Maintain installation, updates, private access, wallet controls, tasks and supported Fased Network services. Existing command or wallet surfaces do not establish that a new financial product is ready.
 
-## Next implementation lanes
+## 2. Support WEN asset mining
 
-### 1. Bonded verified chat
+SAT is WEN's first release scope. The planned Fased integration can compare mining with buying or Bonds, manage bounded mining sessions and collect earned rewards with permission. SAT staking earns eligible BTC and creates no new SAT.
 
-Build self-hosted communication around:
+This integration and the complete new financial journey remain in development. See [WEN](/wen/index) and [planned automation](/wen/automation).
 
-- verified DM
-- public inbox
-- bonded room host
-- append-only signed room logs
-- optional bonded room mirrors
+## 3. Add separate trading support later
 
-Direction:
+WEN plans an unnamed trading arena with loss mining after SAT. Dedicated documentation will explain its own funding and reward rules before participation opens. Fased needs separate supported tools and owner permissions for those actions.
 
-- off-chain messaging
-- local storage per node
-- signed message envelopes
-- HTTP / WebSocket sync
-- end-to-end encryption
+SAT reserves and earned rewards cannot fund that arena's obligations, and its income does not enter SAT's revenue split. A shared portfolio may help an owner manage both, but cannot automatically move or risk their assets.
 
-### 2. Marketplace and operator maturity
+## 4. Expand supported services
 
-- strengthen public offer execution flows
-- mature operator evidence into reviewed collection and payment records only when approved
-- keep bond as trust and anti-spam policy, not message gas
+Research tools, marketplace workflows and further independently funded asset districts can be added as their contracts and integrations become ready. Network identity and service eligibility remain separate from buying or staking SAT.
 
-### 3. Advanced wallet-action engine
+Fcode Lab is the umbrella behind Fased and WEN. Planned FCOD pools use only explicitly allocated available Operating income after expenses and obligations, with published pool terms. They have no automatic claim on product reserves.
 
-Planned as a separate reviewed surface on top of wallet policy, not as an
-implicit default behavior of the runtime.
-
-### 4. Data and market-intelligence engine
-
-Planned as a distinct operator or plugin lane for:
-
-- news ingestion
-- market summaries
-- signal review
-- research workflows
-
-This should remain clearly separated from any claim of financial advice.
-
-### 5. Public release packaging
-
-- clean public docs and legal surface
-- public repo release flow
-- npm package publication for `fased` only after the release/update path is stable
-
-## Design principle
-
-Fased should keep using SAT and bond for:
-
-- trust
-- operator eligibility
-- spam resistance
-- directory identity
-
-and avoid turning every higher-level product action into on-chain message gas.
+See the [WEN roadmap](https://docs.wen.network/roadmap) and [Fcode Lab](https://docs.fcode.ai).

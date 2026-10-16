@@ -98,43 +98,15 @@ Current Fased Network features include:
 Fased Network is how the agent becomes a public network participant.
 Local control stays on the local setup surfaces.
 
-### 8. Offers and marketplace
+### 8. Services and WEN
 
-Fased now includes the operator surfaces for local offers and public discovery.
+Network identity, directory and relay functions remain separate from financial products. The former paid marketplace and federation-bond economy is retired. A profile or service listing does not authorize a payment or grant WEN rewards.
 
-Current marketplace surfaces include:
+WEN's planned first release is SAT asset mining, with funded SAT/BTC awards and optional BTC income from SAT staking. Fased support remains in development. SAT Bonds are quoted purchases, not a trust-role upgrade.
 
-- local offer publishing and management
-- public marketplace discovery
-- selected-offer execution surface
-- payment setup and review flow separation
-- bonded public visibility model
+### 9. Readiness and evidence
 
-Important boundary:
-
-- local offers can exist without public bonded visibility
-- marketplace discovery is separate from any payment provider
-- payment setup remains separate from bond
-
-### 9. Operator status and evidence
-
-Operator accounting and evidence surfaces exist today, but later fee-related
-surfaces remain controlled rollout items.
-
-Current operator status features include:
-
-- operator status surface
-- read-only and gated readiness states
-- accounting / reserve / reconciliation evidence surfaces
-- read-only operator reporting
-- fee-related reporting groundwork
-
-What is true right now:
-
-- bond is live
-- bonded operator lanes are live
-- operator status and evidence surfaces exist
-- full live collection and service-fee paths remain controlled rollout items
+Check the installed release, supported operation and owner permissions before financial activity. A working Network connection or wallet does not prove the complete new WEN journey is available. See [WEN](/wen/index).
 
 ### 10. Plugins, skills, and automation
 
@@ -173,8 +145,8 @@ Keep roadmap items labeled separately from current features.
 
 The next public roadmap lanes are:
 
-- bonded verified chat
-- stronger operator evidence and operator controls
+- optional WEN asset-mining tools, then separate support for an unnamed loss-mining arena
+- owner-controlled services and clear execution records
 - reviewed market automation lanes
 - news and market-intelligence tools
 
