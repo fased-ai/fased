@@ -60,7 +60,7 @@ setup.
     See what belongs in onboarding, Agent setup, Services, Tasks, and Advanced Config.
   </Card>
   <Card title="Fased Glossary" href="/start/operator-glossary" icon="book-open">
-    Learn the shared wallet, mining, bond, and network terms.
+    Learn the shared wallet, mining, reward, and network terms.
   </Card>
 </Columns>
 
@@ -155,7 +155,7 @@ have a specific job. WEN's new asset-mining integration remains in development:
 | Fased Network          | When the Agent needs a public handle, services, or trust                                          |
 | Planned WEN automation | Compare asset-mining strategies, manage spending limits and collect earned SAT/BTC when supported |
 
-Satcoin Mining is WEN's first Asset Mining product: allocate SOL across BTC ranges, with capital × accuracy rewards. Its new integration remains in development. Bonds, reserve-redemption products and a separate loss-mining arena are removed from the new core; existing legacy positions retain original terms and recovery rights.
+Satcoin Mining is WEN's first Asset Mining product: allocate SOL across BTC ranges, with capital × accuracy rewards. Its new integration remains in development.
 
 Relevant pages:
 

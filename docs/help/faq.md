@@ -223,10 +223,6 @@ Create ordinary wallets and use clear names and separate permissions for differe
 
 For planned WEN asset mining, an order can accept less than its maximum when funding, execution or owner limits require it. An unacceptable quote is skipped; unused funds remain unspent and do not erode. The new integration remains in development. See [WEN](/wen/index).
 
-### Does Fased Network require a bond?
-
-The former federation-bond workflow is retired. Network identity, directory and relay functions are separate from WEN ownership. Bonds are removed from the new Satcoin Mining core. SAT staking shares eligible BTC without minting SAT and does not grant a stronger Network role. Existing positions retain their original terms and recovery rights.
-
 ## Memory, Files, And Backup
 
 ### Where does Fased store its data?

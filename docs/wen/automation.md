@@ -19,7 +19,7 @@ For example, a planned session could authorize 1 SOL in total, at most 0.01 SOL 
 
 Track available funds, pending entries, earned rewards and staked principal separately. SAT staking earns eligible BTC, not newly minted SAT. A pending BTC purchase is not yet claimable BTC, and an unresolved transaction must be reconciled before another attempt.
 
-The strategy uses the same capital × accuracy weights as manual Satcoin Mining. Exact-range entries pay the 1% fee; incorrect entries have 5%–10% deductions and may earn partial rewards. Follow the [current product rules](/wen/index), not the retired physical-site or Bond workflows.
+The strategy uses the same capital × accuracy weights as manual Satcoin Mining. Exact-range entries pay the 1% fee; incorrect entries have 5%–10% deductions and may earn partial rewards. Follow the [current product rules](/wen/index).
 
 Before commitment, display historical or estimated crowding rather than pretending sealed selections are public. A payout preview must include the proposed entry and distinguish conditional rewards from received assets. Published ranges cannot change after entry; the agent cannot cancel accepted spending after seeing the outcome.
 

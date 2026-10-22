@@ -24,7 +24,7 @@ This integration and the complete financial journey remain in development. Read 
 
 WEN's journey is **Mine → Trade SAT → Stake → Daily competition → Portfolio/social strategies**. The new Fased App is a separate application project, with a shared terminal design direction; its engineering work is not automatically part of this agent's installed release. See its [product guide](https://github.com/fased-ai/fased-app/blob/main/docs/README.md).
 
-Bonds, reserve-redemption products and a separate loss-mining arena have been removed from the new WEN core. Historical positions retain their original obligations. Further assets and supported venue integrations need their own specifications, capital and permissions.
+Further assets and supported venue integrations need their own specifications, capital and permissions.
 
 ## Keep the umbrella and financial rights distinct
 

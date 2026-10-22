@@ -1,59 +1,50 @@
 ---
-summary: "Plain definitions for Fased, WEN asset mining, SAT rewards and separate product rights."
+summary: "Plain definitions for Fased, Satcoin Mining and separately owned funds."
 read_when:
-  - You want the short vocabulary for wallets, WEN and Fased Network
+  - You want the vocabulary for wallets, WEN and Fased Network
 title: "Fased glossary"
 ---
 
 # Fased glossary
 
-Fased is the personal agent. WEN is the game. SAT is WEN's first asset-district token. Fased Network handles identity, routing and discovery; it does not combine these products' funds or permissions.
+Fased is the personal agent. WEN is the Asset Mining platform, starting with Satcoin Mining. Satcoin is the mined asset; SAT is used for quantities. Fased Network handles identity, routing and discovery.
 
 ## Wallets and permissions
 
-| Term          | Meaning                                                                                                                        |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Wallet        | An account selected for an operation. Names such as Reserve or Trading are labels, not permanent wallet types.                 |
-| Wallet policy | The permitted chain, programs, assets, actions, destinations and spending limits. A balance alone does not authorize spending. |
-| Bounded order | Permission for specified actions, amounts and duration, with cancellation and no implied top-up.                               |
-| Claim         | Collect an earned entitlement. Claim permission does not authorize reinvestment or trading.                                    |
+| Term            | Meaning                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------- |
+| Wallet          | An account selected for an operation. Its label does not authorize spending.                    |
+| Wallet policy   | The permitted chain, programs, assets, actions, destinations and spending limits.               |
+| Bounded session | Permission for specified future rounds, amounts and duration, with explicit stop conditions.    |
+| Claim           | Collect an earned entitlement. Trading or reinvesting the proceeds requires its own permission. |
 
 See [wallet policies](/plugins/crypto/wallet-roles-and-policies) and [WEN automation](/wen/automation).
 
-## WEN and SAT
+## Satcoin Mining
 
-| Term               | Meaning                                                                                                                                        |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Asset mining       | Spend an accepted SOL budget and allocate across mining sites to earn funded SAT and BTC.                                                      |
-| Mining budget      | The maximum funds an owner permits the game to spend. Unused funds remain theirs.                                                              |
-| Round              | A shared settlement interval. Ten minutes is the selected pilot baseline, not a promise of rewards just for waiting.                           |
-| Crowding           | The competing allocation at a site, which affects each participant's share of the funded pool.                                                 |
-| Difficulty         | The award quantity responds to reliable prices and funding requirements; more expensive SAT means fewer tokens for the same accepted spending. |
-| SAT                | The Bitcoin District token. It is not Bitcoin or a required payment token for ordinary Fased tasks.                                            |
-| Bond               | A quoted SAT purchase with disclosed delivery terms; not a network-trust deposit or a loan promising repayment.                                |
-| SAT staking        | Retain staked SAT principal and share eligible earned BTC. It does not create new SAT.                                                         |
-| USDC reserve       | Monetary backing for the district's protected obligations and qualifying exits.                                                                |
-| Retained BTC       | BTC owned by the district under its separate reserve and bounded retirement terms.                                                             |
-| Earned BTC rewards | Participant claim money, separate from both reserves.                                                                                          |
-| Operating Treasury | Settled operating income used for project expenses and explicitly approved budgets.                                                            |
+| Term               | Meaning                                                                                                                                |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Mining budget      | Maximum SOL permitted for a strategy. Uncommitted funds remain available to their owner.                                               |
+| Round              | A ten-minute BTC measurement with published entry, reveal and settlement timing.                                                       |
+| Range              | One of five published BTC-move intervals. Multi-range allocations are permitted.                                                       |
+| Accuracy credit    | Full credit for an exact range, with partial credit for eligible nearby outcomes.                                                      |
+| Capital × accuracy | The weight used to share released fresh BTC rewards and unlocked SAT.                                                                  |
+| Crowding           | Competing capital and accuracy weights that determine the denominator of a reward share.                                               |
+| Principal return   | Exact entries return 99% after the 1% fee; incorrect revealed entries return 90%–95% before separate rewards and execution costs.      |
+| SAT unlock         | Accepted capital unlocks the scheduled award proportionally up to 5 SOL; highest occupied credit and remaining caps constrain release. |
+| SAT supply         | 1,000,000 cumulative lifetime issuance including 50,000 Genesis SAT; at most 50,000 mining SAT per year.                               |
+| Carry              | Miner reward funds not released in their originating round, with recorded contributors, release limits and expiry.                     |
+| SAT staking        | Eligible staked SAT shares funded BTC. Staking does not mint SAT.                                                                      |
+| Daily competition  | Wallet/team capital competition funded by 1% of actual forfeitures, using complete net round results.                                  |
+| Treasury           | Receives 5% of forfeitures, split equally toward BTC and USDC; bought SAT remains locked without staking or burning.                   |
+| Operating          | Receives its 10% forfeiture allocation and exact-entry fees, and pays its disclosed shared costs.                                      |
 
-Depositing a budget does not spend it all. Idle funds do not erode. Mining is not guaranteed to beat buying SAT, and no market price or return is promised.
+The full forfeiture split is 74% miners, 1% daily competition, 10% staking, 10% Operating and 5% treasury. Principal, rewards, treasury inventory and Operating income have distinct ownership and purposes.
 
-The selected economy is described in [SAT's public guide](https://docs.satcoin.app) and [WEN](/wen/index). Its complete financial journey remains in development.
+Mining returns depend on allocations, competition, costs and executable sale proceeds. Read [Satcoin](https://docs.satcoin.app) and [WEN](/wen/index) for the product rules and availability. The Fased integration remains in development.
 
-## Other products
+## Fcode Lab and Network
 
-| Term                | Meaning                                                                                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Loss mining         | A planned reward model in a separate trading arena, after SAT. Its name and detailed terms will be published separately before participation opens.                       |
-| FCOD                | Fcode Lab's existing token. Planned pools use explicitly allocated available Operating income after expenses and obligations, with their own eligibility and claim terms. |
-| Fased Network       | Agent identity, routes, discovery and supported service workflows. Token ownership alone does not authorize payments or confer service roles.                             |
-| Marketplace payment | A payment under an accepted service agreement and wallet policy, separate from WEN reserves and rewards.                                                                  |
+**Fcode Lab** is the umbrella behind WEN and Fased. **FCOD** is the Lab token; planned pools use explicitly allocated available Operating income after expenses and existing obligations. The same money cannot also fund Satcoin rewards.
 
-FCOD has no automatic claim on district reserves or every product's income. Future trading cannot consume SAT backing or earned BTC. A shared portfolio does not authorize transfers between products.
-
-The former network-bond and staking-distributor model is retired. It does not define new SAT Bonds or staking; any historical rights remain subject to their original terms.
-
-- [Bonds and staking](/start/bond-operator-economy)
-- [Fased roadmap](/reference/roadmap)
-- [Fcode Lab and FCOD](https://docs.fcode.ai/fcod)
+Network identity or a profile follow grants no spending authority. Use [the roadmap](/reference/roadmap), [Fcode Lab and FCOD](https://docs.fcode.ai/fcod) and the installed release's supported permissions.
