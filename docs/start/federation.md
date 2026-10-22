@@ -18,11 +18,11 @@ A public handle, verification result or reachable endpoint is not permission to 
 
 ## Network and WEN
 
-WEN starts with SAT asset mining: choose a SOL budget and allocation to earn funded SAT and BTC. The new Fased integration remains in development. Optional SAT staking shares eligible BTC and does not mint SAT. SAT Bonds are quoted token purchases, not network-trust deposits.
+WEN is an Asset Mining platform. Satcoin Mining uses SOL allocations across ten-minute BTC ranges, with capital × accuracy shares of released BTC and unlocked SAT. The new Fased integration remains in development. Optional SAT staking shares eligible BTC and does not mint SAT. Bonds are removed from the new core.
 
 The former federation-bond, SAT distributor and paid marketplace economy is retired. Current Network membership does not create a bond balance, staking entitlement or special WEN reward. Historical positions retain their original obligations and recovery rights.
 
-WEN plans a separate unnamed loss-mining trading arena later. It needs its own supported integration and permissions. SAT reserves, earned BTC and the arena's trading funds remain separate.
+There is no separate loss-mining arena in the active WEN core. Network identity, mining budgets, earned rewards and unrelated trading permissions remain distinct.
 
 ## Operations
 

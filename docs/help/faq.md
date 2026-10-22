@@ -225,7 +225,7 @@ For planned WEN asset mining, an order can accept less than its maximum when fun
 
 ### Does Fased Network require a bond?
 
-The former federation-bond workflow is retired. Network identity, directory and relay functions are separate from WEN ownership. SAT Bonds are quoted purchases; SAT staking shares eligible BTC and does not mint SAT. Neither grants a stronger Network role.
+The former federation-bond workflow is retired. Network identity, directory and relay functions are separate from WEN ownership. Bonds are removed from the new Satcoin Mining core. SAT staking shares eligible BTC without minting SAT and does not grant a stronger Network role. Existing positions retain their original terms and recovery rights.
 
 ## Memory, Files, And Backup
 

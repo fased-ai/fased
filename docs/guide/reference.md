@@ -17,3 +17,5 @@ The main guide covers ordinary use. These references provide detail when you nee
 | Network                    | [Network reference](/start/federation)                                                           |
 
 Detailed pages retain their existing URLs. Older translations and developer material remain in the [source repository](https://github.com/fased-ai/fased/tree/main/docs); the shortened English guide is the current starting point. Implementation notes are not promises that a feature is released.
+
+For Satcoin Mining, start with [the current WEN guide](/wen/index). Legacy operational documents and existing position records retain their original version and recovery scope; they do not activate the new mining rules.

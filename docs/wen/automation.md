@@ -1,15 +1,15 @@
 ---
 title: "WEN automation"
-summary: "Choose the action, budget and approval limits."
+summary: "Bounded Satcoin Mining strategies with the same rules as manual entries."
 ---
 
 <Note>Planned integration. Use only actions explicitly supported by your installed release.</Note>
 
 Start with research. Before enabling a financial action, decide:
 
-- Which wallet, district and assets it can use.
+- Which wallet, BTC ranges and SOL budget it can use.
 - The per-round, daily and total spending limits, minimum awards and expiry.
-- The permitted strategy, conversion costs and slippage limits.
+- The permitted one-range or multi-range strategy, maximum unsettled exposure, conversion costs and slippage limits.
 - Which claims, stake changes, withdrawals or other actions are allowed.
 - When it must stop, pause future entries or ask you.
 
@@ -19,7 +19,11 @@ For example, a planned session could authorize 1 SOL in total, at most 0.01 SOL 
 
 Track available funds, pending entries, earned rewards and staked principal separately. SAT staking earns eligible BTC, not newly minted SAT. A pending BTC purchase is not yet claimable BTC, and an unresolved transaction must be reconciled before another attempt.
 
-Any future loss-mining trading integration requires a separate mandate. Converting claimed BTC, funding another product or reinvesting paid proceeds is optional and must be explicitly authorized. Viewing both positions never combines custody, reserves or financial rights.
+The strategy uses the same capital × accuracy weights as manual Satcoin Mining. Exact-range entries pay the 1% fee; incorrect entries have 5%–10% deductions and may earn partial rewards. Follow the [current product rules](/wen/index), not the retired physical-site or Bond workflows.
+
+Before commitment, display historical or estimated crowding rather than pretending sealed selections are public. A payout preview must include the proposed entry and distinguish conditional rewards from received assets. Published ranges cannot change after entry; the agent cannot cancel accepted spending after seeing the outcome.
+
+Copying authorizes only future actions within the selected mandate. A profile follow is informational. Converting claimed BTC, trading SAT or reinvesting paid proceeds requires its own supported permission. There is no automatic top-up or stake increase after a loss.
 
 Review completed and pending transactions before changing a strategy. If a result is uncertain, check its status before retrying. Stopping future activity does not reverse a completed transaction.
 

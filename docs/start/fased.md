@@ -154,11 +154,8 @@ have a specific job. WEN's new asset-mining integration remains in development:
 | Wallet use             | When the Agent needs reviewed sends, balances, payment history or wallet-connected skills         |
 | Fased Network          | When the Agent needs a public handle, services, or trust                                          |
 | Planned WEN automation | Compare asset-mining strategies, manage spending limits and collect earned SAT/BTC when supported |
-| SAT Bonds              | Compare a quoted SAT purchase with mining or market buying when supported                         |
 
-SAT Bonds are purchase agreements with delivery terms, not a trust-role upgrade.
-WEN plans a separate, unnamed loss-mining trading arena later. It will need its
-own supported tools and owner permissions; SAT reserves and earned rewards stay separate.
+Satcoin Mining is WEN's first Asset Mining product: allocate SOL across BTC ranges, with capital × accuracy rewards. Its new integration remains in development. Bonds, reserve-redemption products and a separate loss-mining arena are removed from the new core; existing legacy positions retain original terms and recovery rights.
 
 Relevant pages:
 
@@ -166,7 +163,6 @@ Relevant pages:
 - [Fased Network](/start/federation)
 - [WEN asset mining](/wen/index)
 - [Planned WEN automation](/wen/automation)
-- [SAT Bonds](https://docs.satcoin.app/bonds)
 
 ## Chat Apps And Tasks
 
