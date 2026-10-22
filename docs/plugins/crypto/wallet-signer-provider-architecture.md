@@ -11,6 +11,6 @@ All user wallets share one model. Labels and agent assignments describe purpose;
 
 Separate application and owner lifecycle interfaces prevent ordinary gateway access from expanding policy or exporting keys. Private material remains in native custody. Account authentication and signer transaction approval serve different purposes.
 
-Persist requests and reconcile results after disconnection or restart. Do not re-execute an unknown submission. The old Satcoin cycle, Federation Bond and on-chain Agent-capital implementations have been retired; current WEN protocol operations retain their own typed validation.
+Persist requests and reconcile results after disconnection or restart. Do not re-execute an unknown submission. WEN protocol operations require their own typed validation and supported execution adapter.
 
 See [Wallet CLI](/cli/wallet) and [Wallet policies](/plugins/crypto/wallet-roles-and-policies).

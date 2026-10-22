@@ -895,6 +895,14 @@
     {
       "source": "/plugins/crypto/wallet-passkey-autonomous-implementation-plan",
       "destination": "/plugins/crypto/wallet-autonomous-sessions"
+    },
+    {
+      "source": "/start/bond-operator-economy",
+      "destination": "/wen/index"
+    },
+    {
+      "source": "/start/offers-marketplace",
+      "destination": "/guide/network"
     }
   ],
   "navigation": {
@@ -923,7 +931,7 @@
             "pages": ["guide/wallets"]
           },
           {
-            "group": "Satcoin Mining · Planned",
+            "group": "Satcoin Mining \u00b7 Planned",
             "pages": [
               "wen/index",
               "wen/automation",

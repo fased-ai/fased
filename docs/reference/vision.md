@@ -117,4 +117,4 @@ Things we should keep resisting:
 
 ## WEN product boundary
 
-WEN is the Asset Mining platform; Satcoin Mining is its first product. Fased's integration remains in development and must use the same capital × accuracy rules as manual mining. SAT staking earns eligible BTC without minting SAT. New-core Bonds, reserve-redemption products and a separate loss-mining arena are removed. Existing legacy rights remain governed by their original terms. See [WEN](/wen/index) and [the roadmap](/reference/roadmap).
+WEN is the Asset Mining platform; Satcoin Mining is its first product. Fased's integration remains in development and must use the same capital × accuracy rules as manual mining. SAT staking earns eligible BTC without minting SAT. See [WEN](/wen/index) and [the roadmap](/reference/roadmap).

@@ -169,7 +169,7 @@ For planned WEN research, compare allocation choices and explain the results wit
 
 **Staking rewards watch**
 
-For the planned WEN integration, report staked SAT principal, eligibility and earned BTC. Staking does not mint SAT. This requires supported WEN data and does not enable an unreleased product; the former network-bond reward workflow is retired.
+For the planned WEN integration, report staked SAT principal, eligibility and earned BTC. Staking does not mint SAT. This requires supported WEN data and does not enable an unreleased product.
 
 **Provider health check**
 

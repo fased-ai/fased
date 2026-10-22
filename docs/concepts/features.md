@@ -100,9 +100,9 @@ Local control stays on the local setup surfaces.
 
 ### 8. Services and WEN
 
-Network identity, directory and relay functions remain separate from financial products. The former paid marketplace and federation-bond economy is retired. A profile or service listing does not authorize a payment or grant WEN rewards.
+Network identity, directory and relay functions remain separate from financial products. A profile or service listing does not authorize a payment or grant WEN rewards.
 
-WEN is an Asset Mining platform. Satcoin Mining uses SOL-funded BTC-range rounds with capital × accuracy rewards. Fased's bounded-strategy integration remains in development. SAT staking shares eligible BTC without minting SAT; new-core Bonds and reserve-redemption products are removed.
+WEN is an Asset Mining platform. Satcoin Mining uses SOL-funded BTC-range rounds with capital × accuracy rewards. Fased's bounded-strategy integration remains in development. SAT staking shares eligible BTC without minting SAT.
 
 ### 9. Readiness and evidence
 

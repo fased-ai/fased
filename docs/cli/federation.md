@@ -13,6 +13,6 @@ fased federation --help
 
 Use its status output to inspect connection and route health. Network readiness does not establish wallet spending permission or WEN financial availability.
 
-The former federation-bond and SAT staking-distributor workflow is retired. New-core Satcoin Mining has no Bond product; eligible SAT staking shares BTC without minting SAT. Do not use old bond-wallet commands as instructions for the new economy. Existing obligations retain their original terms and recovery rights.
+Eligible SAT staking shares funded BTC without minting SAT. See the current WEN rules before using a mining integration.
 
 See [Fased Network](/start/federation), [wallet policies](/plugins/crypto/wallet-roles-and-policies) and [WEN](/wen/index).

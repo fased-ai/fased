@@ -3,13 +3,13 @@ title: "Fased and Satcoin Mining"
 summary: "Optional research and bounded strategies for WEN Asset Mining."
 ---
 
-**Mine Satcoin. Compete for BTC.** WEN is an Asset Mining platform from Fcode Lab. Satcoin Mining is its first product; **Satcoin** is the asset name and **WENSAT** its ticker. SAT is the short form used for quantities.
+**Mine Satcoin. Compete for BTC.** WEN is an Asset Mining platform from Fcode Lab. Satcoin Mining is its first product; **Satcoin** is the asset name. SAT is the short form used for quantities.
 
 Participants allocate SOL across BTC price ranges in ten-minute mining rounds. BTC's measured movement determines accuracy. Committed capital × accuracy determines each entry's share of released fresh BTC rewards and unlocked SAT. More capital on a range increases the share at equal accuracy; it does not make that BTC outcome more likely. Multi-range allocation is permitted.
 
 The WEN app is the primary mining experience. Fased is an optional agent for research, bounded strategies and review.
 
-<Note>The new Satcoin Mining integration is in development. This guide describes approved product rules and planned Fased support, not an available financial release. An existing wallet or legacy mining command does not activate the new protocol.</Note>
+<Note>The new Satcoin Mining integration is in development. This guide describes approved product rules and planned Fased support, not an available financial release.</Note>
 
 ## What a round returns
 
@@ -35,7 +35,5 @@ Fased follows the same capital-and-accuracy rules as manual participation. Copyi
 ## Mine, trade, stake and compete
 
 **Mine** allocates SOL through round rules. **Trade SAT** buys or sells existing Satcoin. **Stake** receives eligible activity-funded BTC. **Daily competition** uses its separately accounted share of forfeitures. A BTC price input does not open an actual BTC position or make SAT BTC-backed.
-
-Bonds, physical mining sites, reserve-redemption products and a separate loss-mining arena are not part of this new core. Existing accepted legacy positions keep their original terms and recovery rights; this guide does not migrate or cancel them.
 
 Read [WEN automation](/wen/automation) for agent limits, [WEN documentation](https://docs.wen.network) for the product rules and [Satcoin documentation](https://docs.satcoin.app) for the asset. This guide does not grant spending authority.

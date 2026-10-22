@@ -95,7 +95,7 @@ For the planned WEN integration, report round status, SOL spent, unused budget a
 
 **Staking rewards watch**
 
-For the planned WEN integration, report staked SAT principal, eligibility and earned BTC. Staking does not mint SAT. The former network-bond reward workflow is retired.
+For the planned WEN integration, report staked SAT principal, eligibility and earned BTC. Staking does not mint SAT.
 
 **Provider health check**
 
