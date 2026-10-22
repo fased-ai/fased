@@ -102,7 +102,7 @@ Local control stays on the local setup surfaces.
 
 Network identity, directory and relay functions remain separate from financial products. The former paid marketplace and federation-bond economy is retired. A profile or service listing does not authorize a payment or grant WEN rewards.
 
-WEN's planned first release is SAT asset mining, with funded SAT/BTC awards and optional BTC income from SAT staking. Fased support remains in development. SAT Bonds are quoted purchases, not a trust-role upgrade.
+WEN is an Asset Mining platform. Satcoin Mining uses SOL-funded BTC-range rounds with capital × accuracy rewards. Fased's bounded-strategy integration remains in development. SAT staking shares eligible BTC without minting SAT; new-core Bonds and reserve-redemption products are removed.
 
 ### 9. Readiness and evidence
 
@@ -145,7 +145,7 @@ Keep roadmap items labeled separately from current features.
 
 The next public roadmap lanes are:
 
-- optional WEN asset-mining tools, then separate support for an unnamed loss-mining arena
+- optional Satcoin Mining research, bounded strategies and reward management
 - owner-controlled services and clear execution records
 - reviewed market automation lanes
 - news and market-intelligence tools

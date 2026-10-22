@@ -5,7 +5,7 @@ title: "Wallet policies"
 
 # Wallet policies
 
-The planned WEN asset-mining integration requires supported tools and explicit permissions. Its later unnamed loss-mining arena needs separate support and authorization; a wallet policy does not activate an unreleased product. See [WEN](/wen/index).
+The planned Satcoin Mining integration requires supported tools and explicit permissions. A wallet policy does not activate an unreleased product or grant preferential mining weights. See [WEN](/wen/index).
 
 Create as many ordinary wallets as you need. Names such as Reserve or Trading are labels, not permanent wallet types. A wallet can serve WEN and another enabled trading module when its separate policies permit those operations.
 

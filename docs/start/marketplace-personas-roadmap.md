@@ -18,8 +18,8 @@ Role names are conveniences, not spending authority or token entitlements. Buyin
 
 ## Order of expansion
 
-Complete SAT asset mining and its optional Fased integration first. Support for an unnamed loss-mining trading arena follows separately, with dedicated terms and permissions. Further asset districts and paid services need their own admitted contracts.
+Complete Satcoin Mining and its optional Fased integration first. Further asset districts and supported services need their own admitted contracts. A separate loss-mining arena is not in the active WEN roadmap.
 
-A shared portfolio can help an owner choose what to do with claimed assets. It cannot automatically move SAT backing, reward claims or trading funds between products. Claiming, converting, trading and reinvesting are separate actions.
+A shared portfolio can help an owner choose what to do with claimed assets. It cannot automatically move mining budgets, reward claims or trading funds between products. Claiming, converting, trading and reinvesting are separate actions.
 
 See [WEN automation](/wen/automation), [services](/start/offers-marketplace) and [the roadmap](/reference/roadmap).

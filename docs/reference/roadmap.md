@@ -1,5 +1,5 @@
 ---
-summary: "Fased foundations, optional WEN asset mining and a separate loss-mining arena later."
+summary: "Fased foundations and optional Satcoin Mining strategies for WEN."
 read_when:
   - You want the next product direction
   - You need a public-facing roadmap summary
@@ -8,28 +8,26 @@ title: "Roadmap"
 
 # Roadmap
 
-Fased remains a personal agent for chat, research, tools and owner-controlled automation. WEN is optional: you do not need SAT or FCOD to run the agent.
+Fased is a personal agent for research, tasks, tools and owner-controlled automation. WEN is optional: you do not need SAT or FCOD to run the agent.
 
-## 1. Keep the agent useful on its own
+## Keep the agent useful on its own
 
-Maintain installation, updates, private access, wallet controls, tasks and supported Fased Network services. Existing command or wallet surfaces do not establish that a new financial product is ready.
+Maintain installation, updates, private access, wallet controls, tasks and supported Network services. A working wallet or command surface does not establish that a new financial integration is ready.
 
-## 2. Support WEN asset mining
+## Support Satcoin Mining
 
-SAT is WEN's first release scope. The planned Fased integration can compare mining with buying or Bonds, manage bounded mining sessions and collect earned rewards with permission. SAT staking earns eligible BTC and creates no new SAT.
+WEN is an Asset Mining platform. Its first product uses SOL allocations across ten-minute BTC price ranges to mine Satcoin and compete for BTC. The planned Fased desk adds bounded multiround strategies, payout previews, results and separately authorized claims or staking. SAT staking earns eligible BTC without minting SAT.
 
-This integration and the complete new financial journey remain in development. See [WEN](/wen/index) and [planned automation](/wen/automation).
+This integration and the complete financial journey remain in development. Read [Fased and Satcoin Mining](/wen/index) and [planned automation](/wen/automation).
 
-## 3. Add separate trading support later
+## Use one clear product language
 
-WEN plans an unnamed trading arena with loss mining after SAT. Dedicated documentation will explain its own funding and reward rules before participation opens. Fased needs separate supported tools and owner permissions for those actions.
+WEN's journey is **Mine → Trade SAT → Stake → Daily competition → Portfolio/social strategies**. The new Fased App is a separate application project, with a shared terminal design direction; its engineering work is not automatically part of this agent's installed release. See its [product guide](https://github.com/fased-ai/fased-app/blob/main/docs/README.md).
 
-SAT reserves and earned rewards cannot fund that arena's obligations, and its income does not enter SAT's revenue split. A shared portfolio may help an owner manage both, but cannot automatically move or risk their assets.
+Bonds, reserve-redemption products and a separate loss-mining arena have been removed from the new WEN core. Historical positions retain their original obligations. Further assets and supported venue integrations need their own specifications, capital and permissions.
 
-## 4. Expand supported services
+## Keep the umbrella and financial rights distinct
 
-Research tools, marketplace workflows and further independently funded asset districts can be added as their contracts and integrations become ready. Network identity and service eligibility remain separate from buying or staking SAT.
+Fcode Lab is the umbrella behind Fased and WEN. Any FCOD allocation must use explicitly available income after expenses and existing obligations. The same funds cannot also be promised as SAT rewards. Brand, profiles and portfolio views do not combine custody or allow one product to spend another's liabilities.
 
-Fcode Lab is the umbrella behind Fased and WEN. Planned FCOD pools use only explicitly allocated available Operating income after expenses and obligations, with published pool terms. They have no automatic claim on product reserves.
-
-See the [WEN roadmap](https://docs.wen.network/roadmap) and [Fcode Lab](https://docs.fcode.ai).
+See [WEN](https://docs.wen.network) and [Fcode Lab](https://docs.fcode.ai).
