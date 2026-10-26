@@ -15,7 +15,7 @@ Start with research. Before enabling a financial action, decide:
 
 Permission to claim a reward is not permission to trade, borrow or move other funds. Future products will need their own permissions.
 
-For example, a planned session could authorize 1 SOL in total, at most 0.01 SOL per round and 0.25 SOL per day, for seven days, without automatic top-ups. Depositing the budget does not spend it all. Entries that cannot meet the selected funding and user limits leave unused funds unspent; accepted pending work must settle or recover under its original terms.
+For example, a planned session could use a 1 SOL bankroll, commit 0.01 SOL to one selected range per participating round, and cap total committed turnover at 0.25 SOL, with expiry within 24 hours and no automatic top-ups. Returned principal can be reused within that turnover limit; each reuse counts again. Every v1 session has a maximum 24-hour horizon. Depositing the bankroll does not spend it all. Entries that cannot meet the selected funding and user limits leave unused funds unspent; accepted pending work must settle or recover under its original terms.
 
 Track available funds, pending entries, earned rewards and staked principal separately. SAT staking earns eligible BTC, not newly minted SAT. A pending BTC purchase is not yet claimable BTC, and an unresolved transaction must be reconciled before another attempt.
 
