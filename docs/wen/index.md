@@ -11,6 +11,8 @@ The WEN app is the primary mining experience. Fased is an optional agent for res
 
 <Note>The new Satcoin Mining integration is in development. This guide describes approved product rules and planned Fased support, not an available financial release.</Note>
 
+![Satcoin bootstrap: zero supply; SAT awards split 50/50; deductions and fees split 90/10. Both 50 net SOL and 15,000 LP SAT must accumulate before accepted rounds finish and the SAT/SOL pool activates.](/assets/diagrams/satcoin-bootstrap.svg)
+
 ## Bootstrap and graduation
 
 New Satcoin supply starts at zero. Bootstrap divides earned SAT **50% miners / 50% LP** and routes **90% of actual deductions plus exact-entry fees to LP SOL / 10% Operating**. Principal recovery is unchanged. Bootstrap has no ordinary BTC, daily-prize or staking distributions.
