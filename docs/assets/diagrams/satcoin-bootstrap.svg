@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1430" viewBox="0 0 640 1430" role="img" aria-labelledby="title desc">
+<title id="title">From zero supply to the SAT/SOL pool</title>
+<desc id="desc">Approved Satcoin launch design. Bootstrap awards split SAT equally between miners and LP. Actual deductions plus exact fees split 90 percent to LP SOL and 10 percent to Operating. Both 50 net SOL and 15,000 LP SAT must accumulate before new bootstrap entries close, accepted rounds finish and all accounted LP balances seed SAT/SOL. The 8 times boost is limited to 60,000 gross SAT inside 1,500,000 annual and 30,000,000 lifetime issuance. No calendar expiry or fixed opening price.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#A84A30"/></marker></defs>
+<rect width="640" height="1430" fill="#EAE5D6"/>
+<g font-family="Noto Sans, Arial, sans-serif">
+<text id="text-1" x="32" y="45" fill="#1D211B" font-size="24" font-weight="700" text-anchor="start">WEN</text>
+<text id="text-2" x="608" y="45" fill="#A84A30" font-size="18" font-weight="600" text-anchor="end">01 / BOOTSTRAP</text>
+<path d="M32 65 L608 65" fill="none" stroke="#AAA99B" stroke-width="1"/>
+<text id="text-3" x="32" y="112" fill="#1D211B" font-size="34" font-weight="700" text-anchor="start">Mining builds the market</text>
+<text id="text-4" x="32" y="151" fill="#65665B" font-size="22" font-weight="400" text-anchor="start">Satcoin · approved launch design</text>
+<rect x="32" y="181" width="576" height="112" rx="2" fill="#F3EFE4" stroke="#AAA99B"/>
+<text id="text-5" x="54" y="216" fill="#1D211B" font-size="26" font-weight="700" text-anchor="start">01   Start at zero supply</text>
+<text id="text-6" x="54" y="251" fill="#1D211B" font-size="24" font-weight="400" text-anchor="start">Commit SOL across BTC ranges.</text>
+<path d="M320 300 L320 330" stroke="#A84A30" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="32" y="342" width="576" height="210" rx="2" fill="#F3EFE4" stroke="#AAA99B"/>
+<text id="text-7" x="54" y="380" fill="#1D211B" font-size="26" font-weight="700" text-anchor="start">02   Accumulate both LP assets</text>
+<path d="M54 398 L586 398" fill="none" stroke="#AAA99B" stroke-width="1"/>
+<text id="text-8" x="54" y="432" fill="#65665B" font-size="23" font-weight="400" text-anchor="start">SAT awards</text>
+<text id="text-9" x="54" y="467" fill="#1D211B" font-size="28" font-weight="700" text-anchor="start">50% miners</text>
+<text id="text-10" x="54" y="506" fill="#A84A30" font-size="28" font-weight="700" text-anchor="start">50% LP</text>
+<path d="M316 416 L316 527" fill="none" stroke="#AAA99B" stroke-width="1"/>
+<text id="text-11" x="338" y="432" fill="#65665B" font-size="23" font-weight="400" text-anchor="start">Deductions + fees</text>
+<text id="text-12" x="338" y="467" fill="#A84A30" font-size="28" font-weight="700" text-anchor="start">90% LP SOL</text>
+<text id="text-13" x="338" y="506" fill="#1D211B" font-size="27" font-weight="700" text-anchor="start">10% Operating</text>
+<path d="M320 560 L320 589" stroke="#A84A30" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="32" y="602" width="576" height="154" rx="2" fill="#F3EFE4" stroke="#AAA99B"/>
+<text id="text-14" x="54" y="640" fill="#1D211B" font-size="26" font-weight="700" text-anchor="start">03   Both minimums must be met</text>
+<text id="text-15" x="54" y="686" fill="#A84A30" font-size="34" font-weight="700" text-anchor="start">50 net SOL</text>
+<text id="text-16" x="340" y="686" fill="#A84A30" font-size="34" font-weight="700" text-anchor="start">15,000 SAT</text>
+<text id="text-17" x="54" y="724" fill="#65665B" font-size="23" font-weight="400" text-anchor="start">For the LP</text>
+<text id="text-18" x="340" y="724" fill="#65665B" font-size="23" font-weight="400" text-anchor="start">For the LP</text>
+<path d="M320 764 L320 794" stroke="#A84A30" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="32" y="807" width="576" height="116" rx="2" fill="#F3EFE4" stroke="#AAA99B"/>
+<text id="text-19" x="54" y="845" fill="#1D211B" font-size="26" font-weight="700" text-anchor="start">04   Close bootstrap entries</text>
+<text id="text-20" x="54" y="885" fill="#1D211B" font-size="24" font-weight="400" text-anchor="start">Finish every accepted round.</text>
+<path d="M320 931 L320 961" stroke="#A84A30" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="32" y="974" width="576" height="151" rx="2" fill="#F3EFE4" stroke="#AAA99B"/>
+<text id="text-21" x="54" y="1012" fill="#1D211B" font-size="26" font-weight="700" text-anchor="start">05   Activate the SAT/SOL pool</text>
+<text id="text-22" x="54" y="1051" fill="#1D211B" font-size="24" font-weight="400" text-anchor="start">Deposit all accounted LP balances.</text>
+<text id="text-23" x="54" y="1084" fill="#1D211B" font-size="24" font-weight="400" text-anchor="start">Verified activation → normal mining.</text>
+<rect x="32" y="1155" width="576" height="155" rx="2" fill="#F3EFE4" stroke="#AAA99B"/>
+<text id="text-24" x="54" y="1193" fill="#1D211B" font-size="25" font-weight="700" text-anchor="start">8× boost · 60,000 gross SAT budget</text>
+<text id="text-25" x="54" y="1232" fill="#1D211B" font-size="24" font-weight="400" text-anchor="start">Inside 1,500,000 SAT per issuance year</text>
+<text id="text-26" x="54" y="1265" fill="#1D211B" font-size="24" font-weight="400" text-anchor="start">and 30,000,000 SAT lifetime.</text>
+<path d="M32 1338 L608 1338" fill="none" stroke="#AAA99B" stroke-width="1"/>
+<text id="text-27" x="32" y="1373" fill="#65665B" font-size="22" font-weight="400" text-anchor="start">No calendar expiry. No fixed opening price.</text>
+</g>
+</svg>
