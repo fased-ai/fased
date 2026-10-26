@@ -11,16 +11,24 @@ The WEN app is the primary mining experience. Fased is an optional agent for res
 
 <Note>The new Satcoin Mining integration is in development. This guide describes approved product rules and planned Fased support, not an available financial release.</Note>
 
+## Bootstrap and graduation
+
+New Satcoin supply starts at zero. Bootstrap divides earned SAT **50% miners / 50% LP** and routes **90% of actual deductions plus exact-entry fees to LP SOL / 10% Operating**. Principal recovery is unchanged. Bootstrap has no ordinary BTC, daily-prize or staking distributions.
+
+The **8× boost is limited to 60,000 gross SAT** inside the **1,500,000 annual / 30,000,000 lifetime** totals. Mining continues without a calendar expiry until settled LP funds reach **50 net SOL and 15,000 SAT**. Accepted rounds finish before all accounted balances seed the official **SAT/SOL** pool. Earned SAT can begin its 24-hour stake maturity during bootstrap. After verified LP activation, normal mining does not require eligible stakers. If the fixed snapshot has none, that round’s staking allocation returns in SOL to its original forfeiture contributors, proportional to their actual deductions; later stakers cannot claim it.
+
+Bootstrap advances the annual allowance; the remaining schedule is reduced as necessary, with reservations counted once and no boost reset. Extra liquidity later uses received treasury funds, without new SAT minting. The opening price comes from actual deposited balances and available market depth. See [the full launch rules](https://docs.satcoin.app/bootstrap).
+
 ## What a round returns
 
-- Exact-range entries return **99% of principal**, after the 1% fee to Operating.
+- Exact-range entries return **99% of principal**, after the 1% fee under the current phase.
 - Incorrect entries deduct **5%–10%**, returning **90%–95%** of principal. Eligible near misses also receive partial fresh rewards.
 - Released BTC and SAT are separate from returned principal. Network and conversion costs must be displayed separately.
 - Invalid observations void the round without mining deductions or SAT issuance. Pending conversions are not yet claimable BTC.
 
-Actual forfeitures fund the **74% miners / 1% daily competition / 10% stakers / 10% Operating / 5% treasury** allocation. The treasury splits incoming value equally between BTC and USDC; bought SAT stays locked without staking or burning. The separate exact-winner fee goes to Operating.
+In normal mining, actual forfeitures fund 74% miners / 1% daily competition / 10% staking / 10% Operating / 5% treasury, plus the separate exact-entry fee to Operating. The normal treasury allocation divides **50% to BTC holdings, 25% to USDC-funded locked SAT purchases and 25% to SOL-funded balanced SAT/SOL additions**. The liquidity budget covers both assets and cannot use locked SAT or participant claims. Bounded purchases/additions can be skipped when execution conditions fail. Market purchases do not mint SAT or promise a price floor.
 
-SAT issuance is capped at **1,000,000 cumulatively**, including **50,000 Genesis SAT**, with at most **50,000 mining SAT per year**. Accepted capital unlocks a scheduled round award up to a 5 SOL threshold, then accuracy and the remaining caps limit release. Five SOL is not a minimum round size. Staking does not mint SAT. Mining does not promise a SAT market price or a profitable sale.
+SAT starts at zero with **30,000,000 cumulative lifetime / 1,500,000 total annual** limits, counting bootstrap/miner/LP awards and unresolved reservations. The current phase-specific ceiling, 5 SOL capital unlock and highest credit determine release. Staking and market buying do not mint SAT.
 
 ## The planned WEN desk
 
@@ -37,3 +45,7 @@ Fased follows the same capital-and-accuracy rules as manual participation. Copyi
 **Mine** allocates SOL through round rules. **Trade SAT** buys or sells existing Satcoin. **Stake** receives eligible activity-funded BTC. **Daily competition** uses its separately accounted share of forfeitures. A BTC price input does not open an actual BTC position or make SAT BTC-backed.
 
 Read [WEN automation](/wen/automation) for agent limits, [WEN documentation](https://docs.wen.network) for the product rules and [Satcoin documentation](https://docs.satcoin.app) for the asset. This guide does not grant spending authority.
+
+## Asset and phase identity
+
+Every future strategy, preview, receipt and permission must bind the admitted network, program, asset/economy, mint, terms and permitted phases. Fased must show bootstrap SAT/LP contributions separately from normal BTC rewards, and stop future unapproved spending at a phase transition. It must not retarget another asset or reuse prior permissions silently. WEN and Fased consume the same canonical definitions; this guide does not implement or activate those routes.
