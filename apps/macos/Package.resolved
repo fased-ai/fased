@@ -1,5 +1,5 @@
 {
-  "originHash" : "1c9c9d251b760ed3234ecff741a88eb4bf42315ad6f50ac7392b187cf226c16c",
+  "originHash" : "b8b550f557c2d25bf74cd7073a761af9d484b54fbfffc27dea04b5cf286190c4",
   "pins" : [
     {
       "identity" : "axorcist",
@@ -24,7 +24,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/steipete/ElevenLabsKit",
       "state" : {
-        "revision" : "c8679fbd37416a8780fe43be88a497ff16209e2d",
+        "revision" : "7e3c948d8340abe3977014f3de020edf221e9269",
         "version" : "0.1.0"
       }
     },
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/orchetect/MenuBarExtraAccess",
       "state" : {
-        "revision" : "707dff6f55217b3ef5b6be84ced3e83511d4df5c",
-        "version" : "1.2.2"
+        "revision" : "e93e3a5b814714bf4d4cea67bf63a6b6a8323968",
+        "version" : "1.3.1"
       }
     },
     {
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sparkle-project/Sparkle",
       "state" : {
-        "revision" : "21d8df80440b1ca3b65fa82e40782f1e5a9e6ba2",
-        "version" : "2.9.0"
+        "revision" : "ab7d71291238df6e0492143b120c9b696a35f603",
+        "version" : "2.10.1"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
       "state" : {
-        "revision" : "bbd81b6725ae874c69e9b8c8804d462356b55523",
-        "version" : "1.10.1"
+        "revision" : "c9c6bb9d275ec0d95c3ad16391f3f045dc623104",
+        "version" : "1.16.2"
       }
     },
     {
