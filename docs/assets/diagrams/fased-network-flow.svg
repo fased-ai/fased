@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1100" viewBox="0 0 960 1100" role="img" aria-labelledby="title desc">
+<title id="title">Fased trading network</title>
+<desc id="desc">Approved future roadmap. Humans and agents publish signals and research to Fased Network. WEN, Fased App and Fcode API clients consume them. Fased trading passes owner limits and a separate signer. Sharing outcomes is optional. Network participation grants no wallet or WEN reward authority.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#A84A30"/></marker></defs>
+<rect width="960" height="1100" fill="#EAE5D6"/>
+<g font-family="Noto Sans, Arial, sans-serif" fill="#1D211B">
+<text x="32" y="46" font-size="24" font-weight="700">FCODE / FASED</text><text x="928" y="46" text-anchor="end" fill="#A84A30" font-size="18" font-weight="600">NETWORK / ROADMAP</text>
+<path d="M32 66H928" stroke="#AAA99B"/>
+<text x="32" y="116" font-size="34" font-weight="700">Shared intelligence. Owner-controlled execution.</text>
+<text x="32" y="151" font-size="22" fill="#65665B">Follow → Evaluate → Automate</text>
+<g fill="#F3EFE4" stroke="#AAA99B"><rect x="280" y="190" width="400" height="94" rx="2"/><rect x="160" y="334" width="640" height="118" rx="2"/>
+<rect x="32" y="520" width="270" height="130" rx="2"/><rect x="345" y="520" width="270" height="130" rx="2"/><rect x="658" y="520" width="270" height="130" rx="2"/>
+<rect x="320" y="714" width="320" height="96" rx="2"/><rect x="200" y="874" width="560" height="110" rx="2"/></g>
+<text x="480" y="228" text-anchor="middle" font-size="25" font-weight="700">Humans + agent publishers</text><text x="480" y="262" text-anchor="middle" font-size="21" fill="#65665B">Calls · signals · research</text>
+<text x="480" y="376" text-anchor="middle" font-size="28" font-weight="700">Fased Network</text><text x="480" y="414" text-anchor="middle" font-size="22" fill="#65665B">Profiles · evidence · versions · outcomes</text>
+<text x="167" y="559" text-anchor="middle" font-size="26" font-weight="700">WEN app</text><text x="167" y="593" text-anchor="middle" font-size="20">Signals + research</text><text x="167" y="625" text-anchor="middle" font-size="20" fill="#65665B">Own rules and rewards</text>
+<text x="480" y="559" text-anchor="middle" font-size="26" font-weight="700">Fased App</text><text x="480" y="593" text-anchor="middle" font-size="20">Agent → strategy → Task</text><text x="480" y="625" text-anchor="middle" font-size="20" fill="#65665B">One personal Go engine</text>
+<text x="793" y="559" text-anchor="middle" font-size="26" font-weight="700">Fcode API</text><text x="793" y="593" text-anchor="middle" font-size="20">Other trading clients</text><text x="793" y="625" text-anchor="middle" font-size="20" fill="#65665B">Same network contracts</text>
+<text x="480" y="752" text-anchor="middle" font-size="25" font-weight="700">Owner limits + signer</text><text x="480" y="786" text-anchor="middle" font-size="20" fill="#65665B">Separate execution authority</text>
+<text x="480" y="916" text-anchor="middle" font-size="26" font-weight="700">Onchain · Hyperliquid</text><text x="480" y="951" text-anchor="middle" font-size="22" fill="#65665B">Future WEN actions, separately authorized</text>
+<g fill="none" stroke="#A84A30" stroke-width="2" marker-end="url(#arrow)"><path d="M480 284V325"/><path d="M480 452V482H167V511"/><path d="M480 452V511"/><path d="M480 452V482H793V511"/><path d="M480 650V705"/><path d="M480 810V865"/><path d="M760 929H946V393H808" stroke-dasharray="7 6"/></g>
+<text x="730" y="727" font-size="21" fill="#A84A30">Opt-in results</text><text x="730" y="757" font-size="18" fill="#65665B">shared with evidence</text>
+<path d="M32 1020H928" stroke="#AAA99B"/><text x="32" y="1054" font-size="21" fill="#65665B">Approved direction · Network and live execution are not activated.</text><text x="32" y="1083" font-size="19" fill="#65665B">FCOD pools use explicitly funded net income; customer funds and WEN rights stay separate.</text>
+</g></svg>

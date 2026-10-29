@@ -1,33 +1,12 @@
 ---
-summary: "Fased Network identity, discovery and routing, separate from WEN financial rights."
 title: "Fased Network"
+description: "Identity and routing for the trading-focused Network roadmap."
 ---
 
-# Fased Network
+Fased Network is planned around trading signals, research and bounded strategy use. Its identity, directory and relay components are reference material for the new service, not proof that signal subscriptions or network trading are released.
 
-Fased works on its own. Optional Network features connect an agent to identity, directory and relay services. Availability depends on the installed release and enabled service.
+Read [Fased Network](/guide/network) for **Follow → Evaluate → Automate**, human/agent profiles, cooperative research, outcomes and the WEN connection. The [Network roadmap](/guide/network-roadmap) defines server reuse and the delivery sequence.
 
-## What to review before connecting
+Private instance access stays separate from public discovery. A handle, reachable endpoint, payment or reputation score does not authorize wallet spending. Existing legacy commands depend on the installed old release; they are not installation instructions for the new Go app.
 
-- Which profile information and service descriptions become public.
-- Who can reach the agent and which requests it may accept.
-- Whether the configured public route is healthy.
-- Which service terms and owner permissions apply to any subsequent action.
-
-A public handle, verification result or reachable endpoint is not permission to spend from a wallet. Network state and payment readiness are separate.
-
-## Network and WEN
-
-WEN is an Asset Mining platform. Satcoin Mining uses SOL allocations across ten-minute BTC ranges, with capital × accuracy shares of released BTC and unlocked SAT. The new Fased integration remains in development. Optional SAT staking shares eligible BTC and does not mint SAT.
-
-There is no separate loss-mining arena in the active WEN core. Network identity, mining budgets, earned rewards and unrelated trading permissions remain distinct.
-
-## Operations
-
-Use the installed version's Network status and help to inspect connection state. Review identity, route health and service availability separately; a successful connection does not prove a financial action is ready. Keep private control access separate from public discovery and routing.
-
-- [Network overview](/guide/network)
-- [Network CLI](/cli/federation)
-- [Wallets](/plugins/crypto/wallet-page)
-- [WEN](/wen/index)
-- [Satcoin Mining](/wen/index)
+WEN remains independently usable. Network membership creates no mining reward, SAT mint right or FCOD entitlement. Mining and live features remain held.

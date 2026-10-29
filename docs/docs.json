@@ -920,7 +920,7 @@
           },
           {
             "group": "Everyday use",
-            "pages": ["guide/everyday", "guide/network"]
+            "pages": ["guide/everyday", "guide/network", "guide/network-roadmap"]
           },
           {
             "group": "Tools",
@@ -931,7 +931,7 @@
             "pages": ["guide/wallets"]
           },
           {
-            "group": "Satcoin Mining \u00b7 Planned",
+            "group": "Satcoin Mining · Planned",
             "pages": [
               "wen/index",
               "wen/automation",

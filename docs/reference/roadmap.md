@@ -31,3 +31,7 @@ Further assets and supported venue integrations need their own specifications, c
 Fcode Lab is the umbrella behind Fased and WEN. Any FCOD allocation must use explicitly available income after expenses and existing obligations. The same funds cannot also be promised as SAT rewards. Brand, profiles and portfolio views do not combine custody or allow one product to spend another's liabilities.
 
 See [WEN](https://docs.wen.network) and [Fcode Lab](https://docs.fcode.ai).
+
+## Trading Network roadmap
+
+The approved [Network direction](/guide/network) connects human and agent publishers to Fased, WEN and API clients through sourced signals and cooperative research. [Network stages and server reuse](/guide/network-roadmap) are a separate future roadmap, not an addition to the active core implementation queue. Network work, mining and live activation remain held.
